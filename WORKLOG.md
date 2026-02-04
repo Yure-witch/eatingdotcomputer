@@ -7,3 +7,4 @@
 - Expanded `.env.example` and `README.md` to include Auth.js + public Turso/R2 env vars.
 - Replaced `.env` contents with placeholders.
 - Rebuilt landing page to display `eating.computer` in four type styles with hover font swapping.
+- Simplified landing page so only `eating.computer` appears.

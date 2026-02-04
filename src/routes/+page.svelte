@@ -44,7 +44,6 @@
 
 <main>
 	<div class="stage">
-		<div class="label">Eating.Computer</div>
 		{#each lines as line, lineIndex}
 			<div class={`line ${line.className}`}>
 				{#each line.letters as letter, letterIndex}
@@ -62,6 +61,5 @@
 				{/each}
 			</div>
 		{/each}
-		<p class="subtitle">Hover letters to shuffle the type DNA.</p>
 	</div>
 </main>
