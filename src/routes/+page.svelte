@@ -1,65 +1,95 @@
 <script>
+	import { onMount, tick } from 'svelte';
+
 	const text = 'eating.computer';
 
 	const fonts = [
-		{
-			label: 'Blackletter',
-			family: '"UnifrakturMaguntia", "UnifrakturCook", "Old English Text MT", serif',
-			className: 'blackletter'
-		},
-		{
-			label: 'Sans Serif',
-			family: '"Space Grotesk", "Helvetica Neue", Arial, sans-serif',
-			className: 'sans'
-		},
-		{
-			label: 'Script',
-			family: '"Pacifico", "Brush Script MT", cursive',
-			className: 'script'
-		},
-		{
-			label: '8-bit',
-			family: '"Press Start 2P", "VT323", monospace',
-			className: 'eight-bit'
-		}
+		'"Cambridge", "UnifrakturCook", "Old English Text MT", serif',
+		'"Space Grotesk", "Helvetica Neue", Arial, sans-serif',
+		'"Pacifico", "Brush Script MT", cursive',
+		'"Press Start 2P", "VT323", monospace'
 	];
 
-	const lines = fonts.map((font) => ({
-		label: font.label,
-		defaultFamily: font.family,
-		className: font.className,
-		letters: Array.from(text)
-	}));
+	const letters = Array.from(text);
+	let letterFonts = letters.map(() => fonts[0]);
+	let letterWidths = letters.map(() => null);
+	let lineEl;
 
-	let letterFonts = lines.map((line) => line.letters.map(() => line.defaultFamily));
+	const scaleByFont = {
+		[fonts[0]]: 1.5,
+		[fonts[1]]: 1.2,
+		[fonts[2]]: 1.15,
+		[fonts[3]]: 1.1
+	};
 
-	function swapFont(lineIndex, letterIndex) {
-		const current = letterFonts[lineIndex][letterIndex];
-		const options = fonts.map((font) => font.family).filter((family) => family !== current);
+	function swapFont(letterIndex) {
+		const current = letterFonts[letterIndex];
+		const options = fonts.filter((family) => family !== current);
 		const next = options[Math.floor(Math.random() * options.length)];
-		letterFonts[lineIndex][letterIndex] = next;
+		letterFonts[letterIndex] = next;
 		letterFonts = [...letterFonts];
 	}
+
+	async function measureWidths() {
+		if (!lineEl) return;
+		await tick();
+
+		const sample = document.createElement('span');
+		sample.style.position = 'absolute';
+		sample.style.visibility = 'hidden';
+		sample.style.whiteSpace = 'pre';
+		sample.style.top = '-9999px';
+		sample.style.left = '-9999px';
+
+		const { fontSize, fontWeight, letterSpacing } = getComputedStyle(lineEl);
+		const baseSize = parseFloat(fontSize);
+		sample.style.fontSize = fontSize;
+		sample.style.fontWeight = fontWeight;
+		sample.style.letterSpacing = letterSpacing;
+
+		document.body.appendChild(sample);
+
+		letterWidths = letters.map((letter) => {
+			let max = 0;
+			for (const family of fonts) {
+				sample.style.fontFamily = family;
+				const scale = scaleByFont[family] ?? 1;
+				sample.style.fontSize = `${baseSize * scale}px`;
+				sample.textContent = letter;
+				const width = sample.getBoundingClientRect().width;
+				if (width > max) max = width;
+			}
+			return Math.ceil(max * 100) / 100;
+		});
+
+		document.body.removeChild(sample);
+	}
+
+	onMount(() => {
+		measureWidths();
+		window.addEventListener('resize', measureWidths);
+		return () => window.removeEventListener('resize', measureWidths);
+	});
 </script>
 
 <main>
 	<div class="stage">
-		{#each lines as line, lineIndex}
-			<div class={`line ${line.className}`}>
-				{#each line.letters as letter, letterIndex}
-					<span
-						class="letter"
-						style={`font-family: ${letterFonts[lineIndex][letterIndex]}`}
-						on:mouseenter={() => swapFont(lineIndex, letterIndex)}
-					>
-						{#if letter === '.'}
-							<span class="dot">.</span>
-						{:else}
-							{letter}
-						{/if}
-					</span>
-				{/each}
-			</div>
-		{/each}
+		<div class="line" bind:this={lineEl}>
+			{#each letters as letter, letterIndex}
+				<span
+					class="letter"
+					style={`font-family: ${letterFonts[letterIndex]}; width: ${
+						letterWidths[letterIndex] ? `${letterWidths[letterIndex].toFixed(2)}px` : 'auto'
+					}; font-size: ${scaleByFont[letterFonts[letterIndex]] ?? 1}em;`}
+					on:mouseenter={() => swapFont(letterIndex)}
+				>
+					{#if letter === '.'}
+						<span class="dot">.</span>
+					{:else}
+						{letter}
+					{/if}
+				</span>
+			{/each}
+		</div>
 	</div>
 </main>
