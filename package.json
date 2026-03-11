@@ -7,7 +7,10 @@
 		"dev": "vite dev",
 		"build": "vite build",
 		"preview": "vite preview",
-		"prepare": "svelte-kit sync || echo ''"
+		"prepare": "svelte-kit sync || echo ''",
+		"generate-vapid": "node scripts/generate-vapid.js",
+		"migrate": "node scripts/migrate.js",
+		"generate-icons": "node scripts/generate-icons.js"
 	},
 	"devDependencies": {
 		"@sveltejs/kit": "^2.50.1",
@@ -16,8 +19,14 @@
 		"vite": "^7.3.1"
 	},
 	"dependencies": {
+		"@auth/sveltekit": "^1.11.1",
 		"@aws-sdk/client-s3": "^3.983.0",
 		"@libsql/client": "^0.17.0",
-		"@sveltejs/adapter-vercel": "^6.3.1"
+		"@sveltejs/adapter-vercel": "^6.3.1",
+		"bcryptjs": "^3.0.3",
+		"dotenv": "^17.3.1",
+		"firebase": "^12.10.0",
+		"firebase-admin": "^13.7.0",
+		"web-push": "^3.6.7"
 	}
 }

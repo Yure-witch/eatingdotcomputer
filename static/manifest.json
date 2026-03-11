@@ -1,0 +1,31 @@
+{
+	"name": "eating.computer",
+	"short_name": "eating.computer",
+	"description": "Class platform — assignments, notes, chat, and more.",
+	"start_url": "/app",
+	"scope": "/",
+	"display": "standalone",
+	"orientation": "any",
+	"background_color": "#f7f2ea",
+	"theme_color": "#0c0c0c",
+	"icons": [
+		{
+			"src": "/icon-192.png",
+			"sizes": "192x192",
+			"type": "image/png",
+			"purpose": "any maskable"
+		},
+		{
+			"src": "/icon-512.png",
+			"sizes": "512x512",
+			"type": "image/png",
+			"purpose": "any maskable"
+		},
+		{
+			"src": "/favicon.svg",
+			"sizes": "any",
+			"type": "image/svg+xml",
+			"purpose": "any"
+		}
+	]
+}

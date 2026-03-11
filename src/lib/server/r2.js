@@ -1,4 +1,4 @@
-import { S3Client, ListObjectsV2Command } from '@aws-sdk/client-s3';
+import { S3Client, ListObjectsV2Command, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { env } from '$env/dynamic/private';
 
 let client;
@@ -25,6 +25,24 @@ export function getR2Client() {
 	});
 
 	return client;
+}
+
+export async function uploadToR2(key, body, contentType) {
+	const r2 = getR2Client();
+	if (!r2 || !env.R2_BUCKET) throw new Error('R2 not configured');
+	await r2.send(new PutObjectCommand({
+		Bucket: env.R2_BUCKET,
+		Key: key,
+		Body: body,
+		ContentType: contentType
+	}));
+}
+
+export async function getR2Stream(key) {
+	const r2 = getR2Client();
+	if (!r2 || !env.R2_BUCKET) return null;
+	const response = await r2.send(new GetObjectCommand({ Bucket: env.R2_BUCKET, Key: key }));
+	return { body: response.Body, contentType: response.ContentType };
 }
 
 export async function listR2Assets() {
