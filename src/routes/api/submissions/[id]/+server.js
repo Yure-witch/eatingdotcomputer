@@ -1,10 +1,11 @@
 import { error } from '@sveltejs/kit';
 import { getDb } from '$lib/server/turso.js';
 import { getR2Stream } from '$lib/server/r2.js';
+import { requireClassAccess } from '$lib/server/access.js';
 
 export async function GET({ params, locals }) {
 	const session = await locals.auth();
-	if (!session) error(401, 'Unauthorized');
+	await requireClassAccess(session);
 
 	const db = getDb();
 	if (!db) error(503, 'Database unavailable');

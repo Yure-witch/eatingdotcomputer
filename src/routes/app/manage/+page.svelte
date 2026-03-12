@@ -1,7 +1,37 @@
 <script>
 	import { enhance } from '$app/forms';
+	import { onMount, onDestroy } from 'svelte';
 
 	let { data, form } = $props();
+
+	// Presence polling — map of uid → { online, lastSeen }
+	let activityMax = $derived(Math.max(1, ...data.activityByHour.map((h) => h.count)));
+
+	let presenceMap = $state(
+		Object.fromEntries(data.members.map((m) => [m.id, { online: m.online, lastSeen: null }]))
+	);
+	let pollTimer;
+
+	async function pollPresence() {
+		try {
+			const res = await fetch('/api/presence');
+			if (res.ok) presenceMap = await res.json();
+		} catch { /* ignore network errors */ }
+	}
+
+	onMount(() => {
+		pollTimer = setInterval(pollPresence, 30_000);
+	});
+	onDestroy(() => clearInterval(pollTimer));
+
+	function formatLastSeen(ts) {
+		if (!ts) return 'never';
+		const diff = Date.now() - ts;
+		if (diff < 60_000) return 'just now';
+		if (diff < 3600_000) return `${Math.floor(diff / 60_000)}m ago`;
+		if (diff < 86400_000) return `${Math.floor(diff / 3600_000)}h ago`;
+		return new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+	}
 
 	let testNotifStatus = $state(null);
 
@@ -245,6 +275,97 @@
 				</div>
 			</section>
 		{/each}
+	{#if data.pendingRequests.length > 0}
+	<section class="members-section pending-section">
+		<h2>Pending requests <span class="member-count">({data.pendingRequests.length})</span></h2>
+		<div class="pending-list">
+			{#each data.pendingRequests as req}
+				<div class="pending-card">
+					<div class="pending-avatar">{req.userName ? req.userName[0].toUpperCase() : '?'}</div>
+					<div class="pending-info">
+						<div class="pending-name-row">
+							<a class="pending-name" href="/app/profile/{req.userId}">{req.userName || 'Unnamed'}</a>
+							{#if req.pronouns}<span class="pending-pronouns">{req.pronouns}</span>{/if}
+						</div>
+						<div class="pending-email">{req.email}</div>
+						<div class="pending-class">{req.className} · {req.term}</div>
+						{#if req.bio}<p class="pending-bio">{req.bio}</p>{/if}
+						{#if req.website}<a class="pending-website" href={req.website} target="_blank" rel="noopener noreferrer">{req.website.replace(/^https?:\/\//, '')}</a>{/if}
+					</div>
+					<div class="pending-actions">
+						<form method="POST" action="?/approve" use:enhance>
+							<input type="hidden" name="id" value={req.id} />
+							<button type="submit" class="btn-approve">Approve</button>
+						</form>
+						<form method="POST" action="?/deny" use:enhance>
+							<input type="hidden" name="id" value={req.id} />
+							<button type="submit" class="btn-deny">Deny</button>
+						</form>
+					</div>
+				</div>
+			{/each}
+		</div>
+	</section>
+	{/if}
+
+	<section class="members-section">
+		<h2>Student activity <span class="member-count">(last 30 days, by hour)</span></h2>
+		<div class="activity-chart">
+			<svg viewBox="0 0 {24 * 20} 80" preserveAspectRatio="none" class="chart-svg">
+				{#each data.activityByHour as { hour, count }}
+					{@const barH = Math.round((count / activityMax) * 64)}
+					<rect
+						x={hour * 20 + 2}
+						y={64 - barH}
+						width="16"
+						height={barH}
+						rx="3"
+						class="bar"
+					/>
+				{/each}
+			</svg>
+			<div class="chart-labels">
+				{#each [0, 3, 6, 9, 12, 15, 18, 21] as h}
+					<span style="left: {(h / 24) * 100}%">{h === 0 ? '12a' : h < 12 ? `${h}a` : h === 12 ? '12p' : `${h - 12}p`}</span>
+				{/each}
+			</div>
+		</div>
+	</section>
+
+	<section class="members-section">
+		<h2>All members <span class="member-count">({data.members.length})</span></h2>
+		<table class="members-table">
+			<thead>
+				<tr>
+					<th>Name</th>
+					<th>Email</th>
+					<th>Role</th>
+					<th>Joined</th>
+					<th>Status</th>
+					<th>Last seen</th>
+				</tr>
+			</thead>
+			<tbody>
+				{#each data.members as m}
+					{@const p = presenceMap[m.id]}
+					<tr>
+						<td>{m.name || '—'}</td>
+						<td class="email">{m.email}</td>
+						<td><span class="role-pill" class:instructor={m.role === 'instructor'}>{m.role}</span></td>
+						<td class="muted">{m.joinedAt ? new Date(m.joinedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}</td>
+						<td>
+							{#if p?.online}
+								<span class="status-online">● online</span>
+							{:else}
+								<span class="status-offline">○ offline</span>
+							{/if}
+						</td>
+						<td class="muted">{formatLastSeen(p?.lastSeen ?? null)}</td>
+					</tr>
+				{/each}
+			</tbody>
+		</table>
+	</section>
 	</main>
 </div>
 
@@ -562,4 +683,112 @@
 	.edit-form { padding: 1rem; }
 
 	.empty { color: #a09688; font-size: 0.9rem; }
+
+	.activity-chart { margin-top: 0.75rem; position: relative; padding-bottom: 1.5rem; }
+	.chart-svg { width: 100%; height: 80px; display: block; }
+	.bar { fill: var(--ink); opacity: 0.15; transition: opacity 0.15s; }
+	.bar:hover { opacity: 0.7; }
+	.chart-labels {
+		position: absolute; bottom: 0; left: 0; right: 0;
+		font-size: 0.65rem; color: #a09688;
+	}
+	.chart-labels span { position: absolute; transform: translateX(-50%); }
+
+	.members-section { margin-top: 2.5rem; }
+	.members-section h2 { font-family: 'Cambridge', serif; font-size: 1.25rem; font-weight: 400; margin: 0 0 1rem; }
+	.member-count { font-family: inherit; font-size: 0.9rem; color: #a09688; }
+
+	.members-table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+	.members-table th {
+		text-align: left; font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+		letter-spacing: 0.06em; color: #a09688; padding: 0.4rem 0.75rem; border-bottom: 1.5px solid #ddd7cc;
+	}
+	.members-table td { padding: 0.6rem 0.75rem; border-bottom: 1px solid #f0ebe3; vertical-align: middle; }
+	.members-table tr:last-child td { border-bottom: none; }
+
+	.email { font-family: monospace; font-size: 0.82rem; color: #555; }
+	.muted { color: #a09688; font-size: 0.8rem; }
+
+	.role-pill {
+		font-size: 0.65rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+		background: #f0ebe3; color: #a09688; padding: 0.15rem 0.5rem; border-radius: 99px;
+	}
+	.role-pill.instructor { background: var(--ink); color: var(--paper); }
+
+	.status-online { font-size: 0.8rem; color: #2e7d32; font-weight: 600; }
+	.status-offline { font-size: 0.8rem; color: #bbb; }
+
+	/* ── Pending requests ── */
+	.pending-section { border: 1.5px solid #f5c6cb; border-radius: 12px; padding: 1.25rem 1.5rem; background: #fff8f8; margin-top: 2.5rem; }
+	.pending-section h2 { margin-bottom: 1rem; }
+
+	.pending-list { display: flex; flex-direction: column; gap: 0.75rem; }
+
+	.pending-card {
+		display: flex;
+		align-items: flex-start;
+		gap: 1rem;
+		background: #fff;
+		border: 1.5px solid #f0ebe3;
+		border-radius: 10px;
+		padding: 1rem 1.25rem;
+	}
+
+	.pending-avatar {
+		width: 40px;
+		height: 40px;
+		border-radius: 50%;
+		background: var(--ink);
+		color: var(--paper);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-family: 'Cambridge', serif;
+		font-size: 1.1rem;
+		flex-shrink: 0;
+	}
+
+	.pending-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.2rem; }
+
+	.pending-name-row { display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; }
+	.pending-name { font-weight: 600; font-size: 0.95rem; color: var(--ink); text-decoration: none; }
+	.pending-name:hover { text-decoration: underline; }
+	.pending-pronouns { font-size: 0.78rem; color: #a09688; }
+	.pending-email { font-size: 0.78rem; color: #a09688; font-family: monospace; }
+	.pending-class { font-size: 0.78rem; color: #a09688; font-weight: 500; }
+	.pending-bio { font-size: 0.82rem; color: #555; margin: 0.35rem 0 0; line-height: 1.4; }
+	.pending-website { font-size: 0.78rem; color: var(--ink); text-decoration: underline; text-underline-offset: 2px; display: block; margin-top: 0.2rem; }
+
+	.pending-actions { display: flex; flex-direction: column; gap: 0.35rem; flex-shrink: 0; }
+	.pending-actions form { flex-direction: row; }
+
+	.btn-approve {
+		padding: 0.35rem 0.85rem;
+		background: #2e7d32;
+		color: #fff;
+		border: none;
+		border-radius: 6px;
+		font-family: inherit;
+		font-size: 0.82rem;
+		font-weight: 600;
+		cursor: pointer;
+		transition: opacity 0.15s;
+		white-space: nowrap;
+	}
+	.btn-approve:hover { opacity: 0.85; }
+
+	.btn-deny {
+		padding: 0.35rem 0.85rem;
+		background: none;
+		color: #c0392b;
+		border: 1.5px solid #c0392b;
+		border-radius: 6px;
+		font-family: inherit;
+		font-size: 0.82rem;
+		font-weight: 600;
+		cursor: pointer;
+		transition: background 0.15s, color 0.15s;
+		white-space: nowrap;
+	}
+	.btn-deny:hover { background: #c0392b; color: #fff; }
 </style>

@@ -3,10 +3,11 @@ import { getAdminDb } from '$lib/server/firebase-admin.js';
 import { getDb } from '$lib/server/turso.js';
 import { getConvId } from '$lib/convId.js';
 import { notifyUsers } from '$lib/server/push.js';
+import { requireClassAccess } from '$lib/server/access.js';
 
 export async function POST({ request, locals }) {
 	const session = await locals.auth();
-	if (!session) error(401, 'Unauthorized');
+	await requireClassAccess(session);
 
 	const { content, channelId, to } = await request.json();
 	if (!content?.trim()) error(400, 'Empty message');

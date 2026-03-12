@@ -3,7 +3,7 @@
 	import { page } from '$app/stores';
 	import { auth, db as rtdb } from '$lib/firebase.js';
 	import { signInWithCustomToken } from 'firebase/auth';
-	import { ref, onValue, off, set } from 'firebase/database';
+	import { ref, onValue, off, set, onDisconnect } from 'firebase/database';
 	import { getConvId } from '$lib/convId.js';
 	import { invalidateAll } from '$app/navigation';
 
@@ -21,11 +21,32 @@
 	let lastRead = $state({});        // { [convId]: timestamp }
 	let channelMeta = $state({});     // { [channelId]: { lastAt, lastMessage, lastUser } }
 
+	// Presence — raw snapshot + stale-filtered derived set
+	const PRESENCE_TTL = 3 * 60 * 1000; // 3 min — must be > heartbeat interval
+	const HEARTBEAT_INTERVAL = 2 * 60 * 1000; // 2 min
+	let rawPresence = $state({});
+	let presenceTick = $state(0); // incremented every minute to force stale re-eval
+
+	// Re-compute online set: online:true AND lastSeen within TTL
+	let onlineIds = $derived.by(() => {
+		presenceTick; // subscribe to tick so this re-runs on the interval
+		const cutoff = Date.now() - PRESENCE_TTL;
+		return new Set(
+			Object.entries(rawPresence)
+				.filter(([, v]) => v.online && (v.lastSeen ?? 0) > cutoff)
+				.map(([uid]) => uid)
+		);
+	});
+
+	// Mobile sidebar
+	let sidebarOpen = $state(false);
+
 	// Toasts
 	let toasts = $state([]);          // { id, convId, convPath, title, body }
 	let toastId = 0;
 
-	let userChatsRef, lastReadRef;
+	let userChatsRef, lastReadRef, presenceRef, connectedRef, allPresenceRef;
+	let heartbeatTimer, tickTimer;
 	const channelRefs = {};
 
 	function isUnread(convId, lastAt) {
@@ -47,6 +68,29 @@
 	onMount(async () => {
 		await signInWithCustomToken(auth, data.firebaseToken);
 		firebaseReady = true;
+
+		// Presence — use Firebase's .info/connected + onDisconnect for reliable cleanup
+		presenceRef = ref(rtdb, `presence/${data.currentUser.id}`);
+		connectedRef = ref(rtdb, '.info/connected');
+		onValue(connectedRef, (snap) => {
+			if (!snap.val()) return;
+			onDisconnect(presenceRef).update({ online: false, lastSeen: Date.now() });
+			set(presenceRef, { name: data.currentUser.name, online: true, lastSeen: Date.now() });
+		});
+
+		// Subscribe to all presence for online dots
+		allPresenceRef = ref(rtdb, 'presence');
+		onValue(allPresenceRef, (snap) => {
+			rawPresence = snap.exists() ? snap.val() : {};
+		});
+
+		// Heartbeat — keep lastSeen fresh so stale detection works
+		heartbeatTimer = setInterval(() => {
+			if (presenceRef) set(presenceRef, { name: data.currentUser.name, online: true, lastSeen: Date.now() });
+		}, HEARTBEAT_INTERVAL);
+
+		// Tick every minute to force stale re-evaluation in the derived
+		tickTimer = setInterval(() => { presenceTick++; }, 60_000);
 
 		// DMs
 		userChatsRef = ref(rtdb, `userChats/${data.currentUser.id}`);
@@ -97,6 +141,10 @@
 	onDestroy(() => {
 		if (userChatsRef) off(userChatsRef);
 		if (lastReadRef) off(lastReadRef);
+		if (allPresenceRef) off(allPresenceRef);
+		if (connectedRef) off(connectedRef);
+		clearInterval(heartbeatTimer);
+		clearInterval(tickTimer);
 		for (const r of Object.values(channelRefs)) off(r);
 	});
 
@@ -141,13 +189,19 @@
 	$effect(() => {
 		$page.url.pathname;
 		showUserPicker = false;
+		sidebarOpen = false;
 	});
 </script>
 
 <div class="chat-shell">
-	<div class="sidebar">
+	{#if sidebarOpen}
+		<div class="sidebar-backdrop" onclick={() => sidebarOpen = false}></div>
+	{/if}
+
+	<div class="sidebar" class:open={sidebarOpen}>
 		<div class="sidebar-header">
 			<a class="wordmark" href="/app">eating.computer</a>
+			<button class="btn-icon sidebar-close" onclick={() => sidebarOpen = false}>×</button>
 		</div>
 
 		<!-- Channels -->
@@ -185,10 +239,29 @@
 			{/each}
 		</div>
 
+		<!-- Members -->
+		<div class="sidebar-section">
+			<div class="section-header"><span>Members</span></div>
+			{#each [data.currentUser, ...data.users] as u}
+				{@const isOnline = onlineIds.has(u.id)}
+				<div class="member-row">
+					<span class="avatar-wrap">
+						<span class="avatar">{u.name[0].toUpperCase()}</span>
+						{#if isOnline}<span class="presence-dot"></span>{/if}
+					</span>
+					<span class="member-name">{u.name}{u.id === data.currentUser.id ? ' (you)' : ''}</span>
+					{#if u.role === 'instructor'}<span class="role-badge">instructor</span>{/if}
+				</div>
+			{/each}
+		</div>
+
 		<!-- DMs -->
 		<div class="sidebar-section">
 			<div class="section-header">
 				<span>Direct messages</span>
+				{#if onlineIds.size > 1}
+					<span class="online-count">{onlineIds.size} online</span>
+				{/if}
 				<button class="btn-icon" onclick={() => (showUserPicker = !showUserPicker)} title="New DM">+</button>
 			</div>
 
@@ -196,7 +269,10 @@
 				<div class="user-picker">
 					{#each data.users as u}
 						<button class="user-option" onclick={() => startDm(u)}>
-							<span class="avatar">{u.name[0].toUpperCase()}</span>
+							<span class="avatar-wrap">
+								<span class="avatar">{u.name[0].toUpperCase()}</span>
+								{#if onlineIds.has(u.id)}<span class="presence-dot"></span>{/if}
+							</span>
 							<span>{u.name}</span>
 							{#if u.role === 'instructor'}<span class="role-badge">instructor</span>{/if}
 						</button>
@@ -209,8 +285,12 @@
 				{@const path = `/app/chat/dm/${dm.convId}`}
 				{@const name = data.users.find(u => u.id === dm.otherUserId)?.name ?? dm.otherUserName ?? '?'}
 				{@const unread = isUnread(dm.convId, dm.lastAt)}
+				{@const online = onlineIds.has(dm.otherUserId)}
 				<a href={path} class="sidebar-item dm-item" class:active={$page.url.pathname === path}>
-					<span class="avatar">{name[0].toUpperCase()}</span>
+					<span class="avatar-wrap">
+						<span class="avatar">{name[0].toUpperCase()}</span>
+						{#if online}<span class="presence-dot"></span>{/if}
+					</span>
 					<div class="dm-meta">
 						<span class="dm-name" class:bold={unread}>{name}</span>
 						{#if dm.lastMessage}<span class="dm-last">{dm.lastMessage}</span>{/if}
@@ -222,6 +302,7 @@
 	</div>
 
 	<div class="chat-main">
+		<button class="mobile-menu-btn" onclick={() => sidebarOpen = true}>☰</button>
 		{#if firebaseReady}
 			{@render children()}
 		{:else}
@@ -333,10 +414,56 @@
 		background: #e53935; flex-shrink: 0; margin-left: auto;
 	}
 
+	.online-count {
+		font-size: 0.65rem; color: #4caf50; font-weight: 600;
+		margin-right: auto; margin-left: 0.3rem;
+	}
+
+	.avatar-wrap { position: relative; flex-shrink: 0; }
+
+	.presence-dot {
+		position: absolute; bottom: -1px; right: -1px;
+		width: 7px; height: 7px; border-radius: 50%;
+		background: #4caf50; border: 1.5px solid #1a1a1a;
+	}
+
+	.member-row {
+		display: flex; align-items: center; gap: 0.4rem;
+		padding: 0.22rem 0.6rem; font-size: 0.82rem; color: #a09688;
+	}
+	.member-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+	.sidebar-close { display: none; font-size: 1.2rem; }
+
 	/* ── Main ── */
-	.chat-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+	.chat-main { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
+
+	.mobile-menu-btn {
+		display: none;
+		position: absolute; top: 0.75rem; left: 1rem; z-index: 10;
+		background: none; border: none; color: var(--ink);
+		font-size: 1.2rem; cursor: pointer; line-height: 1; padding: 0.25rem;
+	}
+
+	.sidebar-backdrop { display: none; }
 
 	.loading { flex: 1; display: flex; align-items: center; justify-content: center; color: #a09688; font-size: 0.9rem; }
+
+	/* ── Mobile ── */
+	@media (max-width: 640px) {
+		.sidebar {
+			position: fixed; inset: 0; z-index: 50;
+			width: 280px; transform: translateX(-100%);
+			transition: transform 0.22s ease;
+		}
+		.sidebar.open { transform: translateX(0); }
+		.sidebar-close { display: block; margin-left: auto; }
+		.sidebar-backdrop {
+			display: block; position: fixed; inset: 0; z-index: 49;
+			background: rgba(0,0,0,0.45);
+		}
+		.mobile-menu-btn { display: block; }
+	}
 
 	/* ── Toasts ── */
 	.toast-stack {

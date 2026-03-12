@@ -9,7 +9,15 @@ export async function load({ locals }) {
 	const db = getDb();
 
 	const [usersResult, channelsResult] = await Promise.all([
-		db ? db.execute('SELECT id, name, email, role FROM users ORDER BY name ASC') : { rows: [] },
+		db ? db.execute(`
+			SELECT u.id, u.name, u.email, u.role FROM users u
+			WHERE u.role = 'instructor'
+			   OR EXISTS (
+			        SELECT 1 FROM class_memberships cm
+			        WHERE cm.user_id = u.id AND cm.status = 'approved'
+			      )
+			ORDER BY u.name ASC
+		`) : { rows: [] },
 		db ? db.execute("SELECT id, name, created_at FROM conversations WHERE type = 'channel' ORDER BY created_at ASC") : { rows: [] }
 	]);
 

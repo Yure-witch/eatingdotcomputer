@@ -1,6 +1,6 @@
 <script>
 	import { browser } from '$app/environment';
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 
 	let { children } = $props();
 
@@ -46,6 +46,9 @@
 	}
 
 	onMount(() => {
+		logActivity();
+		activityTimer = setInterval(logActivity, 5 * 60_000);
+
 		soundEnabled = localStorage.getItem('notif_sound') !== 'false';
 
 		if (window.matchMedia('(display-mode: standalone)').matches) {
@@ -67,6 +70,13 @@
 			});
 		}
 	});
+
+	// Activity logging — fires on load + every 5 min so instructor can see usage patterns
+	let activityTimer;
+	async function logActivity() {
+		try { await fetch('/api/presence/log', { method: 'POST' }); } catch { /* ignore */ }
+	}
+	onDestroy(() => clearInterval(activityTimer));
 
 	async function install() {
 		if (!installPrompt) return;
