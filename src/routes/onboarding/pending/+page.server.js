@@ -16,15 +16,16 @@ export async function load({ locals }) {
 	}) : { rows: [] };
 
 	const membership = result.rows[0];
-	if (membership?.status === 'approved') {
+	if (!membership) redirect(303, '/onboarding/class');
+	if (membership.status === 'approved') {
 		await db?.execute({ sql: "UPDATE users SET onboarding_step = 'complete' WHERE id = ?", args: [session.user.id] });
 		redirect(303, '/app');
 	}
 
 	return {
-		className: String(membership?.name ?? ''),
-		term: String(membership?.term ?? ''),
-		status: String(membership?.status ?? 'pending')
+		className: String(membership.name ?? ''),
+		term: String(membership.term ?? ''),
+		status: String(membership.status ?? 'pending')
 	};
 }
 

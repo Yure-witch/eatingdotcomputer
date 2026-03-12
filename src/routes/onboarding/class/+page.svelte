@@ -7,7 +7,7 @@
 <svelte:head><title>Choose your class — eating.computer</title></svelte:head>
 
 <div class="card">
-	<div class="step-label">Step 2 of 2</div>
+	<a class="back" href="/onboarding/profile">← Back</a>
 	<h1>Choose your class</h1>
 	<p class="sub">Your instructor will approve your request before you get access.</p>
 
@@ -49,14 +49,14 @@
 		max-width: 480px;
 	}
 
-	.step-label {
-		font-size: 0.72rem;
-		font-weight: 700;
-		text-transform: uppercase;
-		letter-spacing: 0.08em;
+	.back {
+		display: inline-block;
+		font-size: 0.82rem;
 		color: #a09688;
-		margin-bottom: 0.75rem;
+		text-decoration: none;
+		margin-bottom: 1rem;
 	}
+	.back:hover { color: var(--ink, #1a1a1a); }
 
 	h1 {
 		font-family: 'Cambridge', serif;

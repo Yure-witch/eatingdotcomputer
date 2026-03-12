@@ -39,11 +39,16 @@ export async function load({ locals }) {
 	const db = getDb();
 	const usersResult = db ? await db.execute('SELECT id, name, email, role, created_at FROM users ORDER BY created_at ASC') : { rows: [] };
 
+	const PRESENCE_TTL = 3 * 60 * 1000;
 	const presenceSnap = await getAdminDb().ref('presence').get();
-	const onlineSet = new Set();
+	const presenceData = {};
 	if (presenceSnap.exists()) {
+		const now = Date.now();
 		for (const [uid, val] of Object.entries(presenceSnap.val())) {
-			if (val.online) onlineSet.add(uid);
+			presenceData[uid] = {
+				online: val.online && (val.lastSeen ?? 0) > now - PRESENCE_TTL,
+				lastSeen: val.lastSeen ?? null
+			};
 		}
 	}
 
@@ -53,24 +58,50 @@ export async function load({ locals }) {
 		email: String(r.email ?? ''),
 		role: String(r.role ?? 'student'),
 		joinedAt: String(r.created_at ?? ''),
-		online: onlineSet.has(String(r.id))
+		online: presenceData[String(r.id)]?.online ?? false,
+		lastSeen: presenceData[String(r.id)]?.lastSeen ?? null
 	}));
 
-	// Activity graph — hourly distribution for non-instructors, last 30 days
-	const activityRows = db ? await db.execute(`
-		SELECT strftime('%H', logged_at) AS hour, COUNT(*) AS count
-		FROM user_activity
-		JOIN users ON user_activity.user_id = users.id
-		WHERE users.role != 'instructor'
-		  AND logged_at >= datetime('now', '-30 days')
-		GROUP BY hour
-		ORDER BY hour
+	// Activity: hourly for last 7 days (drives 12h / 1d / 7d views)
+	const hourlyRows = db ? await db.execute(`
+		SELECT u.id AS user_id, u.name,
+		       strftime('%Y-%m-%dT%H:00', ua.logged_at) AS bucket,
+		       COUNT(*) AS count
+		FROM user_activity ua
+		JOIN users u ON ua.user_id = u.id
+		WHERE u.role != 'instructor'
+		  AND ua.logged_at >= datetime('now', '-7 days')
+		GROUP BY u.id, bucket
+		ORDER BY bucket ASC
 	`) : { rows: [] };
 
-	const activityByHour = Array.from({ length: 24 }, (_, h) => ({
-		hour: h,
-		count: Number(activityRows.rows.find((r) => Number(r.hour) === h)?.count ?? 0)
-	}));
+	// Activity: daily for last 6 months (drives 1m / 6m views)
+	const dailyRows = db ? await db.execute(`
+		SELECT u.id AS user_id, u.name,
+		       date(ua.logged_at) AS bucket,
+		       COUNT(*) AS count
+		FROM user_activity ua
+		JOIN users u ON ua.user_id = u.id
+		WHERE u.role != 'instructor'
+		  AND ua.logged_at >= datetime('now', '-180 days')
+		GROUP BY u.id, bucket
+		ORDER BY bucket ASC
+	`) : { rows: [] };
+
+	function buildSeries(rows) {
+		const map = {};
+		for (const r of rows) {
+			const uid = String(r.user_id);
+			if (!map[uid]) map[uid] = { userId: uid, name: String(r.name ?? ''), points: [] };
+			map[uid].points.push({ bucket: String(r.bucket), count: Number(r.count) });
+		}
+		return Object.values(map);
+	}
+
+	const activityByUser = {
+		hourly: buildSeries(hourlyRows.rows),
+		daily: buildSeries(dailyRows.rows)
+	};
 
 	// Pending class membership requests
 	const pendingResult = db ? await db.execute(`
@@ -97,7 +128,7 @@ export async function load({ locals }) {
 		website: String(r.website ?? '')
 	}));
 
-	return { weeks, maxWeek, members, activityByHour, pendingRequests };
+	return { weeks, maxWeek, members, activityByUser, pendingRequests };
 }
 
 const ALL_TYPES = ['link', 'image', 'video'];
@@ -108,6 +139,21 @@ function parseTypes(data) {
 }
 
 export const actions = {
+	resetStudent: async ({ request, locals }) => {
+		const session = await locals.auth();
+		if (!session || session.user.role !== 'instructor') return fail(403, { error: 'Forbidden' });
+
+		const data = await request.formData();
+		const userId = String(data.get('user_id') ?? '');
+		if (!userId) return fail(400, { error: 'Missing user_id' });
+
+		const db = getDb();
+		if (!db) return fail(503, { error: 'Database unavailable' });
+
+		await db.execute({ sql: 'DELETE FROM class_memberships WHERE user_id = ?', args: [userId] });
+		await db.execute({ sql: "UPDATE users SET onboarding_step = 'profile' WHERE id = ?", args: [userId] });
+	},
+
 	approve: async ({ request, locals }) => {
 		const session = await locals.auth();
 		if (!session || session.user.role !== 'instructor') return fail(403, { error: 'Forbidden' });

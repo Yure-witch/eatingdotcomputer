@@ -7,4 +7,9 @@ export async function load({ locals }) {
 	return { session };
 }
 
-export const actions = { signout: signOut };
+export const actions = {
+	signout: async (event) => {
+		await signOut(event, { redirect: false });
+		redirect(303, '/login');
+	}
+};

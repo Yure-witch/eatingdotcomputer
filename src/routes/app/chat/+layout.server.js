@@ -2,7 +2,8 @@ import { redirect } from '@sveltejs/kit';
 import { getDb } from '$lib/server/turso.js';
 import { createFirebaseToken } from '$lib/server/firebase-admin.js';
 
-export async function load({ locals }) {
+export async function load({ locals, parent }) {
+	await parent(); // wait for app/+layout.server.js to finish (handles auth gate + redirects)
 	const session = await locals.auth();
 	if (!session) redirect(303, '/login');
 

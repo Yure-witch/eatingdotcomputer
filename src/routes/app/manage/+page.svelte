@@ -4,11 +4,69 @@
 
 	let { data, form } = $props();
 
+	// Activity chart
+	const W = 480, H = 80, PAD = 4;
+	const RANGES = [
+		{ key: '12h', label: '12hr', hours: 12 },
+		{ key: '1d',  label: '1d',   hours: 24 },
+		{ key: '7d',  label: '7d',   hours: 24 * 7 },
+		{ key: '1m',  label: '1m',   days: 30 },
+		{ key: '6m',  label: '6m',   days: 180 }
+	];
+	let selectedRange = $state('7d');
+
+	let activityChart = $derived.by(() => {
+		const range = RANGES.find((r) => r.key === selectedRange);
+		const now = Date.now();
+
+		// Choose source dataset and optionally filter
+		let series;
+		if (range.hours) {
+			const cutoff = new Date(now - range.hours * 3600_000).toISOString().slice(0, 13) + ':00';
+			series = data.activityByUser.hourly.map((u) => ({
+				...u,
+				points: u.points.filter((p) => p.bucket >= cutoff)
+			})).filter((u) => u.points.length);
+		} else {
+			const cutoff = new Date(now - range.days * 86400_000).toISOString().slice(0, 10);
+			series = data.activityByUser.daily.map((u) => ({
+				...u,
+				points: u.points.filter((p) => p.bucket >= cutoff)
+			})).filter((u) => u.points.length);
+		}
+
+		// Sort by total activity descending (most active first)
+		series = series
+			.map((u) => ({ ...u, total: u.points.reduce((s, p) => s + p.count, 0) }))
+			.sort((a, b) => b.total - a.total);
+
+		if (!series.length) return { lines: [] };
+
+		// Collect all buckets (sorted)
+		const bucketSet = new Set();
+		for (const u of series) for (const p of u.points) bucketSet.add(p.bucket);
+		const buckets = [...bucketSet].sort();
+
+		const maxCount = Math.max(1, ...series.flatMap((u) => u.points.map((p) => p.count)));
+		const xOf = (b) => PAD + (buckets.indexOf(b) / Math.max(buckets.length - 1, 1)) * (W - PAD * 2);
+		const yOf = (c) => H - PAD - (c / maxCount) * (H - PAD * 2);
+
+		const lines = series.map((u, i) => ({
+			userId: u.userId,
+			name: u.name,
+			total: u.total,
+			points: u.points.map((p) => `${xOf(p.bucket).toFixed(1)},${yOf(p.count).toFixed(1)}`).join(' '),
+			hue: (i * 67) % 360,
+			opacity: Math.max(0.35, 1 - i * 0.12)
+		}));
+
+		return { lines };
+	});
+
 	// Presence polling — map of uid → { online, lastSeen }
-	let activityMax = $derived(Math.max(1, ...data.activityByHour.map((h) => h.count)));
 
 	let presenceMap = $state(
-		Object.fromEntries(data.members.map((m) => [m.id, { online: m.online, lastSeen: null }]))
+		Object.fromEntries(data.members.map((m) => [m.id, { online: m.online, lastSeen: m.lastSeen }]))
 	);
 	let pollTimer;
 
@@ -20,6 +78,7 @@
 	}
 
 	onMount(() => {
+		pollPresence(); // fetch immediately on load
 		pollTimer = setInterval(pollPresence, 30_000);
 	});
 	onDestroy(() => clearInterval(pollTimer));
@@ -46,8 +105,8 @@
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
-					title: 'eating.computer',
-					body: 'Test notification — everything is working!',
+					title: 'Test notification',
+					body: 'Everything is working!',
 					url: '/app',
 					tag: 'test'
 				})
@@ -309,26 +368,45 @@
 	{/if}
 
 	<section class="members-section">
-		<h2>Student activity <span class="member-count">(last 30 days, by hour)</span></h2>
-		<div class="activity-chart">
-			<svg viewBox="0 0 {24 * 20} 80" preserveAspectRatio="none" class="chart-svg">
-				{#each data.activityByHour as { hour, count }}
-					{@const barH = Math.round((count / activityMax) * 64)}
-					<rect
-						x={hour * 20 + 2}
-						y={64 - barH}
-						width="16"
-						height={barH}
-						rx="3"
-						class="bar"
-					/>
-				{/each}
-			</svg>
-			<div class="chart-labels">
-				{#each [0, 3, 6, 9, 12, 15, 18, 21] as h}
-					<span style="left: {(h / 24) * 100}%">{h === 0 ? '12a' : h < 12 ? `${h}a` : h === 12 ? '12p' : `${h - 12}p`}</span>
+		<div class="chart-header">
+			<h2>Activity</h2>
+			<div class="range-tabs">
+				{#each RANGES as r}
+					<button
+						class="range-tab"
+						class:active={selectedRange === r.key}
+						onclick={() => selectedRange = r.key}
+					>{r.label}</button>
 				{/each}
 			</div>
+		</div>
+		<div class="activity-chart">
+			{#if activityChart.lines?.length}
+				<svg viewBox="0 0 {W} {H}" preserveAspectRatio="none" class="chart-svg">
+					{#each activityChart.lines as line}
+						<polyline
+							points={line.points}
+							fill="none"
+							stroke="hsl({line.hue} 30% 40%)"
+							stroke-width="1.5"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							opacity={line.opacity}
+						/>
+					{/each}
+				</svg>
+				<div class="chart-legend">
+					{#each activityChart.lines as line}
+						<span class="legend-item">
+							<span class="legend-dot" style="background: hsl({line.hue} 30% 40%); opacity: {line.opacity}"></span>
+							{line.name || 'Unknown'}
+							<span class="legend-count">{line.total}</span>
+						</span>
+					{/each}
+				</div>
+			{:else}
+				<p class="chart-empty">No activity in this period.</p>
+			{/if}
 		</div>
 	</section>
 
@@ -684,10 +762,15 @@
 
 	.empty { color: #a09688; font-size: 0.9rem; }
 
-	.activity-chart { margin-top: 0.75rem; position: relative; padding-bottom: 1.5rem; }
-	.chart-svg { width: 100%; height: 80px; display: block; }
-	.bar { fill: var(--ink); opacity: 0.15; transition: opacity 0.15s; }
-	.bar:hover { opacity: 0.7; }
+	.activity-chart { margin-top: 0.75rem; }
+	.chart-svg { width: 100%; height: 80px; display: block; border-radius: 6px; background: #faf7f2; }
+	.chart-legend {
+		display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; margin-top: 0.6rem;
+	}
+	.legend-item { display: flex; align-items: center; gap: 0.35rem; font-size: 0.75rem; color: #a09688; }
+	.legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+	.legend-count { font-size: 0.68rem; color: #c8c1b4; }
+	.chart-empty { font-size: 0.85rem; color: #a09688; margin: 0.5rem 0 0; }
 	.chart-labels {
 		position: absolute; bottom: 0; left: 0; right: 0;
 		font-size: 0.65rem; color: #a09688;
@@ -695,7 +778,25 @@
 	.chart-labels span { position: absolute; transform: translateX(-50%); }
 
 	.members-section { margin-top: 2.5rem; }
-	.members-section h2 { font-family: 'Cambridge', serif; font-size: 1.25rem; font-weight: 400; margin: 0 0 1rem; }
+	.members-section h2 { font-family: 'Cambridge', serif; font-size: 1.25rem; font-weight: 400; margin: 0; }
+
+	.chart-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 0.75rem; flex-wrap: wrap; }
+
+	.range-tabs { display: flex; gap: 2px; }
+	.range-tab {
+		padding: 0.2rem 0.6rem;
+		background: none;
+		border: 1.5px solid #ddd7cc;
+		border-radius: 6px;
+		font-family: inherit;
+		font-size: 0.75rem;
+		font-weight: 500;
+		color: #a09688;
+		cursor: pointer;
+		transition: all 0.12s;
+	}
+	.range-tab:hover { border-color: #a09688; color: var(--ink); }
+	.range-tab.active { border-color: var(--ink); color: var(--ink); background: #fff; }
 	.member-count { font-family: inherit; font-size: 0.9rem; color: #a09688; }
 
 	.members-table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }

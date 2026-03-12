@@ -30,7 +30,7 @@ export async function POST({ request, locals }) {
 		]);
 		// Push notification to recipient
 		await notifyUsers([to], {
-			title: senderName,
+			title: `Message from ${senderName}`,
 			body: preview,
 			url: `/app/chat/dm/${convId}`,
 			tag: `dm-${convId}`
@@ -49,7 +49,7 @@ export async function POST({ request, locals }) {
 			});
 			const userIds = usersResult.rows.map((r) => String(r.user_id));
 			await notifyUsers(userIds, {
-				title: `#${channel}`,
+				title: `New message in #${channel}`,
 				body: `${senderName}: ${preview}`,
 				url: `/app/chat/channel/${channel}`,
 				tag: `channel-${channel}`
