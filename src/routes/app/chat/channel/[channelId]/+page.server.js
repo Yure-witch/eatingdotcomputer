@@ -1,7 +1,8 @@
 import { error } from '@sveltejs/kit';
 import { getDb } from '$lib/server/turso.js';
 
-export async function load({ params }) {
+export async function load({ params, parent }) {
+	await parent();
 	const { channelId } = params;
 	const db = getDb();
 
