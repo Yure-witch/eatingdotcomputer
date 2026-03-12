@@ -7,7 +7,7 @@ export async function load({ locals }) {
 
 	const db = getDb();
 	const result = db ? await db.execute({
-		sql: 'SELECT name, pronouns, bio, website FROM users WHERE id = ?',
+		sql: 'SELECT name, pronouns, bio, website, year, school, focus FROM users WHERE id = ?',
 		args: [session.user.id]
 	}) : { rows: [] };
 
@@ -17,7 +17,10 @@ export async function load({ locals }) {
 			name: String(u.name ?? ''),
 			pronouns: String(u.pronouns ?? ''),
 			bio: String(u.bio ?? ''),
-			website: String(u.website ?? '')
+			website: String(u.website ?? ''),
+			year: String(u.year ?? ''),
+			school: String(u.school ?? ''),
+			focus: String(u.focus ?? '')
 		}
 	};
 }
@@ -32,15 +35,18 @@ export const actions = {
 		const pronouns = String(data.get('pronouns') ?? '').trim();
 		const bio = String(data.get('bio') ?? '').trim();
 		const website = String(data.get('website') ?? '').trim();
+		const year = String(data.get('year') ?? '').trim();
+		const school = String(data.get('school') ?? '').trim();
+		const focus = String(data.get('focus') ?? '').trim();
 
-		if (!name) return fail(400, { error: 'Name is required', name, pronouns, bio, website });
+		if (!name) return fail(400, { error: 'Name is required', name, pronouns, bio, website, year, school, focus });
 
 		const db = getDb();
 		if (!db) return fail(503, { error: 'Database unavailable' });
 
 		await db.execute({
-			sql: 'UPDATE users SET name = ?, pronouns = ?, bio = ?, website = ? WHERE id = ?',
-			args: [name, pronouns || null, bio || null, website || null, session.user.id]
+			sql: 'UPDATE users SET name = ?, pronouns = ?, bio = ?, website = ?, year = ?, school = ?, focus = ? WHERE id = ?',
+			args: [name, pronouns || null, bio || null, website || null, year || null, school || null, focus || null, session.user.id]
 		});
 
 		redirect(303, `/app/profile/${session.user.id}`);

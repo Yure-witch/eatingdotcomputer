@@ -16,7 +16,14 @@ export async function load({ locals }) {
 	}) : { rows: [] };
 
 	const membership = result.rows[0];
-	if (!membership) redirect(303, '/onboarding/class');
+	if (!membership || !String(membership.name ?? '').trim()) {
+		// Stale or invalid membership (class missing/unnamed) — clean up and restart
+		if (db) {
+			await db.execute({ sql: "DELETE FROM class_memberships WHERE user_id = ? AND status != 'approved'", args: [session.user.id] });
+			await db.execute({ sql: "UPDATE users SET onboarding_step = 'profile' WHERE id = ?", args: [session.user.id] });
+		}
+		redirect(303, '/onboarding/profile');
+	}
 	if (membership.status === 'approved') {
 		await db?.execute({ sql: "UPDATE users SET onboarding_step = 'complete' WHERE id = ?", args: [session.user.id] });
 		redirect(303, '/app');

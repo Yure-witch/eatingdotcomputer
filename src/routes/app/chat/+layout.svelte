@@ -2,6 +2,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { page } from '$app/stores';
 	import { auth, db as rtdb } from '$lib/firebase.js';
+	import ProfileHover from '$lib/components/ProfileHover.svelte';
 	import { signInWithCustomToken } from 'firebase/auth';
 	import { ref, onValue, off, set, onDisconnect } from 'firebase/database';
 	import { getConvId } from '$lib/convId.js';
@@ -45,9 +46,36 @@
 	let toasts = $state([]);          // { id, convId, convPath, title, body }
 	let toastId = 0;
 
+	// Hover card
+	let hoverUserId = $state(null);
+	let hoverX = $state(0);
+	let hoverY = $state(0);
+	let hoverTimer;
+
+	function showHover(e, userId) {
+		clearTimeout(hoverTimer);
+		const rect = e.currentTarget.getBoundingClientRect();
+		hoverX = rect.right + 8;
+		hoverY = Math.min(rect.top, window.innerHeight - 280);
+		hoverUserId = userId;
+	}
+	function hideHover() {
+		hoverTimer = setTimeout(() => { hoverUserId = null; }, 150);
+	}
+
 	let userChatsRef, lastReadRef, presenceRef, connectedRef, allPresenceRef;
-	let heartbeatTimer, tickTimer;
+	let heartbeatTimer, tickTimer, presencePollTimer;
 	const channelRefs = {};
+
+	async function pollPresence() {
+		try {
+			const res = await fetch('/api/presence');
+			if (!res.ok) return;
+			const apiData = await res.json();
+			// Merge API data into rawPresence — API is authoritative for non-chat users
+			rawPresence = { ...rawPresence, ...apiData };
+		} catch { /* ignore */ }
+	}
 
 	function isUnread(convId, lastAt) {
 		return (lastAt ?? 0) > (lastRead[convId] ?? 0);
@@ -91,6 +119,10 @@
 
 		// Tick every minute to force stale re-evaluation in the derived
 		tickTimer = setInterval(() => { presenceTick++; }, 60_000);
+
+		// Poll /api/presence to catch users on non-chat pages (user_activity based)
+		await pollPresence();
+		presencePollTimer = setInterval(pollPresence, 60_000);
 
 		// DMs
 		userChatsRef = ref(rtdb, `userChats/${data.currentUser.id}`);
@@ -145,6 +177,7 @@
 		if (connectedRef) off(connectedRef);
 		clearInterval(heartbeatTimer);
 		clearInterval(tickTimer);
+		clearInterval(presencePollTimer);
 		for (const r of Object.values(channelRefs)) off(r);
 	});
 
@@ -198,10 +231,17 @@
 		<div class="sidebar-backdrop" onclick={() => sidebarOpen = false}></div>
 	{/if}
 
+	<ProfileHover userId={hoverUserId} x={hoverX} y={hoverY} {onlineIds} />
+
 	<div class="sidebar" class:open={sidebarOpen}>
 		<div class="sidebar-header">
 			<a class="wordmark" href="/app">eating.computer</a>
-			<button class="btn-icon sidebar-close" onclick={() => sidebarOpen = false}>×</button>
+			<div class="sidebar-header-right">
+				<a class="profile-link" href="/app/profile/{data.currentUser.id}" title="My profile">
+					<span class="avatar sm">{data.currentUser.name[0].toUpperCase()}</span>
+				</a>
+				<button class="btn-icon sidebar-close" onclick={() => sidebarOpen = false}>×</button>
+			</div>
 		</div>
 
 		<!-- Channels -->
@@ -239,64 +279,52 @@
 			{/each}
 		</div>
 
-		<!-- Members -->
-		<div class="sidebar-section">
-			<div class="section-header"><span>Members</span></div>
-			{#each [data.currentUser, ...data.users] as u}
-				{@const isOnline = onlineIds.has(u.id)}
-				<div class="member-row">
-					<span class="avatar-wrap">
-						<span class="avatar">{u.name[0].toUpperCase()}</span>
-						{#if isOnline}<span class="presence-dot"></span>{/if}
-					</span>
-					<span class="member-name">{u.name}{u.id === data.currentUser.id ? ' (you)' : ''}</span>
-					{#if u.role === 'instructor'}<span class="role-badge">instructor</span>{/if}
-				</div>
-			{/each}
-		</div>
-
-		<!-- DMs -->
+		<!-- Members (click to DM, hover for profile card) -->
 		<div class="sidebar-section">
 			<div class="section-header">
-				<span>Direct messages</span>
-				{#if onlineIds.size > 1}
+				<span>Members</span>
+				{#if onlineIds.size > 0}
 					<span class="online-count">{onlineIds.size} online</span>
 				{/if}
-				<button class="btn-icon" onclick={() => (showUserPicker = !showUserPicker)} title="New DM">+</button>
 			</div>
-
-			{#if showUserPicker}
-				<div class="user-picker">
-					{#each data.users as u}
-						<button class="user-option" onclick={() => startDm(u)}>
+			{#each [data.currentUser, ...data.users] as u}
+				{@const isOnline = onlineIds.has(u.id)}
+				{@const convId = u.id === data.currentUser.id ? null : getConvId(data.currentUser.id, u.id)}
+				{@const dmPath = convId ? `/app/chat/dm/${convId}` : null}
+				{@const dmUnread = convId ? isUnread(convId, dmList.find(d => d.convId === convId)?.lastAt) : false}
+				{@const lastMsg = dmList.find(d => d.convId === convId)?.lastMessage ?? null}
+				<div
+					class="member-row"
+					class:self={u.id === data.currentUser.id}
+					onmouseenter={(e) => showHover(e, u.id)}
+					onmouseleave={hideHover}
+				>
+					{#if dmPath}
+						<a class="member-inner" href={dmPath} class:active={$page.url.pathname === dmPath}>
 							<span class="avatar-wrap">
 								<span class="avatar">{u.name[0].toUpperCase()}</span>
-								{#if onlineIds.has(u.id)}<span class="presence-dot"></span>{/if}
+								{#if isOnline}<span class="presence-dot"></span>{/if}
 							</span>
-							<span>{u.name}</span>
-							{#if u.role === 'instructor'}<span class="role-badge">instructor</span>{/if}
-						</button>
-					{/each}
-					{#if !data.users.length}<p class="muted">No other users yet.</p>{/if}
+							<div class="member-text">
+								<span class="member-name" class:bold={dmUnread}>{u.name}</span>
+								{#if lastMsg}<span class="dm-last">{lastMsg}</span>{/if}
+							</div>
+							{#if u.role === 'instructor'}<span class="role-badge">instr.</span>{/if}
+							{#if dmUnread}<span class="unread-dot"></span>{/if}
+						</a>
+					{:else}
+						<a class="member-inner self-link" href="/app/profile/{u.id}">
+							<span class="avatar-wrap">
+								<span class="avatar">{u.name[0].toUpperCase()}</span>
+								<span class="presence-dot"></span>
+							</span>
+							<div class="member-text">
+								<span class="member-name">{u.name} <span class="you-tag">you</span></span>
+							</div>
+							{#if u.role === 'instructor'}<span class="role-badge">instr.</span>{/if}
+						</a>
+					{/if}
 				</div>
-			{/if}
-
-			{#each dmList as dm}
-				{@const path = `/app/chat/dm/${dm.convId}`}
-				{@const name = data.users.find(u => u.id === dm.otherUserId)?.name ?? dm.otherUserName ?? '?'}
-				{@const unread = isUnread(dm.convId, dm.lastAt)}
-				{@const online = onlineIds.has(dm.otherUserId)}
-				<a href={path} class="sidebar-item dm-item" class:active={$page.url.pathname === path}>
-					<span class="avatar-wrap">
-						<span class="avatar">{name[0].toUpperCase()}</span>
-						{#if online}<span class="presence-dot"></span>{/if}
-					</span>
-					<div class="dm-meta">
-						<span class="dm-name" class:bold={unread}>{name}</span>
-						{#if dm.lastMessage}<span class="dm-last">{dm.lastMessage}</span>{/if}
-					</div>
-					{#if unread}<span class="unread-dot"></span>{/if}
-				</a>
 			{/each}
 		</div>
 	</div>
@@ -401,7 +429,7 @@
 	.dm-meta { display: flex; flex-direction: column; min-width: 0; }
 	.dm-name { font-size: 0.875rem; color: #a09688; }
 	.sidebar-item.active .dm-name, .sidebar-item:hover .dm-name { color: #f7f2ea; }
-	.dm-last { font-size: 0.7rem; color: #555; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px; }
+	.dm-last { font-size: 0.7rem; color: #555; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 	.muted { font-size: 0.75rem; color: #555; padding: 0.25rem 0.5rem; margin: 0; }
 
@@ -427,11 +455,35 @@
 		background: #4caf50; border: 1.5px solid #1a1a1a;
 	}
 
-	.member-row {
-		display: flex; align-items: center; gap: 0.4rem;
-		padding: 0.22rem 0.6rem; font-size: 0.82rem; color: #a09688;
+	.member-row { /* wrapper */ }
+
+	.member-inner {
+		display: flex; align-items: center; gap: 0.5rem;
+		padding: 0.22rem 0.6rem; border-radius: 5px; width: 100%;
+		font-size: 0.82rem; color: #a09688; text-decoration: none;
+		transition: background 0.1s; box-sizing: border-box;
 	}
-	.member-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.member-inner:hover, .member-inner.active { background: #2a2a2a; color: #f7f2ea; }
+	.member-inner.active .member-name,
+	.member-inner:hover .member-name { color: #f7f2ea; }
+
+	.member-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.08rem; }
+
+	.member-name {
+		font-size: 0.875rem; color: #a09688;
+		overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+	}
+	.member-name.bold { font-weight: 600; color: #f7f2ea; }
+
+	.you-tag { font-size: 0.65rem; color: #555; font-weight: 400; margin-left: 0.2rem; }
+
+	.self-link { opacity: 0.75; }
+	.self-link:hover { opacity: 1; }
+
+	.sidebar-header-right { display: flex; align-items: center; gap: 0.4rem; }
+	.profile-link { display: flex; align-items: center; border-radius: 4px; }
+	.profile-link:hover .avatar { background: #555; }
+	.avatar.sm { width: 22px; height: 22px; font-size: 0.7rem; }
 
 	.sidebar-close { display: none; font-size: 1.2rem; }
 

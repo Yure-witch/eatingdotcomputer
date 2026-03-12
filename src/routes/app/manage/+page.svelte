@@ -421,13 +421,14 @@
 					<th>Joined</th>
 					<th>Status</th>
 					<th>Last seen</th>
+					<th></th>
 				</tr>
 			</thead>
 			<tbody>
 				{#each data.members as m}
 					{@const p = presenceMap[m.id]}
 					<tr>
-						<td>{m.name || '—'}</td>
+						<td><a class="member-link" href="/app/profile/{m.id}">{m.name || '—'}</a></td>
 						<td class="email">{m.email}</td>
 						<td><span class="role-pill" class:instructor={m.role === 'instructor'}>{m.role}</span></td>
 						<td class="muted">{m.joinedAt ? new Date(m.joinedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}</td>
@@ -439,6 +440,14 @@
 							{/if}
 						</td>
 						<td class="muted">{formatLastSeen(p?.lastSeen ?? null)}</td>
+						<td>
+							{#if m.role !== 'instructor'}
+								<form method="POST" action="?/resetStudent" use:enhance>
+									<input type="hidden" name="user_id" value={m.id} />
+									<button type="submit" class="btn-reset" onclick={(e) => { if (!confirm(`Reset ${m.name || 'this user'}'s onboarding?`)) e.preventDefault(); }}>Reset</button>
+								</form>
+							{/if}
+						</td>
 					</tr>
 				{/each}
 			</tbody>
@@ -818,6 +827,14 @@
 
 	.status-online { font-size: 0.8rem; color: #2e7d32; font-weight: 600; }
 	.status-offline { font-size: 0.8rem; color: #bbb; }
+	.member-link { color: var(--ink); text-decoration: none; font-weight: 500; }
+	.member-link:hover { text-decoration: underline; text-underline-offset: 2px; }
+	.btn-reset {
+		font-family: inherit; font-size: 0.75rem; font-weight: 500;
+		color: #a09688; background: none; border: 1px solid #ddd7cc;
+		border-radius: 5px; padding: 0.15rem 0.5rem; cursor: pointer; transition: all 0.12s;
+	}
+	.btn-reset:hover { border-color: #c0392b; color: #c0392b; }
 
 	/* ── Pending requests ── */
 	.pending-section { border: 1.5px solid #f5c6cb; border-radius: 12px; padding: 1.25rem 1.5rem; background: #fff8f8; margin-top: 2.5rem; }
