@@ -1,15 +1,19 @@
 import { redirect } from '@sveltejs/kit';
 import { getDb } from '$lib/server/turso.js';
+import { createFirebaseToken } from '$lib/server/firebase-admin.js';
 
 export async function load({ locals }) {
 	const session = await locals.auth();
 	if (!session) redirect(303, '/login');
 
+	const firebaseToken = await createFirebaseToken(session.user.id).catch(() => null);
+	const userId = session.user.id;
+
 	// Instructors always get through
-	if (session.user.role === 'instructor') return {};
+	if (session.user.role === 'instructor') return { firebaseToken, userId };
 
 	const db = getDb();
-	if (!db) return {}; // local dev without env — skip gate
+	if (!db) return { firebaseToken, userId }; // local dev without env — skip gate
 
 	try {
 		const membershipResult = await db.execute({
@@ -21,7 +25,7 @@ export async function load({ locals }) {
 
 		const status = String(membershipResult.rows[0]?.status ?? 'none');
 
-		if (status === 'approved') return {};
+		if (status === 'approved') return { firebaseToken, userId };
 		if (status === 'pending' || status === 'denied') redirect(303, '/onboarding/pending');
 
 		// No membership — check where they are in onboarding

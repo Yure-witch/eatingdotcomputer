@@ -51,14 +51,21 @@ self.addEventListener('push', (event) => {
 
 	// Always show the OS notification — iOS requires showNotification() on every
 	// push event or it will stop delivering pushes to the app entirely.
-	// In-app toasts are handled separately via the Firebase RTDB subscription.
 	event.waitUntil(
-		self.registration.showNotification(data.title, {
-			body: data.body ?? '',
-			icon: '/icon-192.png',
-			tag: data.tag ?? 'chat',
-			data: { url: data.url ?? '/app' }
-		})
+		Promise.all([
+			self.registration.showNotification(data.title, {
+				body: data.body ?? '',
+				icon: '/icon-192.png',
+				tag: data.tag ?? 'chat',
+				data: { url: data.url ?? '/app' }
+			}),
+			// Also forward to any open clients so in-app toasts appear
+			self.clients.matchAll({ type: 'window' }).then((clientList) => {
+				for (const client of clientList) {
+					client.postMessage({ type: 'push', data });
+				}
+			})
+		])
 	);
 });
 

@@ -1,8 +1,15 @@
 <script>
 	import { browser } from '$app/environment';
 	import { onMount, onDestroy } from 'svelte';
+	import { page } from '$app/stores';
+	import { auth, db as rtdb } from '$lib/firebase.js';
+	import { signInWithCustomToken } from 'firebase/auth';
+	import { ref, onValue, off } from 'firebase/database';
 
-	let { children } = $props();
+	let { data, children } = $props();
+
+	let userChatsRef;
+	const prevDmLastAt = {};
 
 	// Install prompt
 	let installPrompt = $state(null);
@@ -38,16 +45,39 @@
 		}
 	}
 
-	function addToast(data) {
+	function addToast(toast) {
 		const id = crypto.randomUUID();
-		toasts = [{ id, ...data }, ...toasts].slice(0, 5);
+		toasts = [{ id, ...toast }, ...toasts].slice(0, 5);
 		if (soundEnabled) playSound();
 		setTimeout(() => { toasts = toasts.filter((t) => t.id !== id); }, 5000);
 	}
 
-	onMount(() => {
+	onMount(async () => {
 		logActivity();
 		activityTimer = setInterval(logActivity, 5 * 60_000);
+
+		// Subscribe to DMs globally so toasts appear on any app page
+		if (data?.firebaseToken && data?.userId) {
+			try {
+				await signInWithCustomToken(auth, data.firebaseToken);
+				userChatsRef = ref(rtdb, `userChats/${data.userId}`);
+				onValue(userChatsRef, (snap) => {
+					if (!snap.exists()) return;
+					for (const [convId, meta] of Object.entries(snap.val())) {
+						const prev = prevDmLastAt[convId];
+						const lastAt = meta.lastAt ?? 0;
+						if (prev !== undefined && lastAt > prev && !window.location.pathname.startsWith('/app/chat')) {
+							addToast({
+								title: meta.otherUserName ?? 'New message',
+								body: meta.lastMessage ?? '',
+								url: `/app/chat/dm/${convId}`
+							});
+						}
+						prevDmLastAt[convId] = lastAt;
+					}
+				});
+			} catch { /* firebase unavailable */ }
+		}
 
 		soundEnabled = localStorage.getItem('notif_sound') !== 'false';
 
@@ -76,7 +106,10 @@
 	async function logActivity() {
 		try { await fetch('/api/presence/log', { method: 'POST' }); } catch { /* ignore */ }
 	}
-	onDestroy(() => clearInterval(activityTimer));
+	onDestroy(() => {
+		clearInterval(activityTimer);
+		if (userChatsRef) off(userChatsRef);
+	});
 
 	async function install() {
 		if (!installPrompt) return;

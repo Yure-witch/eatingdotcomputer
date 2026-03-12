@@ -13,8 +13,7 @@ export async function subscribeToPush() {
 		return { error: 'Push not supported in this browser' };
 	}
 
-	const permission = await Notification.requestPermission();
-	if (permission !== 'granted') {
+	if (Notification.permission !== 'granted') {
 		return { error: 'Notification permission denied' };
 	}
 

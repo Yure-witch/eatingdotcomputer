@@ -3,11 +3,17 @@ import { env } from '$env/dynamic/private';
 import { getDb } from '$lib/server/turso.js';
 
 let initialized = false;
+let vapidConfigured = false;
 
 function ensureInitialized() {
 	if (initialized) return;
-	webpush.setVapidDetails(env.VAPID_SUBJECT, env.VAPID_PUBLIC_KEY, env.VAPID_PRIVATE_KEY);
 	initialized = true;
+	if (!env.VAPID_SUBJECT || !env.VAPID_PUBLIC_KEY || !env.VAPID_PRIVATE_KEY) {
+		console.warn('[push] VAPID env vars not set — push notifications disabled');
+		return;
+	}
+	webpush.setVapidDetails(env.VAPID_SUBJECT, env.VAPID_PUBLIC_KEY, env.VAPID_PRIVATE_KEY);
+	vapidConfigured = true;
 }
 
 /**
@@ -29,6 +35,7 @@ export async function sendPushNotification(subscription, payload) {
 export async function notifyUsers(userIds, payload) {
 	if (!userIds.length) return;
 	ensureInitialized();
+	if (!vapidConfigured) return;
 	const db = getDb();
 	if (!db) return;
 
