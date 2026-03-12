@@ -1,6 +1,8 @@
 <script>
 	import { enhance } from '$app/forms';
 	import { onMount, onDestroy } from 'svelte';
+	import { db as rtdb } from '$lib/firebase.js';
+	import { ref, onValue, off } from 'firebase/database';
 
 	let { data, form } = $props();
 
@@ -63,25 +65,52 @@
 		return { lines };
 	});
 
-	// Presence polling — map of uid → { online, lastSeen }
+	// Presence — map of uid → { online, lastSeen }
+	const PRESENCE_TTL = 3 * 60 * 1000;
 
 	let presenceMap = $state(
 		Object.fromEntries(data.members.map((m) => [m.id, { online: m.online, lastSeen: m.lastSeen }]))
 	);
 	let pollTimer;
+	let presenceRef;
 
 	async function pollPresence() {
 		try {
 			const res = await fetch('/api/presence');
-			if (res.ok) presenceMap = await res.json();
-		} catch { /* ignore network errors */ }
+			if (res.ok) {
+				const apiData = await res.json();
+				// Merge API data (covers user_activity) without overwriting live Firebase data
+				presenceMap = { ...apiData, ...Object.fromEntries(
+					Object.entries(presenceMap).filter(([, v]) => v.online)
+				)};
+			}
+		} catch { /* ignore */ }
 	}
 
 	onMount(() => {
-		pollPresence(); // fetch immediately on load
+		// Real-time Firebase presence subscription for instant updates
+		presenceRef = ref(rtdb, 'presence');
+		onValue(presenceRef, (snap) => {
+			if (!snap.exists()) return;
+			const now = Date.now();
+			const updated = { ...presenceMap };
+			for (const [uid, val] of Object.entries(snap.val())) {
+				updated[uid] = {
+					online: !!(val.online && (val.lastSeen ?? 0) > now - PRESENCE_TTL),
+					lastSeen: val.lastSeen ?? null
+				};
+			}
+			presenceMap = updated;
+		});
+
+		// Also poll /api/presence to catch users on non-chat pages (user_activity)
+		pollPresence();
 		pollTimer = setInterval(pollPresence, 30_000);
 	});
-	onDestroy(() => clearInterval(pollTimer));
+	onDestroy(() => {
+		clearInterval(pollTimer);
+		if (presenceRef) off(presenceRef);
+	});
 
 	function formatLastSeen(ts) {
 		if (!ts) return 'never';

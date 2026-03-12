@@ -106,10 +106,11 @@
 			set(presenceRef, { name: data.currentUser.name, online: true, lastSeen: Date.now() });
 		});
 
-		// Subscribe to all presence for online dots
+		// Subscribe to all presence for online dots — merge so API-based entries aren't lost
 		allPresenceRef = ref(rtdb, 'presence');
 		onValue(allPresenceRef, (snap) => {
-			rawPresence = snap.exists() ? snap.val() : {};
+			const firebaseData = snap.exists() ? snap.val() : {};
+			rawPresence = { ...rawPresence, ...firebaseData };
 		});
 
 		// Heartbeat — keep lastSeen fresh so stale detection works
