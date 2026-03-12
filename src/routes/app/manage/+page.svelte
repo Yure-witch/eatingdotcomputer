@@ -1,7 +1,8 @@
 <script>
 	import { enhance } from '$app/forms';
 	import { onMount, onDestroy } from 'svelte';
-	import { db as rtdb } from '$lib/firebase.js';
+	import { auth, db as rtdb } from '$lib/firebase.js';
+	import { signInWithCustomToken } from 'firebase/auth';
 	import { ref, onValue, off } from 'firebase/database';
 
 	let { data, form } = $props();
@@ -58,11 +59,12 @@
 			name: u.name,
 			total: u.total,
 			points: u.points.map((p) => `${xOf(p.bucket).toFixed(1)},${yOf(p.count).toFixed(1)}`).join(' '),
+			rawPoints: u.points,
 			hue: (i * 67) % 360,
 			opacity: Math.max(0.35, 1 - i * 0.12)
 		}));
 
-		return { lines };
+		return { lines, buckets };
 	});
 
 	// Presence — map of uid → { online, lastSeen }
@@ -87,7 +89,12 @@
 		} catch { /* ignore */ }
 	}
 
-	onMount(() => {
+	onMount(async () => {
+		// Ensure Firebase is authenticated before subscribing (layout auth may not have finished yet)
+		if (data.firebaseToken) {
+			try { await signInWithCustomToken(auth, data.firebaseToken); } catch { /* already authed */ }
+		}
+
 		// Real-time Firebase presence subscription for instant updates
 		presenceRef = ref(rtdb, 'presence');
 		onValue(presenceRef, (snap) => {
@@ -161,6 +168,36 @@
 	let newWeekNumber = $state(data.maxWeek + 1);
 
 	$effect(() => { newWeekNumber = data.maxWeek + 1; });
+
+	// Chart hover tooltip
+	let hoverIdx = $state(null);
+	let hoverPct = $state(0); // 0–1, for tooltip positioning
+	let chartEl = $state(null);
+
+	function handleChartMouseMove(e) {
+		const rect = e.currentTarget.getBoundingClientRect();
+		const svgX = ((e.clientX - rect.left) / rect.width) * W;
+		const buckets = activityChart.buckets;
+		if (!buckets?.length) return;
+		const raw = (svgX - PAD) / (W - PAD * 2) * (buckets.length - 1);
+		hoverIdx = Math.max(0, Math.min(buckets.length - 1, Math.round(raw)));
+		hoverPct = (e.clientX - rect.left) / rect.width;
+	}
+
+	function handleChartMouseLeave() { hoverIdx = null; }
+
+	function formatBucket(bucket) {
+		if (!bucket) return '';
+		if (bucket.includes('T')) {
+			const [date, time] = bucket.split('T');
+			const [y, m, d] = date.split('-').map(Number);
+			const h = parseInt(time);
+			const label = h === 0 ? '12am' : h < 12 ? `${h}am` : h === 12 ? '12pm' : `${h - 12}pm`;
+			return `${new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}, ${label}`;
+		}
+		const [y, m, d] = bucket.split('-').map(Number);
+		return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+	}
 </script>
 
 <svelte:head>
@@ -409,9 +446,11 @@
 				{/each}
 			</div>
 		</div>
-		<div class="activity-chart">
+		<div class="activity-chart" bind:this={chartEl}>
 			{#if activityChart.lines?.length}
-				<svg viewBox="0 0 {W} {H}" preserveAspectRatio="none" class="chart-svg">
+				<svg viewBox="0 0 {W} {H}" preserveAspectRatio="none" class="chart-svg"
+					onmousemove={handleChartMouseMove}
+					onmouseleave={handleChartMouseLeave}>
 					{#each activityChart.lines as line}
 						<polyline
 							points={line.points}
@@ -423,7 +462,28 @@
 							opacity={line.opacity}
 						/>
 					{/each}
+					{#if hoverIdx !== null && activityChart.buckets?.length}
+						{@const bx = (PAD + (hoverIdx / Math.max(activityChart.buckets.length - 1, 1)) * (W - PAD * 2)).toFixed(1)}
+						<line x1={bx} y1={PAD} x2={bx} y2={H - PAD} stroke="rgba(0,0,0,0.25)" stroke-width="0.75" stroke-dasharray="2,2" />
+					{/if}
 				</svg>
+				{#if hoverIdx !== null && activityChart.buckets?.length}
+					{@const bucket = activityChart.buckets[hoverIdx]}
+					{@const tooltipLeft = Math.min(Math.max(hoverPct * 100, 5), 80)}
+					<div class="chart-tooltip" style="left: {tooltipLeft}%">
+						<div class="tooltip-date">{formatBucket(bucket)}</div>
+						{#each activityChart.lines as line}
+							{@const pt = line.rawPoints.find(p => p.bucket === bucket)}
+							{#if pt?.count}
+								<div class="tooltip-row">
+									<span class="tooltip-dot" style="background: hsl({line.hue} 30% 40%)"></span>
+									<span>{line.name}</span>
+									<span class="tooltip-count">{pt.count}</span>
+								</div>
+							{/if}
+						{/each}
+					</div>
+				{/if}
 				<div class="chart-legend">
 					{#each activityChart.lines as line}
 						<span class="legend-item">
@@ -800,8 +860,22 @@
 
 	.empty { color: #a09688; font-size: 0.9rem; }
 
-	.activity-chart { margin-top: 0.75rem; }
-	.chart-svg { width: 100%; height: 80px; display: block; border-radius: 6px; background: #faf7f2; }
+	.activity-chart { margin-top: 0.75rem; position: relative; }
+	.chart-svg { width: 100%; height: 80px; display: block; border-radius: 6px; background: #faf7f2; cursor: crosshair; }
+
+	.chart-tooltip {
+		position: absolute;
+		top: 0; transform: translateX(-50%);
+		background: #1a1a1a; color: #f7f2ea;
+		border-radius: 7px; padding: 0.45rem 0.65rem;
+		font-size: 0.72rem; pointer-events: none;
+		white-space: nowrap; z-index: 10;
+		box-shadow: 0 2px 12px rgba(0,0,0,0.25);
+	}
+	.tooltip-date { font-weight: 600; margin-bottom: 0.25rem; color: #c8c1b4; }
+	.tooltip-row { display: flex; align-items: center; gap: 0.35rem; }
+	.tooltip-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+	.tooltip-count { margin-left: auto; padding-left: 0.75rem; opacity: 0.7; }
 	.chart-legend {
 		display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; margin-top: 0.6rem;
 	}
