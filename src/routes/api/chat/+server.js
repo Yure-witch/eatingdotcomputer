@@ -28,7 +28,7 @@ export async function POST({ request, locals }) {
 			db.ref(`userChats/${to}/${convId}`).update({ otherUserId: session.user.id, otherUserName: senderName, lastMessage: preview, lastAt: now })
 		]);
 		// Push notification to recipient
-		notifyUsers([to], {
+		await notifyUsers([to], {
 			title: senderName,
 			body: preview,
 			url: `/app/chat/dm/${convId}`,
@@ -47,7 +47,7 @@ export async function POST({ request, locals }) {
 				args: [session.user.id]
 			});
 			const userIds = usersResult.rows.map((r) => String(r.user_id));
-			notifyUsers(userIds, {
+			await notifyUsers(userIds, {
 				title: `#${channel}`,
 				body: `${senderName}: ${preview}`,
 				url: `/app/chat/channel/${channel}`,

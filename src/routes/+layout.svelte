@@ -19,6 +19,8 @@
 	</div>
 {/if}
 
+<footer class="build-info">build #{__BUILD_NUMBER__} · {__BUILD_SHA__}</footer>
+
 <style>
 	.update-banner {
 		position: fixed; bottom: 1rem; left: 50%; transform: translateX(-50%);
@@ -34,5 +36,10 @@
 		border: none; border-radius: 6px;
 		padding: 0.3rem 0.75rem; font-family: inherit;
 		font-size: 0.82rem; font-weight: 600; cursor: pointer;
+	}
+	.build-info {
+		position: fixed; bottom: 0.5rem; right: 0.75rem;
+		font-size: 0.65rem; color: #bbb; pointer-events: none;
+		font-family: monospace; z-index: 10;
 	}
 </style>
