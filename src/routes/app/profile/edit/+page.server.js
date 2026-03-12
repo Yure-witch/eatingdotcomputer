@@ -1,7 +1,8 @@
 import { redirect, fail } from '@sveltejs/kit';
 import { getDb } from '$lib/server/turso.js';
 
-export async function load({ locals }) {
+export async function load({ locals, parent }) {
+	await parent();
 	const session = await locals.auth();
 	if (!session) redirect(303, '/login');
 

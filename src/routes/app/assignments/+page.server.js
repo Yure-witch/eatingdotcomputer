@@ -3,7 +3,8 @@ import { getAssignments, createAssignment, deleteAssignment } from '$lib/server/
 import { getSubmissionsForAssignment, getStudentSubmission, createSubmission } from '$lib/server/submissions.js';
 import { uploadToR2 } from '$lib/server/r2.js';
 
-export async function load({ locals }) {
+export async function load({ locals, parent }) {
+	await parent();
 	const session = await locals.auth();
 	if (!session) redirect(303, '/login');
 

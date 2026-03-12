@@ -4,7 +4,8 @@ import { getSubmissionsForAssignment } from '$lib/server/submissions.js';
 import { getDb } from '$lib/server/turso.js';
 import { getAdminDb } from '$lib/server/firebase-admin.js';
 
-export async function load({ locals }) {
+export async function load({ locals, parent }) {
+	await parent();
 	const session = await locals.auth();
 	if (!session || session.user.role !== 'instructor') redirect(303, '/app');
 

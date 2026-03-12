@@ -2,7 +2,8 @@ import { redirect, error } from '@sveltejs/kit';
 import { getDb } from '$lib/server/turso.js';
 import { getAdminDb } from '$lib/server/firebase-admin.js';
 
-export async function load({ locals, params }) {
+export async function load({ locals, params, parent }) {
+	await parent();
 	const session = await locals.auth();
 	if (!session) redirect(303, '/login');
 
