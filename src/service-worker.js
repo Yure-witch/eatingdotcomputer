@@ -49,25 +49,15 @@ self.addEventListener('push', (event) => {
 		data = { title: 'eating.computer', body: event.data.text() };
 	}
 
+	// Always show the OS notification — iOS requires showNotification() on every
+	// push event or it will stop delivering pushes to the app entirely.
+	// In-app toasts are handled separately via the Firebase RTDB subscription.
 	event.waitUntil(
-		clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
-			// Forward to any open app windows for in-app toast + sound
-			for (const client of clientList) {
-				client.postMessage({ type: 'push', data });
-			}
-
-			// Only show OS notification if no window is currently focused
-			const hasFocused = clientList.some((c) => c.focused);
-			if (hasFocused) return;
-
-			return self.registration.showNotification(data.title, {
-				body: data.body ?? '',
-				icon: '/icon-192.png',
-				badge: '/icon-192.png',
-				tag: data.tag ?? 'default',
-				renotify: true,
-				data: { url: data.url ?? '/app' }
-			});
+		self.registration.showNotification(data.title, {
+			body: data.body ?? '',
+			icon: '/icon-192.png',
+			tag: data.tag ?? 'chat',
+			data: { url: data.url ?? '/app' }
 		})
 	);
 });

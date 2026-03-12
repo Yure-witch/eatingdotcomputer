@@ -18,14 +18,19 @@
 
 	onMount(async () => {
 		if (!browser) return;
-		pushSupported = 'serviceWorker' in navigator && 'PushManager' in window;
+
+		isStandalone = window.matchMedia('(display-mode: standalone)').matches || !!window.navigator.standalone;
+		const iosDevice = /iphone|ipad|ipod/i.test(navigator.userAgent);
+		isIOS = iosDevice && !isStandalone;
+
+		// On iOS, push only works from the installed standalone app — not Safari
+		const iosBlocksPush = iosDevice && !isStandalone;
+		pushSupported = 'serviceWorker' in navigator && 'PushManager' in window && !iosBlocksPush;
+
 		if (pushSupported) {
 			pushSubscribed = await isPushSubscribed();
 			notifPermission = Notification.permission;
 		}
-
-		isStandalone = window.matchMedia('(display-mode: standalone)').matches;
-		isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.navigator.standalone;
 
 		window.addEventListener('beforeinstallprompt', (e) => {
 			e.preventDefault();
