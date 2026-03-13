@@ -31,19 +31,28 @@ export async function POST({ request, locals }) {
 
 	if (removing) {
 		await adminDb.ref(reactionPath).remove();
-		if (turso) {
-			await turso.execute({
-				sql: 'DELETE FROM message_reactions WHERE message_id = ? AND emoji = ? AND user_id = ?',
-				args: [messageId, emoji, userId]
-			});
-		}
 	} else {
 		await adminDb.ref(reactionPath).set(true);
-		if (turso) {
-			await turso.execute({
-				sql: 'INSERT OR IGNORE INTO message_reactions (message_id, emoji, user_id) VALUES (?, ?, ?)',
-				args: [messageId, emoji, userId]
-			});
+	}
+
+	// Only sync to Turso if the message is already archived there (FK constraint)
+	if (turso) {
+		const msgRow = await turso.execute({
+			sql: 'SELECT id FROM messages WHERE id = ?',
+			args: [messageId]
+		});
+		if (msgRow.rows.length > 0) {
+			if (removing) {
+				await turso.execute({
+					sql: 'DELETE FROM message_reactions WHERE message_id = ? AND emoji = ? AND user_id = ?',
+					args: [messageId, emoji, userId]
+				});
+			} else {
+				await turso.execute({
+					sql: 'INSERT OR IGNORE INTO message_reactions (message_id, emoji, user_id) VALUES (?, ?, ?)',
+					args: [messageId, emoji, userId]
+				});
+			}
 		}
 	}
 
