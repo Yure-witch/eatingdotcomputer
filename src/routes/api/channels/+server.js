@@ -5,7 +5,9 @@ export async function POST({ request, locals }) {
 	const session = await locals.auth();
 	if (!session || session.user.role !== 'instructor') error(403, 'Forbidden');
 
-	const { name } = await request.json();
+	const body = await request.json();
+	const name = body.name;
+	const classId = body.class_id ?? 'idc-fall-2026';
 	if (!name?.trim()) error(400, 'Channel name required');
 
 	const slug = name.trim().toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
@@ -18,8 +20,8 @@ export async function POST({ request, locals }) {
 	if (existing.rows.length) error(409, 'Channel already exists');
 
 	await db.execute({
-		sql: "INSERT INTO conversations (id, type, name, created_by) VALUES (?, 'channel', ?, ?)",
-		args: [slug, slug, session.user.id]
+		sql: "INSERT INTO conversations (id, type, name, created_by, class_id) VALUES (?, 'channel', ?, ?, ?)",
+		args: [slug, slug, session.user.id, classId]
 	});
 
 	return json({ id: slug, name: slug });

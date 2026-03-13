@@ -34,13 +34,27 @@ export function normaliseMessage(id, raw, userMap) {
 	const content  = isCompact ? raw.c : (raw.content ?? '');
 	const ts       = isCompact ? pushIdToTimestamp(id) : (raw.createdAt ?? pushIdToTimestamp(id));
 	const user     = userMap[userId];
+
+	let replyTo = null;
+	if (raw.rt) {
+		const replyUser = userMap[raw.rt.u];
+		replyTo = { id: raw.rt.id, userId: raw.rt.u, userName: replyUser?.name ?? 'Unknown', content: raw.rt.c ?? '' };
+	}
+
+	let attachment = null;
+	if (raw.att?.url) {
+		attachment = { url: raw.att.url, filename: raw.att.name ?? '', mimetype: raw.att.type ?? '', size: raw.att.size ?? 0 };
+	}
+
 	return {
 		id,
 		userId,
 		userName: user?.name ?? raw.userName ?? 'Unknown',
 		userRole: user?.role ?? raw.userRole ?? 'student',
 		content,
-		createdAt: ts
+		createdAt: ts,
+		replyTo,
+		attachment
 	};
 }
 

@@ -5,11 +5,12 @@ import { getDb } from '$lib/server/turso.js';
 import { getAdminDb } from '$lib/server/firebase-admin.js';
 
 export async function load({ locals, parent }) {
-	await parent();
+	const parentData = await parent();
 	const session = await locals.auth();
 	if (!session || session.user.role !== 'instructor') redirect(303, '/app');
 
-	const rows = await getAssignments();
+	const classId = parentData.currentClass?.id ?? 'idc-fall-2026';
+	const rows = await getAssignments(classId);
 
 	const byWeek = {};
 	for (const row of rows) {
@@ -36,9 +37,18 @@ export async function load({ locals, parent }) {
 	// Find the highest week number so we can suggest the next one
 	const maxWeek = weeks.length ? Math.max(...weeks.map((w) => w.week)) : 0;
 
-	// All members + online status
+	// All members + online status — scoped to current class (instructors always included)
 	const db = getDb();
-	const usersResult = db ? await db.execute('SELECT id, name, email, role, created_at FROM users ORDER BY created_at ASC') : { rows: [] };
+	const usersResult = db ? await db.execute({
+		sql: `SELECT u.id, u.name, u.email, u.role, u.created_at FROM users u
+		      WHERE u.role = 'instructor'
+		         OR EXISTS (
+		              SELECT 1 FROM class_memberships cm
+		              WHERE cm.user_id = u.id AND cm.status = 'approved' AND cm.class_id = ?
+		            )
+		      ORDER BY u.created_at ASC`,
+		args: [classId]
+	}) : { rows: [] };
 
 	const PRESENCE_TTL = 3 * 60 * 1000;
 	const presenceSnap = await getAdminDb().ref('presence').get();
@@ -64,30 +74,40 @@ export async function load({ locals, parent }) {
 	}));
 
 	// Activity: hourly for last 7 days (drives 12h / 1d / 7d views)
-	const hourlyRows = db ? await db.execute(`
-		SELECT u.id AS user_id, u.name,
-		       strftime('%Y-%m-%dT%H:00', ua.logged_at) AS bucket,
-		       COUNT(*) AS count
-		FROM user_activity ua
-		JOIN users u ON ua.user_id = u.id
-		WHERE u.role != 'instructor'
-		  AND ua.logged_at >= datetime('now', '-7 days')
-		GROUP BY u.id, bucket
-		ORDER BY bucket ASC
-	`) : { rows: [] };
+	const hourlyRows = db ? await db.execute({
+		sql: `SELECT u.id AS user_id, u.name,
+		             strftime('%Y-%m-%dT%H:00', ua.logged_at) AS bucket,
+		             COUNT(*) AS count
+		      FROM user_activity ua
+		      JOIN users u ON ua.user_id = u.id
+		      WHERE u.role != 'instructor'
+		        AND ua.logged_at >= datetime('now', '-7 days')
+		        AND EXISTS (
+		              SELECT 1 FROM class_memberships cm
+		              WHERE cm.user_id = u.id AND cm.status = 'approved' AND cm.class_id = ?
+		            )
+		      GROUP BY u.id, bucket
+		      ORDER BY bucket ASC`,
+		args: [classId]
+	}) : { rows: [] };
 
 	// Activity: daily for last 6 months (drives 1m / 6m views)
-	const dailyRows = db ? await db.execute(`
-		SELECT u.id AS user_id, u.name,
-		       date(ua.logged_at) AS bucket,
-		       COUNT(*) AS count
-		FROM user_activity ua
-		JOIN users u ON ua.user_id = u.id
-		WHERE u.role != 'instructor'
-		  AND ua.logged_at >= datetime('now', '-180 days')
-		GROUP BY u.id, bucket
-		ORDER BY bucket ASC
-	`) : { rows: [] };
+	const dailyRows = db ? await db.execute({
+		sql: `SELECT u.id AS user_id, u.name,
+		             date(ua.logged_at) AS bucket,
+		             COUNT(*) AS count
+		      FROM user_activity ua
+		      JOIN users u ON ua.user_id = u.id
+		      WHERE u.role != 'instructor'
+		        AND ua.logged_at >= datetime('now', '-180 days')
+		        AND EXISTS (
+		              SELECT 1 FROM class_memberships cm
+		              WHERE cm.user_id = u.id AND cm.status = 'approved' AND cm.class_id = ?
+		            )
+		      GROUP BY u.id, bucket
+		      ORDER BY bucket ASC`,
+		args: [classId]
+	}) : { rows: [] };
 
 	function buildSeries(rows) {
 		const map = {};
@@ -104,17 +124,18 @@ export async function load({ locals, parent }) {
 		daily: buildSeries(dailyRows.rows)
 	};
 
-	// Pending class membership requests
-	const pendingResult = db ? await db.execute(`
-		SELECT cm.id, cm.class_id, cm.user_id, cm.requested_at,
-		       c.name AS class_name, c.term,
-		       u.name AS user_name, u.email, u.pronouns, u.bio, u.website
-		FROM class_memberships cm
-		JOIN classes c ON cm.class_id = c.id
-		JOIN users u ON cm.user_id = u.id
-		WHERE cm.status = 'pending'
-		ORDER BY cm.requested_at ASC
-	`) : { rows: [] };
+	// Pending class membership requests — scoped to current class
+	const pendingResult = db ? await db.execute({
+		sql: `SELECT cm.id, cm.class_id, cm.user_id, cm.requested_at,
+		             c.name AS class_name, c.term,
+		             u.name AS user_name, u.email, u.pronouns, u.bio, u.website
+		      FROM class_memberships cm
+		      JOIN classes c ON cm.class_id = c.id
+		      JOIN users u ON cm.user_id = u.id
+		      WHERE cm.status = 'pending' AND cm.class_id = ?
+		      ORDER BY cm.requested_at ASC`,
+		args: [classId]
+	}) : { rows: [] };
 
 	const pendingRequests = pendingResult.rows.map((r) => ({
 		id: String(r.id),
@@ -129,7 +150,7 @@ export async function load({ locals, parent }) {
 		website: String(r.website ?? '')
 	}));
 
-	return { weeks, maxWeek, members, activityByUser, pendingRequests };
+	return { weeks, maxWeek, members, activityByUser, pendingRequests, classId };
 }
 
 const ALL_TYPES = ['link', 'image', 'video'];
@@ -221,10 +242,11 @@ export const actions = {
 		const description = String(data.get('description') ?? '').trim();
 		const dueDate = String(data.get('due_date') ?? '').trim();
 		const acceptedTypes = parseTypes(data);
+		const classId = String(data.get('class_id') ?? 'idc-fall-2026');
 
 		if (!week || !title) return fail(400, { error: 'Week and title are required', action: 'create' });
 
-		await createAssignment({ week, title, description, dueDate, acceptedTypes, createdBy: session.user.id });
+		await createAssignment({ week, title, description, dueDate, acceptedTypes, createdBy: session.user.id, classId });
 	},
 
 	update: async ({ request, locals }) => {

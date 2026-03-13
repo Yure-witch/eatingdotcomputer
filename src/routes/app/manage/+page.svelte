@@ -1,5 +1,6 @@
 <script>
 	import { enhance } from '$app/forms';
+	import ClassSwitcher from '$lib/components/ClassSwitcher.svelte';
 	import { onMount, onDestroy } from 'svelte';
 	import { auth, db as rtdb } from '$lib/firebase.js';
 	import { signInWithCustomToken } from 'firebase/auth';
@@ -67,61 +68,70 @@
 		return { lines, buckets };
 	});
 
-	// Presence — map of uid → { online, lastSeen }
+	// Presence — mirrors the chat layout pattern (rawPresence → $derived presenceMap)
 	const PRESENCE_TTL = 3 * 60 * 1000;
 
-	let presenceMap = $state(
-		Object.fromEntries(data.members.map((m) => [m.id, { online: m.online, lastSeen: m.lastSeen }]))
+	// Raw snapshots: Firebase overwrites, API poll merges in
+	let rawPresence = $state(
+		Object.fromEntries(data.members.map((m) => [m.id, { online: m.online ?? false, lastSeen: m.lastSeen ?? null }]))
 	);
+	let presenceTick = $state(0); // increments every 30s to force stale re-eval
+	let now = $state(Date.now());
 	let pollTimer;
+	let tickTimer;
 	let presenceRef;
+
+	// Derived map — recomputes whenever rawPresence or tick changes
+	const presenceMap = $derived.by(() => {
+		presenceTick; // subscribe so stale entries are re-evaluated on tick
+		const cutoff = Date.now() - PRESENCE_TTL;
+		const result = {};
+		for (const [uid, val] of Object.entries(rawPresence)) {
+			result[uid] = {
+				online: !!(val.online && (val.lastSeen ?? 0) > cutoff),
+				lastSeen: val.lastSeen ?? null
+			};
+		}
+		return result;
+	});
 
 	async function pollPresence() {
 		try {
 			const res = await fetch('/api/presence');
-			if (res.ok) {
-				const apiData = await res.json();
-				// Merge API data (covers user_activity) without overwriting live Firebase data
-				presenceMap = { ...apiData, ...Object.fromEntries(
-					Object.entries(presenceMap).filter(([, v]) => v.online)
-				)};
-			}
+			if (!res.ok) return;
+			const apiData = await res.json();
+			// Merge: API is authoritative for non-chat users; Firebase wins for online ones
+			// Merge: fresh API data updates the map; Firebase onValue re-overrides for real-time users
+			rawPresence = { ...rawPresence, ...apiData };
 		} catch { /* ignore */ }
 	}
 
 	onMount(async () => {
-		// Ensure Firebase is authenticated before subscribing (layout auth may not have finished yet)
+		// Ensure Firebase is authenticated before subscribing
 		if (data.firebaseToken) {
 			try { await signInWithCustomToken(auth, data.firebaseToken); } catch { /* already authed */ }
 		}
 
-		// Real-time Firebase presence subscription for instant updates
 		presenceRef = ref(rtdb, 'presence');
 		onValue(presenceRef, (snap) => {
-			if (!snap.exists()) return;
-			const now = Date.now();
-			const updated = { ...presenceMap };
-			for (const [uid, val] of Object.entries(snap.val())) {
-				updated[uid] = {
-					online: !!(val.online && (val.lastSeen ?? 0) > now - PRESENCE_TTL),
-					lastSeen: val.lastSeen ?? null
-				};
-			}
-			presenceMap = updated;
+			// Merge Firebase data into rawPresence — Firebase is authoritative
+			rawPresence = { ...rawPresence, ...(snap.exists() ? snap.val() : {}) };
+			now = Date.now();
 		});
 
-		// Also poll /api/presence to catch users on non-chat pages (user_activity)
 		pollPresence();
 		pollTimer = setInterval(pollPresence, 30_000);
+		tickTimer = setInterval(() => { presenceTick++; now = Date.now(); }, 30_000);
 	});
 	onDestroy(() => {
 		clearInterval(pollTimer);
+		clearInterval(tickTimer);
 		if (presenceRef) off(presenceRef);
 	});
 
 	function formatLastSeen(ts) {
 		if (!ts) return 'never';
-		const diff = Date.now() - ts;
+		const diff = now - ts;
 		if (diff < 60_000) return 'just now';
 		if (diff < 3600_000) return `${Math.floor(diff / 60_000)}m ago`;
 		if (diff < 86400_000) return `${Math.floor(diff / 3600_000)}h ago`;
@@ -206,7 +216,10 @@
 
 <div class="shell">
 	<header>
-		<a class="wordmark" href="/">eating.computer</a>
+		<div class="wordmark-wrap">
+			<a class="wordmark" href="/">eating.computer</a>
+			<ClassSwitcher currentClass={data.currentClass} allClasses={data.allClasses} />
+		</div>
 		<nav>
 			<a href="/app">Dashboard</a>
 			<a href="/app/assignments">Assignments</a>
@@ -238,7 +251,8 @@
 					<p class="error">{form.error}</p>
 				{/if}
 				<form method="POST" action="?/create" use:enhance={() => () => { addingNewWeek = false; }}>
-					<div class="form-row">
+				<input type="hidden" name="class_id" value={data.classId} />
+				<div class="form-row">
 						<label>
 							<span>Week <span class="req">*</span></span>
 							<input type="number" name="week" min="1" max="52" required bind:value={newWeekNumber} />
@@ -300,6 +314,7 @@
 						{/if}
 						<form method="POST" action="?/create" use:enhance={() => () => { addingToWeek = null; }}>
 							<input type="hidden" name="week" value={week} />
+							<input type="hidden" name="class_id" value={data.classId} />
 							<label class="grow">
 								<span>Title <span class="req">*</span></span>
 								<input type="text" name="title" required placeholder="Assignment title" autofocus />
@@ -501,6 +516,7 @@
 
 	<section class="members-section">
 		<h2>All members <span class="member-count">({data.members.length})</span></h2>
+		<div class="members-table-wrap">
 		<table class="members-table">
 			<thead>
 				<tr>
@@ -541,6 +557,7 @@
 				{/each}
 			</tbody>
 		</table>
+		</div>
 	</section>
 	</main>
 </div>
@@ -561,14 +578,21 @@
 		border-bottom: 1.5px solid #ddd7cc;
 	}
 
+	.wordmark-wrap {
+		display: flex;
+		flex-direction: column;
+		gap: 0.1rem;
+		flex-shrink: 0;
+	}
+
 	.wordmark {
 		font-family: 'Cambridge', serif;
 		font-size: 1.25rem;
 		color: var(--ink);
 		text-decoration: none;
-		flex-shrink: 0;
 	}
 	.wordmark:hover { opacity: 0.7; }
+
 
 	nav { display: flex; gap: 1.25rem; font-size: 0.875rem; }
 	nav a { color: #a09688; text-decoration: none; font-weight: 500; }
@@ -1012,4 +1036,40 @@
 		white-space: nowrap;
 	}
 	.btn-deny:hover { background: #c0392b; color: #fff; }
+
+	.members-table-wrap {
+		overflow-x: auto;
+		-webkit-overflow-scrolling: touch;
+		margin: 0 -0.25rem;
+	}
+
+	@media (max-width: 640px) {
+		header {
+			flex-wrap: wrap;
+			padding: 0.75rem 1rem;
+			gap: 0.4rem 1.5rem;
+			align-items: flex-start;
+		}
+		nav { font-size: 0.8rem; gap: 0.75rem; }
+
+		main { padding: 1.25rem 1rem; padding-bottom: calc(56px + env(safe-area-inset-bottom, 0px) + 1.25rem); }
+		h1 { font-size: 1.4rem; }
+		.subtitle { font-size: 0.8rem; }
+		.page-header { gap: 0.75rem; }
+		.header-actions { flex-wrap: wrap; gap: 0.4rem; }
+
+		.create-card { padding: 1rem; }
+		.form-row { flex-wrap: wrap; }
+		.checkbox-row { flex-wrap: wrap; gap: 0.5rem 1rem; }
+
+		.members-table { min-width: 560px; }
+		.members-table td, .members-table th { padding: 0.5rem 0.6rem; font-size: 0.82rem; }
+
+		.pending-card { flex-direction: column; gap: 0.75rem; }
+		.pending-avatar { align-self: flex-start; }
+		.pending-actions { flex-direction: row; flex-wrap: wrap; }
+
+		.members-section { padding: 1.25rem 1rem; }
+		.week-section { padding: 0; }
+	}
 </style>

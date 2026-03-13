@@ -28,6 +28,8 @@ export async function GET({ request }) {
 	let archived = 0;
 
 	async function archiveMessages(rtdbPath, conversationId) {
+		const reactionsBasePath = rtdbPath.replace('/messages', '/reactions');
+
 		const snap = await adminDb.ref(rtdbPath).get();
 		if (!snap.exists()) return;
 
@@ -44,6 +46,7 @@ export async function GET({ request }) {
 			args: [conversationId]
 		});
 
+		const reactionUpdates = {};
 		for (const msg of toArchive) {
 			// Support both compact { u, c } and legacy { userId, userName, userRole, content } formats
 			const isCompact = 'u' in msg;
@@ -51,17 +54,39 @@ export async function GET({ request }) {
 			const content = isCompact ? msg.c : (msg.content ?? '');
 			const userName = userMap[userId]?.name ?? msg.userName ?? 'Unknown';
 			const userRole = userMap[userId]?.role ?? msg.userRole ?? 'student';
+			const replyToId = msg.rt?.id ?? null;
 			await turso.execute({
 				sql: `INSERT OR IGNORE INTO chat_messages
-				      (id, conversation_id, user_id, user_name, user_role, content, created_at)
-				      VALUES (?, ?, ?, ?, ?, ?, ?)`,
-				args: [msg.key, conversationId, userId, userName, userRole, content, new Date(msg.ts).toISOString()]
+				      (id, conversation_id, user_id, user_name, user_role, content, created_at, reply_to_id)
+				      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+				args: [msg.key, conversationId, userId, userName, userRole, content, new Date(msg.ts).toISOString(), replyToId]
 			});
+
+			// Archive reactions for this message → message_reactions table
+			const reactSnap = await adminDb.ref(`${reactionsBasePath}/${msg.key}`).get();
+			if (reactSnap.exists()) {
+				for (const [emoji, users] of Object.entries(reactSnap.val())) {
+					for (const reactUserId of Object.keys(users)) {
+						await turso.execute({
+							sql: 'INSERT OR IGNORE INTO message_reactions (message_id, emoji, user_id) VALUES (?, ?, ?)',
+							args: [msg.key, emoji, reactUserId]
+						});
+					}
+				}
+				reactionUpdates[msg.key] = null; // schedule Firebase cleanup
+			}
 		}
 
+		// Delete archived messages from Firebase
 		const updates = {};
 		for (const msg of toArchive) updates[msg.key] = null;
 		await adminDb.ref(rtdbPath).update(updates);
+
+		// Delete archived reactions from Firebase
+		if (Object.keys(reactionUpdates).length) {
+			await adminDb.ref(reactionsBasePath).update(reactionUpdates);
+		}
+
 		archived += toArchive.length;
 	}
 

@@ -1,21 +1,22 @@
 import { getDb } from './turso.js';
 
-export async function getAssignments() {
+export async function getAssignments(classId) {
 	const db = getDb();
 	if (!db) return [];
-	const result = await db.execute(
-		'SELECT id, week, title, description, due_date, accepted_types, created_at FROM assignments ORDER BY week ASC, created_at ASC'
-	);
+	const result = await db.execute({
+		sql: 'SELECT id, week, title, description, due_date, accepted_types, created_at FROM assignments WHERE class_id = ? ORDER BY week ASC, created_at ASC',
+		args: [classId]
+	});
 	return result.rows;
 }
 
-export async function createAssignment({ week, title, description, dueDate, acceptedTypes, createdBy }) {
+export async function createAssignment({ week, title, description, dueDate, acceptedTypes, createdBy, classId }) {
 	const db = getDb();
 	if (!db) throw new Error('No database');
 	const id = crypto.randomUUID();
 	await db.execute({
-		sql: 'INSERT INTO assignments (id, week, title, description, due_date, accepted_types, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)',
-		args: [id, week, title, description || null, dueDate || null, JSON.stringify(acceptedTypes), createdBy]
+		sql: 'INSERT INTO assignments (id, week, title, description, due_date, accepted_types, created_by, class_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+		args: [id, week, title, description || null, dueDate || null, JSON.stringify(acceptedTypes), createdBy, classId]
 	});
 	return id;
 }

@@ -3,6 +3,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { page } from '$app/stores';
 	import { auth, db as rtdb } from '$lib/firebase.js';
+	import BottomNav from '$lib/components/BottomNav.svelte';
 	import { signInWithCustomToken } from 'firebase/auth';
 	import { ref, onValue, off } from 'firebase/database';
 
@@ -127,6 +128,8 @@
 
 {@render children()}
 
+<BottomNav />
+
 <!-- In-app notification toasts -->
 <div class="toast-stack">
 	{#each toasts as toast (toast.id)}
@@ -246,6 +249,12 @@
 	}
 	.sound-toggle:hover { opacity: 1; }
 
+	@media (max-width: 640px) {
+		.sound-toggle {
+			bottom: calc(56px + env(safe-area-inset-bottom, 0px) + 0.75rem);
+		}
+	}
+
 	/* ── Install banner ── */
 	.install-banner {
 		position: fixed;
@@ -306,4 +315,10 @@
 		line-height: 1;
 	}
 	.btn-dismiss:hover { opacity: 1; }
+
+	@media (max-width: 640px) {
+		.install-banner {
+			bottom: calc(56px + env(safe-area-inset-bottom, 0px) + 0.75rem);
+		}
+	}
 </style>

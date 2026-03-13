@@ -1,4 +1,4 @@
-import { S3Client, ListObjectsV2Command, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, ListObjectsV2Command, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { env } from '$env/dynamic/private';
 
 let client;
@@ -36,6 +36,12 @@ export async function uploadToR2(key, body, contentType) {
 		Body: body,
 		ContentType: contentType
 	}));
+}
+
+export async function deleteFromR2(key) {
+	const r2 = getR2Client();
+	if (!r2 || !env.R2_BUCKET) throw new Error('R2 not configured');
+	await r2.send(new DeleteObjectCommand({ Bucket: env.R2_BUCKET, Key: key }));
 }
 
 export async function getR2Stream(key) {

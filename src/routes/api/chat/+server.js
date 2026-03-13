@@ -9,16 +9,33 @@ export async function POST({ request, locals }) {
 	const session = await locals.auth();
 	await requireClassAccess(session);
 
-	const { content, channelId, to } = await request.json();
-	if (!content?.trim()) error(400, 'Empty message');
-	if (content.length > 2000) error(400, 'Message too long');
+	const { content, channelId, to, reply_to, attachment } = await request.json();
+	if (!content?.trim() && !attachment?.url) error(400, 'Empty message');
+	if (content && content.length > 2000) error(400, 'Message too long');
 
 	const db = getAdminDb();
 	const senderName = session.user.name || session.user.email;
-	const preview = content.trim().slice(0, 60);
+	const preview = attachment ? `📎 ${attachment.filename}` : content.trim().slice(0, 60);
 	const now = Date.now();
-	// Compact format: { u: userId, c: content } — timestamp derived from push ID
-	const msg = { u: session.user.id, c: content.trim() };
+	// Compact format: { u, c, rt?, att? } — timestamp derived from push ID
+	const msg = { u: session.user.id, c: content?.trim() ?? '' };
+	if (reply_to?.id) {
+		msg.rt = { id: reply_to.id, u: reply_to.userId, c: String(reply_to.content ?? '').slice(0, 100) };
+	}
+	if (attachment?.url) {
+		msg.att = { url: attachment.url, name: attachment.filename, type: attachment.mimetype, size: attachment.size };
+	}
+
+	// Confirm the uploaded file so it isn't swept by the stale-upload cleanup
+	if (attachment?.id) {
+		const turso = getDb();
+		if (turso) {
+			turso.execute({
+				sql: 'UPDATE uploaded_files SET confirmed = 1 WHERE id = ? AND uploaded_by_id = ?',
+				args: [attachment.id, session.user.id]
+			}).catch(() => {});
+		}
+	}
 
 	if (to) {
 		// DM

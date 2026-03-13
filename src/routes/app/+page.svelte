@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { browser } from '$app/environment';
 	import { subscribeToPush, unsubscribeFromPush, isPushSubscribed } from '$lib/push.js';
+	import ClassSwitcher from '$lib/components/ClassSwitcher.svelte';
 
 	let { data } = $props();
 	const user = data.session.user;
@@ -78,7 +79,10 @@
 
 <div class="shell">
 	<header>
-		<a class="wordmark" href="/">eating.computer</a>
+		<div class="wordmark-wrap">
+			<a class="wordmark" href="/">eating.computer</a>
+			<ClassSwitcher currentClass={data.currentClass} allClasses={data.allClasses} />
+		</div>
 		<div class="header-right">
 			{#if user.role === 'instructor'}
 				<a href="/app/manage" class="manage-link">Manage</a>
@@ -216,6 +220,12 @@
 		border-bottom: 1.5px solid #ddd7cc;
 	}
 
+	.wordmark-wrap {
+		display: flex;
+		flex-direction: column;
+		gap: 0.1rem;
+	}
+
 	.wordmark {
 		font-family: 'Cambridge', serif;
 		font-size: 1.25rem;
@@ -226,6 +236,7 @@
 	.wordmark:hover {
 		opacity: 0.7;
 	}
+
 
 	.header-right {
 		display: flex;
@@ -416,5 +427,34 @@
 
 	.ios-icon {
 		font-style: normal;
+	}
+
+	@media (max-width: 640px) {
+		header {
+			position: fixed; top: 0; left: 0; right: 0; z-index: 10;
+			background: var(--paper);
+			padding: 0.75rem 1rem;
+			gap: 0.5rem;
+		}
+		.header-right { gap: 0.5rem; }
+		.user-name { display: none; }
+		.badge { display: none; }
+		.manage-link { padding: 0.3rem 0.55rem; font-size: 0.75rem; }
+		.sign-out { padding: 0.3rem 0.55rem; font-size: 0.75rem; }
+
+		main {
+			padding: 1.25rem 1rem;
+			padding-top: 3.75rem;
+			padding-bottom: calc(56px + env(safe-area-inset-bottom, 0px) + 1.25rem);
+		}
+		h1 {
+			font-size: 1.5rem;
+			margin-bottom: 1rem;
+		}
+		.sections {
+			grid-template-columns: 1fr;
+			gap: 0.75rem;
+		}
+		.card { padding: 1rem 1.25rem; }
 	}
 </style>

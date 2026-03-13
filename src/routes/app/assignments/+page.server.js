@@ -4,11 +4,12 @@ import { getSubmissionsForAssignment, getStudentSubmission, createSubmission } f
 import { uploadToR2 } from '$lib/server/r2.js';
 
 export async function load({ locals, parent }) {
-	await parent();
+	const parentData = await parent();
 	const session = await locals.auth();
 	if (!session) redirect(303, '/login');
 
-	const rows = await getAssignments();
+	const classId = parentData.currentClass?.id ?? 'idc-fall-2026';
+	const rows = await getAssignments(classId);
 	const isInstructor = session.user.role === 'instructor';
 
 	// Group by week, enrich with submissions
@@ -46,7 +47,7 @@ export async function load({ locals, parent }) {
 		.sort((a, b) => a - b)
 		.map((w) => ({ week: w, assignments: byWeek[w] }));
 
-	return { weeks, role: session.user.role, userId: session.user.id };
+	return { weeks, role: session.user.role, userId: session.user.id, classId };
 }
 
 export const actions = {
@@ -64,7 +65,8 @@ export const actions = {
 		if (!week || !title) return fail(400, { error: 'Week and title are required', action: 'create' });
 		if (acceptedTypes.length === 0) return fail(400, { error: 'Select at least one submission type', action: 'create' });
 
-		await createAssignment({ week, title, description, dueDate, acceptedTypes, createdBy: session.user.id });
+		const assignClassId = String(data.get('class_id') ?? '');
+		await createAssignment({ week, title, description, dueDate, acceptedTypes, createdBy: session.user.id, classId: assignClassId || 'idc-fall-2026' });
 	},
 
 	delete: async ({ request, locals }) => {

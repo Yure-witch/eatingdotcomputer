@@ -1,5 +1,6 @@
 <script>
 	import { enhance } from '$app/forms';
+	import ClassSwitcher from '$lib/components/ClassSwitcher.svelte';
 
 	let { data, form } = $props();
 	const isInstructor = data.role === 'instructor';
@@ -24,7 +25,10 @@
 
 <div class="shell">
 	<header>
-		<a class="wordmark" href="/">eating.computer</a>
+		<div class="wordmark-wrap">
+			<a class="wordmark" href="/">eating.computer</a>
+			<ClassSwitcher currentClass={data.currentClass} allClasses={data.allClasses} />
+		</div>
 		<nav>
 			<a href="/app">Dashboard</a>
 			<a href="/app/assignments" class="active">Assignments</a>
@@ -52,6 +56,7 @@
 					<p class="error">{form.error}</p>
 				{/if}
 				<form method="POST" action="?/create" use:enhance={() => () => { showForm = false; }}>
+					<input type="hidden" name="class_id" value={data.classId} />
 					<div class="form-row">
 						<label>
 							<span>Week <span class="required">*</span></span>
@@ -237,14 +242,21 @@
 		border-bottom: 1.5px solid #ddd7cc;
 	}
 
+	.wordmark-wrap {
+		display: flex;
+		flex-direction: column;
+		gap: 0.1rem;
+		flex-shrink: 0;
+	}
+
 	.wordmark {
 		font-family: 'Cambridge', serif;
 		font-size: 1.25rem;
 		color: var(--ink);
 		text-decoration: none;
-		flex-shrink: 0;
 	}
 	.wordmark:hover { opacity: 0.7; }
+
 
 	nav { display: flex; gap: 1.25rem; font-size: 0.875rem; }
 	nav a { color: #a09688; text-decoration: none; font-weight: 500; }
@@ -551,4 +563,33 @@
 	.sub-link { color: var(--ink); font-size: 0.82rem; }
 
 	.empty { color: #a09688; font-size: 0.9rem; }
+
+	@media (max-width: 640px) {
+		header {
+			position: fixed; top: 0; left: 0; right: 0; z-index: 10;
+			background: var(--paper);
+			flex-wrap: wrap;
+			padding: 0.75rem 1rem;
+			gap: 0.4rem 1.5rem;
+			align-items: flex-start;
+		}
+		nav { font-size: 0.8rem; gap: 0.75rem; }
+
+		main { padding: 1.25rem 1rem; padding-top: 5.5rem; padding-bottom: calc(56px + env(safe-area-inset-bottom, 0px) + 1.25rem); }
+		h1 { font-size: 1.5rem; }
+		.page-header { margin-bottom: 1rem; }
+
+		.create-card { padding: 1rem; }
+		.form-row { flex-direction: column; gap: 0.5rem; }
+		.checkbox-row { flex-wrap: wrap; gap: 0.5rem 1rem; }
+
+		.week-section { margin-bottom: 1.5rem; }
+		.card { padding: 1rem; }
+		.card-top { flex-wrap: wrap; gap: 0.5rem; }
+
+		.submission-item { flex-wrap: wrap; gap: 0.35rem; }
+		.sub-student { min-width: 100%; }
+
+		.submit-form { gap: 0.5rem; }
+	}
 </style>

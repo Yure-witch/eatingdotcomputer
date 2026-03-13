@@ -2,43 +2,68 @@ import { redirect } from '@sveltejs/kit';
 import { getDb } from '$lib/server/turso.js';
 import { createFirebaseToken } from '$lib/server/firebase-admin.js';
 
-export async function load({ locals }) {
+export async function load({ locals, cookies }) {
 	const session = await locals.auth();
 	if (!session) redirect(303, '/login');
 
 	const firebaseToken = await createFirebaseToken(session.user.id).catch(() => null);
 	const userId = session.user.id;
 
-	// Instructors always get through
-	if (session.user.role === 'instructor') return { firebaseToken, userId };
-
 	const db = getDb();
-	if (!db) return { firebaseToken, userId }; // local dev without env — skip gate
+
+	let currentClass = null;
+	let allClasses = [];
+
+	if (session.user.role === 'instructor') {
+		if (db) {
+			const result = await db.execute(
+				'SELECT id, name, term FROM classes ORDER BY created_at ASC'
+			);
+			allClasses = result.rows.map((r) => ({
+				id: String(r.id),
+				name: String(r.name),
+				term: String(r.term)
+			}));
+		}
+		const selectedId = cookies.get('selected_class_id');
+		currentClass = allClasses.find((c) => c.id === selectedId) ?? allClasses[0] ?? null;
+		return { firebaseToken, userId, currentClass, allClasses };
+	}
+
+	if (!db) return { firebaseToken, userId, currentClass: null, allClasses: [] };
 
 	try {
 		const membershipResult = await db.execute({
-			sql: `SELECT status FROM class_memberships
-			      WHERE user_id = ?
-			      ORDER BY requested_at DESC LIMIT 1`,
+			sql: `SELECT cm.status, cm.class_id, c.name, c.term
+			      FROM class_memberships cm
+			      JOIN classes c ON cm.class_id = c.id
+			      WHERE cm.user_id = ?
+			      ORDER BY cm.requested_at DESC LIMIT 1`,
 			args: [session.user.id]
 		});
 
-		const status = String(membershipResult.rows[0]?.status ?? 'none');
+		const row = membershipResult.rows[0];
+		const status = String(row?.status ?? 'none');
 
-		if (status === 'approved') return { firebaseToken, userId };
+		if (status === 'approved') {
+			currentClass = {
+				id: String(row.class_id),
+				name: String(row.name),
+				term: String(row.term)
+			};
+			return { firebaseToken, userId, currentClass, allClasses: [] };
+		}
+
 		if (status === 'pending' || status === 'denied') redirect(303, '/onboarding/pending');
 
-		// No membership — check where they are in onboarding
 		const userResult = await db.execute({
 			sql: 'SELECT onboarding_step FROM users WHERE id = ?',
 			args: [session.user.id]
 		});
 		const step = String(userResult.rows[0]?.onboarding_step ?? 'profile');
-		// 'class' means they explicitly finished profile; anything else (incl. grandfathered 'complete') goes to profile
 		redirect(303, step === 'class' ? '/onboarding/class' : '/onboarding/profile');
 	} catch (e) {
-		if (e?.status) throw e; // rethrow redirects
-		// DB error (e.g. migration not run) — send to onboarding
+		if (e?.status) throw e;
 		redirect(303, '/onboarding/profile');
 	}
 }

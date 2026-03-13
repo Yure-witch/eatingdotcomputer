@@ -197,7 +197,7 @@
 			const res = await fetch('/api/channels', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ name })
+				body: JSON.stringify({ name, class_id: data.classId })
 			});
 			if (!res.ok) {
 				const err = await res.json().catch(() => ({}));
@@ -236,13 +236,18 @@
 
 	<div class="sidebar" class:open={sidebarOpen}>
 		<div class="sidebar-header">
-			<a class="wordmark" href="/app">eating.computer</a>
-			<div class="sidebar-header-right">
-				<a class="profile-link" href="/app/profile/{data.currentUser.id}" title="My profile">
-					<span class="avatar sm">{data.currentUser.name[0].toUpperCase()}</span>
-				</a>
-				<button class="btn-icon sidebar-close" onclick={() => sidebarOpen = false}>×</button>
+			<div class="sidebar-header-top">
+				<a class="wordmark" href="/app">eating.computer</a>
+				<div class="sidebar-header-right">
+					<a class="profile-link" href="/app/profile/{data.currentUser.id}" title="My profile">
+						<span class="avatar sm">{data.currentUser.name[0].toUpperCase()}</span>
+					</a>
+					<button class="btn-icon sidebar-close" onclick={() => sidebarOpen = false}>×</button>
+				</div>
 			</div>
+			{#if data.currentClass}
+				<span class="class-label">{data.currentClass.name} — {data.currentClass.term}</span>
+			{/if}
 		</div>
 
 		<!-- Channels -->
@@ -331,7 +336,9 @@
 	</div>
 
 	<div class="chat-main">
-		<button class="mobile-menu-btn" onclick={() => sidebarOpen = true}>☰</button>
+		<div class="mobile-topbar">
+			<button class="mobile-menu-btn" onclick={() => sidebarOpen = true}>☰</button>
+		</div>
 		{#if firebaseReady}
 			{@render children()}
 		{:else}
@@ -355,7 +362,7 @@
 {/if}
 
 <style>
-	.chat-shell { height: 100vh; display: flex; background: var(--paper); }
+	.chat-shell { height: 100vh; height: 100dvh; display: flex; background: var(--paper); }
 
 	/* ── Sidebar ── */
 	.sidebar {
@@ -364,7 +371,11 @@
 		display: flex; flex-direction: column; overflow-y: auto;
 	}
 
-	.sidebar-header { padding: 1rem 1rem 0.75rem; border-bottom: 1px solid #2a2a2a; }
+	.sidebar-header { padding: 0.9rem 1rem 0.75rem; border-bottom: 1px solid #2a2a2a; display: flex; flex-direction: column; gap: 0.25rem; }
+
+	.sidebar-header-top { display: flex; align-items: center; justify-content: space-between; }
+
+	.class-label { font-size: 0.68rem; color: #555; font-weight: 500; letter-spacing: 0.01em; }
 
 	.wordmark { font-family: 'Cambridge', serif; font-size: 1.1rem; color: #f7f2ea; text-decoration: none; }
 	.wordmark:hover { opacity: 0.8; }
@@ -491,12 +502,26 @@
 	/* ── Main ── */
 	.chat-main { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
 
-	.mobile-menu-btn {
+	.mobile-topbar {
 		display: none;
-		position: absolute; top: 0.75rem; left: 1rem; z-index: 10;
-		background: none; border: none; color: var(--ink);
-		font-size: 1.2rem; cursor: pointer; line-height: 1; padding: 0.25rem;
 	}
+
+	.mobile-menu-btn {
+		background: none; border: none; color: var(--ink);
+		font-size: 1.3rem; cursor: pointer; line-height: 1;
+		padding: 0; width: 44px; height: 44px;
+		display: flex; align-items: center; justify-content: center;
+		flex-shrink: 0;
+	}
+
+	.mobile-back {
+		font-size: 0.85rem;
+		font-weight: 500;
+		color: #a09688;
+		text-decoration: none;
+		flex: 1;
+	}
+	.mobile-back:hover { color: var(--ink); }
 
 	.sidebar-backdrop { display: none; }
 
@@ -504,18 +529,27 @@
 
 	/* ── Mobile ── */
 	@media (max-width: 640px) {
+		.chat-shell { height: calc(100dvh - 56px); }
 		.sidebar {
-			position: fixed; inset: 0; z-index: 50;
-			width: 280px; transform: translateX(-100%);
+			position: fixed; inset: 0; z-index: 100;
+			width: 85vw; max-width: 300px;
+			transform: translateX(-100%);
 			transition: transform 0.22s ease;
+			padding-bottom: env(safe-area-inset-bottom, 0);
 		}
 		.sidebar.open { transform: translateX(0); }
 		.sidebar-close { display: block; margin-left: auto; }
 		.sidebar-backdrop {
-			display: block; position: fixed; inset: 0; z-index: 49;
+			display: block; position: fixed; inset: 0; z-index: 99;
 			background: rgba(0,0,0,0.45);
 		}
-		.mobile-menu-btn { display: block; }
+		.mobile-topbar {
+			display: flex;
+			align-items: center;
+			position: fixed;
+			top: 0; left: 0;
+			z-index: 15;
+		}
 	}
 
 	/* ── Toasts ── */
