@@ -66,7 +66,7 @@
 			padding-bottom: env(safe-area-inset-bottom, 0);
 			background: #1a1a1a;
 			border-top: 1px solid #2a2a2a;
-			z-index: 80;
+			z-index: 1000;
 		}
 
 		.nav-item {

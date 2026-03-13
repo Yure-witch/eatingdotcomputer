@@ -531,7 +531,7 @@
 	@media (max-width: 640px) {
 		.chat-shell { height: calc(100dvh - 56px); }
 		.sidebar {
-			position: fixed; inset: 0; z-index: 100;
+			position: fixed; inset: 0; z-index: 1200;
 			width: 85vw; max-width: 300px;
 			transform: translateX(-100%);
 			transition: transform 0.22s ease;
@@ -540,7 +540,7 @@
 		.sidebar.open { transform: translateX(0); }
 		.sidebar-close { display: block; margin-left: auto; }
 		.sidebar-backdrop {
-			display: block; position: fixed; inset: 0; z-index: 99;
+			display: block; position: fixed; inset: 0; z-index: 1100;
 			background: rgba(0,0,0,0.45);
 		}
 		.mobile-topbar {
