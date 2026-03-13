@@ -88,23 +88,12 @@
 			: { ...curEmoji, [uid]: true };
 		reactions = { ...reactions, [msgId]: { ...curMsg, [emoji]: newEmoji } };
 
-		// Archived messages (in Turso) go through the server API which writes to both Turso + Firebase.
-		// Live messages (in Firebase) write directly to Firebase for minimum latency.
-		if (data.history.some((m) => m.id === msgId)) {
-			await fetch('/api/chat/react', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ messageId: msgId, emoji, conversationId: convId })
-			});
-		} else {
-			const path = `channels/${convId}/reactions/${msgId}/${emoji}/${uid}`;
-			const r = ref(db, path);
-			if (alreadyReacted) {
-				await remove(r);
-			} else {
-				await set(r, true);
-			}
-		}
+		// Always route through the server API — uses firebase-admin which bypasses security rules
+		await fetch('/api/chat/react', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ messageId: msgId, emoji, conversationId: convId })
+		});
 	}
 
 	onMount(() => {

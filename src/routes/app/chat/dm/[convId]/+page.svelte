@@ -90,21 +90,12 @@
 			: { ...curEmoji, [uid]: true };
 		reactions = { ...reactions, [msgId]: { ...curMsg, [emoji]: newEmoji } };
 
-		if (data.history.some((m) => m.id === msgId)) {
-			await fetch('/api/chat/react', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ messageId: msgId, emoji, conversationId: data.convId })
-			});
-		} else {
-			const path = `dms/${data.convId}/reactions/${msgId}/${emoji}/${uid}`;
-			const r = ref(db, path);
-			if (alreadyReacted) {
-				await remove(r);
-			} else {
-				await set(r, true);
-			}
-		}
+		// Always route through the server API — uses firebase-admin which bypasses security rules
+		await fetch('/api/chat/react', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ messageId: msgId, emoji, conversationId: data.convId })
+		});
 	}
 
 	onMount(() => {
