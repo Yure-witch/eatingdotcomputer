@@ -41,14 +41,25 @@
 	let firebaseRef, typingRef, reactionsRef;
 	let typingTimer;
 
+	let userScrolledUp = false;
+
 	function scrollToBottom() {
-		tick().then(() => { if (listEl) listEl.scrollTop = listEl.scrollHeight; });
+		tick().then(() => {
+			if (!listEl) return;
+			listEl.scrollTop = listEl.scrollHeight;
+			userScrolledUp = false;
+		});
 	}
 
+	// Called from image onload — scrolls only if user hasn't manually scrolled up
 	function scrollIfNearBottom() {
+		if (!userScrolledUp && listEl) listEl.scrollTop = listEl.scrollHeight;
+	}
+
+	function onListScroll() {
 		if (!listEl) return;
 		const dist = listEl.scrollHeight - listEl.scrollTop - listEl.clientHeight;
-		if (dist < 300) listEl.scrollTop = listEl.scrollHeight;
+		userScrolledUp = dist > 80;
 	}
 
 	function scrollToMessage(id) {
@@ -231,7 +242,7 @@
 	{#if otherUser.role === 'instructor'}<span class="badge">instructor</span>{/if}
 </div>
 
-<div class="message-list" bind:this={listEl} style:padding-bottom="{inputAreaHeight}px">
+<div class="message-list" bind:this={listEl} style:padding-bottom="{inputAreaHeight}px" onscroll={onListScroll}>
 	{#if messages.length === 0}
 		<p class="empty">Start your conversation with {otherUser.name}.</p>
 	{/if}
