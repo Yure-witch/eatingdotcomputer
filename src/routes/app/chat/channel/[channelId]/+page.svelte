@@ -43,6 +43,12 @@
 		tick().then(() => { if (listEl) listEl.scrollTop = listEl.scrollHeight; });
 	}
 
+	function scrollIfNearBottom() {
+		if (!listEl) return;
+		const dist = listEl.scrollHeight - listEl.scrollTop - listEl.clientHeight;
+		if (dist < 300) listEl.scrollTop = listEl.scrollHeight;
+	}
+
 	function scrollToMessage(id) {
 		const el = listEl?.querySelector(`[data-msg-id="${id}"]`);
 		el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -258,7 +264,7 @@
 				{#if msg.attachment}
 					{#if msg.attachment.mimetype?.startsWith('image/')}
 						<a href={msg.attachment.url} target="_blank" rel="noopener noreferrer" class="bubble bubble-img" class:pending={msg.pending}>
-							<img src={msg.attachment.url} alt={msg.attachment.filename} />
+							<img src={msg.attachment.url} alt={msg.attachment.filename} onload={scrollIfNearBottom} />
 						</a>
 					{:else}
 						<a href={msg.attachment.url} target="_blank" rel="noopener noreferrer" class="bubble bubble-file" class:pending={msg.pending} class:mine={isMine}>
@@ -369,7 +375,9 @@
 	.message-list {
 		flex: 1; overflow-y: auto; padding: 1rem 1.5rem;
 		display: flex; flex-direction: column; gap: 0.15rem;
+		scrollbar-width: none;
 	}
+	.message-list::-webkit-scrollbar { display: none; }
 	.empty { color: #a09688; font-size: 0.9rem; text-align: center; margin: auto; }
 	.message { display: flex; flex-direction: column; max-width: 75%; gap: 0.15rem; }
 	.message.mine { align-self: flex-end; align-items: flex-end; }

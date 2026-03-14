@@ -10,13 +10,13 @@ export async function getAssignments(classId) {
 	return result.rows;
 }
 
-export async function createAssignment({ week, title, description, dueDate, acceptedTypes, createdBy, classId }) {
+export async function createAssignment({ week, title, description, dueDate, acceptedTypes, attachments, createdBy, classId }) {
 	const db = getDb();
 	if (!db) throw new Error('No database');
 	const id = crypto.randomUUID();
 	await db.execute({
-		sql: 'INSERT INTO assignments (id, week, title, description, due_date, accepted_types, created_by, class_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-		args: [id, week, title, description || null, dueDate || null, JSON.stringify(acceptedTypes), createdBy, classId]
+		sql: 'INSERT INTO assignments (id, week, title, description, due_date, accepted_types, attachments, created_by, class_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+		args: [id, week, title, description || null, dueDate || null, JSON.stringify(acceptedTypes), JSON.stringify(attachments ?? []), createdBy, classId]
 	});
 	return id;
 }

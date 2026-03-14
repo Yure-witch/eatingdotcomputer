@@ -17,9 +17,12 @@ export async function GET({ locals }) {
 
 	if (snap.exists()) {
 		for (const [uid, v] of Object.entries(snap.val())) {
+			const online = !!(v.online && (v.lastSeen ?? 0) > now - PRESENCE_TTL);
 			result[uid] = {
-				online: !!(v.online && (v.lastSeen ?? 0) > now - PRESENCE_TTL),
-				lastSeen: v.lastSeen ?? null
+				online,
+				lastSeen: v.lastSeen ?? null,
+				...(online && v.ua ? { ua: v.ua } : {}),
+				...(online && v.screen ? { screen: v.screen } : {})
 			};
 		}
 	}

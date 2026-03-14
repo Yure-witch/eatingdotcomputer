@@ -73,7 +73,7 @@
 
 	// Raw snapshots: Firebase overwrites, API poll merges in
 	let rawPresence = $state(
-		Object.fromEntries(data.members.map((m) => [m.id, { online: m.online ?? false, lastSeen: m.lastSeen ?? null }]))
+		Object.fromEntries(data.members.map((m) => [m.id, { online: m.online ?? false, lastSeen: m.lastSeen ?? null, ua: m.ua ?? null, screen: m.screen ?? null }]))
 	);
 	let presenceTick = $state(0); // increments every 30s to force stale re-eval
 	let now = $state(Date.now());
@@ -87,13 +87,31 @@
 		const cutoff = Date.now() - PRESENCE_TTL;
 		const result = {};
 		for (const [uid, val] of Object.entries(rawPresence)) {
+			const online = !!(val.online && (val.lastSeen ?? 0) > cutoff);
 			result[uid] = {
-				online: !!(val.online && (val.lastSeen ?? 0) > cutoff),
-				lastSeen: val.lastSeen ?? null
+				online,
+				lastSeen: val.lastSeen ?? null,
+				ua: online ? (val.ua ?? null) : null,
+				screen: online ? (val.screen ?? null) : null
 			};
 		}
 		return result;
 	});
+
+	function deviceFromUA(ua) {
+		if (!ua) return null;
+		const u = ua.toLowerCase();
+		if (/iphone|android.*mobile|windows phone/.test(u)) return 'mobile';
+		if (/ipad|android(?!.*mobile)/.test(u)) return 'tablet';
+		return 'desktop';
+	}
+
+	function deviceIcon(ua) {
+		const d = deviceFromUA(ua);
+		if (d === 'mobile') return '📱';
+		if (d === 'tablet') return '⬛'; // no great emoji; use a placeholder
+		return '🖥️';
+	}
 
 	async function pollPresence() {
 		try {
@@ -525,6 +543,7 @@
 					<th>Role</th>
 					<th>Joined</th>
 					<th>Status</th>
+					<th>Device</th>
 					<th>Last seen</th>
 					<th></th>
 				</tr>
@@ -542,6 +561,15 @@
 								<span class="status-online">● online</span>
 							{:else}
 								<span class="status-offline">○ offline</span>
+							{/if}
+						</td>
+						<td class="muted device-cell">
+							{#if p?.online && p?.ua}
+								<span class="device-info" title={p.ua}>
+									{deviceIcon(p.ua)} {deviceFromUA(p.ua)}{p.screen ? ` · ${p.screen}` : ''}
+								</span>
+							{:else}
+								—
 							{/if}
 						</td>
 						<td class="muted">{formatLastSeen(p?.lastSeen ?? null)}</td>
@@ -954,6 +982,8 @@
 
 	.status-online { font-size: 0.8rem; color: #2e7d32; font-weight: 600; }
 	.status-offline { font-size: 0.8rem; color: #bbb; }
+	.device-cell { font-size: 0.78rem; white-space: nowrap; }
+	.device-info { cursor: default; }
 	.member-link { color: var(--ink); text-decoration: none; font-weight: 500; }
 	.member-link:hover { text-decoration: underline; text-underline-offset: 2px; }
 	.btn-reset {

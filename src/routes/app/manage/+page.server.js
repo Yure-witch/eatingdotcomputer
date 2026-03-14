@@ -70,7 +70,9 @@ export async function load({ locals, parent }) {
 		role: String(r.role ?? 'student'),
 		joinedAt: String(r.created_at ?? ''),
 		online: presenceData[String(r.id)]?.online ?? false,
-		lastSeen: presenceData[String(r.id)]?.lastSeen ?? null
+		lastSeen: presenceData[String(r.id)]?.lastSeen ?? null,
+		ua: presenceData[String(r.id)]?.ua ?? null,
+		screen: presenceData[String(r.id)]?.screen ?? null
 	}));
 
 	// Activity: hourly for last 7 days (drives 12h / 1d / 7d views)

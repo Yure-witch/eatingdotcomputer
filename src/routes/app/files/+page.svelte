@@ -251,6 +251,9 @@
 		color: var(--ink);
 		transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
 		min-width: 0;
+		overflow: hidden;
+		width: 100%;
+		box-sizing: border-box;
 	}
 	.link-chip:hover {
 		border-color: #b0a898;
@@ -279,6 +282,7 @@
 	.chip-body {
 		flex: 1;
 		min-width: 0;
+		overflow: hidden;
 		display: flex;
 		flex-direction: column;
 		gap: 0.2rem;
@@ -297,7 +301,9 @@
 		display: flex;
 		align-items: center;
 		gap: 0.3rem;
-		flex-wrap: wrap;
+		flex-wrap: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 	.chip-domain { font-weight: 600; color: #888; }

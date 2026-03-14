@@ -106,10 +106,18 @@
 		// Presence — use Firebase's .info/connected + onDisconnect for reliable cleanup
 		presenceRef = ref(rtdb, `presence/${data.currentUser.id}`);
 		connectedRef = ref(rtdb, '.info/connected');
+		const presencePayload = () => ({
+			name: data.currentUser.name,
+			online: true,
+			lastSeen: Date.now(),
+			ua: navigator.userAgent,
+			screen: `${screen.width}x${screen.height}`
+		});
+
 		onValue(connectedRef, (snap) => {
 			if (!snap.val()) return;
 			onDisconnect(presenceRef).update({ online: false, lastSeen: Date.now() });
-			set(presenceRef, { name: data.currentUser.name, online: true, lastSeen: Date.now() });
+			set(presenceRef, presencePayload());
 		});
 
 		// Subscribe to all presence for online dots — merge so API-based entries aren't lost
@@ -121,7 +129,7 @@
 
 		// Heartbeat — keep lastSeen fresh so stale detection works
 		heartbeatTimer = setInterval(() => {
-			if (presenceRef) set(presenceRef, { name: data.currentUser.name, online: true, lastSeen: Date.now() });
+			if (presenceRef) set(presenceRef, presencePayload());
 		}, HEARTBEAT_INTERVAL);
 
 		// Tick every minute to force stale re-evaluation in the derived
