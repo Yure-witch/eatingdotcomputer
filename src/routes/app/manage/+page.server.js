@@ -3,6 +3,7 @@ import { getAssignments, createAssignment, updateAssignment, deleteAssignment } 
 import { getSubmissionsForAssignment } from '$lib/server/submissions.js';
 import { getDb } from '$lib/server/turso.js';
 import { getAdminDb } from '$lib/server/firebase-admin.js';
+import { notifyInactiveStudents } from '$lib/server/notify-inactive.js';
 
 export async function load({ locals, parent }) {
 	const parentData = await parent();
@@ -151,6 +152,9 @@ export async function load({ locals, parent }) {
 		bio: String(r.bio ?? ''),
 		website: String(r.website ?? '')
 	}));
+
+	// Non-blocking: send reminders to inactive students for assignments posted 3+ days ago
+	notifyInactiveStudents().catch(() => {});
 
 	return { weeks, maxWeek, members, activityByUser, pendingRequests, classId };
 }

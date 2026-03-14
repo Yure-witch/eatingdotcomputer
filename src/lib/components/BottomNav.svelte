@@ -28,29 +28,44 @@
 			href: '/app',
 			label: 'Home',
 			active: (p) => p === '/app',
-			icon: `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>`
+			icon: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>`
 		},
 		{
 			href: '/app/chat',
 			label: 'Chat',
 			active: (p) => p.startsWith('/app/chat'),
-			icon: `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`
+			icon: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`
 		},
 		{
 			href: '/app/assignments',
 			label: 'Roadmap',
 			active: (p) => p.startsWith('/app/assignments'),
-			icon: `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"/><line x1="9" y1="3" x2="9" y2="18"/><line x1="15" y1="6" x2="15" y2="21"/></svg>`
+			icon: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"/><line x1="9" y1="3" x2="9" y2="18"/><line x1="15" y1="6" x2="15" y2="21"/></svg>`
 		},
 		{
 			href: '/app/files',
 			label: 'Files',
 			active: (p) => p.startsWith('/app/files'),
-			icon: `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`
+			icon: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`
 		}
 	];
 </script>
 
+<!-- Desktop sidebar -->
+<nav class="sidebar">
+	<a class="sidebar-wordmark" href="/">eating.computer</a>
+	<div class="sidebar-items">
+		{#each items as item}
+			{@const isActive = item.active($page.url.pathname)}
+			<a href={item.href} class="sidebar-item" class:active={isActive}>
+				{@html item.icon}
+				<span>{item.label}</span>
+			</a>
+		{/each}
+	</div>
+</nav>
+
+<!-- Mobile bottom nav -->
 <nav class="bottom-nav" class:hidden={inputFocused}>
 	{#each items as item}
 		{@const isActive = item.active($page.url.pathname)}
@@ -62,6 +77,59 @@
 </nav>
 
 <style>
+	/* ── Desktop sidebar ── */
+	.sidebar {
+		display: none;
+	}
+
+	@media (min-width: 641px) {
+		.sidebar {
+			display: flex;
+			flex-direction: column;
+			position: fixed;
+			top: 0; left: 0; bottom: 0;
+			width: 200px;
+			background: var(--paper);
+			border-right: 1.5px solid #e0d9cf;
+			padding: 1.5rem 0.75rem 1.5rem;
+			gap: 0.25rem;
+			z-index: 200;
+		}
+
+		.sidebar-wordmark {
+			font-family: 'Cambridge', serif;
+			font-size: 1rem;
+			color: var(--ink);
+			text-decoration: none;
+			padding: 0 0.5rem;
+			margin-bottom: 1.25rem;
+			flex-shrink: 0;
+		}
+		.sidebar-wordmark:hover { opacity: 0.7; }
+
+		.sidebar-items {
+			display: flex;
+			flex-direction: column;
+			gap: 0.15rem;
+		}
+
+		.sidebar-item {
+			display: flex;
+			align-items: center;
+			gap: 0.65rem;
+			padding: 0.55rem 0.6rem;
+			border-radius: 9px;
+			color: #a09688;
+			text-decoration: none;
+			font-size: 0.9rem;
+			font-weight: 500;
+			transition: background 0.12s, color 0.12s;
+		}
+		.sidebar-item:hover { background: #ede8df; color: var(--ink); }
+		.sidebar-item.active { background: #e8e2d8; color: var(--ink); font-weight: 600; }
+	}
+
+	/* ── Mobile bottom nav ── */
 	.bottom-nav {
 		display: none;
 	}

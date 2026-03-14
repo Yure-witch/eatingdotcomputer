@@ -1,5 +1,6 @@
 import { redirect, fail } from '@sveltejs/kit';
 import { getDb } from '$lib/server/turso.js';
+import { getAdminDb } from '$lib/server/firebase-admin.js';
 
 export async function load({ locals }) {
 	const session = await locals.auth();
@@ -58,6 +59,9 @@ export const actions = {
 			sql: "UPDATE users SET onboarding_step = 'pending' WHERE id = ?",
 			args: [session.user.id]
 		});
+
+		// Signal the manage page that a new request is pending
+		getAdminDb().ref(`pendingRequests/${classId}`).set(Date.now()).catch(() => {});
 
 		redirect(303, '/onboarding/pending');
 	}

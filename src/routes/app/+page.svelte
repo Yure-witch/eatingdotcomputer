@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { browser } from '$app/environment';
 	import { enhance } from '$app/forms';
+	import { invalidateAll } from '$app/navigation';
 	import { subscribeToPush, unsubscribeFromPush, isPushSubscribed } from '$lib/push.js';
 	import ClassSwitcher from '$lib/components/ClassSwitcher.svelte';
 
@@ -27,6 +28,10 @@
 
 	onMount(async () => {
 		if (!browser) return;
+
+		// Auto-refresh so new assignments appear without a manual reload
+		const refreshTimer = setInterval(() => invalidateAll(), 30_000);
+
 		isStandalone = window.matchMedia('(display-mode: standalone)').matches || !!window.navigator.standalone;
 		const iosDevice = /iphone|ipad|ipod/i.test(navigator.userAgent);
 		const androidDevice = /android/i.test(navigator.userAgent);
@@ -47,6 +52,8 @@
 
 		window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installPrompt = e; });
 		window.addEventListener('appinstalled', () => { isStandalone = true; installPrompt = null; });
+
+		return () => clearInterval(refreshTimer);
 	});
 
 	async function install() {

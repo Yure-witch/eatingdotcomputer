@@ -2,6 +2,7 @@
 	import { enhance } from '$app/forms';
 	import ClassSwitcher from '$lib/components/ClassSwitcher.svelte';
 	import { onMount, onDestroy } from 'svelte';
+	import { invalidateAll } from '$app/navigation';
 	import { auth, db as rtdb } from '$lib/firebase.js';
 	import { signInWithCustomToken } from 'firebase/auth';
 	import { ref, onValue, off } from 'firebase/database';
@@ -80,6 +81,7 @@
 	let pollTimer;
 	let tickTimer;
 	let presenceRef;
+	let pendingRequestsRef;
 
 	// Derived map — recomputes whenever rawPresence or tick changes
 	const presenceMap = $derived.by(() => {
@@ -137,6 +139,16 @@
 			now = Date.now();
 		});
 
+		// Subscribe to join-request signals — any write here means a new request came in
+		if (data.currentClass?.id) {
+			pendingRequestsRef = ref(rtdb, `pendingRequests/${data.currentClass.id}`);
+			let firstPending = true;
+			onValue(pendingRequestsRef, () => {
+				if (firstPending) { firstPending = false; return; } // skip initial fire
+				invalidateAll();
+			});
+		}
+
 		pollPresence();
 		pollTimer = setInterval(pollPresence, 30_000);
 		tickTimer = setInterval(() => { presenceTick++; now = Date.now(); }, 30_000);
@@ -145,6 +157,7 @@
 		clearInterval(pollTimer);
 		clearInterval(tickTimer);
 		if (presenceRef) off(presenceRef);
+		if (pendingRequestsRef) off(pendingRequestsRef);
 	});
 
 	function formatLastSeen(ts) {

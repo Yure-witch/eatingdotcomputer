@@ -126,7 +126,9 @@
 	}
 </script>
 
-{@render children()}
+<div class="app-shell">
+	{@render children()}
+</div>
 
 <BottomNav />
 
@@ -146,12 +148,6 @@
 	{/each}
 </div>
 
-<!-- Sound toggle (floating, subtle) -->
-{#if browser}
-	<button class="sound-toggle" onclick={toggleSound} title={soundEnabled ? 'Mute notifications' : 'Unmute notifications'}>
-		{soundEnabled ? '🔔' : '🔕'}
-	</button>
-{/if}
 
 <!-- Install banner -->
 {#if browser && installPrompt && !installed && !dismissed}
@@ -233,29 +229,7 @@
 	}
 	.toast-close:hover { opacity: 1; }
 
-	/* ── Sound toggle ── */
-	.sound-toggle {
-		position: fixed;
-		bottom: 1rem;
-		right: 1rem;
-		background: none;
-		border: none;
-		font-size: 1.1rem;
-		cursor: pointer;
-		opacity: 0.4;
-		transition: opacity 0.15s;
-		z-index: 100;
-		padding: 0.25rem;
-	}
-	.sound-toggle:hover { opacity: 1; }
-
-	@media (max-width: 640px) {
-		.sound-toggle {
-			bottom: calc(56px + env(safe-area-inset-bottom, 0px) + 0.75rem);
-		}
-	}
-
-	/* ── Install banner ── */
+/* ── Install banner ── */
 	.install-banner {
 		position: fixed;
 		bottom: 1.25rem;
