@@ -11,6 +11,7 @@
 	let { data, children } = $props();
 
 	let firebaseReady = $state(false);
+	let firebaseError = $state(false);
 	let dmList = $state([]);
 	let showUserPicker = $state(false);
 	let showNewChannel = $state(false);
@@ -94,7 +95,12 @@
 	}
 
 	onMount(async () => {
-		await signInWithCustomToken(auth, data.firebaseToken);
+		try {
+			await signInWithCustomToken(auth, data.firebaseToken);
+		} catch (e) {
+			console.error('Firebase sign-in failed:', e);
+			firebaseError = true;
+		}
 		firebaseReady = true;
 
 		// Presence — use Firebase's .info/connected + onDisconnect for reliable cleanup
@@ -340,7 +346,18 @@
 			<button class="mobile-menu-btn" onclick={() => sidebarOpen = true}>☰</button>
 		</div>
 		{#if firebaseReady}
-			{@render children()}
+			{#if firebaseError}
+				<div class="loading error">
+					<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+					Chat unavailable — couldn't connect to real-time service.
+					<div class="error-actions">
+						<button onclick={() => location.reload()}>Retry</button>
+						<a href="/login">Log back in</a>
+					</div>
+				</div>
+			{:else}
+				{@render children()}
+			{/if}
 		{:else}
 			<div class="loading">Connecting…</div>
 		{/if}
@@ -525,7 +542,16 @@
 
 	.sidebar-backdrop { display: none; }
 
-	.loading { flex: 1; display: flex; align-items: center; justify-content: center; color: #a09688; font-size: 0.9rem; }
+	.loading { flex: 1; display: flex; align-items: center; justify-content: center; color: #a09688; font-size: 0.9rem; gap: 0.5rem; flex-wrap: wrap; text-align: center; padding: 2rem; }
+	.loading.error { color: #c0392b; flex-direction: column; gap: 1rem; }
+	.error-actions { display: flex; gap: 0.6rem; align-items: center; }
+	.loading.error button, .loading.error a {
+		padding: 0.4rem 1rem; border-radius: 8px;
+		font-family: inherit; font-size: 0.85rem; cursor: pointer; text-decoration: none;
+	}
+	.loading.error button { background: #c0392b; color: #fff; border: none; }
+	.loading.error a { background: transparent; color: #c0392b; border: 1.5px solid #c0392b; }
+	.loading.error button:hover, .loading.error a:hover { opacity: 0.8; }
 
 	/* ── Mobile ── */
 	@media (max-width: 640px) {
