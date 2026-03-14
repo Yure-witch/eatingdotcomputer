@@ -23,7 +23,6 @@
 	let typingUsers = $state([]);
 	let keyboardOpen = $state(false);
 	let inputAreaHeight = $state(0);
-	let mobile = $state(false);
 
 	// Replies
 	let replyingTo = $state(null);
@@ -41,7 +40,6 @@
 
 	let firebaseRef, typingRef, reactionsRef;
 	let typingTimer;
-	let vvCleanup;
 
 	function scrollToBottom() {
 		tick().then(() => { if (listEl) listEl.scrollTop = listEl.scrollHeight; });
@@ -99,13 +97,6 @@
 	}
 
 	onMount(() => {
-		mobile = window.matchMedia('(max-width: 640px)').matches;
-		if (mobile && window.visualViewport) {
-			const onVV = () => { keyboardOpen = window.innerHeight - window.visualViewport.height > 150; };
-			window.visualViewport.addEventListener('resize', onVV);
-			vvCleanup = () => window.visualViewport.removeEventListener('resize', onVV);
-		}
-
 		markRead();
 		scrollToBottom();
 
@@ -146,7 +137,6 @@
 		if (typingRef) off(typingRef);
 		if (reactionsRef) off(reactionsRef);
 		clearTyping();
-		vvCleanup?.();
 		cancelAttachment();
 	});
 
@@ -358,7 +348,7 @@
 			{/if}
 			<input bind:this={fileInputEl} type="file" style="display:none" onchange={handleFileSelect} disabled={uploading || sending} />
 		</label>
-		<textarea bind:this={inputEl} bind:value={input} onkeydown={onKeydown} oninput={onInput} placeholder="Message {otherUser.name}" rows="1" disabled={sending || uploading}></textarea>
+		<textarea bind:this={inputEl} bind:value={input} onkeydown={onKeydown} oninput={onInput} onfocus={() => keyboardOpen = true} onblur={() => keyboardOpen = false} placeholder="Message {otherUser.name}" rows="1" disabled={sending || uploading}></textarea>
 		<button onclick={send} disabled={sending || uploading || (!input.trim() && !pendingAttachment)} class="btn-send">Send</button>
 	</div>
 </div>

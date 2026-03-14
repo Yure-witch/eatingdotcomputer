@@ -21,7 +21,6 @@
 	let typingUsers = $state([]);
 	let keyboardOpen = $state(false);
 	let inputAreaHeight = $state(0);
-	let mobile = $state(false);
 
 	// Replies
 	let replyingTo = $state(null); // { id, userId, userName, content }
@@ -39,7 +38,6 @@
 
 	let firebaseRef, typingRef, reactionsRef;
 	let typingTimer;
-	let vvCleanup;
 
 	function scrollToBottom() {
 		tick().then(() => { if (listEl) listEl.scrollTop = listEl.scrollHeight; });
@@ -97,13 +95,6 @@
 	}
 
 	onMount(() => {
-		mobile = window.matchMedia('(max-width: 640px)').matches;
-		if (mobile && window.visualViewport) {
-			const onVV = () => { keyboardOpen = window.innerHeight - window.visualViewport.height > 150; };
-			window.visualViewport.addEventListener('resize', onVV);
-			vvCleanup = () => window.visualViewport.removeEventListener('resize', onVV);
-		}
-
 		markRead();
 		scrollToBottom();
 
@@ -145,7 +136,6 @@
 		if (typingRef) off(typingRef);
 		if (reactionsRef) off(reactionsRef);
 		clearTyping();
-		vvCleanup?.();
 		cancelAttachment();
 	});
 
@@ -359,6 +349,8 @@
 			bind:value={input}
 			onkeydown={onKeydown}
 			oninput={onInput}
+			onfocus={() => keyboardOpen = true}
+			onblur={() => keyboardOpen = false}
 			placeholder="Message #{data.channelId}"
 			rows="1"
 			disabled={sending || uploading}

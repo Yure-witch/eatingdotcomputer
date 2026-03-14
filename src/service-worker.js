@@ -25,6 +25,16 @@ self.addEventListener('fetch', (event) => {
 	const url = new URL(event.request.url);
 	if (url.origin !== self.location.origin) return;
 
+	// HTML navigations: network-first so the app shell is always fresh after a deploy.
+	// Falls back to cache only if offline.
+	if (event.request.mode === 'navigate') {
+		event.respondWith(
+			fetch(event.request).catch(() => caches.match(event.request))
+		);
+		return;
+	}
+
+	// Static assets (JS, CSS, fonts, icons): cache-first, update in background.
 	event.respondWith(
 		caches.match(event.request).then((cached) => {
 			const network = fetch(event.request).then((response) => {

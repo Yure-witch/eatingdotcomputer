@@ -2,13 +2,25 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 
-	let keyboardOpen = $state(false);
+	let inputFocused = $state(false);
 
 	onMount(() => {
-		if (!window.visualViewport) return;
-		const handler = () => { keyboardOpen = window.innerHeight - window.visualViewport.height > 150; };
-		window.visualViewport.addEventListener('resize', handler);
-		return () => window.visualViewport.removeEventListener('resize', handler);
+		const onFocusIn = (e) => {
+			if (e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement) {
+				inputFocused = true;
+			}
+		};
+		const onFocusOut = (e) => {
+			if (e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement) {
+				inputFocused = false;
+			}
+		};
+		document.addEventListener('focusin', onFocusIn);
+		document.addEventListener('focusout', onFocusOut);
+		return () => {
+			document.removeEventListener('focusin', onFocusIn);
+			document.removeEventListener('focusout', onFocusOut);
+		};
 	});
 
 	const items = [
@@ -39,7 +51,7 @@
 	];
 </script>
 
-<nav class="bottom-nav" class:hidden={keyboardOpen}>
+<nav class="bottom-nav" class:hidden={inputFocused}>
 	{#each items as item}
 		{@const isActive = item.active($page.url.pathname)}
 		<a href={item.href} class="nav-item" class:active={isActive}>
