@@ -225,7 +225,7 @@
 	{#if otherUser.role === 'instructor'}<span class="badge">instructor</span>{/if}
 </div>
 
-<div class="message-list" bind:this={listEl} style:padding-bottom={mobile ? `${inputAreaHeight}px` : null}>
+<div class="message-list" bind:this={listEl} style:padding-bottom="{inputAreaHeight}px">
 	{#if messages.length === 0}
 		<p class="empty">Start your conversation with {otherUser.name}.</p>
 	{/if}

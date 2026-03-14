@@ -220,7 +220,7 @@
 
 <div class="chat-header"><h1># {data.channelId}</h1></div>
 
-<div class="message-list" bind:this={listEl} style:padding-bottom={mobile ? `${inputAreaHeight}px` : null}>
+<div class="message-list" bind:this={listEl} style:padding-bottom="{inputAreaHeight}px">
 	{#if messages.length === 0}
 		<p class="empty">No messages yet. Say something!</p>
 	{/if}
