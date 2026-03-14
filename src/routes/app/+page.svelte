@@ -159,18 +159,18 @@
 
 <div class="shell">
 	<header>
-		<div class="wordmark-wrap">
-			<a class="wordmark" href="/">eating.computer</a>
+		<a class="wordmark" href="/">eating.computer</a>
+		<div class="header-sub">
 			<ClassSwitcher currentClass={data.currentClass} allClasses={data.allClasses} />
-		</div>
-		<div class="header-right">
-			{#if isInstructor}
-				<a href="/app/manage" class="hdr-link">Manage</a>
-			{/if}
-			<a href="/app/profile/{user.id}" class="hdr-link">{user.name || user.email}</a>
-			<form method="POST" action="?/signout">
-				<button type="submit" class="hdr-btn">Sign out</button>
-			</form>
+			<div class="header-right">
+				{#if isInstructor}
+					<a href="/app/manage" class="hdr-link">Manage</a>
+				{/if}
+				<a href="/app/profile/{user.id}" class="hdr-link">{user.name || user.email}</a>
+				<form method="POST" action="?/signout">
+					<button type="submit" class="hdr-btn">Sign out</button>
+				</form>
+			</div>
 		</div>
 	</header>
 
@@ -436,13 +436,13 @@
 
 	/* Header */
 	header {
-		display: flex; align-items: center; justify-content: space-between;
+		display: flex; align-items: center; gap: 0.75rem;
 		padding: 1rem 1.5rem; border-bottom: 1.5px solid #ddd7cc; flex-shrink: 0;
 	}
-	.wordmark-wrap { display: flex; align-items: center; gap: 0.75rem; }
-	.wordmark { font-family: 'Cambridge', serif; font-size: 1.1rem; color: var(--ink); text-decoration: none; }
+	.wordmark { font-family: 'Cambridge', serif; font-size: 1.1rem; color: var(--ink); text-decoration: none; flex-shrink: 0; }
 	.wordmark:hover { opacity: 0.7; }
-	.header-right { display: flex; align-items: center; gap: 0.6rem; }
+	.header-sub { display: flex; align-items: center; gap: 0.75rem; flex: 1; min-width: 0; }
+	.header-right { display: flex; align-items: center; gap: 0.6rem; margin-left: auto; flex-shrink: 0; }
 	.hdr-link { font-size: 0.82rem; color: #a09688; text-decoration: none; font-weight: 500; }
 	.hdr-link:hover { color: var(--ink); }
 	.hdr-btn {
@@ -684,11 +684,15 @@
 	@media (max-width: 640px) {
 		header {
 			position: fixed; top: 0; left: 0; right: 0; z-index: 10;
-			background: var(--paper); padding: 0.75rem 1rem;
+			background: var(--paper); padding: 0.6rem 1rem 0.5rem;
+			flex-direction: column; align-items: flex-start; gap: 0.2rem;
+		}
+		.header-sub {
+			width: 100%; gap: 0.5rem;
 		}
 		main {
 			padding: 1.25rem 1rem;
-			padding-top: 3.75rem;
+			padding-top: 5rem;
 			padding-bottom: calc(56px + env(safe-area-inset-bottom, 0px) + 1.25rem);
 		}
 		.assign-title { font-size: 1.4rem; }
