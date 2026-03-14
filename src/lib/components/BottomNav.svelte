@@ -53,7 +53,6 @@
 
 <!-- Desktop sidebar -->
 <nav class="sidebar">
-	<a class="sidebar-wordmark" href="/">eating.computer</a>
 	<div class="sidebar-items">
 		{#each items as item}
 			{@const isActive = item.active($page.url.pathname)}
@@ -86,44 +85,39 @@
 		.sidebar {
 			display: flex;
 			flex-direction: column;
+			align-items: center;
 			position: fixed;
 			top: 0; left: 0; bottom: 0;
-			width: 200px;
+			width: 60px;
 			background: var(--paper);
 			border-right: 1.5px solid #e0d9cf;
-			padding: 1.5rem 0.75rem 1.5rem;
-			gap: 0.25rem;
+			padding: 1.25rem 0.25rem 1.5rem;
+			gap: 0.15rem;
 			z-index: 200;
 		}
 
-		.sidebar-wordmark {
-			font-family: 'Cambridge', serif;
-			font-size: 1rem;
-			color: var(--ink);
-			text-decoration: none;
-			padding: 0 0.5rem;
-			margin-bottom: 1.25rem;
-			flex-shrink: 0;
-		}
-		.sidebar-wordmark:hover { opacity: 0.7; }
-
-		.sidebar-items {
+.sidebar-items {
 			display: flex;
 			flex-direction: column;
-			gap: 0.15rem;
+			gap: 0.1rem;
+			width: 100%;
 		}
 
 		.sidebar-item {
 			display: flex;
+			flex-direction: column;
 			align-items: center;
-			gap: 0.65rem;
-			padding: 0.55rem 0.6rem;
-			border-radius: 9px;
+			justify-content: center;
+			gap: 0.2rem;
+			padding: 0.35rem 0.2rem;
+			border-radius: 7px;
 			color: #a09688;
 			text-decoration: none;
-			font-size: 0.9rem;
+			font-size: 0.55rem;
 			font-weight: 500;
 			transition: background 0.12s, color 0.12s;
+			text-align: center;
+			width: 100%;
 		}
 		.sidebar-item:hover { background: #ede8df; color: var(--ink); }
 		.sidebar-item.active { background: #e8e2d8; color: var(--ink); font-weight: 600; }

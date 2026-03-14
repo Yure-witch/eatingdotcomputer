@@ -266,16 +266,6 @@
 				</button>
 			{/if}
 			<div class="bubble-row">
-				{#if !msg.pending && !isMine}
-					<div class="msg-actions">
-						<button class="action-btn" onclick={(e) => openPicker(msg.id, e)} title="React">
-							<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
-						</button>
-						<button class="action-btn" onclick={() => startReply(msg)} title="Reply">
-							<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>
-						</button>
-					</div>
-				{/if}
 				{#if msg.attachment}
 					{#if msg.attachment.mimetype?.startsWith('image/')}
 						<a href={msg.attachment.url} target="_blank" rel="noopener noreferrer" class="bubble bubble-img" class:pending={msg.pending}>
@@ -293,16 +283,6 @@
 				{:else}
 					<p class="bubble" class:pending={msg.pending}>{msg.content}</p>
 				{/if}
-				{#if !msg.pending && isMine}
-					<div class="msg-actions">
-						<button class="action-btn" onclick={(e) => openPicker(msg.id, e)} title="React">
-							<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
-						</button>
-						<button class="action-btn" onclick={() => startReply(msg)} title="Reply">
-							<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>
-						</button>
-					</div>
-				{/if}
 			</div>
 			{#if hasReactions}
 				<div class="reactions">
@@ -314,6 +294,25 @@
 							</button>
 						{/if}
 					{/each}
+				</div>
+			{/if}
+			{#if !msg.pending}
+				<div class="msg-actions">
+					<button class="action-btn" onclick={(e) => openPicker(msg.id, e)} title="React">
+						<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
+					</button>
+					<button class="action-btn" onclick={() => startReply(msg)} title="Reply">
+						<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>
+					</button>
+					<button class="action-btn" title="Reply in thread">
+						<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><line x1="9" y1="10" x2="15" y2="10"/><line x1="9" y1="14" x2="13" y2="14"/></svg>
+					</button>
+					<button class="action-btn" title="Save message">
+						<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+					</button>
+					<button class="action-btn" title="Message effect">
+						<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>
+					</button>
 				</div>
 			{/if}
 		</div>
@@ -418,14 +417,18 @@
 	/* Bubble row */
 	.bubble-row { display: flex; align-items: flex-end; gap: 0.3rem; }
 	.message.mine .bubble-row { flex-direction: row-reverse; }
+
+	/* Action toolbar — appears below each message on hover */
 	.msg-actions {
-		display: flex; flex-direction: column; gap: 0.15rem;
-		opacity: 0; transition: opacity 0.1s; flex-shrink: 0;
+		display: flex; flex-direction: row; gap: 0.18rem;
+		opacity: 0; transition: opacity 0.15s;
+		margin-top: 0.1rem;
 	}
 	.message:hover .msg-actions { opacity: 1; }
+	.message.mine .msg-actions { justify-content: flex-end; }
 	.action-btn {
 		background: #fff; border: 1.5px solid #ddd7cc; border-radius: 6px;
-		padding: 0.22rem 0.28rem; cursor: pointer; color: #a09688;
+		padding: 0.2rem 0.3rem; cursor: pointer; color: #a09688;
 		display: flex; align-items: center; justify-content: center;
 		transition: color 0.1s, border-color 0.1s;
 	}
@@ -539,7 +542,7 @@
 		.chat-header h1 { font-size: 1.1rem; }
 		.message-list { padding: 0.75rem 0.875rem; padding-top: calc(0.75rem + 0.6rem + 1.54rem); }
 		.message { max-width: 88%; }
-		.msg-actions { opacity: 0.35; }
+		.msg-actions { opacity: 0.25; }
 		.message:hover .msg-actions { opacity: 1; }
 		.reply-bar { padding: 0.4rem 0.75rem; }
 		.input-area {
