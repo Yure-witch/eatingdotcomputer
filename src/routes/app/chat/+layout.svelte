@@ -95,11 +95,19 @@
 	}
 
 	onMount(async () => {
-		try {
-			await signInWithCustomToken(auth, data.firebaseToken);
-		} catch (e) {
-			console.error('Firebase sign-in failed:', e);
-			firebaseError = true;
+		const MAX_RETRIES = 5;
+		for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+			try {
+				await signInWithCustomToken(auth, data.firebaseToken);
+				break; // success
+			} catch (e) {
+				if (attempt === MAX_RETRIES) {
+					console.error('Firebase sign-in failed after 5 attempts:', e);
+					firebaseError = true;
+				} else {
+					await new Promise((r) => setTimeout(r, 1000 * attempt)); // 1s, 2s, 3s, 4s
+				}
+			}
 		}
 		firebaseReady = true;
 
@@ -364,7 +372,9 @@
 					</div>
 				</div>
 			{:else}
-				{@render children()}
+				{#key $page.url.pathname}
+					{@render children()}
+				{/key}
 			{/if}
 		{:else}
 			<div class="loading">Connecting…</div>
