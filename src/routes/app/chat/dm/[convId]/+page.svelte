@@ -524,7 +524,7 @@
 		.message:hover .msg-actions { opacity: 1; }
 		.reply-bar { padding: 0.4rem 0.75rem; }
 		.input-area {
-			position: fixed; bottom: 56px; left: 0; right: 0;
+			position: fixed; bottom: calc(56px + env(safe-area-inset-bottom, 0px)); left: 0; right: 0;
 			background: var(--paper); z-index: 20;
 		}
 		.input-area.kb-open { bottom: 0; }

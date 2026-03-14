@@ -74,8 +74,8 @@
 			display: flex;
 			position: fixed;
 			bottom: 0; left: 0; right: 0;
-			height: 56px;
-			padding-bottom: env(safe-area-inset-bottom, 0);
+			height: calc(56px + env(safe-area-inset-bottom, 0px));
+			padding-bottom: env(safe-area-inset-bottom, 0px);
 			background: #1a1a1a;
 			border-top: 1px solid #2a2a2a;
 			z-index: 1000;

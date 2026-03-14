@@ -529,7 +529,7 @@
 
 	/* ── Mobile ── */
 	@media (max-width: 640px) {
-		.chat-shell { height: calc(100dvh - 56px); }
+		.chat-shell { height: calc(100dvh - 56px - env(safe-area-inset-bottom, 0px)); }
 		.sidebar {
 			position: fixed; inset: 0; z-index: 1200;
 			width: 85vw; max-width: 300px;
