@@ -2,6 +2,8 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 
+	let { isInstructor = false } = $props();
+
 	let inputFocused = $state(false);
 
 	onMount(() => {
@@ -23,7 +25,7 @@
 		};
 	});
 
-	const items = [
+	const baseItems = [
 		{
 			href: '/app',
 			label: 'Home',
@@ -49,22 +51,18 @@
 			icon: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`
 		}
 	];
+
+	const manageItem = {
+		href: '/app/manage',
+		label: 'Manage',
+		active: (p) => p.startsWith('/app/manage'),
+		icon: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>`
+	};
+
+	const items = $derived(isInstructor ? [...baseItems, manageItem] : baseItems);
 </script>
 
-<!-- Desktop sidebar -->
-<nav class="sidebar">
-	<div class="sidebar-items">
-		{#each items as item}
-			{@const isActive = item.active($page.url.pathname)}
-			<a href={item.href} class="sidebar-item" class:active={isActive}>
-				{@html item.icon}
-				<span>{item.label}</span>
-			</a>
-		{/each}
-	</div>
-</nav>
-
-<!-- Mobile bottom nav -->
+<!-- Mobile bottom nav only — desktop nav is in the global sidebar (app/+layout.svelte) -->
 <nav class="bottom-nav" class:hidden={inputFocused}>
 	{#each items as item}
 		{@const isActive = item.active($page.url.pathname)}
@@ -76,60 +74,8 @@
 </nav>
 
 <style>
-	/* ── Desktop sidebar ── */
-	.sidebar {
-		display: none;
-	}
-
-	@media (min-width: 641px) {
-		.sidebar {
-			display: flex;
-			flex-direction: column;
-			align-items: center;
-			position: fixed;
-			top: 0; left: 0; bottom: 0;
-			width: 60px;
-			background: var(--paper);
-			border-right: 1.5px solid #e0d9cf;
-			padding: 1.25rem 0.25rem 1.5rem;
-			gap: 0.15rem;
-			z-index: 200;
-		}
-
-.sidebar-items {
-			display: flex;
-			flex-direction: column;
-			gap: 0.1rem;
-			width: 100%;
-		}
-
-		.sidebar-item {
-			display: flex;
-			flex-direction: column;
-			align-items: center;
-			justify-content: center;
-			gap: 0.2rem;
-			padding: 0.35rem 0.2rem;
-			border-radius: 7px;
-			color: #a09688;
-			text-decoration: none;
-			font-size: 0.55rem;
-			font-weight: 500;
-			transition: background 0.12s, color 0.12s;
-			text-align: center;
-			width: 100%;
-		}
-		.sidebar-item:hover { background: #ede8df; color: var(--ink); }
-		.sidebar-item.active { background: #e8e2d8; color: var(--ink); font-weight: 600; }
-	}
-
-	/* ── Mobile bottom nav ── */
-	.bottom-nav {
-		display: none;
-	}
-	.bottom-nav.hidden {
-		display: none !important;
-	}
+	.bottom-nav { display: none; }
+	.bottom-nav.hidden { display: none !important; }
 
 	@media (max-width: 640px) {
 		.bottom-nav {
@@ -155,7 +101,6 @@
 			transition: color 0.15s;
 			-webkit-tap-highlight-color: transparent;
 		}
-
 		.nav-item.active { color: #f7f2ea; }
 		.nav-item:not(.active):active { color: #888; }
 

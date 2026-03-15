@@ -70,12 +70,6 @@ self.addEventListener('push', (event) => {
 		})
 	);
 
-	// Also forward to any open clients so in-app toasts appear (best-effort, outside waitUntil)
-	self.clients.matchAll({ type: 'window' }).then((clientList) => {
-		for (const client of clientList) {
-			try { client.postMessage({ type: 'push', data }); } catch {}
-		}
-	}).catch(() => {});
 });
 
 self.addEventListener('notificationclick', (event) => {

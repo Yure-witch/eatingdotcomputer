@@ -59,7 +59,12 @@ export async function load({ locals, parent }) {
 		for (const [uid, val] of Object.entries(presenceSnap.val())) {
 			presenceData[uid] = {
 				online: val.online && (val.lastSeen ?? 0) > now - PRESENCE_TTL,
-				lastSeen: val.lastSeen ?? null
+				lastSeen: val.lastSeen ?? null,
+				ua: val.ua ?? null,
+				screen: val.screen ?? null,
+				pwa: val.pwa ?? null,
+				mobile: val.mobile ?? null,
+				notif: val.notif ?? null
 			};
 		}
 	}
@@ -73,7 +78,10 @@ export async function load({ locals, parent }) {
 		online: presenceData[String(r.id)]?.online ?? false,
 		lastSeen: presenceData[String(r.id)]?.lastSeen ?? null,
 		ua: presenceData[String(r.id)]?.ua ?? null,
-		screen: presenceData[String(r.id)]?.screen ?? null
+		screen: presenceData[String(r.id)]?.screen ?? null,
+		pwa: presenceData[String(r.id)]?.pwa ?? null,
+		mobile: presenceData[String(r.id)]?.mobile ?? null,
+		notif: presenceData[String(r.id)]?.notif ?? null
 	}));
 
 	// Activity: hourly for last 7 days (drives 12h / 1d / 7d views)
@@ -127,6 +135,64 @@ export async function load({ locals, parent }) {
 		daily: buildSeries(dailyRows.rows)
 	};
 
+	// User device breakdown: hourly (drives 12h/1d/7d) — pings × 5 = minutes
+	const udHourlyRows = db ? await db.execute({
+		sql: `SELECT u.id AS user_id, u.name,
+		             strftime('%Y-%m-%dT%H:00', ua.logged_at) AS bucket,
+		             COALESCE(ua.device_type, 'unknown') AS device_type,
+		             CASE WHEN ps.user_id IS NOT NULL THEN 1 ELSE 0 END AS has_notif,
+		             COUNT(*) AS pings
+		      FROM user_activity ua
+		      JOIN users u ON ua.user_id = u.id
+		      LEFT JOIN (SELECT DISTINCT user_id FROM push_subscriptions) ps ON ua.user_id = ps.user_id
+		      WHERE u.role != 'instructor'
+		        AND ua.logged_at >= datetime('now', '-7 days')
+		        AND EXISTS (
+		              SELECT 1 FROM class_memberships cm
+		              WHERE cm.user_id = u.id AND cm.status = 'approved' AND cm.class_id = ?
+		            )
+		      GROUP BY ua.user_id, bucket, device_type, has_notif
+		      ORDER BY bucket ASC`,
+		args: [classId]
+	}) : { rows: [] };
+
+	// User device breakdown: daily (drives 1m/6m)
+	const udDailyRows = db ? await db.execute({
+		sql: `SELECT u.id AS user_id, u.name,
+		             date(ua.logged_at) AS bucket,
+		             COALESCE(ua.device_type, 'unknown') AS device_type,
+		             CASE WHEN ps.user_id IS NOT NULL THEN 1 ELSE 0 END AS has_notif,
+		             COUNT(*) AS pings
+		      FROM user_activity ua
+		      JOIN users u ON ua.user_id = u.id
+		      LEFT JOIN (SELECT DISTINCT user_id FROM push_subscriptions) ps ON ua.user_id = ps.user_id
+		      WHERE u.role != 'instructor'
+		        AND ua.logged_at >= datetime('now', '-180 days')
+		        AND EXISTS (
+		              SELECT 1 FROM class_memberships cm
+		              WHERE cm.user_id = u.id AND cm.status = 'approved' AND cm.class_id = ?
+		            )
+		      GROUP BY ua.user_id, bucket, device_type, has_notif
+		      ORDER BY bucket ASC`,
+		args: [classId]
+	}) : { rows: [] };
+
+	function mapUdRows(rows) {
+		return rows.map((r) => ({
+			userId: String(r.user_id),
+			name: String(r.name ?? ''),
+			bucket: String(r.bucket),
+			deviceType: String(r.device_type),
+			hasNotif: Number(r.has_notif) === 1,
+			pings: Number(r.pings)
+		}));
+	}
+
+	const userDeviceActivity = {
+		hourly: mapUdRows(udHourlyRows.rows),
+		daily: mapUdRows(udDailyRows.rows)
+	};
+
 	// Pending class membership requests — scoped to current class
 	const pendingResult = db ? await db.execute({
 		sql: `SELECT cm.id, cm.class_id, cm.user_id, cm.requested_at,
@@ -153,10 +219,32 @@ export async function load({ locals, parent }) {
 		website: String(r.website ?? '')
 	}));
 
+	// Avg time in app (minutes/day) grouped by device_type × is_pwa × notifications on/off
+	const deviceNotifRows = db ? await db.execute({
+		sql: `SELECT
+		          ua.device_type,
+		          ua.is_pwa,
+		          CASE WHEN ps.user_id IS NOT NULL THEN 1 ELSE 0 END AS has_notif,
+		          CAST(COUNT(*) AS REAL) / MAX(1, COUNT(DISTINCT ua.user_id || '|' || date(ua.logged_at))) * 5 AS avg_minutes
+		      FROM user_activity ua
+		      LEFT JOIN (SELECT DISTINCT user_id FROM push_subscriptions) ps ON ua.user_id = ps.user_id
+		      WHERE ua.logged_at >= datetime('now', '-30 days')
+		        AND ua.device_type IS NOT NULL
+		      GROUP BY ua.device_type, ua.is_pwa, has_notif`,
+		args: []
+	}) : { rows: [] };
+
+	const deviceNotifData = deviceNotifRows.rows.map((r) => ({
+		deviceType: String(r.device_type ?? ''),
+		isPwa: Number(r.is_pwa) === 1,
+		hasNotif: Number(r.has_notif) === 1,
+		avgMinutes: Number(r.avg_minutes ?? 0)
+	}));
+
 	// Non-blocking: send reminders to inactive students for assignments posted 3+ days ago
 	notifyInactiveStudents().catch(() => {});
 
-	return { weeks, maxWeek, members, activityByUser, pendingRequests, classId };
+	return { weeks, maxWeek, members, activityByUser, userDeviceActivity, deviceNotifData, pendingRequests, classId };
 }
 
 const ALL_TYPES = ['link', 'image', 'video'];

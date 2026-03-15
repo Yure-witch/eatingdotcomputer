@@ -13,14 +13,13 @@
 	--ink: #0c0c0c;
 	--paper: #f7f2ea;
 	--accent: #ffb347;
-	--sidebar-width: 60px;
+	--sidebar-width: 220px;
 }
 
-/* Push app pages right of the desktop sidebar */
+/* Hide per-page wordmarks on desktop — sidebar has the logo */
 @media (min-width: 641px) {
-	.app-shell {
-		margin-left: var(--sidebar-width);
-	}
+	.wordmark { display: none !important; }
+	.wordmark-wrap { gap: 0 !important; }
 }
 /*  */
 *,

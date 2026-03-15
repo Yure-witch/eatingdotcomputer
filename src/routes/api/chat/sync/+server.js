@@ -55,11 +55,17 @@ export async function GET({ request }) {
 			const userName = userMap[userId]?.name ?? msg.userName ?? 'Unknown';
 			const userRole = userMap[userId]?.role ?? msg.userRole ?? 'student';
 			const replyToId = msg.rt?.id ?? null;
+			const attUrl      = msg.att?.url  ?? null;
+			const attFilename = msg.att?.name ?? null;
+			const attMimetype = msg.att?.type ?? null;
+			const attSize     = msg.att?.size ?? null;
 			await turso.execute({
 				sql: `INSERT OR IGNORE INTO chat_messages
-				      (id, conversation_id, user_id, user_name, user_role, content, created_at, reply_to_id)
-				      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-				args: [msg.key, conversationId, userId, userName, userRole, content, new Date(msg.ts).toISOString(), replyToId]
+				      (id, conversation_id, user_id, user_name, user_role, content, created_at, reply_to_id,
+				       attachment_url, attachment_filename, attachment_mimetype, attachment_size)
+				      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				args: [msg.key, conversationId, userId, userName, userRole, content, new Date(msg.ts).toISOString(), replyToId,
+				       attUrl, attFilename, attMimetype, attSize]
 			});
 
 			// Archive reactions for this message → message_reactions table

@@ -7,6 +7,7 @@
 
 	let links = $state(data.links);
 	let uploadedFiles = $state(data.uploadedFiles ?? []);
+	let starredMessages = $state(data.starredMessages ?? []);
 
 	onMount(() => {
 		// Fetch titles for uncached links — fire in parallel, update as they resolve
@@ -53,15 +54,12 @@
 			<a class="wordmark" href="/app">eating.computer</a>
 			<ClassSwitcher {data} />
 		</div>
-		<div class="header-right">
-			<a class="back-link" href="/app">Dashboard</a>
-		</div>
 	</header>
 
 	<main>
 		<div class="page-header">
 			<h1>Files</h1>
-			<p class="subtitle">Uploads and links shared in class</p>
+			<p class="subtitle">Uploads, links, and starred messages</p>
 		</div>
 
 		{#if uploadedFiles.length > 0}
@@ -121,7 +119,33 @@
 			</div>
 		{/if}
 
-		{#if uploadedFiles.length === 0 && links.length === 0}
+		{#if starredMessages.length > 0}
+			<p class="section-label">Starred messages</p>
+			<div class="starred-list">
+				{#each starredMessages as s (s.id)}
+					<div class="starred-card">
+						<div class="starred-meta">
+							<span class="starred-author">{s.authorName}</span>
+							<span class="chip-dot">·</span>
+							<span class="starred-conv">{s.convName ? `#${s.convName}` : 'DM'}</span>
+							<span class="chip-dot">·</span>
+							<span>{formatAge(s.starredAt)}</span>
+						</div>
+						{#if s.content}
+							<p class="starred-content">{s.content}</p>
+						{/if}
+						{#if s.attachment}
+							<a href={s.attachment.url} target="_blank" rel="noopener noreferrer" class="starred-att">
+								<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+								{s.attachment.filename}
+							</a>
+						{/if}
+					</div>
+				{/each}
+			</div>
+		{/if}
+
+		{#if uploadedFiles.length === 0 && links.length === 0 && starredMessages.length === 0}
 			<div class="empty-state">
 				<div class="empty-icon">
 					<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>
@@ -231,6 +255,23 @@
 		line-height: 1.5;
 		margin: 0;
 	}
+
+	/* ── Starred messages ── */
+	.starred-list { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 2rem; }
+	.starred-card {
+		background: #fff; border: 1.5px solid #ddd7cc; border-radius: 10px;
+		padding: 0.75rem 1rem; display: flex; flex-direction: column; gap: 0.35rem;
+	}
+	.starred-meta { display: flex; align-items: center; gap: 0.4rem; font-size: 0.75rem; color: #a09688; flex-wrap: wrap; }
+	.starred-author { font-weight: 600; color: var(--ink); }
+	.starred-conv { font-weight: 500; }
+	.starred-content { font-size: 0.875rem; color: var(--ink); margin: 0; white-space: pre-wrap; word-break: break-word; line-height: 1.45; }
+	.starred-att {
+		display: inline-flex; align-items: center; gap: 0.35rem;
+		font-size: 0.78rem; color: var(--ink); text-decoration: underline;
+		text-underline-offset: 2px; opacity: 0.7;
+	}
+	.starred-att:hover { opacity: 1; }
 
 	/* ── Link chips ── */
 	.links-grid {

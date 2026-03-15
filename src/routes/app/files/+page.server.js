@@ -12,7 +12,7 @@ export async function load({ parent }) {
 	const classId = parentData.currentClass?.id ?? 'idc-fall-2026';
 	const userId = parentData.currentUser?.id;
 
-	if (!db) return { links: [], uploadedFiles: [] };
+	if (!db) return { links: [], uploadedFiles: [], starredMessages: [] };
 
 	// All messages from channels scoped to this class, newest first
 	const result = await db.execute({
@@ -83,5 +83,27 @@ export async function load({ parent }) {
 		convName: r.conv_name ? String(r.conv_name) : String(r.context_id)
 	}));
 
-	return { links, uploadedFiles };
+	const starredResult = userId ? await db.execute({
+		sql: `SELECT id, message_id, conv_id, conv_name, content, author_name, author_id,
+		             attachment_url, attachment_filename, attachment_mimetype, starred_at
+		      FROM starred_messages WHERE user_id = ? ORDER BY starred_at DESC`,
+		args: [userId]
+	}) : { rows: [] };
+
+	const starredMessages = starredResult.rows.map((r) => ({
+		id: String(r.id),
+		messageId: String(r.message_id),
+		convId: String(r.conv_id),
+		convName: r.conv_name ? String(r.conv_name) : null,
+		content: r.content ? String(r.content) : null,
+		authorName: String(r.author_name ?? ''),
+		attachment: r.attachment_url ? {
+			url: String(r.attachment_url),
+			filename: String(r.attachment_filename ?? ''),
+			mimetype: String(r.attachment_mimetype ?? '')
+		} : null,
+		starredAt: new Date(String(r.starred_at).endsWith('Z') ? r.starred_at : r.starred_at + 'Z').getTime()
+	}));
+
+	return { links, uploadedFiles, starredMessages };
 }

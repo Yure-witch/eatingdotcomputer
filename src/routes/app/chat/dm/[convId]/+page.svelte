@@ -1,5 +1,5 @@
 <script>
-	import { onMount, onDestroy, tick } from 'svelte';
+	import { onMount, onDestroy, tick, getContext } from 'svelte';
 	import { db } from '$lib/firebase.js';
 	import { ref, onChildAdded, onValue, off, query, limitToLast, set, remove } from 'firebase/database';
 	import { normaliseMessage, buildUserMap, formatTime } from '$lib/chat.js';
@@ -8,6 +8,7 @@
 
 	let { data } = $props();
 
+	const openSidebar = getContext('openSidebar');
 	const otherUserId = data.convId.replace(data.currentUser.id, '').replace(/^_|_$/, '');
 	const otherUser = data.users.find((u) => u.id === otherUserId) ?? { name: 'Unknown', id: otherUserId };
 
@@ -93,6 +94,54 @@
 		pickerMsgId = msgId;
 	}
 
+	let kebabOpenId = $state(null);
+	let editingMsgId = $state(null);
+	let editContent = $state('');
+	let starredIds = $state(new Set(data.starredMessageIds ?? []));
+
+	function startEdit(msg) {
+		editingMsgId = msg.id;
+		editContent = msg.content;
+	}
+
+	async function saveEdit() {
+		const msgId = editingMsgId;
+		const content = editContent.trim();
+		if (!content || !msgId) { editingMsgId = null; return; }
+		editingMsgId = null;
+		messages = messages.map((m) => m.id === msgId ? { ...m, content, edited: true } : m);
+		await fetch('/api/chat/edit', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ messageId: msgId, conversationId: data.convId, content })
+		}).catch(() => {});
+	}
+
+	async function toggleStar(msg) {
+		const wasStarred = starredIds.has(msg.id);
+		starredIds = new Set(wasStarred
+			? [...starredIds].filter((id) => id !== msg.id)
+			: [...starredIds, msg.id]);
+		await fetch('/api/chat/star', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				messageId: msg.id,
+				conversationId: data.convId,
+				snapshot: { content: msg.content, authorName: msg.userName, authorId: msg.userId, attachment: msg.attachment ?? null, convName: null }
+			})
+		}).catch(() => {});
+	}
+
+	async function deleteMessage(msg) {
+		messages = messages.filter((m) => m.id !== msg.id);
+		await fetch('/api/chat/delete', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ messageId: msg.id, conversationId: data.convId, authorId: msg.userId })
+		}).catch(() => {});
+	}
+
 	async function toggleReaction(msgId, emoji) {
 		const uid = data.currentUser.id;
 		const alreadyReacted = !!reactions[msgId]?.[emoji]?.[uid];
@@ -138,7 +187,15 @@
 
 		reactionsRef = ref(db, `dms/${data.convId}/reactions`);
 		onValue(reactionsRef, (snap) => {
-			reactions = { ...(data.initialReactions ?? {}), ...(snap.exists() ? snap.val() : {}) };
+			const fbReactions = snap.exists() ? snap.val() : {};
+			const base = data.initialReactions ?? {};
+			// Deep merge per message: Turso base → current state (optimistic) → Firebase
+			const merged = {};
+			const allMsgIds = new Set([...Object.keys(base), ...Object.keys(reactions), ...Object.keys(fbReactions)]);
+			for (const msgId of allMsgIds) {
+				merged[msgId] = { ...(base[msgId] ?? {}), ...(reactions[msgId] ?? {}), ...(fbReactions[msgId] ?? {}) };
+			}
+			reactions = merged;
 		});
 	});
 
@@ -237,6 +294,9 @@
 <svelte:head><title>DM: {otherUser.name} — eating.computer</title></svelte:head>
 
 <div class="chat-header">
+	<button class="sidebar-toggle" onclick={openSidebar} aria-label="Open menu">
+		<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+	</button>
 	<span class="avatar">{otherUser.name[0].toUpperCase()}</span>
 	<h1>{otherUser.name}</h1>
 	{#if otherUser.role === 'instructor'}<span class="badge">instructor</span>{/if}
@@ -271,6 +331,14 @@
 						<a href={msg.attachment.url} target="_blank" rel="noopener noreferrer" class="bubble bubble-img" class:pending={msg.pending}>
 							<img src={msg.attachment.url} alt={msg.attachment.filename} onload={scrollIfNearBottom} />
 						</a>
+					{:else if msg.attachment.mimetype?.startsWith('video/')}
+						<div class="bubble bubble-video" class:pending={msg.pending}>
+							<video src={msg.attachment.url} controls preload="metadata" class="att-video" onloadedmetadata={scrollIfNearBottom}></video>
+							<div class="att-info att-info-video">
+								<span class="att-name">{msg.attachment.filename}</span>
+								<span class="att-size">{formatSize(msg.attachment.size)}</span>
+							</div>
+						</div>
 					{:else}
 						<a href={msg.attachment.url} target="_blank" rel="noopener noreferrer" class="bubble bubble-file" class:pending={msg.pending} class:mine={isMine}>
 							<FileTypeIcon filename={msg.attachment.filename} mimetype={msg.attachment.mimetype} iconSize={36} />
@@ -280,8 +348,18 @@
 							</div>
 						</a>
 					{/if}
+				{:else if editingMsgId === msg.id}
+					<div class="bubble edit-bubble" class:mine={isMine}>
+						<textarea class="edit-textarea" bind:value={editContent} rows="2"
+							onkeydown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveEdit(); } if (e.key === 'Escape') editingMsgId = null; }}
+						></textarea>
+						<div class="edit-controls">
+							<button class="edit-cancel" onclick={() => editingMsgId = null}>Cancel</button>
+							<button class="edit-save" onclick={saveEdit}>Save</button>
+						</div>
+					</div>
 				{:else}
-					<p class="bubble" class:pending={msg.pending}>{msg.content}</p>
+					<p class="bubble" class:pending={msg.pending}>{msg.content}{#if msg.edited}<span class="edited-tag"> (edited)</span>{/if}</p>
 				{/if}
 			</div>
 			{#if hasReactions}
@@ -291,6 +369,11 @@
 						{#if count > 0}
 							<button class="reaction-chip" class:reacted={data.currentUser.id in users} onclick={() => toggleReaction(msg.id, emoji)}>
 								{emoji} <span class="reaction-count">{count}</span>
+								<div class="reaction-tooltip">
+									{#each Object.keys(users) as uid}
+										<div>{userMap[uid]?.name ?? 'Someone'}</div>
+									{/each}
+								</div>
 							</button>
 						{/if}
 					{/each}
@@ -298,21 +381,42 @@
 			{/if}
 			{#if !msg.pending}
 				<div class="msg-actions">
-					<button class="action-btn" onclick={(e) => openPicker(msg.id, e)} title="React">
-						<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
+					<button class="action-btn" onclick={(e) => openPicker(msg.id, e)} title="Add reaction">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
 					</button>
 					<button class="action-btn" onclick={() => startReply(msg)} title="Reply">
-						<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>
 					</button>
-					<button class="action-btn" title="Reply in thread">
-						<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><line x1="9" y1="10" x2="15" y2="10"/><line x1="9" y1="14" x2="13" y2="14"/></svg>
+					<button class="action-btn" class:action-btn-starred={starredIds.has(msg.id)} onclick={() => toggleStar(msg)} title={starredIds.has(msg.id) ? 'Unstar' : 'Star message'}>
+						{#if starredIds.has(msg.id)}
+							<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+						{:else}
+							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+						{/if}
 					</button>
-					<button class="action-btn" title="Save message">
-						<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+					<button class="action-btn" title="Add effect">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>
 					</button>
-					<button class="action-btn" title="Message effect">
-						<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>
-					</button>
+					{#if isMine}
+						<button class="action-btn" onclick={() => startEdit(msg)} title="Edit message">
+							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+						</button>
+						<button class="action-btn action-btn-delete" onclick={() => { if (confirm('Delete this message?')) deleteMessage(msg); }} title="Delete">
+							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+						</button>
+					{:else if data.currentUser.role === 'instructor'}
+						<div class="kebab-wrap">
+							<button class="action-btn" onclick={() => kebabOpenId = kebabOpenId === msg.id ? null : msg.id} title="More">
+								<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+							</button>
+							{#if kebabOpenId === msg.id}
+								<div class="kebab-overlay" onclick={() => kebabOpenId = null} role="presentation"></div>
+								<div class="kebab-menu">
+									<button class="kebab-item kebab-item-delete" onclick={() => { kebabOpenId = null; if (confirm('Delete this message?')) deleteMessage(msg); }}>Delete</button>
+								</div>
+							{/if}
+						</div>
+					{/if}
 				</div>
 			{/if}
 		</div>
@@ -374,7 +478,16 @@
 		display: flex; align-items: center; gap: 0.75rem;
 		padding: 1rem 1.5rem 0.75rem; border-bottom: 1.5px solid #ddd7cc; flex-shrink: 0;
 	}
-	.chat-header h1 { font-family: 'Cambridge', serif; font-size: 1.25rem; font-weight: 400; margin: 0; }
+	.chat-header h1 { font-family: 'Cambridge', serif; font-size: 1.25rem; font-weight: 400; margin: 0; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+	.sidebar-toggle {
+		display: none;
+		background: none; border: none; color: var(--ink);
+		cursor: pointer; padding: 0.3rem; border-radius: 6px;
+		flex-shrink: 0; align-items: center; justify-content: center;
+		-webkit-tap-highlight-color: transparent;
+	}
+	.sidebar-toggle:active { background: rgba(0,0,0,0.06); }
 	.avatar {
 		width: 28px; height: 28px; border-radius: 7px; background: var(--ink); color: var(--paper);
 		font-size: 0.8rem; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
@@ -390,7 +503,7 @@
 	}
 	.message-list::-webkit-scrollbar { display: none; }
 	.empty { color: #a09688; font-size: 0.9rem; text-align: center; margin: auto; }
-	.message { display: flex; flex-direction: column; max-width: 75%; gap: 0.15rem; }
+	.message { display: flex; flex-direction: column; max-width: 75%; gap: 0.15rem; position: relative; }
 	.message.mine { align-self: flex-end; align-items: flex-end; }
 	.message:not(.mine) { align-self: flex-start; align-items: flex-start; }
 	.message.first { margin-top: 0.75rem; }
@@ -418,21 +531,70 @@
 	.bubble-row { display: flex; align-items: flex-end; gap: 0.3rem; }
 	.message.mine .bubble-row { flex-direction: row-reverse; }
 
-	/* Action toolbar — appears below each message on hover */
+	/* Action toolbar — floats above message on hover, takes no vertical space */
 	.msg-actions {
-		display: flex; flex-direction: row; gap: 0.18rem;
-		opacity: 0; transition: opacity 0.15s;
-		margin-top: 0.1rem;
+		position: absolute;
+		top: 0; right: 0;
+		z-index: 5;
+		display: flex; flex-direction: row; gap: 0;
+		background: #fff; border: 1.5px solid #ddd7cc; border-radius: 10px;
+		padding: 0; overflow: hidden;
+		box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+		opacity: 0; pointer-events: none;
+		transition: opacity 0.12s;
 	}
-	.message:hover .msg-actions { opacity: 1; }
-	.message.mine .msg-actions { justify-content: flex-end; }
+	.message:hover .msg-actions { opacity: 1; pointer-events: auto; }
 	.action-btn {
-		background: #fff; border: 1.5px solid #ddd7cc; border-radius: 6px;
-		padding: 0.2rem 0.3rem; cursor: pointer; color: #a09688;
+		background: transparent; border: none; border-radius: 0;
+		width: 40px; height: 40px; padding: 10px; cursor: pointer; color: #a09688;
 		display: flex; align-items: center; justify-content: center;
-		transition: color 0.1s, border-color 0.1s;
+		transition: color 0.1s, background 0.1s;
+		flex-shrink: 0;
 	}
-	.action-btn:hover { color: var(--ink); border-color: #b0a898; }
+	.action-btn:hover { color: var(--ink); background: rgba(0,0,0,0.06); }
+	.action-btn-delete:hover { color: #c0392b; background: rgba(192,57,43,0.08); }
+	.action-btn-starred { color: #e6a817; }
+	.action-btn-starred:hover { color: #c8900f; background: rgba(230,168,23,0.1); }
+
+	/* Edit mode */
+	.edit-bubble { padding: 0.4rem !important; min-width: 220px; background: #fff !important; border: 1.5px solid var(--ink) !important; }
+	.edit-textarea {
+		width: 100%; min-height: 56px; padding: 0.4rem 0.5rem;
+		border: none; background: transparent; font-family: inherit;
+		font-size: 0.9rem; color: var(--ink); resize: vertical;
+		outline: none; display: block; field-sizing: content;
+	}
+	.edit-controls { display: flex; gap: 0.25rem; justify-content: flex-end; margin-top: 0.25rem; }
+	.edit-cancel {
+		padding: 0.25rem 0.65rem; background: none; border: none;
+		font-family: inherit; font-size: 0.78rem; color: #a09688; cursor: pointer; border-radius: 5px;
+	}
+	.edit-cancel:hover { background: #f0ece4; color: var(--ink); }
+	.edit-save {
+		padding: 0.25rem 0.65rem; background: var(--ink); color: var(--paper);
+		border: none; border-radius: 5px; font-family: inherit; font-size: 0.78rem;
+		font-weight: 600; cursor: pointer;
+	}
+	.edit-save:hover { opacity: 0.8; }
+	.edited-tag { font-size: 0.68rem; opacity: 0.5; font-style: italic; }
+
+	.kebab-wrap { position: relative; }
+	.kebab-overlay { position: fixed; inset: 0; z-index: 20; }
+	.kebab-menu {
+		position: absolute; top: calc(100% + 4px); right: 0; z-index: 21;
+		background: #fff; border: 1.5px solid #ddd7cc; border-radius: 8px;
+		box-shadow: 0 4px 16px rgba(0,0,0,0.12); min-width: 110px; overflow: hidden;
+	}
+	.kebab-item {
+		display: block; width: 100%; text-align: left;
+		padding: 0.5rem 0.85rem; font-family: inherit; font-size: 0.82rem;
+		background: none; border: none; cursor: pointer; color: var(--ink);
+		transition: background 0.1s;
+	}
+	.kebab-item:hover { background: #f5f0e8; }
+	.kebab-item-delete { color: #c0392b; }
+	.kebab-item-delete:hover { background: #fff0f0; }
+
 
 	.bubble {
 		margin: 0; padding: 0.55rem 0.85rem; border-radius: 14px;
@@ -444,12 +606,20 @@
 
 	.bubble-img {
 		padding: 0; overflow: hidden; display: block; max-width: 260px; border-radius: 14px;
-		text-decoration: none;
+		text-decoration: none; background: transparent !important; border-color: transparent !important;
 	}
 	.bubble-img img {
 		display: block; max-width: 260px; max-height: 320px;
 		width: 100%; height: auto; object-fit: cover;
 	}
+	.bubble-video {
+		padding: 0.5rem; max-width: 320px; display: block;
+	}
+	.att-video {
+		display: block; width: 100%; max-height: 400px;
+		border-radius: 8px; background: #000;
+	}
+	.att-info-video { padding: 0.1rem 0.35rem 0; }
 	.bubble-file {
 		display: flex; align-items: center; gap: 0.65rem;
 		padding: 0.6rem 0.85rem; text-decoration: none; color: var(--ink);
@@ -463,6 +633,7 @@
 	/* Reactions */
 	.reactions { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.2rem; }
 	.reaction-chip {
+		position: relative;
 		display: flex; align-items: center; gap: 0.22rem;
 		background: #f5f0e8; border: 1.5px solid #ddd7cc; border-radius: 99px;
 		padding: 0.12rem 0.5rem; font-size: 0.85rem; cursor: pointer;
@@ -471,6 +642,20 @@
 	.reaction-chip:hover { background: #ede8df; border-color: #c8c1b4; }
 	.reaction-chip.reacted { background: #e8f0fe; border-color: #a0b8f0; }
 	.reaction-count { font-size: 0.72rem; color: #555; font-weight: 600; }
+	.reaction-tooltip {
+		display: none;
+		position: absolute;
+		bottom: calc(100% + 6px);
+		left: 50%; transform: translateX(-50%);
+		background: #1a1a1a; color: #f7f2ea;
+		border-radius: 7px; padding: 0.35rem 0.65rem;
+		font-size: 0.72rem; white-space: nowrap;
+		z-index: 30; pointer-events: none;
+		flex-direction: column; gap: 0.1rem;
+		box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+		text-align: left;
+	}
+	.reaction-chip:hover .reaction-tooltip { display: flex; }
 
 	/* Emoji picker */
 	.picker-overlay { position: fixed; inset: 0; z-index: 40; }
@@ -534,22 +719,20 @@
 	.btn-send:disabled { opacity: 0.4; cursor: default; }
 
 	@media (max-width: 640px) {
+		.sidebar-toggle { display: flex; }
 		.chat-header {
-			position: fixed; top: 0; left: 0; right: 0;
-			padding: 0.75rem 1rem 0.6rem; padding-left: 52px;
-			background: var(--paper); z-index: 12;
+			padding: 0.6rem 0.75rem 0.5rem;
+			gap: 0.5rem;
+			background: var(--paper);
 		}
 		.chat-header h1 { font-size: 1.1rem; }
-		.message-list { padding: 0.75rem 0.875rem; padding-top: calc(0.75rem + 0.6rem + 1.54rem); }
+		.message-list { padding: 0.75rem 0.875rem; }
 		.message { max-width: 88%; }
-		.msg-actions { opacity: 0.25; }
-		.message:hover .msg-actions { opacity: 1; }
+		.msg-actions { opacity: 0; }
 		.reply-bar { padding: 0.4rem 0.75rem; }
 		.input-area {
-			position: fixed; bottom: calc(56px + env(safe-area-inset-bottom, 0px)); left: 0; right: 0;
-			background: var(--paper); z-index: 20;
+			background: var(--paper);
 		}
-		.input-area.kb-open { bottom: 0; }
 		.input-bar {
 			padding: 0.5rem 0.75rem;
 			padding-bottom: max(0.5rem, env(safe-area-inset-bottom, 0.5rem));

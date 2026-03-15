@@ -47,7 +47,7 @@ export async function POST({ request, locals }) {
 		]);
 		// Push notification to recipient
 		await notifyUsers([to], {
-			title: `Message from ${senderName}`,
+			title: senderName,
 			body: preview,
 			url: `/app/chat/dm/${convId}`,
 			tag: `dm-${convId}`

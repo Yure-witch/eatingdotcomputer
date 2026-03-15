@@ -163,9 +163,6 @@
 		<div class="header-sub">
 			<ClassSwitcher currentClass={data.currentClass} allClasses={data.allClasses} />
 			<div class="header-right">
-				{#if isInstructor}
-					<a href="/app/manage" class="hdr-link">Manage</a>
-				{/if}
 				<a href="/app/profile/{user.id}" class="hdr-link">{user.name || user.email}</a>
 				<form method="POST" action="?/signout">
 					<button type="submit" class="hdr-btn">Sign out</button>

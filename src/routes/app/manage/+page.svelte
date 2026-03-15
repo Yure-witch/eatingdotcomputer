@@ -74,7 +74,7 @@
 
 	// Raw snapshots: Firebase overwrites, API poll merges in
 	let rawPresence = $state(
-		Object.fromEntries(data.members.map((m) => [m.id, { online: m.online ?? false, lastSeen: m.lastSeen ?? null, ua: m.ua ?? null, screen: m.screen ?? null }]))
+		Object.fromEntries(data.members.map((m) => [m.id, { online: m.online ?? false, lastSeen: m.lastSeen ?? null, ua: m.ua ?? null, screen: m.screen ?? null, pwa: m.pwa ?? null, mobile: m.mobile ?? null, notif: m.notif ?? null }]))
 	);
 	let presenceTick = $state(0); // increments every 30s to force stale re-eval
 	let now = $state(Date.now());
@@ -94,25 +94,23 @@
 				online,
 				lastSeen: val.lastSeen ?? null,
 				ua: online ? (val.ua ?? null) : null,
-				screen: online ? (val.screen ?? null) : null
+				screen: online ? (val.screen ?? null) : null,
+				pwa: online ? (val.pwa ?? null) : null,
+				mobile: online ? (val.mobile ?? null) : null,
+				notif: val.notif ?? null
 			};
 		}
 		return result;
 	});
 
-	function deviceFromUA(ua) {
-		if (!ua) return null;
-		const u = ua.toLowerCase();
-		if (/iphone|android.*mobile|windows phone/.test(u)) return 'mobile';
-		if (/ipad|android(?!.*mobile)/.test(u)) return 'tablet';
-		return 'desktop';
-	}
-
-	function deviceIcon(ua) {
-		const d = deviceFromUA(ua);
-		if (d === 'mobile') return '📱';
-		if (d === 'tablet') return '⬛'; // no great emoji; use a placeholder
-		return '🖥️';
+	function deviceLabel(p) {
+		if (!p) return null;
+		const mobile = p.mobile ?? /iphone|android.*mobile|windows phone/i.test(p.ua ?? '');
+		const pwa = p.pwa ?? false;
+		if (mobile && pwa)  return { icon: '📱', label: 'Mobile app' };
+		if (mobile)         return { icon: '🌐', label: 'Mobile browser' };
+		if (pwa)            return { icon: '🖥️', label: 'Desktop app' };
+		return               { icon: '💻', label: 'Desktop browser' };
 	}
 
 	async function pollPresence() {
@@ -210,6 +208,38 @@
 
 	$effect(() => { newWeekNumber = data.maxWeek + 1; });
 
+	// User × device bar chart — shares selectedRange with the activity line chart
+	const userBars = $derived.by(() => {
+		const range = RANGES.find((r) => r.key === selectedRange);
+		const now = Date.now();
+		let rows;
+		let cutoff;
+		if (range.hours) {
+			cutoff = new Date(now - range.hours * 3600_000).toISOString().slice(0, 13) + ':00';
+			rows = data.userDeviceActivity.hourly;
+		} else {
+			cutoff = new Date(now - range.days * 86400_000).toISOString().slice(0, 10);
+			rows = data.userDeviceActivity.daily;
+		}
+
+		const byUser = {};
+		for (const r of rows) {
+			if (r.bucket < cutoff) continue;
+			const uid = r.userId;
+			if (!byUser[uid]) byUser[uid] = { userId: uid, name: r.name, total: 0, desktop: 0, mobile: 0, desktopNoNotif: 0, mobileNoNotif: 0 };
+			const mins = r.pings * 5;
+			byUser[uid].total += mins;
+			if (r.deviceType === 'desktop') byUser[uid].desktop += mins;
+			if (r.deviceType === 'mobile')  byUser[uid].mobile += mins;
+			if (r.deviceType === 'desktop' && !r.hasNotif) byUser[uid].desktopNoNotif += mins;
+			if (r.deviceType === 'mobile'  && !r.hasNotif) byUser[uid].mobileNoNotif += mins;
+		}
+
+		const users = Object.values(byUser).sort((a, b) => b.total - a.total);
+		const maxVal = Math.max(1, ...users.map((u) => u.total));
+		return { users, maxVal };
+	});
+
 	// Chart hover tooltip
 	let hoverIdx = $state(null);
 	let hoverPct = $state(0); // 0–1, for tooltip positioning
@@ -251,11 +281,7 @@
 			<a class="wordmark" href="/">eating.computer</a>
 			<ClassSwitcher currentClass={data.currentClass} allClasses={data.allClasses} />
 		</div>
-		<nav>
-			<a href="/app">Dashboard</a>
-			<a href="/app/assignments">Assignments</a>
-			<a href="/app/manage" class="active">Manage</a>
-		</nav>
+
 	</header>
 
 	<main>
@@ -546,6 +572,69 @@
 	</section>
 
 	<section class="members-section">
+		<div class="chart-header">
+			<div>
+				<h2>Time in app by user</h2>
+				<p class="subtitle" style="margin: 0.15rem 0 0">Minutes · each bar = one metric per person</p>
+			</div>
+			<div class="range-tabs">
+				{#each RANGES as r}
+					<button class="range-tab" class:active={selectedRange === r.key} onclick={() => selectedRange = r.key}>{r.label}</button>
+				{/each}
+			</div>
+		</div>
+		{#if userBars.users.length}
+			{@const BAR_W = 8}
+			{@const BAR_GAP = 2}
+			{@const N_BARS = 5}
+			{@const GROUP_GAP = 14}
+			{@const CHART_H = 120}
+			{@const LABEL_H = 32}
+			{@const SVG_H = CHART_H + LABEL_H}
+			{@const groupW = N_BARS * BAR_W + (N_BARS - 1) * BAR_GAP}
+			{@const SVG_W = userBars.users.length * (groupW + GROUP_GAP) + 24}
+			<div class="device-chart-wrap">
+				<svg viewBox="0 0 {SVG_W} {SVG_H}" class="device-chart-svg" style="min-width: {Math.max(260, SVG_W)}px">
+					<!-- baseline -->
+					<line x1="0" y1={CHART_H} x2={SVG_W} y2={CHART_H} stroke="#ddd7cc" stroke-width="1"/>
+					{#each userBars.users as u, i}
+						{@const gx = 12 + i * (groupW + GROUP_GAP)}
+						{@const bars = [
+							{ val: u.total,          fill: 'hsl(200 55% 48%)', title: 'Total' },
+							{ val: u.desktop,        fill: 'hsl(220 45% 52%)', title: 'Desktop' },
+							{ val: u.mobile,         fill: 'hsl(270 40% 55%)', title: 'Mobile' },
+							{ val: u.desktopNoNotif, fill: 'hsl(220 25% 72%)', title: 'Desktop, no notif' },
+							{ val: u.mobileNoNotif,  fill: 'hsl(270 20% 72%)', title: 'Mobile, no notif' }
+						]}
+						{#each bars as b, bi}
+							{@const bx = gx + bi * (BAR_W + BAR_GAP)}
+							{@const h = (b.val / userBars.maxVal) * CHART_H}
+							{#if h > 0}
+								<rect x={bx} y={CHART_H - h} width={BAR_W} height={h} rx="2" fill={b.fill} opacity="0.9">
+									<title>{u.name} · {b.title}: {b.val}m</title>
+								</rect>
+							{/if}
+						{/each}
+						<!-- name label -->
+						{@const firstName = u.name.split(' ')[0]}
+						<text x={gx + groupW / 2} y={CHART_H + 14} text-anchor="middle" font-size="7.5" fill="#6b5f54">{firstName}</text>
+					{/each}
+				</svg>
+			</div>
+			<!-- Legend -->
+			<div class="ud-legend">
+				<span class="ud-swatch" style="background: hsl(200 55% 48%)"></span> Total
+				<span class="ud-swatch" style="background: hsl(220 45% 52%)"></span> Desktop
+				<span class="ud-swatch" style="background: hsl(270 40% 55%)"></span> Mobile
+				<span class="ud-swatch" style="background: hsl(220 25% 72%)"></span> Desktop / no notif
+				<span class="ud-swatch" style="background: hsl(270 20% 72%)"></span> Mobile / no notif
+			</div>
+		{:else}
+			<p class="chart-empty">No device activity in this period.</p>
+		{/if}
+	</section>
+
+	<section class="members-section">
 		<h2>All members <span class="member-count">({data.members.length})</span></h2>
 		<div class="members-table-wrap">
 		<table class="members-table">
@@ -557,6 +646,7 @@
 					<th>Joined</th>
 					<th>Status</th>
 					<th>Device</th>
+					<th>Notif</th>
 					<th>Last seen</th>
 					<th></th>
 				</tr>
@@ -577,12 +667,26 @@
 							{/if}
 						</td>
 						<td class="muted device-cell">
-							{#if p?.online && p?.ua}
-								<span class="device-info" title={p.ua}>
-									{deviceIcon(p.ua)} {deviceFromUA(p.ua)}{p.screen ? ` · ${p.screen}` : ''}
-								</span>
+							{#if p?.online}
+								{@const dev = deviceLabel(p)}
+								{#if dev}
+									<span class="device-info" title={p.ua ?? ''}>
+										{dev.icon} {dev.label}
+									</span>
+								{:else}
+									—
+								{/if}
 							{:else}
 								—
+							{/if}
+						</td>
+						<td class="muted notif-cell">
+							{#if p?.notif === true}
+								<span title="Notifications enabled">🔔</span>
+							{:else if p?.notif === false}
+								<span title="Notifications off">🔕</span>
+							{:else}
+								<span title="Unknown">—</span>
 							{/if}
 						</td>
 						<td class="muted">{formatLastSeen(p?.lastSeen ?? null)}</td>
@@ -953,6 +1057,17 @@
 		font-size: 0.65rem; color: #a09688;
 	}
 	.chart-labels span { position: absolute; transform: translateX(-50%); }
+
+	.device-chart-wrap { margin-top: 0.75rem; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+	.device-chart-svg { display: block; height: 152px; }
+	.ud-legend {
+		display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 1rem;
+		margin-top: 0.6rem; font-size: 0.72rem; color: #a09688;
+	}
+	.ud-swatch {
+		display: inline-block; width: 10px; height: 10px;
+		border-radius: 2px; vertical-align: middle; margin-right: 0.2rem;
+	}
 
 	.members-section { margin-top: 2.5rem; }
 	.members-section h2 { font-family: 'Cambridge', serif; font-size: 1.25rem; font-weight: 400; margin: 0; }

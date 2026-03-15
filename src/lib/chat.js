@@ -54,7 +54,8 @@ export function normaliseMessage(id, raw, userMap) {
 		content,
 		createdAt: ts,
 		replyTo,
-		attachment
+		attachment,
+		edited: !!(raw.ed)
 	};
 }
 

@@ -29,13 +29,6 @@
 			<a class="wordmark" href="/">eating.computer</a>
 			<ClassSwitcher currentClass={data.currentClass} allClasses={data.allClasses} />
 		</div>
-		<nav>
-			<a href="/app">Dashboard</a>
-			<a href="/app/assignments" class="active">Assignments</a>
-			{#if isInstructor}
-				<a href="/app/manage">Manage</a>
-			{/if}
-		</nav>
 	</header>
 
 	<main>
