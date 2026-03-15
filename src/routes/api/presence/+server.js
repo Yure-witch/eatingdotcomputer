@@ -17,12 +17,25 @@ export async function GET({ locals }) {
 
 	if (snap.exists()) {
 		for (const [uid, v] of Object.entries(snap.val())) {
-			const online = !!(v.online && (v.lastSeen ?? 0) > now - PRESENCE_TTL);
+			if (!v || typeof v !== 'object') continue;
+			// Support both old (flat) and new (per-device nested) presence formats
+			const deviceList = typeof v.online !== 'undefined'
+				? [v]
+				: Object.values(v).filter(Boolean);
+			let online = false, lastSeen = null, ua = null, screen = null;
+			for (const d of deviceList) {
+				if (d.online && (d.lastSeen ?? 0) > now - PRESENCE_TTL) online = true;
+				if (d.lastSeen && (!lastSeen || d.lastSeen > lastSeen)) {
+					lastSeen = d.lastSeen;
+					if (d.ua) ua = d.ua;
+					if (d.screen) screen = d.screen;
+				}
+			}
 			result[uid] = {
 				online,
-				lastSeen: v.lastSeen ?? null,
-				...(online && v.ua ? { ua: v.ua } : {}),
-				...(online && v.screen ? { screen: v.screen } : {})
+				lastSeen,
+				...(online && ua ? { ua } : {}),
+				...(online && screen ? { screen } : {})
 			};
 		}
 	}

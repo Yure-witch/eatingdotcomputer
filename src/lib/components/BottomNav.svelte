@@ -4,24 +4,37 @@
 
 	let { isInstructor = false } = $props();
 
-	let inputFocused = $state(false);
+	// Hide the nav only when a real on-screen keyboard appears (mobile).
+	// On desktop, focusing an input doesn't shrink the visual viewport so the nav stays.
+	let keyboardOpen = $state(false);
 
 	onMount(() => {
+		let anyInputFocused = false;
+
 		const onFocusIn = (e) => {
 			if (e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement) {
-				inputFocused = true;
+				anyInputFocused = true;
 			}
 		};
 		const onFocusOut = (e) => {
 			if (e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement) {
-				inputFocused = false;
+				anyInputFocused = false;
+				keyboardOpen = false;
 			}
 		};
+		const checkKeyboard = () => {
+			if (!anyInputFocused) { keyboardOpen = false; return; }
+			const vvh = window.visualViewport?.height ?? window.innerHeight;
+			keyboardOpen = vvh < window.innerHeight * 0.75;
+		};
+
 		document.addEventListener('focusin', onFocusIn);
 		document.addEventListener('focusout', onFocusOut);
+		window.visualViewport?.addEventListener('resize', checkKeyboard);
 		return () => {
 			document.removeEventListener('focusin', onFocusIn);
 			document.removeEventListener('focusout', onFocusOut);
+			window.visualViewport?.removeEventListener('resize', checkKeyboard);
 		};
 	});
 
@@ -63,7 +76,7 @@
 </script>
 
 <!-- Mobile bottom nav only — desktop nav is in the global sidebar (app/+layout.svelte) -->
-<nav class="bottom-nav" class:hidden={inputFocused}>
+<nav class="bottom-nav" class:hidden={keyboardOpen}>
 	{#each items as item}
 		{@const isActive = item.active($page.url.pathname)}
 		<a href={item.href} class="nav-item" class:active={isActive}>

@@ -1,5 +1,6 @@
 import { json, error } from '@sveltejs/kit';
 import { getAdminDb } from '$lib/server/firebase-admin.js';
+import { ServerValue } from 'firebase-admin/database';
 import { getDb } from '$lib/server/turso.js';
 import { getConvId } from '$lib/convId.js';
 import { notifyUsers } from '$lib/server/push.js';
@@ -56,10 +57,43 @@ export async function POST({ request, locals }) {
 		// Channel
 		const channel = channelId ?? 'class';
 		await db.ref(`channels/${channel}/messages`).push(msg);
-		await db.ref(`channels/${channel}`).update({ lastAt: now, lastMessage: preview, lastUser: senderName });
-		// Push notification to all other users with subscriptions
+		const meta = { lastAt: now, lastMessage: preview, lastUser: senderName };
+		await db.ref(`channels/${channel}`).update(meta);
+		// Lightweight metadata node (used by layout for unread dots — no messages payload)
+		await db.ref(`channelMeta/${channel}`).update(meta);
+
 		const turso = getDb();
 		if (turso) {
+			// Increment unread counts for all class members (best-effort, never blocks push)
+			try {
+				const convResult = await turso.execute({
+					sql: "SELECT class_id FROM conversations WHERE id = ? AND type = 'channel'",
+					args: [channel]
+				});
+				const classId = convResult.rows[0]?.class_id;
+				if (classId) {
+					const membersResult = await turso.execute({
+						sql: `SELECT DISTINCT u.id FROM users u
+						      WHERE u.role = 'instructor'
+						         OR EXISTS (
+						              SELECT 1 FROM class_memberships cm
+						              WHERE cm.user_id = u.id AND cm.status = 'approved' AND cm.class_id = ?
+						            )`,
+						args: [String(classId)]
+					});
+					const unreadUpdates = {};
+					for (const r of membersResult.rows) {
+						const uid = String(r.id);
+						if (uid === session.user.id) continue;
+						unreadUpdates[`unreadCounts/${uid}/${channel}`] = ServerValue.increment(1);
+					}
+					if (Object.keys(unreadUpdates).length > 0) {
+						await db.ref().update(unreadUpdates);
+					}
+				}
+			} catch { /* unread counts are best-effort */ }
+
+			// Push notification to all other users with subscriptions
 			const usersResult = await turso.execute({
 				sql: 'SELECT DISTINCT user_id FROM push_subscriptions WHERE user_id != ?',
 				args: [session.user.id]

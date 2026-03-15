@@ -54,6 +54,7 @@
 	// ── Unread / DMs ──
 	let lastRead = $state({});
 	let channelMeta = $state({});
+	let unreadCounts = $state({});
 	let dmList = $state([]);
 
 	function isUnread(convId, lastAt) {
@@ -64,7 +65,7 @@
 	const totalUnread = $derived.by(() => {
 		let count = 0;
 		for (const ch of (data.channels ?? [])) {
-			if (isUnread(ch.id, channelMeta[ch.id]?.lastAt)) count++;
+			count += unreadCounts[ch.id] ?? 0;
 		}
 		for (const dm of dmList) {
 			if (isUnread(dm.convId, dm.lastAt)) count++;
@@ -158,8 +159,8 @@
 
 	// ── Firebase refs ──
 	let userChatsRef, lastReadRef, presenceRef, connectedRef, allPresenceRef;
+	let channelMetaRef, unreadCountsRef;
 	let heartbeatTimer, tickTimer, presencePollTimer, activityTimer;
-	const channelRefs = {};
 
 	async function pollPresence() {
 		try {
@@ -241,8 +242,13 @@
 
 		try { await signInWithCustomToken(auth, data.firebaseToken); } catch { /* ignore */ }
 
-		// Presence write
-		presenceRef = ref(rtdb, `presence/${data.currentUser.id}`);
+		// Presence write — per-device so two simultaneous logins don't clobber each other
+		let deviceId = sessionStorage.getItem('ec_device_id');
+		if (!deviceId) {
+			deviceId = Math.random().toString(36).slice(2) + Date.now().toString(36);
+			sessionStorage.setItem('ec_device_id', deviceId);
+		}
+		presenceRef = ref(rtdb, `presence/${data.currentUser.id}/${deviceId}`);
 		connectedRef = ref(rtdb, '.info/connected');
 		const isPwa = window.matchMedia('(display-mode: standalone)').matches || !!navigator.standalone;
 		const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || (screen.width <= 768 && 'ontouchstart' in window);
@@ -277,10 +283,28 @@
 		heartbeatTimer = setInterval(() => { if (presenceRef) set(presenceRef, presencePayload()); }, HEARTBEAT_INTERVAL);
 		tickTimer = setInterval(() => { presenceTick++; }, 60_000);
 
-		// All presence (online dots)
+		// All presence (online dots) — normalize both old (flat) and new (per-device) formats
 		allPresenceRef = ref(rtdb, 'presence');
 		onValue(allPresenceRef, (snap) => {
-			rawPresence = { ...rawPresence, ...(snap.exists() ? snap.val() : {}) };
+			if (!snap.exists()) return;
+			const fb = snap.val();
+			const normalized = {};
+			for (const [uid, v] of Object.entries(fb)) {
+				if (!v || typeof v !== 'object') continue;
+				if (typeof v.online !== 'undefined') {
+					// Old single-device format
+					normalized[uid] = { online: !!v.online, lastSeen: v.lastSeen ?? 0 };
+				} else {
+					// New per-device format: a user is online if ANY device is online
+					let online = false, lastSeen = 0;
+					for (const d of Object.values(v)) {
+						if (d?.online) online = true;
+						if ((d?.lastSeen ?? 0) > lastSeen) lastSeen = d.lastSeen;
+					}
+					normalized[uid] = { online, lastSeen };
+				}
+			}
+			rawPresence = { ...rawPresence, ...normalized };
 		});
 
 		await pollPresence();
@@ -309,23 +333,34 @@
 		lastReadRef = ref(rtdb, `lastRead/${data.currentUser.id}`);
 		onValue(lastReadRef, (snap) => { lastRead = snap.exists() ? snap.val() : {}; });
 
-		// Channel metadata (for unread dots + toasts)
+		// Channel metadata — single lightweight subscription (no messages payload)
 		const prevChannelLastAt = {};
-		for (const ch of (data.channels ?? [])) {
-			const r = ref(rtdb, `channels/${ch.id}`);
-			channelRefs[ch.id] = r;
-			onValue(r, (snap) => {
-				if (!snap.exists()) return;
-				const val = snap.val();
-				const meta = { lastAt: val.lastAt ?? 0, lastMessage: val.lastMessage ?? '', lastUser: val.lastUser ?? '' };
-				channelMeta = { ...channelMeta, [ch.id]: meta };
-				const prev = prevChannelLastAt[ch.id];
-				if (prev !== undefined && meta.lastAt > prev) {
-					addToast(ch.id, `/app/chat/channel/${ch.id}`, `#${ch.name}`, `${meta.lastUser}: ${meta.lastMessage}`);
+		const channelMap = Object.fromEntries((data.channels ?? []).map((ch) => [ch.id, ch]));
+		channelMetaRef = ref(rtdb, 'channelMeta');
+		onValue(channelMetaRef, (snap) => {
+			if (!snap.exists()) { channelMeta = {}; return; }
+			const allMeta = snap.val();
+			const newMeta = {};
+			for (const [chId, raw] of Object.entries(allMeta)) {
+				const meta = { lastAt: raw.lastAt ?? 0, lastMessage: raw.lastMessage ?? '', lastUser: raw.lastUser ?? '' };
+				newMeta[chId] = meta;
+				const ch = channelMap[chId];
+				if (ch) {
+					const prev = prevChannelLastAt[chId];
+					if (prev !== undefined && meta.lastAt > prev) {
+						addToast(chId, `/app/chat/channel/${chId}`, `#${ch.name}`, `${meta.lastUser}: ${meta.lastMessage}`);
+					}
+					prevChannelLastAt[chId] = meta.lastAt;
 				}
-				prevChannelLastAt[ch.id] = meta.lastAt;
-			});
-		}
+			}
+			channelMeta = newMeta;
+		});
+
+		// Per-user unread counts per channel
+		unreadCountsRef = ref(rtdb, `unreadCounts/${data.currentUser.id}`);
+		onValue(unreadCountsRef, (snap) => {
+			unreadCounts = snap.exists() ? snap.val() : {};
+		});
 	});
 
 	onDestroy(() => {
@@ -337,7 +372,8 @@
 		if (lastReadRef) off(lastReadRef);
 		if (allPresenceRef) off(allPresenceRef);
 		if (connectedRef) off(connectedRef);
-		for (const r of Object.values(channelRefs)) off(r);
+		if (channelMetaRef) off(channelMetaRef);
+		if (unreadCountsRef) off(unreadCountsRef);
 	});
 
 	function toggleCollapse() {
@@ -411,11 +447,11 @@
 
 			{#each data.channels as ch}
 				{@const path = `/app/chat/channel/${ch.id}`}
-				{@const unread = isUnread(ch.id, channelMeta[ch.id]?.lastAt)}
+				{@const unreadCount = unreadCounts[ch.id] ?? 0}
 				<a href={path} class="sidebar-item" class:active={$page.url.pathname === path}>
 					<span class="hash">#</span>
-					<span class="item-name" class:bold={unread}>{ch.name}</span>
-					{#if unread}<span class="unread-dot"></span>{/if}
+					<span class="item-name" class:bold={unreadCount > 0}>{ch.name}</span>
+					{#if unreadCount > 0}<span class="unread-badge">{unreadCount > 99 ? '99+' : unreadCount}</span>{/if}
 				</a>
 			{/each}
 		</div>
@@ -684,6 +720,19 @@
 	.item-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	.item-name.bold { color: #f7f2ea; font-weight: 600; }
 
+	.unread-badge {
+		font-size: 0.6rem;
+		font-weight: 700;
+		background: #e53935;
+		color: #fff;
+		border-radius: 99px;
+		padding: 0.1rem 0.35rem;
+		min-width: 16px;
+		text-align: center;
+		flex-shrink: 0;
+		margin-left: auto;
+		line-height: 1.4;
+	}
 	.unread-dot { width: 8px; height: 8px; border-radius: 50%; background: #e53935; flex-shrink: 0; margin-left: auto; }
 	.online-count { font-size: 0.65rem; color: #4caf50; font-weight: 600; margin-right: auto; margin-left: 0.3rem; }
 

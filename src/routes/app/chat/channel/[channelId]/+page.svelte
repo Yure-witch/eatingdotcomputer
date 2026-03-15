@@ -67,7 +67,9 @@
 	}
 
 	function markRead() {
-		set(ref(db, `lastRead/${data.currentUser.id}/${convId}`), Date.now());
+		const uid = data.currentUser.id;
+		set(ref(db, `lastRead/${uid}/${convId}`), Date.now());
+		set(ref(db, `unreadCounts/${uid}/${convId}`), 0);
 	}
 
 	function clearTyping() {
@@ -309,7 +311,7 @@
 		{@const isMine = msg.userId === data.currentUser.id}
 		{@const msgReactions = reactions[msg.id] ?? {}}
 		{@const hasReactions = Object.values(msgReactions).some(u => Object.keys(u).length > 0)}
-		<div class="message" class:mine={isMine} class:first={isFirst} data-msg-id={msg.id}>
+		<div class="message" class:mine={isMine} class:first={isFirst} class:starred={starredIds.has(msg.id)} data-msg-id={msg.id}>
 			{#if isFirst}
 				<div class="meta">
 					<span class="name">{msg.userName}</span>
@@ -360,6 +362,12 @@
 					<p class="bubble" class:pending={msg.pending}>{msg.content}{#if msg.edited}<span class="edited-tag"> (edited)</span>{/if}</p>
 				{/if}
 			</div>
+			{#if starredIds.has(msg.id)}
+				<div class="saved-label">
+					<svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+					Saved
+				</div>
+			{/if}
 			{#if hasReactions}
 				<div class="reactions">
 					{#each Object.entries(msgReactions) as [emoji, users]}
@@ -613,12 +621,21 @@
 	.kebab-item-delete { color: #c0392b; }
 	.kebab-item-delete:hover { background: #fff0f0; }
 
+	.saved-label {
+		display: flex; align-items: center; gap: 0.2rem;
+		font-size: 0.62rem; font-weight: 600; color: #c8900f;
+		padding: 0.1rem 0.5rem; letter-spacing: 0.02em;
+	}
+	.message.mine .saved-label { justify-content: flex-end; }
+
 	.bubble {
 		margin: 0; padding: 0.55rem 0.85rem; border-radius: 14px;
 		font-size: 0.9rem; line-height: 1.45; white-space: pre-wrap; word-break: break-word;
 		background: #fff; border: 1.5px solid #ddd7cc;
 	}
 	.message.mine .bubble { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+	.message.starred:not(.mine) .bubble { background: #fff8e6; border-color: #e6cc70; }
+	.message.starred.mine .bubble { border-color: #c8900f; }
 	.bubble.pending { opacity: 0.6; }
 
 	/* Attachment bubbles */
