@@ -281,7 +281,7 @@
 	}
 
 	function onKeydown(e) {
-		if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+		if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); inputEl?.focus(); send(); }
 	}
 
 	function onInput() {

@@ -4,9 +4,9 @@
 	import { page } from '$app/stores';
 	import { auth, db as rtdb } from '$lib/firebase.js';
 	import { signInWithCustomToken } from 'firebase/auth';
-	import { ref, onValue, off, set, onDisconnect } from 'firebase/database';
+	import { ref, onValue, onChildAdded, off, set, update, onDisconnect, query, limitToLast } from 'firebase/database';
 	import { getConvId } from '$lib/convId.js';
-	import { invalidateAll } from '$app/navigation';
+	import { invalidateAll, afterNavigate } from '$app/navigation';
 	import ProfileHover from '$lib/components/ProfileHover.svelte';
 	import BottomNav from '$lib/components/BottomNav.svelte';
 
@@ -45,16 +45,25 @@
 	let sidebarOpen = $state(false);
 	let sidebarCollapsed = $state(false);
 
-	setContext('openSidebar', () => { sidebarOpen = true; });
+	setContext('openSidebar', () => { sidebarOpen = !sidebarOpen; });
+	// Expose rawPresence to child pages (e.g. manage) via a getter so the manage
+	// tab uses the exact same signal as the sidebar — no separate Firebase subscription.
+	setContext('rawPresence', { get value() { return rawPresence; } });
+	setContext('refreshPresence', () => pollPresence());
 	let showNewChannel = $state(false);
 	let newChannelName = $state('');
 	let creatingChannel = $state(false);
 	let channelError = $state(null);
 
 	// ── Unread / DMs ──
-	let lastRead = $state({});
-	let channelMeta = $state({});
-	let unreadCounts = $state({});
+	// Seeded from server (Firebase Admin read) so unread indicators are correct immediately,
+	// before any Firebase client subscription fires. Client subscriptions update these live.
+	let lastRead = $state({ ...(data.initialLastRead ?? {}) });
+	let unreadCounts = $state({ ...(data.initialUnreadCounts ?? {}) });
+	// channelMeta seeded from channel.lastAt values returned by the server
+	let channelMeta = $state(
+		Object.fromEntries((data.channels ?? []).filter((ch) => ch.lastAt).map((ch) => [ch.id, { lastAt: ch.lastAt }]))
+	);
 	let dmList = $state([]);
 
 	function isUnread(convId, lastAt) {
@@ -65,10 +74,14 @@
 	const totalUnread = $derived.by(() => {
 		let count = 0;
 		for (const ch of (data.channels ?? [])) {
-			count += unreadCounts[ch.id] ?? 0;
+			const cnt = unreadCounts[ch.id];
+			if (cnt !== undefined) count += cnt;
+			else if (isUnread(ch.id, channelMeta[ch.id]?.lastAt)) count++;
 		}
 		for (const dm of dmList) {
-			if (isUnread(dm.convId, dm.lastAt)) count++;
+			const cnt = unreadCounts[dm.convId];
+			if (cnt !== undefined) count += cnt;
+			else if (isUnread(dm.convId, dm.lastAt)) count++;
 		}
 		return count;
 	});
@@ -83,8 +96,10 @@
 	});
 
 	// ── Presence ──
-	const PRESENCE_TTL = 3 * 60 * 1000;
-	const HEARTBEAT_INTERVAL = 2 * 60 * 1000;
+	const PRESENCE_TTL = 5 * 60 * 1000;      // 5 min — how stale a lastSeen can be before considered offline
+	const HEARTBEAT_INTERVAL = 2.5 * 60 * 1000; // 2.5 min — keeps lastSeen fresh within TTL with 2.5min margin
+	const POLL_INTERVAL = 5 * 60 * 1000;     // 5 min — fallback only; allPresenceRef subscription handles real-time
+	const PING_DEBOUNCE = 90 * 1000;         // navigation pings skipped if we pinged within this window
 	let rawPresence = $state({});
 	let presenceTick = $state(0);
 
@@ -160,29 +175,100 @@
 	// ── Firebase refs ──
 	let userChatsRef, lastReadRef, presenceRef, connectedRef, allPresenceRef;
 	let channelMetaRef, unreadCountsRef;
-	let heartbeatTimer, tickTimer, presencePollTimer, activityTimer;
+	let pushBroadcast; // BroadcastChannel for push-notification relay from service worker
+	let heartbeatTimer, tickTimer, presencePollTimer;
+	const channelRefs = {}; // per-channel lastAt subscriptions
 
 	async function pollPresence() {
 		try {
 			const res = await fetch('/api/presence');
-			if (!res.ok) return;
-			rawPresence = { ...rawPresence, ...(await res.json()) };
+			if (!res.ok) {
+				console.error('[ec:presence] poll failed', res.status, res.statusText);
+				return;
+			}
+			const apiData = await res.json();
+			console.info('[ec:presence] poll returned', Object.keys(apiData).length, 'users:', Object.entries(apiData).map(([id, v]) => `${id.slice(0,8)} online=${v.online}`));
+			const now = Date.now();
+			// Merge API data into rawPresence. The API returns online/lastSeen/ua/screen
+			// but NOT pwa/mobile/notif (those come from Firebase). Preserve existing
+			// device metadata so the manage tab always has the full picture.
+			const merged = { ...rawPresence };
+			for (const [uid, v] of Object.entries(apiData)) {
+				const existing = merged[uid] ?? {};
+				// API returns a devices array (TTL-filtered server-side). Prefer it when
+				// it has data; fall back to what Firebase already told us client-side.
+				const devices = v.devices?.length ? v.devices : (existing.devices ?? []);
+				merged[uid] = {
+					...existing,
+					online: v.online,
+					// Refresh lastSeen to now for confirmed-online users so the 3-min
+					// TTL check doesn't conflict with the API's 8-min activity window.
+					lastSeen: v.online ? now : (v.lastSeen ?? existing.lastSeen ?? null),
+					devices,
+					...(v.ua != null ? { ua: v.ua } : {}),
+					...(v.screen != null ? { screen: v.screen } : {})
+				};
+			}
+			// Current user is always online while this code is running — never let the
+			// API override that (API may lag behind Firebase or Turso window).
+			if (data?.currentUser?.id) {
+				merged[data.currentUser.id] = {
+					...(merged[data.currentUser.id] ?? {}),
+					online: true,
+					lastSeen: Date.now()
+				};
+			}
+			rawPresence = merged;
 		} catch { /* ignore */ }
 	}
 
-	// device info populated after onMount computes isPwa / isMobile
-	let _deviceType = 'desktop';
-	let _isPwa = false;
-
-	async function logActivity() {
-		try {
-			await fetch('/api/presence/log', {
+	// Server-side presence ping — writes via Firebase Admin SDK, bypassing client auth.
+	// Falls back to direct client Firebase write when presenceRef is available (belt-and-suspenders).
+	let _pingDeviceId = null;
+	let _pingSessionStart = null;
+	let _lastPingedAt = 0;
+	let presencePing = async (force = false) => {
+		// Debounce: skip if we pinged recently (navigation fires this on every route change)
+		const now = Date.now();
+		if (!force && now - _lastPingedAt < PING_DEBOUNCE) return;
+		_lastPingedAt = now;
+		// Client-side Firebase write (fast, best-effort)
+		if (presenceRef) {
+			update(presenceRef, { online: true, lastSeen: Date.now() })
+				.then(() => console.info('[ec:presence] client RTDB write ok'))
+				.catch((e) => console.error('[ec:presence] client RTDB write FAILED:', e.code, e.message));
+		}
+		// Server-side write via Admin SDK (always succeeds regardless of client auth)
+		if (_pingDeviceId) {
+			const isPwa = window.matchMedia('(display-mode: standalone)').matches || !!navigator.standalone;
+			const isMob = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+			console.info('[ec:presence] pinging server-side', { deviceId: _pingDeviceId, pwa: isPwa, mobile: isMob });
+			fetch('/api/presence/ping', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ deviceType: _deviceType, isPwa: _isPwa })
-			});
-		} catch { /* ignore */ }
-	}
+				body: JSON.stringify({
+					deviceId: _pingDeviceId,
+					ua: navigator.userAgent,
+					pwa: isPwa,
+					mobile: isMob,
+					notif: typeof Notification !== 'undefined' && Notification.permission === 'granted',
+					sessionStart: _pingSessionStart
+				})
+			})
+				.then(async (r) => {
+					if (r.ok) {
+						const body = await r.json().catch(() => ({}));
+						console.info('[ec:presence] server ping ok — RTDB written, lastSeen:', body.lastSeen);
+					} else {
+						const body = await r.text().catch(() => '');
+						console.error('[ec:presence] server ping FAILED', r.status, body);
+					}
+				})
+				.catch((e) => console.error('[ec:presence] server ping fetch error:', e.message));
+		} else {
+			console.warn('[ec:presence] presencePing called before deviceId was set — skipping server write');
+		}
+	};
 
 	function startDm(user) {
 		const convId = getConvId(data.currentUser.id, user.id);
@@ -227,9 +313,18 @@
 		installPrompt = null;
 	}
 
+	afterNavigate(() => { presencePing(); });
+
 	onMount(async () => {
-		logActivity();
-		activityTimer = setInterval(logActivity, 5 * 60_000);
+
+		// BroadcastChannel: service worker relays push data here, but we no longer show
+		// toasts from it — Firebase subscriptions (onChildAdded / userChats) handle
+		// in-app toasts with better attribution while the app is open. The OS notification
+		// covers the background case. Keeping the channel open just in case we need it
+		// for future non-toast purposes (e.g. count sync when Firebase is briefly down).
+		try {
+			pushBroadcast = new BroadcastChannel('ec-push');
+		} catch { /* BroadcastChannel not available */ }
 
 		sidebarCollapsed = localStorage.getItem('sidebar_collapsed') === '1';
 		soundEnabled = localStorage.getItem('notif_sound') !== 'false';
@@ -238,22 +333,68 @@
 		window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installPrompt = e; });
 		window.addEventListener('appinstalled', () => { installed = true; installPrompt = null; });
 
-		if (!data?.firebaseToken || !data?.currentUser) return;
+		// Immediately mark the current user as online — we know they are since this
+		// code is executing. Do this BEFORE the firebaseToken guard so it always runs.
+		if (data?.currentUser?.id) {
+			rawPresence = {
+				...rawPresence,
+				[data.currentUser.id]: {
+					...(rawPresence[data.currentUser.id] ?? {}),
+					online: true,
+					lastSeen: Date.now()
+				}
+			};
+		}
 
-		try { await signInWithCustomToken(auth, data.firebaseToken); } catch { /* ignore */ }
-
-		// Presence write — per-device so two simultaneous logins don't clobber each other
+		// Stable device ID + session start — set before the Firebase guard so
+		// server-side pings (via /api/presence/ping) work even if client auth fails.
 		let deviceId = sessionStorage.getItem('ec_device_id');
 		if (!deviceId) {
 			deviceId = Math.random().toString(36).slice(2) + Date.now().toString(36);
 			sessionStorage.setItem('ec_device_id', deviceId);
 		}
+		_pingDeviceId = deviceId;
+		_pingSessionStart = Date.now();
+		console.info('[ec:presence] device ready — id:', deviceId, '| user:', data.currentUser?.id, '| firebaseToken:', !!data.firebaseToken);
+
+		// Instant offline signal on clean tab/window close via sendBeacon.
+		// onDisconnect() handles crashes/network drops; this makes clean closes immediate.
+		const sendOfflineBeacon = () => {
+			if (!_pingDeviceId) return;
+			const blob = new Blob([JSON.stringify({ deviceId: _pingDeviceId })], { type: 'application/json' });
+			navigator.sendBeacon('/api/presence/offline', blob);
+		};
+		window.addEventListener('pagehide', sendOfflineBeacon);
+
+		// Immediately fire a server-side ping so the instructor (or any user) shows as
+		// online right away — even before signInWithCustomToken completes.
+		presencePing(true); // force=true: always ping on initial mount regardless of debounce
+
+		if (!data?.firebaseToken || !data?.currentUser) return;
+
+		// Retry Firebase auth so presence and subscriptions work on non-chat pages too.
+		// Chat layout has its own retry, but presence is set up here for all routes.
+		let fbAuthed = false;
+		for (let i = 1; i <= 4; i++) {
+			try {
+				await signInWithCustomToken(auth, data.firebaseToken);
+				fbAuthed = true;
+				console.info('[ec:presence] Firebase client auth OK (attempt', i, ')');
+				break;
+			} catch (e) {
+				console.warn(`[ec:presence] Firebase auth attempt ${i}/4 failed:`, e.code, e.message);
+				if (i < 4) await new Promise((r) => setTimeout(r, 800 * i));
+			}
+		}
+		if (!fbAuthed) {
+			console.error('[ec:presence] Firebase client auth FAILED after 4 attempts — allPresenceRef subscription will not work; relying on 30s server poll only');
+		}
+
+		// Presence write — per-device so two simultaneous logins don't clobber each other
 		presenceRef = ref(rtdb, `presence/${data.currentUser.id}/${deviceId}`);
 		connectedRef = ref(rtdb, '.info/connected');
 		const isPwa = window.matchMedia('(display-mode: standalone)').matches || !!navigator.standalone;
-		const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || (screen.width <= 768 && 'ontouchstart' in window);
-		_isPwa = isPwa;
-		_deviceType = isMobile ? 'mobile' : 'desktop';
+		const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
 		// Check notification permission + active push subscription
 		let hasNotif = typeof Notification !== 'undefined' && Notification.permission === 'granted';
@@ -265,67 +406,181 @@
 			} catch { hasNotif = false; }
 		}
 
+		// sessionStart captured once per browser session — used by archive cron to build Turso session ranges
+		const sessionStart = _pingSessionStart;
 		const presencePayload = () => ({
 			name: data.currentUser.name,
 			online: true,
 			lastSeen: Date.now(),
+			sessionStart,
 			ua: navigator.userAgent,
 			screen: `${screen.width}x${screen.height}`,
 			pwa: isPwa,
 			mobile: isMobile,
 			notif: hasNotif
 		});
-		onValue(connectedRef, (snap) => {
-			if (!snap.val()) return;
-			onDisconnect(presenceRef).update({ online: false, lastSeen: Date.now() });
-			set(presenceRef, presencePayload());
-		});
-		heartbeatTimer = setInterval(() => { if (presenceRef) set(presenceRef, presencePayload()); }, HEARTBEAT_INTERVAL);
-		tickTimer = setInterval(() => { presenceTick++; }, 60_000);
 
-		// All presence (online dots) — normalize both old (flat) and new (per-device) formats
+		// Immediately mark ourselves online in rawPresence — don't wait for the Firebase
+		// round-trip. We know with certainty the user is online since this code is running.
+		rawPresence = {
+			...rawPresence,
+			[data.currentUser.id]: {
+				online: true,
+				lastSeen: Date.now(),
+				ua: navigator.userAgent,
+				pwa: isPwa,
+				mobile: isMobile,
+				notif: hasNotif,
+				devices: [{ ua: navigator.userAgent, pwa: isPwa, mobile: isMobile, lastSeen: Date.now() }]
+			}
+		};
+
+		// Write presence immediately after auth — don't wait for connectedRef.
+		// connectedRef fires before signInWithCustomToken completes, so the write
+		// inside the callback fails silently (no auth). By the time we get here,
+		// auth has succeeded so this write lands right away.
+		console.info('[ec:presence] writing initial presence to RTDB path:', `presence/${data.currentUser.id}/${deviceId}`);
+		set(presenceRef, presencePayload())
+			.then(() => console.info('[ec:presence] initial RTDB presence write ok'))
+			.catch((e) => console.error('[ec:presence] initial RTDB presence write FAILED:', e.code, e.message));
+		onValue(connectedRef, (snap) => {
+			const connected = !!snap.val();
+			console.info('[ec:presence] Firebase connection state:', connected ? 'CONNECTED' : 'DISCONNECTED');
+			if (!connected) return;
+			// Set up disconnect handler and re-write on reconnect
+			onDisconnect(presenceRef).update({ online: false }); // lastSeen stays at last heartbeat
+			set(presenceRef, presencePayload())
+				.catch((e) => console.error('[ec:presence] reconnect RTDB write FAILED:', e.code, e.message));
+		});
+		heartbeatTimer = setInterval(() => {
+			if (presenceRef) set(presenceRef, presencePayload());
+			// Server-side ping as backup (belt-and-suspenders with client write above)
+			presencePing(true); // force=true: heartbeat always writes, never skipped by debounce
+			// Also refresh rawPresence directly so TTL never expires for the current user
+			rawPresence = {
+				...rawPresence,
+				[data.currentUser.id]: {
+					...(rawPresence[data.currentUser.id] ?? {}),
+					online: true,
+					lastSeen: Date.now()
+				}
+			};
+		}, HEARTBEAT_INTERVAL);
+		tickTimer = setInterval(() => { presenceTick++; }, 60_000); // 1 min tick — re-evaluates TTL in onlineIds
+
+		// All presence — normalize both old (flat) and new (per-device) formats.
+		// Store full device metadata so the manage tab can use this same signal.
 		allPresenceRef = ref(rtdb, 'presence');
+		console.info('[ec:presence] subscribing to allPresenceRef');
 		onValue(allPresenceRef, (snap) => {
-			if (!snap.exists()) return;
+			if (!snap.exists()) { console.info('[ec:presence] allPresenceRef: empty snapshot'); return; }
+			console.info('[ec:presence] allPresenceRef snapshot — uids:', Object.keys(snap.val()));
 			const fb = snap.val();
 			const normalized = {};
+			const fbNow = Date.now();
 			for (const [uid, v] of Object.entries(fb)) {
 				if (!v || typeof v !== 'object') continue;
-				if (typeof v.online !== 'undefined') {
-					// Old single-device format
-					normalized[uid] = { online: !!v.online, lastSeen: v.lastSeen ?? 0 };
+				// Per-device format: any child that is an object is a device node.
+				// Mixed format (stale flat fields + live device objects) → treat as per-device
+				// so orphaned flat `online: false` from old sessions never masks fresh data.
+				const deviceObjects = Object.values(v).filter(d => d && typeof d === 'object');
+				if (deviceObjects.length === 0) {
+					// Pure flat single-device format
+					const fresh = !!v.online && (v.lastSeen ?? 0) > fbNow - PRESENCE_TTL;
+					normalized[uid] = {
+						online: fresh, lastSeen: v.lastSeen ?? 0,
+						ua: v.ua ?? null, pwa: v.pwa ?? null, mobile: v.mobile ?? null, notif: v.notif ?? null,
+						devices: fresh ? [{ ua: v.ua ?? null, pwa: !!v.pwa, mobile: !!v.mobile, lastSeen: v.lastSeen ?? 0 }] : []
+					};
 				} else {
-					// New per-device format: a user is online if ANY device is online
-					let online = false, lastSeen = 0;
-					for (const d of Object.values(v)) {
-						if (d?.online) online = true;
-						if ((d?.lastSeen ?? 0) > lastSeen) lastSeen = d.lastSeen;
+					// Per-device format (or mixed — only read the object children)
+					let online = false, lastSeen = 0, ua = null, pwa = null, mobile = null, notif = null;
+					const devices = [];
+					for (const d of deviceObjects) {
+						const fresh = d.online && (d.lastSeen ?? 0) > fbNow - PRESENCE_TTL;
+						if (fresh) {
+							online = true;
+							devices.push({ ua: d.ua ?? null, pwa: !!d.pwa, mobile: !!d.mobile, lastSeen: d.lastSeen ?? 0 });
+						}
+						if ((d.lastSeen ?? 0) > lastSeen) {
+							lastSeen = d.lastSeen;
+							ua = d.ua ?? null;
+							pwa = d.pwa ?? null;
+							mobile = d.mobile ?? null;
+						}
+						if (d.notif != null) notif = d.notif;
 					}
-					normalized[uid] = { online, lastSeen };
+					normalized[uid] = { online, lastSeen, ua, pwa, mobile, notif, devices };
 				}
 			}
+			// Never let Firebase override the current user as offline — they're online
+			// since this code is running. Firebase may have a stale onDisconnect value.
+			// Also correct device metadata to match the current session (not a stale mobile entry).
+			if (data?.currentUser?.id) {
+				const existing = normalized[data.currentUser.id] ?? rawPresence[data.currentUser.id] ?? {};
+				const currentDevice = { ua: navigator.userAgent, pwa: isPwa, mobile: isMobile, lastSeen: Date.now() };
+				// Replace or add this session's device in the devices array
+				const otherDevices = (existing.devices ?? []).filter(
+					(d) => d.ua !== navigator.userAgent
+				);
+				normalized[data.currentUser.id] = {
+					...existing,
+					online: true,
+					lastSeen: Date.now(),
+					ua: navigator.userAgent,
+					pwa: isPwa,
+					mobile: isMobile,
+					devices: [currentDevice, ...otherDevices]
+				};
+			}
 			rawPresence = { ...rawPresence, ...normalized };
+		}, (err) => {
+			// PERMISSION_DENIED — Firebase RTDB rules denied the read (client auth failed).
+			// The 30s poll via /api/presence (Admin SDK) compensates — users will still appear
+			// online, just with up to 30s latency instead of real-time.
+			console.warn('[presence] allPresenceRef denied:', err.code, err.message);
 		});
 
 		await pollPresence();
-		presencePollTimer = setInterval(pollPresence, 60_000);
+		presencePollTimer = setInterval(pollPresence, POLL_INTERVAL); // 30s near-real-time; allPresenceRef handles instant updates
 
-		// DMs
+		// Timestamp when this session mounted — used to ignore pre-existing Firebase values
+		// and only toast for messages that arrive after the user opened the app.
+		const mountedAt = Date.now();
+
+		// DMs — track lastAt per conversation so re-fires of the whole userChats snapshot
+		// (which happens whenever ANY dm updates) don't double-count old unread messages.
+		const knownDmLastAt = {};
+		let firstUserChatsFire = true;
 		userChatsRef = ref(rtdb, `userChats/${data.currentUser.id}`);
-		const prevDmLastAt = {};
 		onValue(userChatsRef, (snap) => {
-			if (!snap.exists()) { dmList = []; return; }
+			if (!snap.exists()) { dmList = []; firstUserChatsFire = false; return; }
 			const entries = Object.entries(snap.val())
 				.map(([convId, meta]) => ({ convId, ...meta }))
 				.sort((a, b) => (b.lastAt ?? 0) - (a.lastAt ?? 0));
 			for (const dm of entries) {
-				const prev = prevDmLastAt[dm.convId];
-				if (prev !== undefined && (dm.lastAt ?? 0) > prev) {
-					const name = data.users?.find((u) => u.id === dm.otherUserId)?.name ?? dm.otherUserName ?? '?';
-					addToast(dm.convId, `/app/chat/dm/${dm.convId}`, name, dm.lastMessage ?? '');
+				const prevLastAt = knownDmLastAt[dm.convId] ?? mountedAt;
+				// dm.otherUserName is only set by the API on the RECIPIENT's userChats entry,
+				// so checking it prevents self-toasts when we send (sender entry has no otherUserName).
+				// Only toast/increment when lastAt genuinely increased (avoids double-counting
+				// on re-fires triggered by other DMs updating).
+				if ((dm.lastAt ?? 0) > prevLastAt && dm.otherUserName) {
+					const dmConvPath = `/app/chat/dm/${dm.convId}`;
+					addToast(dm.convId, dmConvPath, dm.otherUserName, dm.lastMessage ?? '');
+					// Skip increment when actively reading this DM.
+					if (window.location.pathname !== dmConvPath) {
+						unreadCounts = { ...unreadCounts, [dm.convId]: (unreadCounts[dm.convId] ?? 0) + 1 };
+					}
 				}
-				prevDmLastAt[dm.convId] = dm.lastAt ?? 0;
+				// On the initial snapshot: if there's an unread DM but count is still 0 (race
+				// window between SSR fetch and client mount), show at least 1 so the badge
+				// appears instead of a plain dot.
+				if (firstUserChatsFire && isUnread(dm.convId, dm.lastAt) && !(unreadCounts[dm.convId] > 0)) {
+					unreadCounts = { ...unreadCounts, [dm.convId]: 1 };
+				}
+				knownDmLastAt[dm.convId] = dm.lastAt ?? 0;
 			}
+			firstUserChatsFire = false;
 			dmList = entries;
 		});
 
@@ -333,38 +588,71 @@
 		lastReadRef = ref(rtdb, `lastRead/${data.currentUser.id}`);
 		onValue(lastReadRef, (snap) => { lastRead = snap.exists() ? snap.val() : {}; });
 
-		// Channel metadata — single lightweight subscription (no messages payload)
-		const prevChannelLastAt = {};
-		const channelMap = Object.fromEntries((data.channels ?? []).map((ch) => [ch.id, ch]));
+		// Channel new-message detection via onChildAdded on the messages path.
+		// Firebase rules always allow channels/${id}/messages (it's the main chat path),
+		// whereas channels/${id}/lastAt may be blocked if rules only cover the messages subtree.
+		// limitToLast(1) keeps the initial download minimal — we only need the latest key
+		// to establish a baseline, and onChildAdded fires for every subsequent new message.
+		//
+		// Push key decoding: Firebase push IDs embed the creation timestamp in their first
+		// 8 characters (base-64 encoded ms). We use this to filter out pre-existing messages.
+		const PUSH_CHARS = '-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz';
+		function pushKeyTime(key) {
+			let t = 0;
+			for (let i = 0; i < 8; i++) t = t * 64 + PUSH_CHARS.indexOf(key[i]);
+			return t;
+		}
+		for (const ch of (data.channels ?? [])) {
+			const r = query(ref(rtdb, `channels/${ch.id}/messages`), limitToLast(1));
+			channelRefs[ch.id] = r;
+			onChildAdded(r, (snap) => {
+				// Ignore the initial "existing message" fire — only act on new arrivals.
+				if (pushKeyTime(snap.key) <= mountedAt) return;
+				const msg = snap.val();
+				// Ignore messages sent by the current user (no self-notification).
+				if (msg?.u === data.currentUser.id) return;
+				const convPath = `/app/chat/channel/${ch.id}`;
+				const senderName = data.users.find((u) => u.id === msg?.u)?.name ?? '';
+				const msgText = msg?.c ? String(msg.c).slice(0, 80) : (msg?.att ? '📎 attachment' : '');
+				const body = senderName ? `${senderName}: ${msgText}` : msgText;
+				addToast(ch.id, convPath, `#${ch.name}`, body);
+				if (window.location.pathname !== convPath) {
+					unreadCounts = { ...unreadCounts, [ch.id]: (unreadCounts[ch.id] ?? 0) + 1 };
+				}
+			});
+		}
+
+		// channelMeta for toast body content — best-effort; may fail if RTDB rules don't
+		// cover this path yet, which is fine since we fall back to empty body above.
 		channelMetaRef = ref(rtdb, 'channelMeta');
 		onValue(channelMetaRef, (snap) => {
-			if (!snap.exists()) { channelMeta = {}; return; }
-			const allMeta = snap.val();
-			const newMeta = {};
-			for (const [chId, raw] of Object.entries(allMeta)) {
-				const meta = { lastAt: raw.lastAt ?? 0, lastMessage: raw.lastMessage ?? '', lastUser: raw.lastUser ?? '' };
-				newMeta[chId] = meta;
-				const ch = channelMap[chId];
-				if (ch) {
-					const prev = prevChannelLastAt[chId];
-					if (prev !== undefined && meta.lastAt > prev) {
-						addToast(chId, `/app/chat/channel/${chId}`, `#${ch.name}`, `${meta.lastUser}: ${meta.lastMessage}`);
-					}
-					prevChannelLastAt[chId] = meta.lastAt;
+			if (!snap.exists()) return;
+			const merged = { ...channelMeta };
+			for (const [chId, raw] of Object.entries(snap.val())) {
+				if (raw && typeof raw === 'object') {
+					merged[chId] = { ...(channelMeta[chId] ?? {}), lastMessage: raw.lastMessage ?? '', lastUser: raw.lastUser ?? '' };
 				}
 			}
-			channelMeta = newMeta;
-		});
+			channelMeta = merged;
+		}, () => { /* permission denied — channelMeta not in rules yet, ignore */ });
 
-		// Per-user unread counts per channel
+		// Per-user unread counts — max-merge with local state so live increments
+		// are never overwritten by a stale Firebase snapshot. The $effect on pathname
+		// handles explicit clearing when the user navigates into a conversation.
 		unreadCountsRef = ref(rtdb, `unreadCounts/${data.currentUser.id}`);
 		onValue(unreadCountsRef, (snap) => {
-			unreadCounts = snap.exists() ? snap.val() : {};
+			if (!snap.exists()) return;
+			const remote = snap.val();
+			const merged = { ...unreadCounts };
+			for (const [k, v] of Object.entries(remote)) {
+				merged[k] = Math.max(merged[k] ?? 0, v ?? 0);
+			}
+			unreadCounts = merged;
 		});
 	});
 
 	onDestroy(() => {
-		clearInterval(activityTimer);
+		pushBroadcast?.close();
 		clearInterval(heartbeatTimer);
 		clearInterval(tickTimer);
 		clearInterval(presencePollTimer);
@@ -374,6 +662,7 @@
 		if (connectedRef) off(connectedRef);
 		if (channelMetaRef) off(channelMetaRef);
 		if (unreadCountsRef) off(unreadCountsRef);
+		for (const r of Object.values(channelRefs)) off(r);
 	});
 
 	function toggleCollapse() {
@@ -384,6 +673,28 @@
 	$effect(() => {
 		$page.url.pathname;
 		sidebarOpen = false;
+	});
+
+	// Clear unread state locally the moment the user navigates to a conversation —
+	// don't wait for Firebase subscription round-trips to clear the badge/dot.
+	$effect(() => {
+		const path = $page.url.pathname;
+		const channelMatch = path.match(/\/app\/chat\/channel\/([^/]+)/);
+		if (channelMatch) {
+			const chId = channelMatch[1];
+			if ((unreadCounts[chId] ?? 0) !== 0 || isUnread(chId, channelMeta[chId]?.lastAt)) {
+				unreadCounts = { ...unreadCounts, [chId]: 0 };
+				lastRead = { ...lastRead, [chId]: Date.now() };
+			}
+		}
+		const dmMatch = path.match(/\/app\/chat\/dm\/([^/]+)/);
+		if (dmMatch) {
+			const cId = dmMatch[1];
+			if ((unreadCounts[cId] ?? 0) !== 0 || isUnread(cId, dmList.find((d) => d.convId === cId)?.lastAt)) {
+				unreadCounts = { ...unreadCounts, [cId]: 0 };
+				lastRead = { ...lastRead, [cId]: Date.now() };
+			}
+		}
 	});
 </script>
 
@@ -448,10 +759,15 @@
 			{#each data.channels as ch}
 				{@const path = `/app/chat/channel/${ch.id}`}
 				{@const unreadCount = unreadCounts[ch.id] ?? 0}
+				{@const hasDot = unreadCount === 0 && isUnread(ch.id, channelMeta[ch.id]?.lastAt)}
 				<a href={path} class="sidebar-item" class:active={$page.url.pathname === path}>
 					<span class="hash">#</span>
-					<span class="item-name" class:bold={unreadCount > 0}>{ch.name}</span>
-					{#if unreadCount > 0}<span class="unread-badge">{unreadCount > 99 ? '99+' : unreadCount}</span>{/if}
+					<span class="item-name" class:bold={unreadCount > 0 || hasDot}>{ch.name}</span>
+					{#if unreadCount > 0}
+						<span class="unread-badge">{unreadCount > 99 ? '99+' : unreadCount}</span>
+					{:else if hasDot}
+						<span class="unread-dot"></span>
+					{/if}
 				</a>
 			{/each}
 		</div>
@@ -484,7 +800,8 @@
 				{@const isOnline = onlineIds.has(u.id)}
 				{@const convId = getConvId(data.currentUser.id, u.id)}
 				{@const dmPath = `/app/chat/dm/${convId}`}
-				{@const dmUnread = isUnread(convId, dmList.find((d) => d.convId === convId)?.lastAt)}
+				{@const dmUnreadCount = unreadCounts[convId] ?? 0}
+				{@const dmUnreadDot = dmUnreadCount === 0 && isUnread(convId, dmList.find((d) => d.convId === convId)?.lastAt)}
 				{@const lastMsg = dmList.find((d) => d.convId === convId)?.lastMessage ?? null}
 				<div class="member-row" onmouseenter={(e) => showHover(e, u.id)} onmouseleave={hideHover}>
 					<a class="member-inner" href={dmPath} class:active={$page.url.pathname === dmPath}>
@@ -493,11 +810,15 @@
 							{#if isOnline}<span class="presence-dot"></span>{/if}
 						</span>
 						<div class="member-text">
-							<span class="member-name" class:bold={dmUnread}>{u.name}</span>
+							<span class="member-name" class:bold={dmUnreadCount > 0 || dmUnreadDot}>{u.name}</span>
 							{#if lastMsg}<span class="dm-last">{lastMsg}</span>{/if}
 						</div>
 						{#if u.role === 'instructor'}<span class="role-badge">instr.</span>{/if}
-						{#if dmUnread}<span class="unread-dot"></span>{/if}
+						{#if dmUnreadCount > 0}
+							<span class="unread-badge">{dmUnreadCount > 99 ? '99+' : dmUnreadCount}</span>
+						{:else if dmUnreadDot}
+							<span class="unread-dot"></span>
+						{/if}
 					</a>
 				</div>
 			{/each}
@@ -510,7 +831,7 @@
 	<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
 </button>
 
-<BottomNav isInstructor={data.currentUser?.role === 'instructor'} />
+<BottomNav isInstructor={data.currentUser?.role === 'instructor'} {totalUnread} />
 
 <div class="app-shell" style:margin-left={sidebarCollapsed ? '52px' : null}>
 	{@render children()}
@@ -774,14 +1095,14 @@
 	/* Mobile hamburger — hidden by default (chat layout shows its own) */
 	.mobile-menu-btn { display: none; }
 
-	/* Mobile sidebar drawer */
+	/* Mobile sidebar — full-screen overlay */
 	@media (max-width: 640px) {
 		.global-sidebar {
 			display: flex;
 			flex-direction: column;
 			position: fixed;
 			top: 0; left: 0; bottom: 0;
-			width: 280px;
+			width: 100%;
 			background: #1a1a1a;
 			color: #c8c1b4;
 			overflow-y: auto;
@@ -800,13 +1121,8 @@
 		.global-sidebar .collapse-btn { display: none; }
 		.global-sidebar .mobile-close-btn { display: flex; }
 		.global-sidebar .sidebar-class-name { display: block; }
-		.sidebar-backdrop {
-			display: block;
-			position: fixed;
-			inset: 0;
-			background: rgba(0, 0, 0, 0.5);
-			z-index: 499;
-		}
+		/* No backdrop needed — sidebar is full-screen */
+		.sidebar-backdrop { display: none; }
 	}
 
 	/* ── App shell ── */

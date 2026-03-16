@@ -1,8 +1,10 @@
 <script>
-	import { onMount } from 'svelte';
+	import { onMount, getContext } from 'svelte';
 	import { page } from '$app/stores';
 
-	let { isInstructor = false } = $props();
+	const openSidebar = getContext('openSidebar');
+
+	let { isInstructor = false, totalUnread = 0 } = $props();
 
 	// Hide the nav only when a real on-screen keyboard appears (mobile).
 	// On desktop, focusing an input doesn't shrink the visual viewport so the nav stays.
@@ -38,18 +40,14 @@
 		};
 	});
 
+	const chatIcon = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`;
+
 	const baseItems = [
 		{
 			href: '/app',
 			label: 'Home',
 			active: (p) => p === '/app',
 			icon: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>`
-		},
-		{
-			href: '/app/chat',
-			label: 'Chat',
-			active: (p) => p.startsWith('/app/chat'),
-			icon: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`
 		},
 		{
 			href: '/app/assignments',
@@ -77,6 +75,16 @@
 
 <!-- Mobile bottom nav only — desktop nav is in the global sidebar (app/+layout.svelte) -->
 <nav class="bottom-nav" class:hidden={keyboardOpen}>
+	<!-- Chat button opens the full-screen sidebar instead of navigating -->
+	<button class="nav-item" class:active={$page.url.pathname.startsWith('/app/chat')} onclick={openSidebar} type="button">
+		<span class="icon-wrap">
+			{@html chatIcon}
+			{#if totalUnread > 0}
+				<span class="nav-badge">{totalUnread > 99 ? '99+' : totalUnread}</span>
+			{/if}
+		</span>
+		<span class="label">Chat</span>
+	</button>
 	{#each items as item}
 		{@const isActive = item.active($page.url.pathname)}
 		<a href={item.href} class="nav-item" class:active={isActive}>
@@ -113,6 +121,12 @@
 			text-decoration: none;
 			transition: color 0.15s;
 			-webkit-tap-highlight-color: transparent;
+			/* reset button defaults */
+			background: none;
+			border: none;
+			padding: 0;
+			font-family: inherit;
+			cursor: pointer;
 		}
 		.nav-item.active { color: #f7f2ea; }
 		.nav-item:not(.active):active { color: #888; }
@@ -122,6 +136,29 @@
 			font-weight: 600;
 			text-transform: uppercase;
 			letter-spacing: 0.05em;
+		}
+
+		.icon-wrap {
+			position: relative;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+		}
+
+		.nav-badge {
+			position: absolute;
+			top: -6px;
+			right: -8px;
+			background: #e53935;
+			color: #fff;
+			font-size: 0.55rem;
+			font-weight: 700;
+			border-radius: 99px;
+			padding: 0.06rem 0.28rem;
+			min-width: 14px;
+			text-align: center;
+			line-height: 1.5;
+			pointer-events: none;
 		}
 	}
 </style>

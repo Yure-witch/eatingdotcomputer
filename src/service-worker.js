@@ -59,6 +59,14 @@ self.addEventListener('push', (event) => {
 		data = { title: 'eating.computer', body: event.data.text() };
 	}
 
+	// Relay to all open app tabs so they can show an in-app toast + ding.
+	// This is a fire-and-forget broadcast; tabs that aren't open simply miss it.
+	try {
+		const bc = new BroadcastChannel('ec-push');
+		bc.postMessage(data);
+		bc.close();
+	} catch { /* BroadcastChannel not available in all environments */ }
+
 	// Always show the OS notification — iOS requires showNotification() on every
 	// push event or it will stop delivering pushes to the app entirely.
 	event.waitUntil(

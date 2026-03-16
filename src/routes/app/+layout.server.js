@@ -1,6 +1,6 @@
 import { redirect } from '@sveltejs/kit';
 import { getDb } from '$lib/server/turso.js';
-import { createFirebaseToken } from '$lib/server/firebase-admin.js';
+import { createFirebaseToken, getAdminDb } from '$lib/server/firebase-admin.js';
 
 export async function load({ locals, cookies }) {
 	const session = await locals.auth();
@@ -97,5 +97,25 @@ export async function load({ locals, cookies }) {
 		role: session.user.role ?? 'student'
 	};
 
-	return { firebaseToken, userId, currentClass, allClasses, users, channels, classId, currentUser };
+	// Fetch initial unread state from Firebase Admin (bypasses client auth/rules).
+	// This ensures unread indicators show correctly on first render, before any
+	// Firebase client subscription fires.
+	let initialLastRead = {};
+	let initialUnreadCounts = {};
+	try {
+		const adminDb = getAdminDb();
+		const [lastReadSnap, unreadSnap, ...channelSnaps] = await Promise.all([
+			adminDb.ref(`lastRead/${userId}`).get(),
+			adminDb.ref(`unreadCounts/${userId}`).get(),
+			...channels.map((ch) => adminDb.ref(`channels/${ch.id}/lastAt`).get())
+		]);
+		if (lastReadSnap.exists()) initialLastRead = lastReadSnap.val();
+		if (unreadSnap.exists()) initialUnreadCounts = unreadSnap.val();
+		// Attach lastAt to each channel so the client has it immediately
+		for (let i = 0; i < channels.length; i++) {
+			if (channelSnaps[i].exists()) channels[i] = { ...channels[i], lastAt: channelSnaps[i].val() };
+		}
+	} catch { /* non-fatal — client subscriptions will fill in the gaps */ }
+
+	return { firebaseToken, userId, currentClass, allClasses, users, channels, classId, currentUser, initialLastRead, initialUnreadCounts };
 }

@@ -3,6 +3,10 @@
 		{
 			"path": "/api/chat/sync",
 			"schedule": "0 0 * * *"
+		},
+		{
+			"path": "/api/presence/archive",
+			"schedule": "0 1 * * *"
 		}
 	]
 }

@@ -44,7 +44,8 @@ export async function POST({ request, locals }) {
 		await db.ref(`dms/${convId}/messages`).push(msg);
 		await Promise.all([
 			db.ref(`userChats/${session.user.id}/${convId}`).update({ otherUserId: to, lastMessage: preview, lastAt: now }),
-			db.ref(`userChats/${to}/${convId}`).update({ otherUserId: session.user.id, otherUserName: senderName, lastMessage: preview, lastAt: now })
+			db.ref(`userChats/${to}/${convId}`).update({ otherUserId: session.user.id, otherUserName: senderName, lastMessage: preview, lastAt: now }),
+			db.ref(`unreadCounts/${to}`).update({ [convId]: ServerValue.increment(1) })
 		]);
 		// Push notification to recipient
 		await notifyUsers([to], {

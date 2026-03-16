@@ -69,7 +69,9 @@
 	}
 
 	function markRead() {
-		set(ref(db, `lastRead/${data.currentUser.id}/${data.convId}`), Date.now());
+		const uid = data.currentUser.id;
+		set(ref(db, `lastRead/${uid}/${data.convId}`), Date.now());
+		set(ref(db, `unreadCounts/${uid}/${data.convId}`), 0);
 	}
 
 	function clearTyping() {
@@ -280,7 +282,7 @@
 	}
 
 	function onKeydown(e) {
-		if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+		if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); inputEl?.focus(); send(); }
 	}
 
 	function onInput() {

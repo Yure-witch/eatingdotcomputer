@@ -1,16 +1,21 @@
 <script>
 	import { enhance } from '$app/forms';
 	import ClassSwitcher from '$lib/components/ClassSwitcher.svelte';
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount, onDestroy, getContext } from 'svelte';
 	import { invalidateAll } from '$app/navigation';
 	import { auth, db as rtdb } from '$lib/firebase.js';
 	import { signInWithCustomToken } from 'firebase/auth';
 	import { ref, onValue, off } from 'firebase/database';
 
+	// Use the layout's rawPresence directly — same signal that drives the sidebar
+	// green dots. No separate Firebase subscription needed for presence here.
+	const rawPresenceCtx = getContext('rawPresence');
+	const refreshPresence = getContext('refreshPresence');
+
 	let { data, form } = $props();
 
 	// Activity chart
-	const W = 480, H = 80, PAD = 4;
+	const W = 480, PAD = 4, LABEL_W = 64, ROW_H = 44;
 	const RANGES = [
 		{ key: '12h', label: '12hr', hours: 12 },
 		{ key: '1d',  label: '1d',   hours: 24 },
@@ -45,59 +50,73 @@
 			.map((u) => ({ ...u, total: u.points.reduce((s, p) => s + p.count, 0) }))
 			.sort((a, b) => b.total - a.total);
 
-		if (!series.length) return { lines: [] };
+		if (!series.length) return { rows: [], buckets: [], svgH: ROW_H };
 
 		// Collect all buckets (sorted)
 		const bucketSet = new Set();
 		for (const u of series) for (const p of u.points) bucketSet.add(p.bucket);
 		const buckets = [...bucketSet].sort();
 
-		const maxCount = Math.max(1, ...series.flatMap((u) => u.points.map((p) => p.count)));
-		const xOf = (b) => PAD + (buckets.indexOf(b) / Math.max(buckets.length - 1, 1)) * (W - PAD * 2);
-		const yOf = (c) => H - PAD - (c / maxCount) * (H - PAD * 2);
+		// Each user gets their own swim lane — no overlap
+		const chartW = W - LABEL_W;
+		const xOf = (b) => LABEL_W + PAD + (buckets.indexOf(b) / Math.max(buckets.length - 1, 1)) * (chartW - PAD * 2);
 
-		const lines = series.map((u, i) => ({
-			userId: u.userId,
-			name: u.name,
-			total: u.total,
-			points: u.points.map((p) => `${xOf(p.bucket).toFixed(1)},${yOf(p.count).toFixed(1)}`).join(' '),
-			rawPoints: u.points,
-			hue: (i * 67) % 360,
-			opacity: Math.max(0.35, 1 - i * 0.12)
-		}));
+		const rows = series.map((u, i) => {
+			const userMax = Math.max(1, ...u.points.map((p) => p.count));
+			const rowTop = i * ROW_H;
+			const yOf = (c) => rowTop + PAD + (1 - c / userMax) * (ROW_H - PAD * 2);
+			return {
+				userId: u.userId,
+				name: u.name,
+				total: u.total,
+				hue: (i * 67) % 360,
+				points: u.points.map((p) => `${xOf(p.bucket).toFixed(1)},${yOf(p.count).toFixed(1)}`).join(' '),
+				rawPoints: u.points,
+				rowY: rowTop,
+				labelY: rowTop + ROW_H / 2 + 3.5
+			};
+		});
 
-		return { lines, buckets };
+		const svgH = series.length * ROW_H;
+		return { rows, buckets, svgH };
 	});
 
-	// Presence — mirrors the chat layout pattern (rawPresence → $derived presenceMap)
-	const PRESENCE_TTL = 3 * 60 * 1000;
-
-	// Raw snapshots: Firebase overwrites, API poll merges in
-	let rawPresence = $state(
-		Object.fromEntries(data.members.map((m) => [m.id, { online: m.online ?? false, lastSeen: m.lastSeen ?? null, ua: m.ua ?? null, screen: m.screen ?? null, pwa: m.pwa ?? null, mobile: m.mobile ?? null, notif: m.notif ?? null }]))
-	);
-	let presenceTick = $state(0); // increments every 30s to force stale re-eval
+	// Presence — read directly from the layout's rawPresence via context.
+	// The layout owns the Firebase subscription and API poll, so this always
+	// matches the sidebar green dots exactly with no race conditions.
+	const PRESENCE_TTL = 5 * 60 * 1000;
+	let presenceTick = $state(0);
 	let now = $state(Date.now());
-	let pollTimer;
 	let tickTimer;
-	let presenceRef;
 	let pendingRequestsRef;
 
-	// Derived map — recomputes whenever rawPresence or tick changes
 	const presenceMap = $derived.by(() => {
-		presenceTick; // subscribe so stale entries are re-evaluated on tick
+		presenceTick; // re-evaluate every minute so TTL expirations render correctly
+		const rp = rawPresenceCtx?.value ?? {};
 		const cutoff = Date.now() - PRESENCE_TTL;
 		const result = {};
-		for (const [uid, val] of Object.entries(rawPresence)) {
-			const online = !!(val.online && (val.lastSeen ?? 0) > cutoff);
-			result[uid] = {
+		for (const m of data.members) {
+			const val = rp[m.id];
+			// Current viewer is always online — they're looking at this page right now.
+			const isMe = m.id === data.currentUser?.id;
+			const online = isMe || !!(val?.online && (val?.lastSeen ?? 0) > cutoff);
+			// Build active devices list — filter by TTL too
+			// For the current viewer (isMe), skip TTL filter — they're definitionally online now.
+		// For others, apply TTL per device to exclude stale/crashed tabs.
+		let devices = [];
+		if (online) {
+			const rawDevices = val?.devices ?? (val?.ua ? [{ ua: val.ua, pwa: val.pwa, mobile: val.mobile, lastSeen: val.lastSeen }] : []);
+			devices = isMe ? rawDevices : rawDevices.filter((d) => (d?.lastSeen ?? 0) > cutoff);
+		}
+			result[m.id] = {
 				online,
-				lastSeen: val.lastSeen ?? null,
-				ua: online ? (val.ua ?? null) : null,
-				screen: online ? (val.screen ?? null) : null,
-				pwa: online ? (val.pwa ?? null) : null,
-				mobile: online ? (val.mobile ?? null) : null,
-				notif: val.notif ?? null
+				lastSeen: val?.lastSeen ?? null,
+				ua: online ? (val?.ua ?? null) : null,
+				screen: online ? (val?.screen ?? null) : null,
+				pwa: online ? (val?.pwa ?? null) : null,
+				mobile: online ? (val?.mobile ?? null) : null,
+				notif: val?.notif ?? null,
+				devices
 			};
 		}
 		return result;
@@ -113,29 +132,15 @@
 		return               { icon: '💻', label: 'Desktop browser' };
 	}
 
-	async function pollPresence() {
-		try {
-			const res = await fetch('/api/presence');
-			if (!res.ok) return;
-			const apiData = await res.json();
-			// Merge: API is authoritative for non-chat users; Firebase wins for online ones
-			// Merge: fresh API data updates the map; Firebase onValue re-overrides for real-time users
-			rawPresence = { ...rawPresence, ...apiData };
-		} catch { /* ignore */ }
-	}
-
 	onMount(async () => {
-		// Ensure Firebase is authenticated before subscribing
+		// Immediately trigger the layout's presence poll so the manage tab sees
+		// accurate online status right away, not on the next scheduled cycle.
+		refreshPresence?.();
+
+		// Firebase auth needed only for the pendingRequestsRef subscription below
 		if (data.firebaseToken) {
 			try { await signInWithCustomToken(auth, data.firebaseToken); } catch { /* already authed */ }
 		}
-
-		presenceRef = ref(rtdb, 'presence');
-		onValue(presenceRef, (snap) => {
-			// Merge Firebase data into rawPresence — Firebase is authoritative
-			rawPresence = { ...rawPresence, ...(snap.exists() ? snap.val() : {}) };
-			now = Date.now();
-		});
 
 		// Subscribe to join-request signals — any write here means a new request came in
 		if (data.currentClass?.id) {
@@ -147,14 +152,10 @@
 			});
 		}
 
-		pollPresence();
-		pollTimer = setInterval(pollPresence, 30_000);
-		tickTimer = setInterval(() => { presenceTick++; now = Date.now(); }, 30_000);
+		tickTimer = setInterval(() => { presenceTick++; now = Date.now(); }, 60_000);
 	});
 	onDestroy(() => {
-		clearInterval(pollTimer);
 		clearInterval(tickTimer);
-		if (presenceRef) off(presenceRef);
 		if (pendingRequestsRef) off(pendingRequestsRef);
 	});
 
@@ -245,12 +246,19 @@
 	let hoverPct = $state(0); // 0–1, for tooltip positioning
 	let chartEl = $state(null);
 
+	// Bar chart hover
+	let barHoverIdx = $state(null);
+	let barTooltipX = $state(0);
+	function handleBarMouseMove(e) {
+		barTooltipX = e.clientX - e.currentTarget.getBoundingClientRect().left;
+	}
+
 	function handleChartMouseMove(e) {
 		const rect = e.currentTarget.getBoundingClientRect();
 		const svgX = ((e.clientX - rect.left) / rect.width) * W;
 		const buckets = activityChart.buckets;
 		if (!buckets?.length) return;
-		const raw = (svgX - PAD) / (W - PAD * 2) * (buckets.length - 1);
+		const raw = (svgX - LABEL_W - PAD) / (W - LABEL_W - PAD * 2) * (buckets.length - 1);
 		hoverIdx = Math.max(0, Math.min(buckets.length - 1, Math.round(raw)));
 		hoverPct = (e.clientX - rect.left) / rect.width;
 	}
@@ -260,11 +268,10 @@
 	function formatBucket(bucket) {
 		if (!bucket) return '';
 		if (bucket.includes('T')) {
-			const [date, time] = bucket.split('T');
-			const [y, m, d] = date.split('-').map(Number);
-			const h = parseInt(time);
-			const label = h === 0 ? '12am' : h < 12 ? `${h}am` : h === 12 ? '12pm' : `${h - 12}pm`;
-			return `${new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}, ${label}`;
+			// Bucket is stored as UTC — append Z so Date parses it correctly, then display in local tz
+			return new Date(bucket + ':00Z').toLocaleString('en-US', {
+				month: 'short', day: 'numeric', hour: 'numeric', hour12: true
+			});
 		}
 		const [y, m, d] = bucket.split('-').map(Number);
 		return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
@@ -519,52 +526,55 @@
 			</div>
 		</div>
 		<div class="activity-chart" bind:this={chartEl}>
-			{#if activityChart.lines?.length}
-				<svg viewBox="0 0 {W} {H}" preserveAspectRatio="none" class="chart-svg"
+			{#if activityChart.rows?.length}
+				<svg viewBox="0 0 {W} {activityChart.svgH}" width="100%" height={activityChart.svgH}
+					class="chart-svg"
 					onmousemove={handleChartMouseMove}
 					onmouseleave={handleChartMouseLeave}>
-					{#each activityChart.lines as line}
-						<polyline
-							points={line.points}
-							fill="none"
-							stroke="hsl({line.hue} 30% 40%)"
-							stroke-width="1.5"
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							opacity={line.opacity}
-						/>
+					<!-- Swim lane backgrounds and name labels -->
+					{#each activityChart.rows as row, i}
+						<rect x={0} y={row.rowY} width={W} height={ROW_H} fill={i % 2 === 0 ? '#faf7f2' : '#f5f1eb'} />
+						{#if i > 0}
+							<line x1={0} y1={row.rowY} x2={W} y2={row.rowY} stroke="#e8e2d9" stroke-width="0.5" />
+						{/if}
+						<text x={LABEL_W - 6} y={row.labelY} text-anchor="end" font-size="8" fill="#a09688">{row.name.split(' ')[0]}</text>
 					{/each}
+					<!-- Label column separator -->
+					<line x1={LABEL_W} y1={0} x2={LABEL_W} y2={activityChart.svgH} stroke="#ddd7cc" stroke-width="0.75" />
+					<!-- Data lines (each user in their own lane) -->
+					{#each activityChart.rows as row}
+						{#if row.points}
+							<polyline
+								points={row.points}
+								fill="none"
+								stroke="hsl({row.hue} 55% 42%)"
+								stroke-width="1.5"
+								stroke-linecap="round"
+								stroke-linejoin="round"
+							/>
+						{/if}
+					{/each}
+					<!-- Hover crosshair -->
 					{#if hoverIdx !== null && activityChart.buckets?.length}
-						{@const bx = (PAD + (hoverIdx / Math.max(activityChart.buckets.length - 1, 1)) * (W - PAD * 2)).toFixed(1)}
-						<line x1={bx} y1={PAD} x2={bx} y2={H - PAD} stroke="rgba(0,0,0,0.25)" stroke-width="0.75" stroke-dasharray="2,2" />
+						{@const bx = (LABEL_W + PAD + (hoverIdx / Math.max(activityChart.buckets.length - 1, 1)) * (W - LABEL_W - PAD * 2)).toFixed(1)}
+						<line x1={bx} y1={0} x2={bx} y2={activityChart.svgH} stroke="rgba(0,0,0,0.2)" stroke-width="0.75" stroke-dasharray="2,2" />
 					{/if}
 				</svg>
 				{#if hoverIdx !== null && activityChart.buckets?.length}
 					{@const bucket = activityChart.buckets[hoverIdx]}
-					{@const tooltipLeft = Math.min(Math.max(hoverPct * 100, 5), 80)}
+					{@const tooltipLeft = Math.min(Math.max(hoverPct * 100, 15), 75)}
 					<div class="chart-tooltip" style="left: {tooltipLeft}%">
 						<div class="tooltip-date">{formatBucket(bucket)}</div>
-						{#each activityChart.lines as line}
-							{@const pt = line.rawPoints.find(p => p.bucket === bucket)}
-							{#if pt?.count}
-								<div class="tooltip-row">
-									<span class="tooltip-dot" style="background: hsl({line.hue} 30% 40%)"></span>
-									<span>{line.name}</span>
-									<span class="tooltip-count">{pt.count}</span>
-								</div>
-							{/if}
+						{#each activityChart.rows as row}
+							{@const pt = row.rawPoints.find(p => p.bucket === bucket)}
+							<div class="tooltip-row">
+								<span class="tooltip-dot" style="background: hsl({row.hue} 55% 42%)"></span>
+								<span>{row.name.split(' ')[0]}</span>
+								<span class="tooltip-count">{pt?.count ?? 0}</span>
+							</div>
 						{/each}
 					</div>
 				{/if}
-				<div class="chart-legend">
-					{#each activityChart.lines as line}
-						<span class="legend-item">
-							<span class="legend-dot" style="background: hsl({line.hue} 30% 40%); opacity: {line.opacity}"></span>
-							{line.name || 'Unknown'}
-							<span class="legend-count">{line.total}</span>
-						</span>
-					{/each}
-				</div>
 			{:else}
 				<p class="chart-empty">No activity in this period.</p>
 			{/if}
@@ -593,26 +603,29 @@
 			{@const SVG_H = CHART_H + LABEL_H}
 			{@const groupW = N_BARS * BAR_W + (N_BARS - 1) * BAR_GAP}
 			{@const SVG_W = userBars.users.length * (groupW + GROUP_GAP) + 24}
-			<div class="device-chart-wrap">
+			<div class="device-chart-wrap"
+				onmousemove={handleBarMouseMove}
+				onmouseleave={() => barHoverIdx = null}>
 				<svg viewBox="0 0 {SVG_W} {SVG_H}" class="device-chart-svg" style="min-width: {Math.max(260, SVG_W)}px">
 					<!-- baseline -->
 					<line x1="0" y1={CHART_H} x2={SVG_W} y2={CHART_H} stroke="#ddd7cc" stroke-width="1"/>
 					{#each userBars.users as u, i}
 						{@const gx = 12 + i * (groupW + GROUP_GAP)}
 						{@const bars = [
-							{ val: u.total,          fill: 'hsl(200 55% 48%)', title: 'Total' },
-							{ val: u.desktop,        fill: 'hsl(220 45% 52%)', title: 'Desktop' },
-							{ val: u.mobile,         fill: 'hsl(270 40% 55%)', title: 'Mobile' },
-							{ val: u.desktopNoNotif, fill: 'hsl(220 25% 72%)', title: 'Desktop, no notif' },
-							{ val: u.mobileNoNotif,  fill: 'hsl(270 20% 72%)', title: 'Mobile, no notif' }
+							{ val: u.total,          fill: 'hsl(200 55% 48%)' },
+							{ val: u.desktop,        fill: 'hsl(220 45% 52%)' },
+							{ val: u.mobile,         fill: 'hsl(270 40% 55%)' },
+							{ val: u.desktopNoNotif, fill: 'hsl(220 25% 72%)' },
+							{ val: u.mobileNoNotif,  fill: 'hsl(270 20% 72%)' }
 						]}
+						<!-- Hit area for hover -->
+						<rect x={gx - BAR_GAP} y={0} width={groupW + BAR_GAP * 2} height={CHART_H}
+							fill="transparent" onmouseenter={() => barHoverIdx = i} />
 						{#each bars as b, bi}
 							{@const bx = gx + bi * (BAR_W + BAR_GAP)}
 							{@const h = (b.val / userBars.maxVal) * CHART_H}
 							{#if h > 0}
-								<rect x={bx} y={CHART_H - h} width={BAR_W} height={h} rx="2" fill={b.fill} opacity="0.9">
-									<title>{u.name} · {b.title}: {b.val}m</title>
-								</rect>
+								<rect x={bx} y={CHART_H - h} width={BAR_W} height={h} rx="2" fill={b.fill} opacity="0.9" />
 							{/if}
 						{/each}
 						<!-- name label -->
@@ -620,6 +633,45 @@
 						<text x={gx + groupW / 2} y={CHART_H + 14} text-anchor="middle" font-size="7.5" fill="#6b5f54">{firstName}</text>
 					{/each}
 				</svg>
+				{#if barHoverIdx !== null && userBars.users[barHoverIdx]}
+					{@const u = userBars.users[barHoverIdx]}
+					<div class="bar-tooltip" style="left: {barTooltipX}px">
+						<div class="tooltip-date">{u.name}</div>
+						<div class="tooltip-row">
+							<span class="tooltip-dot" style="background: hsl(200 55% 48%)"></span>
+							<span>Total</span>
+							<span class="tooltip-count">{u.total}m</span>
+						</div>
+						{#if u.desktop > 0}
+						<div class="tooltip-row">
+							<span class="tooltip-dot" style="background: hsl(220 45% 52%)"></span>
+							<span>Desktop</span>
+							<span class="tooltip-count">{u.desktop}m</span>
+						</div>
+						{/if}
+						{#if u.mobile > 0}
+						<div class="tooltip-row">
+							<span class="tooltip-dot" style="background: hsl(270 40% 55%)"></span>
+							<span>Mobile</span>
+							<span class="tooltip-count">{u.mobile}m</span>
+						</div>
+						{/if}
+						{#if u.desktopNoNotif > 0}
+						<div class="tooltip-row">
+							<span class="tooltip-dot" style="background: hsl(220 25% 72%)"></span>
+							<span>Desktop/no notif</span>
+							<span class="tooltip-count">{u.desktopNoNotif}m</span>
+						</div>
+						{/if}
+						{#if u.mobileNoNotif > 0}
+						<div class="tooltip-row">
+							<span class="tooltip-dot" style="background: hsl(270 20% 72%)"></span>
+							<span>Mobile/no notif</span>
+							<span class="tooltip-count">{u.mobileNoNotif}m</span>
+						</div>
+						{/if}
+					</div>
+				{/if}
 			</div>
 			<!-- Legend -->
 			<div class="ud-legend">
@@ -667,15 +719,16 @@
 							{/if}
 						</td>
 						<td class="muted device-cell">
-							{#if p?.online}
+							{#if p?.online && p.devices?.length}
+								<span class="devices-list">
+									{#each p.devices as d}
+										{@const dev = deviceLabel(d)}
+										<span class="device-info" title={d.ua ?? ''}>{dev?.icon ?? '💻'} {dev?.label ?? 'Browser'}</span>
+									{/each}
+								</span>
+							{:else if p?.online}
 								{@const dev = deviceLabel(p)}
-								{#if dev}
-									<span class="device-info" title={p.ua ?? ''}>
-										{dev.icon} {dev.label}
-									</span>
-								{:else}
-									—
-								{/if}
+								<span class="device-info" title={p.ua ?? ''}>{dev?.icon ?? '💻'} {dev?.label ?? 'Browser'}</span>
 							{:else}
 								—
 							{/if}
@@ -689,7 +742,7 @@
 								<span title="Unknown">—</span>
 							{/if}
 						</td>
-						<td class="muted">{formatLastSeen(p?.lastSeen ?? null)}</td>
+						<td class="muted">{p?.online ? 'just now' : formatLastSeen(p?.lastSeen ?? m.lastSeen ?? null)}</td>
 						<td>
 							{#if m.role !== 'instructor'}
 								<form method="POST" action="?/resetStudent" use:enhance>
@@ -1030,7 +1083,7 @@
 	.empty { color: #a09688; font-size: 0.9rem; }
 
 	.activity-chart { margin-top: 0.75rem; position: relative; }
-	.chart-svg { width: 100%; height: 80px; display: block; border-radius: 6px; background: #faf7f2; cursor: crosshair; }
+	.chart-svg { width: 100%; display: block; border-radius: 6px; cursor: crosshair; }
 
 	.chart-tooltip {
 		position: absolute;
@@ -1058,7 +1111,16 @@
 	}
 	.chart-labels span { position: absolute; transform: translateX(-50%); }
 
-	.device-chart-wrap { margin-top: 0.75rem; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+	.device-chart-wrap { margin-top: 0.75rem; overflow-x: auto; -webkit-overflow-scrolling: touch; position: relative; }
+	.bar-tooltip {
+		position: absolute;
+		top: 0; transform: translateX(-50%);
+		background: #1a1a1a; color: #f7f2ea;
+		border-radius: 7px; padding: 0.45rem 0.65rem;
+		font-size: 0.72rem; pointer-events: none;
+		white-space: nowrap; z-index: 10;
+		box-shadow: 0 2px 12px rgba(0,0,0,0.25);
+	}
 	.device-chart-svg { display: block; height: 152px; }
 	.ud-legend {
 		display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 1rem;
@@ -1112,6 +1174,7 @@
 	.status-offline { font-size: 0.8rem; color: #bbb; }
 	.device-cell { font-size: 0.78rem; white-space: nowrap; }
 	.device-info { cursor: default; }
+	.devices-list { display: flex; flex-direction: column; gap: 2px; }
 	.member-link { color: var(--ink); text-decoration: none; font-weight: 500; }
 	.member-link:hover { text-decoration: underline; text-underline-offset: 2px; }
 	.btn-reset {

@@ -85,12 +85,46 @@ export const { handle, signIn, signOut } = SvelteKitAuth({
 				token.role = user.role ?? 'student';
 				token.userId = user.id;
 			}
+			// Fallback: if userId is still missing (DB was down at sign-in, old token predating
+			// userId enrichment, etc.), re-fetch it now so it persists in the token going forward.
+			if (!token.userId && token.email) {
+				const db = getDb();
+				if (db) {
+					try {
+						const result = await db.execute({
+							sql: 'SELECT id, role FROM users WHERE email = ?',
+							args: [token.email]
+						});
+						if (result.rows[0]) {
+							token.userId = String(result.rows[0].id);
+							if (!token.role) token.role = String(result.rows[0].role);
+						}
+					} catch { /* non-fatal */ }
+				}
+			}
 			return token;
 		},
 
 		async session({ session, token }) {
 			session.user.role = token.role;
 			session.user.id = token.userId;
+			// Fallback for existing sessions where token.userId was never set.
+			// Runs on every locals.auth() call until the JWT is refreshed with the fix above.
+			if (!session.user.id && token.email) {
+				const db = getDb();
+				if (db) {
+					try {
+						const result = await db.execute({
+							sql: 'SELECT id, role FROM users WHERE email = ?',
+							args: [token.email]
+						});
+						if (result.rows[0]) {
+							session.user.id = String(result.rows[0].id);
+							if (!session.user.role) session.user.role = String(result.rows[0].role);
+						}
+					} catch { /* non-fatal */ }
+				}
+			}
 			return session;
 		}
 	}
