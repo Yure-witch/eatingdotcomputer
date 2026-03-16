@@ -110,4 +110,13 @@
 	.login-btn:hover {
 		color: var(--ink);
 	}
+
+	@media (max-width: 600px) {
+		.line { display: none; }
+		.login-btn {
+			font-size: 1.25rem;
+			color: var(--ink);
+			margin-top: 0;
+		}
+	}
 </style>
