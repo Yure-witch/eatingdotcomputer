@@ -112,7 +112,7 @@
 		display: flex; align-items: center; gap: 0.75rem;
 		padding: 1rem 1.5rem 0.75rem; border-bottom: 1.5px solid #ddd7cc; flex-shrink: 0;
 	}
-	.chat-header h1 { font-family: 'Cambridge', serif; font-size: 1.25rem; font-weight: 400; margin: 0; }
+	.chat-header h1 { font-family: 'Avara', serif; font-size: 1.25rem; font-weight: 400; margin: 0; }
 	.avatar {
 		width: 28px; height: 28px; border-radius: 7px; background: var(--ink); color: var(--paper);
 		font-size: 0.8rem; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0;

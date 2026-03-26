@@ -361,6 +361,48 @@
 				{:else}
 					<p class="bubble" class:pending={msg.pending}>{msg.content}{#if msg.edited}<span class="edited-tag"> (edited)</span>{/if}</p>
 				{/if}
+				{#if !msg.pending}
+				<div class="msg-actions-bar">
+					<button class="action-btn" onclick={(e) => { e.stopPropagation(); openPicker(msg.id, e); }} title="Add reaction">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
+					</button>
+					<button class="action-btn" onclick={(e) => { e.stopPropagation(); startReply(msg); }} title="Reply">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>
+					</button>
+					<button class="action-btn" title="Reply in thread">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+					</button>
+					<button class="action-btn" class:action-btn-starred={starredIds.has(msg.id)} onclick={(e) => { e.stopPropagation(); toggleStar(msg); }} title={starredIds.has(msg.id) ? 'Unstar' : 'Star message'}>
+						{#if starredIds.has(msg.id)}
+							<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+						{:else}
+							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+						{/if}
+					</button>
+					<button class="action-btn" title="Add effect">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>
+					</button>
+					{#if isMine}
+						<button class="action-btn" onclick={(e) => { e.stopPropagation(); startEdit(msg); }} title="Edit message">
+							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+						</button>
+						<button class="action-btn action-btn-delete" onclick={(e) => { e.stopPropagation(); if (confirm('Delete this message?')) deleteMessage(msg); }} title="Delete">
+							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+						</button>
+					{:else if data.currentUser.role === 'instructor'}
+						<div class="kebab-wrap">
+							<button class="action-btn" onclick={(e) => { e.stopPropagation(); kebabOpenId = kebabOpenId === msg.id ? null : msg.id; }} title="More">
+								<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+							</button>
+							{#if kebabOpenId === msg.id}
+								<div class="kebab-menu">
+									<button class="kebab-item kebab-item-delete" onclick={(e) => { e.stopPropagation(); kebabOpenId = null; if (confirm('Delete this message?')) deleteMessage(msg); }}>Delete</button>
+								</div>
+							{/if}
+						</div>
+					{/if}
+				</div>
+				{/if}
 			</div>
 			{#if starredIds.has(msg.id)}
 				<div class="saved-label">
@@ -383,58 +425,6 @@
 							</button>
 						{/if}
 					{/each}
-				</div>
-			{/if}
-			{#if !msg.pending}
-				<div class="msg-actions">
-					<!-- React -->
-					<button class="action-btn" onclick={(e) => openPicker(msg.id, e)} title="Add reaction">
-						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
-					</button>
-					<!-- Reply -->
-					<button class="action-btn" onclick={() => startReply(msg)} title="Reply">
-						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>
-					</button>
-					<!-- Reply in thread (placeholder) -->
-					<button class="action-btn" title="Reply in thread">
-						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-					</button>
-					<!-- Star / save -->
-					<button class="action-btn" class:action-btn-starred={starredIds.has(msg.id)} onclick={() => toggleStar(msg)} title={starredIds.has(msg.id) ? 'Unstar' : 'Star message'}>
-						{#if starredIds.has(msg.id)}
-							<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-						{:else}
-							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-						{/if}
-					</button>
-					<!-- Effect (placeholder) -->
-					<button class="action-btn" title="Add effect">
-						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>
-					</button>
-					<!-- Edit (own messages) -->
-					{#if isMine}
-						<button class="action-btn" onclick={() => startEdit(msg)} title="Edit message">
-							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-						</button>
-					{/if}
-					<!-- Delete -->
-					{#if isMine}
-						<button class="action-btn action-btn-delete" onclick={() => { if (confirm('Delete this message?')) deleteMessage(msg); }} title="Delete">
-							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
-						</button>
-					{:else if data.currentUser.role === 'instructor'}
-						<div class="kebab-wrap">
-							<button class="action-btn" onclick={() => kebabOpenId = kebabOpenId === msg.id ? null : msg.id} title="More">
-								<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>
-							</button>
-							{#if kebabOpenId === msg.id}
-								<div class="kebab-overlay" onclick={() => kebabOpenId = null} role="presentation"></div>
-								<div class="kebab-menu">
-									<button class="kebab-item kebab-item-delete" onclick={() => { kebabOpenId = null; if (confirm('Delete this message?')) deleteMessage(msg); }}>Delete</button>
-								</div>
-							{/if}
-						</div>
-					{/if}
 				</div>
 			{/if}
 		</div>
@@ -508,7 +498,7 @@
 		border-bottom: 1.5px solid #ddd7cc;
 		flex-shrink: 0;
 	}
-	.chat-header h1 { font-family: 'Cambridge', serif; font-size: 1.25rem; font-weight: 400; margin: 0; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.chat-header h1 { font-family: 'Avara', serif; font-size: 1.25rem; font-weight: 400; margin: 0; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 	.sidebar-toggle {
 		display: none;
@@ -554,25 +544,49 @@
 	.message.mine .reply-text { color: rgba(255,255,255,0.85); }
 
 	/* Bubble row */
-	.bubble-row { display: flex; align-items: flex-end; gap: 0.3rem; }
+	.bubble-row { position: relative; display: flex; align-items: flex-end; gap: 0.3rem; }
 	.message.mine .bubble-row { flex-direction: row-reverse; }
 
-	/* Action toolbar — floats above message on hover, takes no vertical space */
-	.msg-actions {
+	.msg-actions-bar {
 		position: absolute;
-		top: 0; right: 0;
-		z-index: 5;
-		display: flex; flex-direction: row; gap: 0;
-		background: #fff; border: 1.5px solid #ddd7cc; border-radius: 10px;
-		padding: 0; overflow: hidden;
-		box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-		opacity: 0; pointer-events: none;
-		transition: opacity 0.12s;
+		top: 9px;
+		transform: translateY(-100%);
+		display: flex;
+		flex-direction: row;
+		gap: 0;
+		background: #fff;
+		border: 1.5px solid #ddd7cc;
+		border-radius: 10px;
+		padding: 1px;
+		overflow: visible;
+		box-shadow: 0 2px 10px rgba(0,0,0,0.12);
+		opacity: 0;
+		pointer-events: none;
+		transition: opacity 0.1s;
+		z-index: 50;
+		white-space: nowrap;
 	}
-	.message:hover .msg-actions { opacity: 1; pointer-events: auto; }
+
+	/* For others' messages: left-anchor when short, right-anchor when long */
+	.message:not(.mine) .msg-actions-bar {
+		left: max(5px, calc(100% - 178px));
+	}
+
+	/* For mine messages: left-anchor when bubble is wide, right-anchor when narrow */
+	.message.mine .msg-actions-bar {
+		left: min(-5px, calc(100% - 218px));
+	}
+
+	/* Show bar on bubble-row hover or when bar itself is hovered */
+	.bubble-row:hover .msg-actions-bar,
+	.msg-actions-bar:hover {
+		opacity: 1;
+		pointer-events: auto;
+	}
+
 	.action-btn {
 		background: transparent; border: none; border-radius: 6px;
-		width: 40px; height: 40px; padding: 10px; cursor: pointer; color: #a09688;
+		width: 30px; height: 30px; padding: 5px; cursor: pointer; color: #a09688;
 		display: flex; align-items: center; justify-content: center;
 		transition: color 0.1s, background 0.1s;
 		flex-shrink: 0;
@@ -761,7 +775,6 @@
 		.chat-header h1 { font-size: 1.1rem; }
 		.message-list { padding: 0.75rem 0.875rem; }
 		.message { max-width: 88%; }
-		.msg-actions { opacity: 0; }
 		.reply-bar { padding: 0.4rem 0.75rem; }
 		.input-area {
 			background: var(--paper);

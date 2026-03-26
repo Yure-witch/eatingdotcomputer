@@ -60,7 +60,7 @@
 	}
 
 	.wordmark {
-		font-family: 'Cambridge', serif;
+		font-family: 'Avara', serif;
 		font-size: 1.2rem;
 		color: var(--ink, #1a1a1a);
 	}

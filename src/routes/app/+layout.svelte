@@ -636,18 +636,12 @@
 			channelMeta = merged;
 		}, () => { /* permission denied — channelMeta not in rules yet, ignore */ });
 
-		// Per-user unread counts — max-merge with local state so live increments
-		// are never overwritten by a stale Firebase snapshot. The $effect on pathname
-		// handles explicit clearing when the user navigates into a conversation.
+		// Per-user unread counts — replace directly from Firebase so clears from
+		// other tabs/devices propagate instantly. Local optimistic increments
+		// (e.g. new message arrival) are quickly corrected by the Firebase echo.
 		unreadCountsRef = ref(rtdb, `unreadCounts/${data.currentUser.id}`);
 		onValue(unreadCountsRef, (snap) => {
-			if (!snap.exists()) return;
-			const remote = snap.val();
-			const merged = { ...unreadCounts };
-			for (const [k, v] of Object.entries(remote)) {
-				merged[k] = Math.max(merged[k] ?? 0, v ?? 0);
-			}
-			unreadCounts = merged;
+			unreadCounts = snap.exists() ? snap.val() : {};
 		});
 	});
 
@@ -910,7 +904,7 @@
 
 	/* ── Logo ── */
 	.sidebar-logo {
-		font-family: 'Cambridge', serif;
+		font-family: 'Avara', serif;
 		font-size: 0.9rem;
 		color: #f7f2ea;
 		text-decoration: none;
@@ -924,7 +918,7 @@
 	/* ── Class name (mobile sidebar header only) ── */
 	.sidebar-class-name {
 		display: none;
-		font-family: 'Cambridge', serif;
+		font-family: 'Avara', serif;
 		font-size: 0.9rem;
 		color: #f7f2ea;
 		white-space: nowrap;

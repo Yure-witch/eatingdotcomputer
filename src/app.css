@@ -1,11 +1,32 @@
 @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Space+Grotesk:wght@400;500;600&family=Pacifico&display=swap');
 
 @font-face {
-	font-family: 'Cambridge';
-	src: url('/fonts/Cambridge.otf') format('opentype'),
-		url('/fonts/Cambridge.ttf') format('truetype');
-	font-weight: 400;
+	font-family: 'Avara';
+	src: url('/fonts/Avara-master/fonts/webfonts/Bold/Avara-Bold.woff2') format('woff2'),
+		url('/fonts/Avara-master/fonts/webfonts/Bold/Avara-Bold.woff') format('woff'),
+		url('/fonts/Avara-master/fonts/webfonts/Bold/Avara-Bold.ttf') format('truetype');
+	font-weight: 700;
 	font-style: normal;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: 'Avara';
+	src: url('/fonts/Avara-master/fonts/webfonts/Black/Avara-Black.woff2') format('woff2'),
+		url('/fonts/Avara-master/fonts/webfonts/Black/Avara-Black.woff') format('woff'),
+		url('/fonts/Avara-master/fonts/webfonts/Black/Avara-Black.ttf') format('truetype');
+	font-weight: 900;
+	font-style: normal;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: 'Avara';
+	src: url('/fonts/Avara-master/fonts/webfonts/BoldItalic/Avara-BoldItalic.woff2') format('woff2'),
+		url('/fonts/Avara-master/fonts/webfonts/BoldItalic/Avara-BoldItalic.woff') format('woff'),
+		url('/fonts/Avara-master/fonts/webfonts/BoldItalic/Avara-BoldItalic.ttf') format('truetype');
+	font-weight: 700;
+	font-style: italic;
 	font-display: swap;
 }
 

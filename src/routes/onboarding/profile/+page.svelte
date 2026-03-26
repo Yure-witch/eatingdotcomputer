@@ -76,7 +76,7 @@
 	}
 
 	h1 {
-		font-family: 'Cambridge', serif;
+		font-family: 'Avara', serif;
 		font-size: 1.75rem;
 		font-weight: 400;
 		margin: 0 0 0.1rem;

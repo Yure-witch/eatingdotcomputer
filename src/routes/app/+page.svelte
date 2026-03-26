@@ -436,7 +436,7 @@
 		display: flex; align-items: center; gap: 0.75rem;
 		padding: 1rem 1.5rem; border-bottom: 1.5px solid #ddd7cc; flex-shrink: 0;
 	}
-	.wordmark { font-family: 'Cambridge', serif; font-size: 1.1rem; color: var(--ink); text-decoration: none; flex-shrink: 0; }
+	.wordmark { font-family: 'Avara', serif; font-size: 1.1rem; color: var(--ink); text-decoration: none; flex-shrink: 0; }
 	.wordmark:hover { opacity: 0.7; }
 	.header-sub { display: flex; align-items: center; gap: 0.75rem; flex: 1; min-width: 0; }
 	.header-right { display: flex; align-items: center; gap: 0.6rem; margin-left: auto; flex-shrink: 0; }
@@ -455,7 +455,7 @@
 		width: 100%; margin: 0 auto; box-sizing: border-box;
 	}
 	.page-header { margin-bottom: 1.75rem; }
-	.page-header h1 { font-family: 'Cambridge', serif; font-size: 2rem; font-weight: 400; margin: 0 0 0.2rem; }
+	.page-header h1 { font-family: 'Avara', serif; font-size: 2rem; font-weight: 400; margin: 0 0 0.2rem; }
 	.subtitle { font-size: 0.85rem; color: #a09688; margin: 0; }
 
 	/* Create form */
@@ -534,7 +534,7 @@
 	}
 	.assign-due { font-size: 0.82rem; color: #e07550; font-weight: 500; }
 	.assign-title {
-		font-family: 'Cambridge', serif; font-size: 1.75rem; font-weight: 400;
+		font-family: 'Avara', serif; font-size: 1.75rem; font-weight: 400;
 		color: var(--ink); margin: 0; line-height: 1.2;
 	}
 	.assign-desc { font-size: 0.9rem; color: #555; line-height: 1.6; margin: 0; white-space: pre-wrap; }
@@ -608,7 +608,7 @@
 
 	/* Empty state */
 	.empty-state { text-align: center; padding: 3rem 1rem; }
-	.empty-state h1 { font-family: 'Cambridge', serif; font-size: 1.75rem; font-weight: 400; color: var(--ink); margin: 0 0 0.5rem; }
+	.empty-state h1 { font-family: 'Avara', serif; font-size: 1.75rem; font-weight: 400; color: var(--ink); margin: 0 0 0.5rem; }
 	.empty-state p { color: #a09688; font-size: 0.9rem; margin: 0; }
 
 	/* Utility chips */
@@ -633,13 +633,13 @@
 		text-align: center; max-width: 360px; width: 100%; gap: 0.85rem;
 	}
 	.gate-wordmark {
-		font-family: 'Cambridge', serif; font-size: 1.1rem; color: var(--ink);
+		font-family: 'Avara', serif; font-size: 1.1rem; color: var(--ink);
 		text-decoration: none; margin-bottom: 0.5rem;
 	}
 	.gate-wordmark:hover { opacity: 0.7; }
 	.gate-icon { font-size: 2.5rem; line-height: 1; }
 	.gate-title {
-		font-family: 'Cambridge', serif; font-size: 1.75rem; font-weight: 400;
+		font-family: 'Avara', serif; font-size: 1.75rem; font-weight: 400;
 		color: var(--ink); margin: 0;
 	}
 	.gate-body {

@@ -59,7 +59,7 @@
 	.back:hover { color: var(--ink, #1a1a1a); }
 
 	h1 {
-		font-family: 'Cambridge', serif;
+		font-family: 'Avara', serif;
 		font-size: 1.75rem;
 		font-weight: 400;
 		margin: 0 0 0.4rem;

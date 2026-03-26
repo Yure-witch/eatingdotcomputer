@@ -105,7 +105,7 @@ export async function load({ locals, parent }) {
 		      FROM user_sessions us
 		      JOIN users u ON us.user_id = u.id
 		      JOIN hours ON us.session_start <= datetime(hours.h, '+1 hour')
-		               AND (us.session_end IS NULL OR us.session_end >= hours.h)
+		               AND (us.session_end IS NULL OR us.session_end >= datetime(hours.h))
 		      WHERE u.role != 'instructor'
 		        AND us.session_start >= datetime('now', '-7 days')
 		        AND EXISTS (
@@ -151,11 +151,15 @@ export async function load({ locals, parent }) {
 		const now = Date.now();
 		const dayAgo = now - 24 * 3600_000;
 
-		// Which students are approved class members (exclude instructor from charts)
+		// All non-instructor users — not restricted to approved members so activity
+		// from pending/unapproved accounts still shows up in charts.
+		const allUsersResult = db ? await db.execute({
+			sql: `SELECT id, name FROM users WHERE role != 'instructor'`,
+			args: []
+		}) : { rows: [] };
 		const studentMap = {};
-		for (const m of members) {
-			if (m.role === 'instructor') continue;
-			studentMap[m.id] = m.name;
+		for (const r of allUsersResult.rows) {
+			studentMap[String(r.id)] = String(r.name ?? '');
 		}
 
 		// Push notification status per user
@@ -249,7 +253,7 @@ export async function load({ locals, parent }) {
 		      FROM user_sessions us
 		      JOIN users u ON us.user_id = u.id
 		      JOIN hours ON us.session_start <= datetime(hours.h, '+1 hour')
-		               AND (us.session_end IS NULL OR us.session_end >= hours.h)
+		               AND (us.session_end IS NULL OR us.session_end >= datetime(hours.h))
 		      LEFT JOIN (SELECT DISTINCT user_id FROM push_subscriptions) ps ON us.user_id = ps.user_id
 		      WHERE u.role != 'instructor'
 		        AND us.session_start >= datetime('now', '-7 days')

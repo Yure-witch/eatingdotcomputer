@@ -85,9 +85,9 @@ export const { handle, signIn, signOut } = SvelteKitAuth({
 				token.role = user.role ?? 'student';
 				token.userId = user.id;
 			}
-			// Fallback: if userId is still missing (DB was down at sign-in, old token predating
-			// userId enrichment, etc.), re-fetch it now so it persists in the token going forward.
-			if (!token.userId && token.email) {
+			// Fallback: if userId or role is missing (DB was down at sign-in, old token, etc.),
+			// re-fetch now so it persists in the token going forward.
+			if ((!token.userId || !token.role) && token.email) {
 				const db = getDb();
 				if (db) {
 					try {
@@ -108,9 +108,10 @@ export const { handle, signIn, signOut } = SvelteKitAuth({
 		async session({ session, token }) {
 			session.user.role = token.role;
 			session.user.id = token.userId;
-			// Fallback for existing sessions where token.userId was never set.
-			// Runs on every locals.auth() call until the JWT is refreshed with the fix above.
-			if (!session.user.id && token.email) {
+			// Fallback for sessions where userId or role was never set (DB down at sign-in,
+			// old token predating role enrichment, etc.). Without role, an instructor is
+			// treated as a student and gets bounced to the profile onboarding page.
+			if ((!session.user.id || !session.user.role) && token.email) {
 				const db = getDb();
 				if (db) {
 					try {
@@ -120,7 +121,7 @@ export const { handle, signIn, signOut } = SvelteKitAuth({
 						});
 						if (result.rows[0]) {
 							session.user.id = String(result.rows[0].id);
-							if (!session.user.role) session.user.role = String(result.rows[0].role);
+							session.user.role = String(result.rows[0].role);
 						}
 					} catch { /* non-fatal */ }
 				}

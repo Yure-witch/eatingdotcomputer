@@ -90,7 +90,7 @@
 		width: 36px; height: 36px; border-radius: 8px;
 		background: #333; color: #f7f2ea;
 		display: flex; align-items: center; justify-content: center;
-		font-family: 'Cambridge', serif; font-size: 1.1rem; flex-shrink: 0;
+		font-family: 'Avara', serif; font-size: 1.1rem; flex-shrink: 0;
 	}
 
 	.hc-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.25rem; }

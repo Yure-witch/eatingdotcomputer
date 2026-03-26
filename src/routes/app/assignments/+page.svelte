@@ -243,7 +243,7 @@
 	}
 
 	.wordmark {
-		font-family: 'Cambridge', serif;
+		font-family: 'Avara', serif;
 		font-size: 1.25rem;
 		color: var(--ink);
 		text-decoration: none;
@@ -273,7 +273,7 @@
 	}
 
 	h1 {
-		font-family: 'Cambridge', serif;
+		font-family: 'Avara', serif;
 		font-size: 2rem;
 		font-weight: 400;
 		margin: 0;

@@ -28,15 +28,29 @@
 	let activityChart = $derived.by(() => {
 		const range = RANGES.find((r) => r.key === selectedRange);
 		const now = Date.now();
+		const rp = rawPresenceCtx?.value ?? {};
 
 		// Choose source dataset and optionally filter
 		let series;
 		if (range.hours) {
 			const cutoff = new Date(now - range.hours * 3600_000).toISOString().slice(0, 13) + ':00';
-			series = data.activityByUser.hourly.map((u) => ({
-				...u,
-				points: u.points.filter((p) => p.bucket >= cutoff)
-			})).filter((u) => u.points.length);
+			const currentHour = new Date(Math.floor(now / 3600_000) * 3600_000).toISOString().slice(0, 13) + ':00';
+
+			// Start with server snapshot, then inject currently-online users from live presence
+			// so users who came online after page load appear in the chart without a reload.
+			const seriesMap = new Map(data.activityByUser.hourly.map((u) => [u.userId, { ...u, points: [...u.points] }]));
+			for (const member of data.members) {
+				if (member.role === 'instructor') continue;
+				const val = rp[member.id];
+				if (!val?.online) continue;
+				if (!seriesMap.has(member.id)) seriesMap.set(member.id, { userId: member.id, name: member.name, points: [] });
+				const u = seriesMap.get(member.id);
+				if (!u.points.find((p) => p.bucket === currentHour)) u.points.push({ bucket: currentHour, count: 1 });
+			}
+
+			series = [...seriesMap.values()]
+				.map((u) => ({ ...u, points: u.points.filter((p) => p.bucket >= cutoff) }))
+				.filter((u) => u.points.length);
 		} else {
 			const cutoff = new Date(now - range.days * 86400_000).toISOString().slice(0, 10);
 			series = data.activityByUser.daily.map((u) => ({
@@ -784,7 +798,7 @@
 	}
 
 	.wordmark {
-		font-family: 'Cambridge', serif;
+		font-family: 'Avara', serif;
 		font-size: 1.25rem;
 		color: var(--ink);
 		text-decoration: none;
@@ -823,7 +837,7 @@
 	}
 
 	h1 {
-		font-family: 'Cambridge', serif;
+		font-family: 'Avara', serif;
 		font-size: 2rem;
 		font-weight: 400;
 		margin: 0 0 0.25rem;
@@ -1132,7 +1146,7 @@
 	}
 
 	.members-section { margin-top: 2.5rem; }
-	.members-section h2 { font-family: 'Cambridge', serif; font-size: 1.25rem; font-weight: 400; margin: 0; }
+	.members-section h2 { font-family: 'Avara', serif; font-size: 1.25rem; font-weight: 400; margin: 0; }
 
 	.chart-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 0.75rem; flex-wrap: wrap; }
 
@@ -1209,7 +1223,7 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		font-family: 'Cambridge', serif;
+		font-family: 'Avara', serif;
 		font-size: 1.1rem;
 		flex-shrink: 0;
 	}

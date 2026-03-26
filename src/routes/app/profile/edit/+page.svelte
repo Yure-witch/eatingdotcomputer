@@ -78,7 +78,7 @@
 	.shell { min-height: 100vh; display: flex; flex-direction: column; background: var(--paper); }
 
 	header { display: flex; align-items: center; padding: 1rem 2rem; border-bottom: 1.5px solid #ddd7cc; }
-	.wordmark { font-family: 'Cambridge', serif; font-size: 1.25rem; color: var(--ink); text-decoration: none; }
+	.wordmark { font-family: 'Avara', serif; font-size: 1.25rem; color: var(--ink); text-decoration: none; }
 	.wordmark:hover { opacity: 0.7; }
 
 	main { padding: 2rem; max-width: 480px; width: 100%; margin: 0 auto; }
@@ -91,7 +91,7 @@
 		padding: 2rem; display: flex; flex-direction: column; gap: 1rem;
 	}
 
-	h1 { font-family: 'Cambridge', serif; font-size: 1.75rem; font-weight: 400; margin: 0 0 0.25rem; color: var(--ink); }
+	h1 { font-family: 'Avara', serif; font-size: 1.75rem; font-weight: 400; margin: 0 0 0.25rem; color: var(--ink); }
 
 	.error { background: #fef2f2; border: 1px solid #fca5a5; border-radius: 8px; padding: 0.6rem 0.85rem; font-size: 0.85rem; color: #b91c1c; margin: 0; }
 

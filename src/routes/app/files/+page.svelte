@@ -182,7 +182,7 @@
 		min-width: 0;
 	}
 	.wordmark {
-		font-family: 'Cambridge', serif;
+		font-family: 'Avara', serif;
 		font-size: 1.1rem;
 		color: var(--ink);
 		text-decoration: none;
@@ -208,7 +208,7 @@
 	}
 	.page-header { margin-bottom: 1.75rem; }
 	h1 {
-		font-family: 'Cambridge', serif;
+		font-family: 'Avara', serif;
 		font-size: 2rem;
 		font-weight: 400;
 		margin: 0 0 0.25rem;
@@ -243,7 +243,7 @@
 		margin-bottom: 0.5rem;
 	}
 	.empty-state h2 {
-		font-family: 'Cambridge', serif;
+		font-family: 'Avara', serif;
 		font-size: 1.3rem;
 		font-weight: 400;
 		color: var(--ink);

@@ -4,7 +4,7 @@
 	const text = 'eating.computer';
 
 	const fonts = [
-		'"Cambridge", "UnifrakturCook", "Old English Text MT", serif',
+		'"Avara", "Old English Text MT", serif',
 		'"Space Grotesk", "Helvetica Neue", Arial, sans-serif',
 		'"Pacifico", "Brush Script MT", cursive',
 		'"Press Start 2P", "VT323", monospace'
