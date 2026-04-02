@@ -5,6 +5,7 @@
 	import { normaliseMessage, buildUserMap, formatTime } from '$lib/chat.js';
 	import EmojiPicker from '$lib/components/EmojiPicker.svelte';
 	import FileTypeIcon from '$lib/components/FileTypeIcon.svelte';
+	import ProfileHover from '$lib/components/ProfileHover.svelte';
 
 	let { data } = $props();
 
@@ -38,6 +39,20 @@
 	// Emoji picker
 	let pickerMsgId = $state(null);
 	let pickerPos = $state({ x: 0, y: 0 });
+	let showComposePicker = $state(false);
+
+	function insertEmoji(emoji) {
+		const el = inputEl;
+		if (!el) { input += emoji; return; }
+		const start = el.selectionStart ?? input.length;
+		const end   = el.selectionEnd   ?? input.length;
+		input = input.slice(0, start) + emoji + input.slice(end);
+		tick().then(() => {
+			el.focus();
+			el.setSelectionRange(start + emoji.length, start + emoji.length);
+		});
+	}
+
 
 	let firebaseRef, typingRef, reactionsRef;
 	let typingTimer;
@@ -160,7 +175,7 @@
 		await fetch('/api/chat/react', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ messageId: msgId, emoji, conversationId: data.convId })
+			body: JSON.stringify({ messageId: msgId, emoji, conversationId: data.convId, type: 'dm' })
 		});
 	}
 
@@ -317,7 +332,9 @@
 		<div class="message" class:mine={isMine} class:first={isFirst} class:starred={starredIds.has(msg.id)} data-msg-id={msg.id}>
 			{#if isFirst}
 				<div class="meta">
-					<span class="name">{msg.userName}</span>
+					<ProfileHover userId={msg.userId}>
+						<span class="name">{msg.userName}</span>
+					</ProfileHover>
 					<span class="time">{formatTime(msg.createdAt)}</span>
 				</div>
 			{/if}
@@ -437,6 +454,7 @@
 	</div>
 {/if}
 
+
 <div class="input-area" class:kb-open={keyboardOpen} bind:clientHeight={inputAreaHeight}>
 	{#if replyingTo}
 		<div class="reply-bar">
@@ -475,6 +493,18 @@
 			{/if}
 			<input bind:this={fileInputEl} type="file" style="display:none" onchange={handleFileSelect} disabled={uploading || sending} />
 		</label>
+		<div class="compose-picker-wrap">
+			<button class="btn-emoji" class:active={showComposePicker} title="Emoji" onclick={() => showComposePicker = !showComposePicker}>
+				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
+			</button>
+			{#if showComposePicker}
+				<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+				<div class="compose-picker-backdrop" onclick={() => showComposePicker = false}></div>
+				<div class="compose-picker-pop">
+					<EmojiPicker onSelect={insertEmoji} />
+				</div>
+			{/if}
+		</div>
 		<textarea bind:this={inputEl} bind:value={input} onkeydown={onKeydown} oninput={onInput} onfocus={() => keyboardOpen = true} onblur={() => keyboardOpen = false} placeholder="Message {otherUser.name}" rows="1" disabled={sending || uploading}></textarea>
 		<button onclick={send} disabled={sending || uploading || (!input.trim() && !pendingAttachment)} class="btn-send">Send</button>
 	</div>
@@ -515,7 +545,8 @@
 	.message:not(.mine) { align-self: flex-start; align-items: flex-start; }
 	.message.first { margin-top: 0.75rem; }
 	.meta { display: flex; align-items: center; gap: 0.4rem; padding: 0 0.5rem; }
-	.name { font-size: 0.78rem; font-weight: 600; color: var(--ink); }
+	.name { font-size: 0.78rem; font-weight: 600; color: var(--ink); cursor: pointer; }
+	.name:hover { text-decoration: underline; text-underline-offset: 2px; }
 	.time { font-size: 0.72rem; color: #a09688; }
 
 	/* Reply quote */
@@ -699,11 +730,7 @@
 
 	/* Emoji picker */
 	.picker-overlay { position: fixed; inset: 0; z-index: 40; }
-	.picker-popover {
-		position: fixed; z-index: 41;
-		background: #fff; border: 1.5px solid #ddd7cc; border-radius: 12px;
-		box-shadow: 0 8px 32px rgba(0,0,0,0.12);
-	}
+	.picker-popover { position: fixed; z-index: 41; }
 
 	/* Reply bar */
 	.reply-bar {
@@ -749,6 +776,18 @@
 	.btn-attach.disabled { opacity: 0.4; pointer-events: none; }
 	.spin { animation: spin 1s linear infinite; }
 	@keyframes spin { to { transform: rotate(360deg); } }
+
+	.compose-picker-wrap { position: relative; flex-shrink: 0; }
+	.btn-emoji {
+		display: flex; align-items: center; justify-content: center;
+		width: 36px; height: 36px;
+		border: 1.5px solid #c8c1b4; border-radius: 10px;
+		background: #fff; color: #a09688; cursor: pointer;
+		transition: color 0.15s, border-color 0.15s, background 0.15s;
+	}
+	.btn-emoji:hover, .btn-emoji.active { color: var(--ink); border-color: #b0a898; background: #f5f2ee; }
+	.compose-picker-backdrop { position: fixed; inset: 0; z-index: 49; }
+	.compose-picker-pop { position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 50; }
 
 	.btn-send {
 		padding: 0.6rem 1.1rem; background: var(--ink); color: var(--paper); border: none;

@@ -7,23 +7,16 @@ export async function POST({ request, locals }) {
 	const session = await locals.auth();
 	await requireClassAccess(session);
 
-	const { messageId, emoji, conversationId } = await request.json();
+	const { messageId, emoji, conversationId, type } = await request.json();
 	if (!messageId || !emoji || !conversationId) error(400, 'Missing fields');
 
 	const userId = session.user.id;
 	const adminDb = getAdminDb();
 	const turso = getDb();
 
-	// Determine channel vs DM to build the correct Firebase path
-	let reactionPath;
-	if (turso) {
-		const conv = await turso.execute({ sql: 'SELECT type FROM conversations WHERE id = ?', args: [conversationId] });
-		const type = String(conv.rows[0]?.type ?? 'channel');
-		const base = type === 'dm' ? `dms/${conversationId}` : `channels/${conversationId}`;
-		reactionPath = `${base}/reactions/${messageId}/${emoji}/${userId}`;
-	} else {
-		reactionPath = `channels/${conversationId}/reactions/${messageId}/${emoji}/${userId}`;
-	}
+	// Build the correct Firebase path based on conversation type passed by the client
+	const base = type === 'dm' ? `dms/${conversationId}` : `channels/${conversationId}`;
+	const reactionPath = `${base}/reactions/${messageId}/${emoji}/${userId}`;
 
 	// Toggle: check current Firebase state
 	const snap = await adminDb.ref(reactionPath).get();

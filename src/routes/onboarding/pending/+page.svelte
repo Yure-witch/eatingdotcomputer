@@ -1,6 +1,30 @@
 <script>
 	import { enhance } from '$app/forms';
+	import { onMount, onDestroy } from 'svelte';
+	import { goto } from '$app/navigation';
+	import { auth, db as rtdb } from '$lib/firebase.js';
+	import { signInWithCustomToken } from 'firebase/auth';
+	import { ref, onValue, off } from 'firebase/database';
+
 	let { data, form } = $props();
+
+	let approvalRef;
+
+	onMount(async () => {
+		if (!data.firebaseToken || !data.userId) return;
+		try {
+			await signInWithCustomToken(auth, data.firebaseToken);
+		} catch { /* ignore — polling fallback still works */ }
+
+		approvalRef = ref(rtdb, `approvals/${data.userId}`);
+		onValue(approvalRef, (snap) => {
+			if (snap.exists()) goto('/app');
+		});
+	});
+
+	onDestroy(() => {
+		if (approvalRef) off(approvalRef);
+	});
 </script>
 
 <svelte:head><title>Pending approval — eating.computer</title></svelte:head>

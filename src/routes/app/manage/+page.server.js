@@ -4,6 +4,7 @@ import { getSubmissionsForAssignment } from '$lib/server/submissions.js';
 import { getDb } from '$lib/server/turso.js';
 import { getAdminDb } from '$lib/server/firebase-admin.js';
 import { notifyInactiveStudents } from '$lib/server/notify-inactive.js';
+import { sendApprovalEmail } from '$lib/server/email.js';
 
 export async function load({ locals, parent }) {
 	const parentData = await parent();
@@ -414,6 +415,30 @@ export const actions = {
 			sql: `UPDATE users SET onboarding_step = 'complete' WHERE id = ?`,
 			args: [userId]
 		});
+
+		// Fetch user info + class info for the email and RTDB signal
+		const [userRow, classRow] = await Promise.all([
+			db.execute({ sql: `SELECT name, email FROM users WHERE id = ?`, args: [userId] }),
+			db.execute({
+				sql: `SELECT c.name, c.term FROM class_memberships cm JOIN classes c ON cm.class_id = c.id WHERE cm.id = ?`,
+				args: [membershipId]
+			})
+		]);
+		const user = userRow.rows[0];
+		const cls = classRow.rows[0];
+
+		// Signal the student's pending screen to auto-refresh (non-blocking)
+		getAdminDb().ref(`approvals/${userId}`).set(Date.now()).catch(() => {});
+
+		// Send approval email (non-blocking)
+		if (user?.email) {
+			sendApprovalEmail({
+				toEmail: String(user.email),
+				toName: String(user.name ?? ''),
+				className: String(cls?.name ?? 'your class'),
+				term: String(cls?.term ?? '')
+			}).catch(() => {});
+		}
 	},
 
 	deny: async ({ request, locals }) => {

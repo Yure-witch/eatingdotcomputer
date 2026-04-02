@@ -50,6 +50,7 @@
 	// tab uses the exact same signal as the sidebar — no separate Firebase subscription.
 	setContext('rawPresence', { get value() { return rawPresence; } });
 	setContext('refreshPresence', () => pollPresence());
+	setContext('addToast', (convId, convPath, title, body) => addToast(convId, convPath, title, body));
 	let showNewChannel = $state(false);
 	let newChannelName = $state('');
 	let creatingChannel = $state(false);

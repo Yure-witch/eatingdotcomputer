@@ -1,6 +1,7 @@
 <script>
 	import { enhance } from '$app/forms';
 	import ClassSwitcher from '$lib/components/ClassSwitcher.svelte';
+	import SyllabusBuilder from '$lib/components/SyllabusBuilder.svelte';
 	import { onMount, onDestroy, getContext } from 'svelte';
 	import { invalidateAll } from '$app/navigation';
 	import { auth, db as rtdb } from '$lib/firebase.js';
@@ -11,8 +12,12 @@
 	// green dots. No separate Firebase subscription needed for presence here.
 	const rawPresenceCtx = getContext('rawPresence');
 	const refreshPresence = getContext('refreshPresence');
+	const addToast = getContext('addToast');
 
 	let { data, form } = $props();
+
+	let activeTab = $state('assignments');
+	let syllabusPreviewOpen = $state(false);
 
 	// Activity chart
 	const W = 480, PAD = 4, LABEL_W = 64, ROW_H = 44;
@@ -151,9 +156,14 @@
 		// accurate online status right away, not on the next scheduled cycle.
 		refreshPresence?.();
 
-		// Firebase auth needed only for the pendingRequestsRef subscription below
+		// Firebase auth — retry up to 4 times so the pendingRequests subscription
+		// doesn't fail with PERMISSION_DENIED due to a timing race with the layout.
 		if (data.firebaseToken) {
-			try { await signInWithCustomToken(auth, data.firebaseToken); } catch { /* already authed */ }
+			for (let i = 1; i <= 4; i++) {
+				try { await signInWithCustomToken(auth, data.firebaseToken); break; } catch {
+					if (i < 4) await new Promise((r) => setTimeout(r, 500 * i));
+				}
+			}
 		}
 
 		// Subscribe to join-request signals — any write here means a new request came in
@@ -163,6 +173,9 @@
 			onValue(pendingRequestsRef, () => {
 				if (firstPending) { firstPending = false; return; } // skip initial fire
 				invalidateAll();
+				addToast?.('join-request', '', 'New join request', 'Someone wants to join the class');
+			}, (err) => {
+				console.warn('[manage] pendingRequests subscription denied:', err.code);
 			});
 		}
 
@@ -305,22 +318,40 @@
 
 	</header>
 
-	<main>
+	<main style:margin-left={syllabusPreviewOpen ? '0px' : null}>
 		<div class="page-header">
 			<div>
-				<h1>Manage assignments</h1>
-				<p class="subtitle">Instructor view — students see assignments at <a href="/app/assignments">/app/assignments</a></p>
+				<h1>Manage</h1>
 			</div>
 			<div class="header-actions">
-				<button class="btn-secondary" onclick={sendTestNotification} disabled={testNotifStatus === 'sending'}>
-					{testNotifStatus ?? '🔔 Test notification'}
-				</button>
-				<button class="btn-primary" onclick={() => { addingNewWeek = !addingNewWeek; addingToWeek = null; }}>
-					{addingNewWeek ? 'Cancel' : '+ Add assignment'}
-				</button>
+				{#if activeTab === 'assignments'}
+					<button class="btn-secondary" onclick={sendTestNotification} disabled={testNotifStatus === 'sending'}>
+						{testNotifStatus ?? '🔔 Test notification'}
+					</button>
+					<button class="btn-primary" onclick={() => { addingNewWeek = !addingNewWeek; addingToWeek = null; }}>
+						{addingNewWeek ? 'Cancel' : '+ Add assignment'}
+					</button>
+				{/if}
 			</div>
 		</div>
 
+		<nav class="manage-tabs">
+			<button class="manage-tab" class:active={activeTab === 'assignments'} onclick={() => activeTab = 'assignments'}>Assignments</button>
+			<button class="manage-tab" class:active={activeTab === 'syllabus'} onclick={() => activeTab = 'syllabus'}>Syllabus</button>
+			<button class="manage-tab" class:active={activeTab === 'members'} onclick={() => activeTab = 'members'}>
+				Members
+				{#if data.pendingRequests.length > 0}<span class="tab-badge">{data.pendingRequests.length}</span>{/if}
+			</button>
+			<button class="manage-tab" class:active={activeTab === 'activity'} onclick={() => activeTab = 'activity'}>Activity</button>
+		</nav>
+
+		{#if activeTab === 'syllabus'}
+			<section class="syllabus-section">
+				<SyllabusBuilder classId={data.classId} bind:previewOpen={syllabusPreviewOpen} />
+			</section>
+		{/if}
+
+		{#if activeTab === 'assignments'}
 		<!-- ── Global create form ── -->
 		{#if addingNewWeek}
 			<div class="create-card">
@@ -493,6 +524,9 @@
 				</div>
 			</section>
 		{/each}
+		{/if}
+
+		{#if activeTab === 'members'}
 	{#if data.pendingRequests.length > 0}
 	<section class="members-section pending-section">
 		<h2>Pending requests <span class="member-count">({data.pendingRequests.length})</span></h2>
@@ -525,7 +559,9 @@
 		</div>
 	</section>
 	{/if}
+		{/if}
 
+		{#if activeTab === 'activity'}
 	<section class="members-section">
 		<div class="chart-header">
 			<h2>Activity</h2>
@@ -700,6 +736,9 @@
 		{/if}
 	</section>
 
+		{/if}
+
+		{#if activeTab === 'members'}
 	<section class="members-section">
 		<h2>All members <span class="member-count">({data.members.length})</span></h2>
 		<div class="members-table-wrap">
@@ -771,6 +810,7 @@
 		</table>
 		</div>
 	</section>
+		{/if}
 	</main>
 </div>
 
@@ -819,6 +859,27 @@
 		min-height: unset;
 		place-items: unset;
 	}
+
+	/* ── Tabs ── */
+	.manage-tabs {
+		display: flex; gap: 0; margin-bottom: 1.5rem;
+		border-bottom: 1.5px solid #e8e2d9;
+	}
+	.manage-tab {
+		font-family: inherit; font-size: 0.88rem; font-weight: 500;
+		padding: 0.5rem 1.1rem; border: none; background: none; cursor: pointer;
+		color: #a09688; border-bottom: 2px solid transparent; margin-bottom: -1.5px;
+		transition: color 0.15s, border-color 0.15s;
+		display: flex; align-items: center; gap: 0.4rem;
+	}
+	.manage-tab:hover { color: var(--ink); }
+	.manage-tab.active { color: var(--ink); border-bottom-color: var(--ink); }
+	.tab-badge {
+		background: #e53935; color: #fff; font-size: 0.65rem; font-weight: 700;
+		border-radius: 99px; padding: 0.1rem 0.4rem; min-width: 1.1rem; text-align: center;
+	}
+
+	.syllabus-section { padding-top: 0.25rem; }
 
 	.page-header {
 		display: flex;

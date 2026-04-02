@@ -1,5 +1,6 @@
 import { redirect } from '@sveltejs/kit';
 import { getDb } from '$lib/server/turso.js';
+import { createFirebaseToken } from '$lib/server/firebase-admin.js';
 
 export async function load({ locals }) {
 	const session = await locals.auth();
@@ -29,7 +30,10 @@ export async function load({ locals }) {
 		redirect(303, '/app');
 	}
 
+	const firebaseToken = await createFirebaseToken(session.user.id).catch(() => null);
 	return {
+		userId: session.user.id,
+		firebaseToken,
 		className: String(membership.name ?? ''),
 		term: String(membership.term ?? ''),
 		status: String(membership.status ?? 'pending')

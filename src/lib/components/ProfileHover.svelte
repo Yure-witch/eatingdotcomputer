@@ -1,34 +1,79 @@
+<script module>
+	// Shared across all instances so re-hovering the same user is instant
+	const cache = {};
+</script>
+
 <script>
-	let { userId, name, x = 0, y = 0, onlineIds = new Set() } = $props();
+	import { onMount } from 'svelte';
+
+	let { userId, children } = $props();
+
+	const CARD_W = 228;
+	const CARD_H = 220;
 
 	let profile = $state(null);
 	let loading = $state(true);
-
-	const cache = {};
+	let anchorEl = $state(null);
+	let x = $state(0);
+	let y = $state(0);
+	let mobileActive = $state(false);
 
 	$effect(() => {
 		if (!userId) return;
 		loading = true;
-		if (cache[userId]) {
-			profile = cache[userId];
-			loading = false;
-			return;
-		}
+		if (cache[userId]) { profile = cache[userId]; loading = false; return; }
 		fetch(`/api/profile/${userId}`)
-			.then((r) => r.ok ? r.json() : null)
-			.then((d) => {
-				if (d) cache[userId] = d;
-				profile = d;
-				loading = false;
-			})
+			.then(r => r.ok ? r.json() : null)
+			.then(d => { if (d) cache[userId] = d; profile = d; loading = false; })
 			.catch(() => { loading = false; });
 	});
 
-	let online = $derived(onlineIds.has(userId));
+	function updatePos() {
+		if (!anchorEl) return;
+		const rect = anchorEl.getBoundingClientRect();
+		const vw = window.innerWidth;
+		const vh = window.innerHeight;
+		let cx = rect.right + 8;
+		if (cx + CARD_W > vw) cx = Math.max(8, rect.left - CARD_W - 8);
+		let cy = rect.top;
+		if (cy + CARD_H > vh) cy = Math.max(8, vh - CARD_H - 8);
+		x = cx;
+		y = cy;
+	}
+
+	onMount(() => {
+		updatePos();
+		// Keep position accurate while the message list scrolls
+		const scrollEl = anchorEl?.closest('.message-list');
+		scrollEl?.addEventListener('scroll', updatePos, { passive: true });
+		window.addEventListener('resize', updatePos, { passive: true });
+		return () => {
+			scrollEl?.removeEventListener('scroll', updatePos);
+			window.removeEventListener('resize', updatePos);
+		};
+	});
+
+	// Mobile: tap the name to toggle; tap anywhere else to dismiss
+	function onTap(e) {
+		if (!window.matchMedia('(hover: none)').matches) return;
+		e.stopPropagation();
+		mobileActive = !mobileActive;
+		if (mobileActive) updatePos();
+	}
+
+	$effect(() => {
+		if (!mobileActive) return;
+		function onOutside() { mobileActive = false; }
+		document.addEventListener('click', onOutside);
+		return () => document.removeEventListener('click', onOutside);
+	});
 </script>
 
-{#if userId}
-	<div class="hover-card" style="left: {x}px; top: {y}px">
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<span class="ph-anchor" class:active={mobileActive} bind:this={anchorEl} onclick={onTap}>
+	{@render children?.()}
+
+	<div class="hover-card" style="left:{x}px;top:{y}px">
 		{#if loading}
 			<div class="hc-loading">…</div>
 		{:else if profile}
@@ -40,7 +85,6 @@
 						{#if profile.pronouns}<span class="hc-pronouns">{profile.pronouns}</span>{/if}
 					</div>
 					<div class="hc-sub-row">
-						{#if online}<span class="hc-online">● online</span>{/if}
 						<span class="hc-role" class:instructor={profile.role === 'instructor'}>{profile.role}</span>
 					</div>
 				</div>
@@ -63,10 +107,17 @@
 			<a class="hc-link" href="/app/profile/{userId}">View full profile →</a>
 		{/if}
 	</div>
-{/if}
+</span>
 
 <style>
+	.ph-anchor {
+		position: relative;
+		display: inline;
+	}
+
+	/* Card hidden by default; shown on CSS hover (desktop) or .active (mobile tap) */
 	.hover-card {
+		display: none;
 		position: fixed;
 		z-index: 1000;
 		background: #1a1a1a;
@@ -75,11 +126,16 @@
 		padding: 1rem;
 		width: 220px;
 		box-shadow: 0 8px 32px rgba(0,0,0,0.35);
-		pointer-events: none;
-		display: flex;
 		flex-direction: column;
 		gap: 0.6rem;
 		font-size: 0.82rem;
+		/* Don't let the card itself close the mobile tap */
+		pointer-events: auto;
+	}
+
+	.ph-anchor:hover .hover-card,
+	.ph-anchor.active .hover-card {
+		display: flex;
 	}
 
 	.hc-loading { color: #666; font-size: 0.8rem; }
@@ -100,7 +156,6 @@
 	.hc-pronouns { font-size: 0.72rem; color: #666; }
 
 	.hc-sub-row { display: flex; align-items: center; gap: 0.5rem; }
-	.hc-online { font-size: 0.72rem; color: #4caf50; }
 	.hc-role {
 		font-size: 0.6rem; font-weight: 700; text-transform: uppercase;
 		background: #333; color: #888; padding: 0.1rem 0.35rem; border-radius: 99px;
@@ -117,12 +172,11 @@
 
 	.hc-website {
 		font-size: 0.72rem; color: #888; text-decoration: underline;
-		text-underline-offset: 2px; pointer-events: auto;
+		text-underline-offset: 2px;
 	}
 
 	.hc-link {
-		font-size: 0.72rem; color: #888; text-decoration: none;
-		margin-top: 0.1rem; pointer-events: auto;
+		font-size: 0.72rem; color: #888; text-decoration: none; margin-top: 0.1rem;
 	}
 	.hc-link:hover { color: #f7f2ea; }
 </style>
