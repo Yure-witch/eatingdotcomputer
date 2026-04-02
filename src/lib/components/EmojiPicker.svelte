@@ -13,10 +13,12 @@
 
 	let { onSelect } = $props();
 
-	const RECENT_KEY = 'emoji-recent';
-	const FONT_KEY   = 'emoji-font';
-	const TONE_KEY   = 'emoji-tone';
-	const GENDER_KEY = 'emoji-gender';
+	const RECENT_KEY    = 'emoji-recent';
+	const FONT_KEY      = 'emoji-font';
+	const TONE_KEY      = 'emoji-tone';
+	const GENDER_KEY    = 'emoji-gender';
+	const DUAL_LEFT_KEY = 'emoji-dual-left';
+	const DUAL_RIGHT_KEY= 'emoji-dual-right';
 	const MAX_RECENT = 40;
 
 	let data         = $state(null);
@@ -38,6 +40,8 @@
 	let lpFired    = false;  // suppresses the click that follows a long press
 	let lpX0 = 0, lpY0 = 0;
 	let showDir    = $state(false); // directional popover: false=left-facing, true=right-facing
+	let dualLeft   = $state(undefined); // undefined=not yet picked, '1F3FB'–'1F3FF'=tone selected
+	let dualRight  = $state(undefined);
 
 	const TONE_SET_D    = new Set(['1F3FB','1F3FC','1F3FD','1F3FE','1F3FF']);
 	const TONE_IDX_D    = {'1F3FB':1,'1F3FC':2,'1F3FD':3,'1F3FE':4,'1F3FF':5};
@@ -67,6 +71,12 @@
 		const parentKey = item.cp.split(' ').find(p => !TONE_SET_D.has(p)) ?? '';
 		groups.get(parentKey)?.unshift({ e: item.e, cp: item.cp });
 		return [...groups.values()];
+	}
+
+	// Return the matrix cell for the currently-selected left+right tones, or null if not both picked.
+	function getDualEmoji(matrix, left, right) {
+		if (left === undefined || right === undefined) return null;
+		return matrix[TONE_IDX_D[left]][TONE_IDX_D[right]] ?? null;
 	}
 
 	// Build a 6×6 matrix for dual-tone emoji (handshake, wrestlers, etc.)
@@ -149,7 +159,11 @@
 		const glyph = vObj ? vObj.e : parentItem.e;
 		const cp    = vObj ? vObj.cp : parentItem.cp;
 
-		if (classifyVariants(parentItem) !== 'dual') {
+		if (classifyVariants(parentItem) === 'dual') {
+			// Persist the dual tone selection so it restores on next open
+			try { localStorage.setItem(DUAL_LEFT_KEY,  dualLeft  ?? ''); } catch {}
+			try { localStorage.setItem(DUAL_RIGHT_KEY, dualRight ?? ''); } catch {}
+		} else {
 			const tone = cp.split(' ').find(p => TONE_SET_D.has(p)) ?? '';
 			// Only update global tone when the picked variant carries one —
 			// picking a gender-only (toneless) variant should preserve the existing tone.
@@ -197,8 +211,10 @@
 	onMount(async () => {
 		try { recent = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]'); } catch {}
 		try { fontStyle = localStorage.getItem(FONT_KEY) ?? 'noto'; } catch {}
-		try { skinTone = localStorage.getItem(TONE_KEY) ?? ''; } catch {}
-		try { gender   = localStorage.getItem(GENDER_KEY) ?? ''; } catch {}
+		try { skinTone  = localStorage.getItem(TONE_KEY) ?? ''; } catch {}
+		try { gender    = localStorage.getItem(GENDER_KEY) ?? ''; } catch {}
+		try { const dl = localStorage.getItem(DUAL_LEFT_KEY);  dualLeft  = dl  || undefined; } catch {}
+		try { const dr = localStorage.getItem(DUAL_RIGHT_KEY); dualRight = dr || undefined; } catch {}
 		data = await loadEmojiData();
 		for (const g of data.groups) {
 			for (const item of g.items) cpToName[item.cp] = item.n;
@@ -566,25 +582,60 @@
 	{@const vtype = classifyVariants(longPress.item)}
 
 	{#if vtype === 'dual'}
-		<!-- 6×6 half-selector matrix for dual-tone emoji (handshake, wrestlers, couples…) -->
+		<!-- Half-selector for dual-tone emoji: pick left tone (top row) + right tone (bottom row) -->
 		{@const matrix = buildDualMatrix(longPress.item)}
+		{@const TONES = ['1F3FB','1F3FC','1F3FD','1F3FE','1F3FF']}
+		{@const dualResult = getDualEmoji(matrix, dualLeft, dualRight)}
 		<div class="lp-pop lp-dual" class:noto={fontStyle === 'noto'}
 			style="left:{longPress.x}px;top:{longPress.y}px">
-			{#each matrix as row}
-				{#each row as cell}
-					{#if cell}
-						{@const isBase = cell.e === longPress.item.e}
-						<button class="cell lp-cell"
-							onclick={() => pickVariant(isBase ? null : cell, longPress.item)}
-							onmouseenter={() => preview = { e: cell.e, n: variantDisplayName(cell, longPress.item), sc: variantShortcode(isBase ? null : cell, longPress.item) }}
-							onmouseleave={() => preview = null}>
-							{cell.e}
-						</button>
-					{:else}
-						<span class="lp-empty"></span>
-					{/if}
+
+			<!-- Left-tone row (shows left halves) -->
+			<div class="dual-row">
+				{#each TONES as tone, ti}
+					{@const cell = matrix[ti + 1][ti + 1]}
+					<button class="dual-half-btn" class:active={dualLeft === tone}
+						onclick={() => dualLeft = tone}
+						onmouseenter={() => preview = { e: cell?.e ?? longPress.item.e, n: variantDisplayName(cell, longPress.item), sc: variantShortcode(cell, longPress.item) }}
+						onmouseleave={() => preview = null}>
+						<span class="half-wrap half-left"><span class="half-glyph">{cell?.e ?? longPress.item.e}</span></span>
+					</button>
 				{/each}
-			{/each}
+			</div>
+
+			<!-- Right-tone row (shows right halves) -->
+			<div class="dual-row">
+				{#each TONES as tone, ti}
+					{@const cell = matrix[ti + 1][ti + 1]}
+					<button class="dual-half-btn" class:active={dualRight === tone}
+						onclick={() => dualRight = tone}
+						onmouseenter={() => preview = { e: cell?.e ?? longPress.item.e, n: variantDisplayName(cell, longPress.item), sc: variantShortcode(cell, longPress.item) }}
+						onmouseleave={() => preview = null}>
+						<span class="half-wrap half-right"><span class="half-glyph">{cell?.e ?? longPress.item.e}</span></span>
+					</button>
+				{/each}
+			</div>
+
+			<!-- Footer: default emoji (left) + composed result or silhouette (right) -->
+			<div class="dual-footer">
+				<button class="dual-foot-btn"
+					onclick={() => pickVariant(null, longPress.item)}
+					onmouseenter={() => preview = { e: longPress.item.e, n: longPress.item.n, sc: longPress.item.sc?.[0] ? ':' + longPress.item.sc[0] + ':' : '' }}
+					onmouseleave={() => preview = null}>
+					<span class="dual-foot-glyph">{longPress.item.e}</span>
+				</button>
+				{#if dualResult}
+					<button class="dual-foot-btn dual-result"
+						onclick={() => pickVariant(dualResult, longPress.item)}
+						onmouseenter={() => preview = { e: dualResult.e, n: variantDisplayName(dualResult, longPress.item), sc: variantShortcode(dualResult, longPress.item) }}
+						onmouseleave={() => preview = null}>
+						<span class="dual-foot-glyph">{dualResult.e}</span>
+					</button>
+				{:else}
+					<span class="dual-foot-btn dual-silhouette">
+						<span class="dual-foot-glyph">{longPress.item.e}</span>
+					</span>
+				{/if}
+			</div>
 		</div>
 
 	{:else if vtype === 'directional'}
@@ -894,18 +945,96 @@
 	/* Remove the variant dot from cells inside the popover */
 	.lp-cell::after { display: none; }
 
-	/* Dual-tone 6×6 half-selector */
+	/* ── Dual-tone half-selector ── */
 	.lp-dual {
-		grid-template-columns: repeat(6, 36px);
+		display: flex !important; /* override .lp-pop grid */
+		flex-direction: column;
+		gap: 3px;
+		padding: 6px;
+		width: auto;
 	}
 
-	.lp-empty {
-		width: 36px;
-		height: 36px;
-		border-radius: 6px;
-		background: #f5f2ee;
-		opacity: 0.5;
+	.dual-row {
+		display: flex;
+		gap: 2px;
 	}
+
+	/* Each half-button shows one clipped half of the emoji */
+	.dual-half-btn {
+		background: none;
+		border: 1.5px solid transparent;
+		border-radius: 6px;
+		width: 30px;
+		height: 34px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		cursor: pointer;
+		padding: 0;
+		overflow: hidden;
+		transition: background 0.08s, border-color 0.08s;
+		flex-shrink: 0;
+	}
+	.dual-half-btn:hover  { background: #f0ebe3; }
+	.dual-half-btn.active { border-color: #666; background: #ede8e2; }
+	.lp-dual.noto .dual-half-btn .half-glyph { font-family: 'Noto Color Emoji', sans-serif; }
+
+	/* Clip wrappers: show left or right half of the emoji glyph */
+	.half-wrap {
+		display: block;
+		width: 18px;
+		height: 30px;
+		overflow: hidden;
+		flex-shrink: 0;
+	}
+	.half-glyph {
+		display: block;
+		font-size: 1.75rem;
+		line-height: 30px;
+		width: 36px; /* full glyph width so both halves are available */
+	}
+	.half-right .half-glyph {
+		margin-left: -18px; /* shift left so right half is visible */
+	}
+
+	/* Footer row: default emoji + composed result */
+	.dual-footer {
+		display: flex;
+		gap: 4px;
+		padding-top: 5px;
+		border-top: 1px solid #ede8e2;
+		margin-top: 1px;
+	}
+	.dual-foot-btn {
+		flex: 1;
+		height: 44px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		border-radius: 8px;
+		border: 1.5px solid #e0dbd4;
+		background: none;
+		cursor: pointer;
+		padding: 0;
+		transition: background 0.08s;
+	}
+	.dual-foot-btn:hover { background: #f0ebe3; }
+	.dual-foot-btn.dual-result { border-color: #aaa; }
+	.dual-silhouette {
+		flex: 1;
+		height: 44px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		border-radius: 8px;
+		border: 1.5px dashed #ddd;
+	}
+	.dual-silhouette .dual-foot-glyph { filter: grayscale(1) opacity(0.3); }
+	.dual-foot-glyph {
+		font-size: 1.75rem;
+		line-height: 1;
+	}
+	.lp-dual.noto .dual-foot-glyph { font-family: 'Noto Color Emoji', sans-serif; }
 
 	/* Multi-base grouped rows (profession, child/girl/boy, Mx/Mrs/Mr Claus, etc.) */
 	.lp-multibase {
