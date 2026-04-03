@@ -11,6 +11,8 @@
 <script>
 	import { onMount } from 'svelte';
 
+	console.log('[EmojiPicker] script block executing — this fires at import time');
+
 	let { onSelect } = $props();
 
 	const RECENT_KEY    = 'emoji-recent';
@@ -50,7 +52,8 @@
 	function classifyVariants(item) {
 		if (!item?.t?.length) return 'simple';
 		if (item.t.some(v => v.cp.includes('27A1'))) return 'directional';
-		if (item.t.length === 25) return 'dual';
+		// Dual-tone: at least one variant carries 2 skin-tone codepoints
+		if (item.t.some(v => v.cp.split(' ').filter(p => TONE_SET_D.has(p)).length === 2)) return 'dual';
 		// Multi-base: variants span >1 distinct primary codepoint
 		// e.g. cook (1F9D1 / 1F469 / 1F468), child (1F9D2 / 1F467 / 1F466), Mx Claus (1F9D1 / 1F936 / 1F385)
 		const bases = new Set(item.t.map(v => v.cp.split(' ').find(p => !TONE_SET_D.has(p))));
@@ -77,6 +80,65 @@
 	function getDualEmoji(matrix, left, right) {
 		if (left === undefined || right === undefined) return null;
 		return matrix[TONE_IDX_D[left]][TONE_IDX_D[right]] ?? null;
+	}
+
+	// Build the /emoji-halves/ SVG src for a variant codepoint.
+	// - Gendered ZWJ variants (e.g. '1F93C 1F3FB 200D 2642 FE0F') → strip gender suffix
+	// - Couple heart/kiss sequences (1F469…2764…) → fall back to neutral base + first tone
+	function dualHalfSrc(cp, side) {
+		let safeCp = cp.replace(/ 200D 264[02] FE0F$/, '').trim();
+		// Couple with heart (2764) or kiss (1F48B) sequences have no toned Noto SVGs
+		if (/\b2764\b/.test(safeCp)) {
+			const hasKiss = /\b1F48B\b/.test(safeCp);
+			const baseCp = hasKiss ? '1F48F' : '1F491';
+			const firstTone = safeCp.split(' ').find(p => TONE_SET_D.has(p));
+			safeCp = firstTone ? `${baseCp} ${firstTone}` : baseCp;
+		}
+		const slug = 'emoji_u' + safeCp.toLowerCase().split(' ').join('_');
+		return `/emoji-halves/${slug}-${side}.svg`;
+	}
+
+	// Canvas-rendered half images for system (iOS/Apple) font mode.
+	// Renders the emoji glyph using the system font, then grays out the inactive half.
+	const _sysHalfCache = new Map();
+	function systemHalfSrc(emojiChar, side) {
+		if (typeof document === 'undefined') return '';
+		const key = emojiChar + '\x00' + side;
+		if (_sysHalfCache.has(key)) return _sysHalfCache.get(key);
+		const SIZE = 80;
+		const c = document.createElement('canvas');
+		c.width = SIZE; c.height = SIZE;
+		const ctx = c.getContext('2d');
+		ctx.font = `${SIZE * 0.78}px sans-serif`;
+		ctx.textAlign = 'center';
+		ctx.textBaseline = 'middle';
+		ctx.fillText(emojiChar, SIZE / 2, SIZE / 2 + 3);
+		const mid = SIZE / 2;
+		const img = ctx.getImageData(0, 0, SIZE, SIZE);
+		const d = img.data;
+		if (side === 'gray') {
+			for (let i = 0; i < d.length; i += 4) {
+				if (d[i + 3] > 10) { d[i] = 0xa0; d[i+1] = 0xa0; d[i+2] = 0xa0; }
+			}
+		} else {
+			const [gs, ge] = side === 'left' ? [mid, SIZE] : [0, mid];
+			for (let y = 0; y < SIZE; y++) {
+				for (let x = gs; x < ge; x++) {
+					const i = (y * SIZE + x) * 4;
+					if (d[i + 3] > 10) { d[i] = 0xa0; d[i+1] = 0xa0; d[i+2] = 0xa0; }
+				}
+			}
+		}
+		ctx.putImageData(img, 0, 0);
+		const uri = c.toDataURL();
+		_sysHalfCache.set(key, uri);
+		return uri;
+	}
+
+	// Unified half-image src: canvas for system mode, static SVG for noto mode.
+	function halfSrc(emojiChar, cp, side) {
+		if (fontStyle === 'system') return systemHalfSrc(emojiChar, side);
+		return dualHalfSrc(cp, side);
 	}
 
 	// Build a 6×6 matrix for dual-tone emoji (handshake, wrestlers, etc.)
@@ -158,32 +220,42 @@
 	function pickVariant(vObj, parentItem) {
 		const glyph = vObj ? vObj.e : parentItem.e;
 		const cp    = vObj ? vObj.cp : parentItem.cp;
-
 		if (classifyVariants(parentItem) === 'dual') {
 			// Persist the dual tone selection so it restores on next open
 			try { localStorage.setItem(DUAL_LEFT_KEY,  dualLeft  ?? ''); } catch {}
 			try { localStorage.setItem(DUAL_RIGHT_KEY, dualRight ?? ''); } catch {}
 		} else {
-			const tone = cp.split(' ').find(p => TONE_SET_D.has(p)) ?? '';
-			// Only update global tone when the picked variant carries one —
-			// picking a gender-only (toneless) variant should preserve the existing tone.
-			if (tone) {
-				skinTone = tone;
-				try { localStorage.setItem(TONE_KEY, tone); } catch {}
+			const toneInCp = cp.split(' ').find(p => TONE_SET_D.has(p)) ?? '';
+			const genderInCp = getGenderFromCp(cp);
+
+			// Does this emoji support tone choices?
+			const parentHasTones = (parentItem.t ?? []).some(v =>
+				v.cp.split(' ').some(p => TONE_SET_D.has(p))
+			);
+
+			// Does this emoji support gender choice?
+			const allGenders = new Set([
+				getGenderFromCp(parentItem.cp),
+				...(parentItem.t ?? []).map(v => getGenderFromCp(v.cp))
+			]);
+			const parentHasGenderChoice = allGenders.size > 1;
+
+			console.log('[pickVariant] glyph=%s cp=%s toneInCp=%s genderInCp=%s parentHasTones=%s parentHasGenderChoice=%s',
+				glyph, cp, JSON.stringify(toneInCp), genderInCp, parentHasTones, parentHasGenderChoice);
+			console.log('[pickVariant] BEFORE skinTone=%s gender=%s', JSON.stringify(skinTone), JSON.stringify(gender));
+
+			if (parentHasTones) {
+				skinTone = toneInCp;
+				try { localStorage.setItem(TONE_KEY, toneInCp); } catch {}
 			}
-			const g = getGenderFromCp(cp);
-			if (g !== 'neutral') {
+
+			if (parentHasGenderChoice) {
+				const g = genderInCp === 'neutral' ? '' : genderInCp;
 				gender = g;
 				try { localStorage.setItem(GENDER_KEY, g); } catch {}
-			} else {
-				// Only reset gender if this emoji actually has gendered variants —
-				// picking a hand gesture shouldn't clear gender set from a person emoji.
-				const hasGenderVariants = (parentItem.t ?? []).some(v => getGenderFromCp(v.cp) !== 'neutral');
-				if (hasGenderVariants) {
-					gender = '';
-					try { localStorage.setItem(GENDER_KEY, ''); } catch {}
-				}
 			}
+
+			console.log('[pickVariant] AFTER  skinTone=%s gender=%s', JSON.stringify(skinTone), JSON.stringify(gender));
 		}
 
 		saveRecent(glyph);
@@ -209,6 +281,7 @@
 	}
 
 	onMount(async () => {
+		console.log('[EmojiPicker] onMount fired');
 		try { recent = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]'); } catch {}
 		try { fontStyle = localStorage.getItem(FONT_KEY) ?? 'noto'; } catch {}
 		try { skinTone  = localStorage.getItem(TONE_KEY) ?? ''; } catch {}
@@ -263,39 +336,41 @@
 		return 'neutral';
 	}
 
-	function resolveEmoji(item) {
+	// skinTone and gender are passed explicitly so Svelte 5 tracks them as reactive
+	// dependencies in every template call — do not remove the parameters.
+	function resolveEmoji(item, tone = skinTone, gend = gender) {
 		// Dual-tone emoji (handshake, wrestlers, etc.) — never apply global prefs
 		if (classifyVariants(item) === 'dual') return item.e;
 		if (!item.t?.length) return item.e;
 
 		// Directional emoji — apply gender + skin tone to left-facing variants for grid display
 		if (classifyVariants(item) === 'directional') {
-			const wantGender = gender || 'neutral';
+			const wantGender = gend || 'neutral';
 			const nonDir = item.t.filter(v => !v.cp.includes('27A1'));
 			const genderPool = nonDir.filter(v => getGenderFromCp(v.cp) === wantGender);
 			const pool = genderPool.length ? genderPool : nonDir;
-			if (skinTone) {
-				return pool.find(v => v.cp.includes(skinTone))?.e
+			if (tone) {
+				return pool.find(v => v.cp.includes(tone))?.e
 					?? pool.find(v => !v.cp.split(' ').some(p => TONE_SET_D.has(p)))?.e
 					?? item.e;
 			}
-			if (gender) {
+			if (gend) {
 				return pool.find(v => !v.cp.split(' ').some(p => TONE_SET_D.has(p)))?.e ?? item.e;
 			}
 			return item.e;
 		}
 
 		// G1 / G2 / G3 — apply gender preference then skin tone
-		const wantGender = gender || 'neutral';
+		const wantGender = gend || 'neutral';
 		const genderPool = item.t.filter(v => getGenderFromCp(v.cp) === wantGender);
 		const pool = genderPool.length ? genderPool : item.t;
 
-		if (skinTone) {
-			return pool.find(v => v.cp.includes(skinTone))?.e
+		if (tone) {
+			return pool.find(v => v.cp.includes(tone))?.e
 				?? pool.find(v => !v.cp.split(' ').some(p => TONE_SET_D.has(p)))?.e
 				?? item.e;
 		}
-		if (gender) {
+		if (gend) {
 			// No tone — return the no-tone variant of the requested gender
 			return pool.find(v => !v.cp.split(' ').some(p => TONE_SET_D.has(p)))?.e ?? item.e;
 		}
@@ -305,7 +380,7 @@
 	// Returns the display name for the resolved variant of an item.
 	// e.g. 🧚 resolved to 🧚‍♀️ → "woman fairy"; 🚶 resolved to 🚶‍♂️ → "man walking"
 	function resolvedName(item) {
-		const resolved = resolveEmoji(item);
+		const resolved = resolveEmoji(item, skinTone, gender);
 		if (resolved === item.e) return item.n;
 		const v = item.t?.find(t => t.e === resolved);
 		if (!v) return item.n;
@@ -339,7 +414,7 @@
 		const base = item.sc?.[0];
 		if (!base) return '';
 		if (classifyVariants(item) === 'dual') return ':' + base + ':';
-		const resolvedE = resolveEmoji(item);
+		const resolvedE = resolveEmoji(item, skinTone, gender);
 		if (resolvedE === item.e) return ':' + base + ':';
 		const v = item.t?.find(t => t.e === resolvedE);
 		if (!v) return ':' + base + ':';
@@ -365,7 +440,7 @@
 	}
 
 	function pickItem(item) {
-		const e = resolveEmoji(item);
+		const e = resolveEmoji(item, skinTone, gender);
 		saveRecent(e);
 		onSelect?.(e);
 	}
@@ -413,9 +488,36 @@
 		data.groups[activeGroup]?.items ?? []
 	);
 
+	let resolvedGroupItems = $derived.by(() => {
+		const t = skinTone, g = gender;
+		console.log('[derived:group] recomputing — skinTone=%s gender=%s items=%d', JSON.stringify(t), JSON.stringify(g), groupItems?.length ?? 0);
+		return groupItems?.map(item => ({ item, e: resolveEmoji(item, t, g) })) ?? [];
+	});
+	let resolvedSearchItems = $derived.by(() => {
+		const t = skinTone, g = gender;
+		console.log('[derived:search] recomputing — skinTone=%s gender=%s', JSON.stringify(t), JSON.stringify(g));
+		return searchResults?.map(item => ({ item, e: resolveEmoji(item, t, g) })) ?? [];
+	});
+	let resolvedPopularItems = $derived.by(() => {
+		const t = skinTone, g = gender;
+		console.log('[derived:popular] recomputing — skinTone=%s gender=%s', JSON.stringify(t), JSON.stringify(g));
+		return (data?.popular ?? []).map(raw => {
+			const item = findItem(raw);
+			return { raw, item, resolved: item ? resolveEmoji(item, t, g) : raw };
+		});
+	});
+
 	$effect(() => {
 		void activeGroup; void query;
 		gridEl?.scrollTo(0, 0);
+	});
+
+	// DEBUG — remove once tone/gender reactivity is confirmed working
+	$effect(() => {
+		console.log('[state] skinTone changed →', JSON.stringify(skinTone));
+	});
+	$effect(() => {
+		console.log('[state] gender changed →', JSON.stringify(gender));
 	});
 </script>
 
@@ -488,39 +590,37 @@
 		{#if loading}
 			<div class="state-msg">Loading…</div>
 		{:else if searchResults !== null}
-			{#if searchResults.length === 0}
+			{#if resolvedSearchItems.length === 0}
 				<div class="state-msg">No results for "{query}"</div>
 			{:else}
 				<div class="grid" class:noto={fontStyle === 'noto'}>
-					{#each searchResults as item (item.cp)}
+					{#each resolvedSearchItems as { item, e } (item.cp)}
 						<button class="cell" class:has-variants={item.t?.length} title={item.n}
-							onpointerdown={(e) => startLp(e, item)}
+							onpointerdown={(ev) => startLp(ev, item)}
 							onpointermove={moveLp}
 							onpointerup={cancelLp}
 							onpointerleave={cancelLp}
-							oncontextmenu={(e) => openVariants(e, item)}
-							onmouseenter={() => preview = { e: resolveEmoji(item), n: resolvedName(item), sc: resolvedShortcode(item) }}
+							oncontextmenu={(ev) => openVariants(ev, item)}
+							onmouseenter={() => preview = { e: resolveEmoji(item, skinTone, gender), n: resolvedName(item), sc: resolvedShortcode(item) }}
 							onmouseleave={() => preview = null}
 							onclick={() => { if (lpFired) { lpFired = false; return; } pickItem(item); }}>
-							{resolveEmoji(item)}
+							{e}
 						</button>
 					{/each}
 				</div>
 			{/if}
 		{:else if activeGroup === -2}
 			<div class="grid" class:noto={fontStyle === 'noto'}>
-				{#each (data?.popular ?? []) as e}
-					{@const item = findItem(e)}
-					{@const re = item ? resolveEmoji(item) : e}
+				{#each resolvedPopularItems as { raw, item, resolved }}
 					<button class="cell" class:has-variants={item?.t?.length}
 						onpointerdown={(ev) => { if (item) startLp(ev, item); }}
 						onpointermove={moveLp}
 						onpointerup={cancelLp}
 						onpointerleave={cancelLp}
 						oncontextmenu={(ev) => { if (item) openVariants(ev, item); }}
-						onmouseenter={() => preview = { e: re, n: item ? resolvedName(item) : '', sc: item ? resolvedShortcode(item) : '' }}
+						onmouseenter={() => preview = { e: resolveEmoji(item, skinTone, gender), n: item ? resolvedName(item) : '', sc: item ? resolvedShortcode(item) : '' }}
 						onmouseleave={() => preview = null}
-						onclick={() => { if (lpFired) { lpFired = false; return; } item ? pickItem(item) : pickRaw(e); }}>{re}</button>
+						onclick={() => { if (lpFired) { lpFired = false; return; } item ? pickItem(item) : pickRaw(raw); }}>{resolved}</button>
 				{/each}
 			</div>
 		{:else if activeGroup === -1}
@@ -542,19 +642,19 @@
 					{/each}
 				</div>
 			{/if}
-		{:else if groupItems}
+		{:else if resolvedGroupItems.length}
 			<div class="grid" class:noto={fontStyle === 'noto'}>
-				{#each groupItems as item (item.cp)}
+				{#each resolvedGroupItems as { item, e } (item.cp)}
 					<button class="cell" class:has-variants={item.t?.length} title={item.n}
-						onpointerdown={(e) => startLp(e, item)}
+						onpointerdown={(ev) => startLp(ev, item)}
 						onpointermove={moveLp}
 						onpointerup={cancelLp}
 						onpointerleave={cancelLp}
-						oncontextmenu={(e) => openVariants(e, item)}
-						onmouseenter={() => preview = { e: resolveEmoji(item), n: resolvedName(item), sc: resolvedShortcode(item) }}
+						oncontextmenu={(ev) => openVariants(ev, item)}
+						onmouseenter={() => preview = { e: resolveEmoji(item, skinTone, gender), n: resolvedName(item), sc: resolvedShortcode(item) }}
 						onmouseleave={() => preview = null}
 						onclick={() => { if (lpFired) { lpFired = false; return; } pickItem(item); }}>
-						{resolveEmoji(item)}
+						{e}
 					</button>
 				{/each}
 			</div>
@@ -589,7 +689,7 @@
 		<div class="lp-pop lp-dual" class:noto={fontStyle === 'noto'}
 			style="left:{longPress.x}px;top:{longPress.y}px">
 
-			<!-- Left-tone row (shows left halves) -->
+			<!-- Left-tone row: each button shows left half colored, right half gray silhouette -->
 			<div class="dual-row">
 				{#each TONES as tone, ti}
 					{@const cell = matrix[ti + 1][ti + 1]}
@@ -597,12 +697,12 @@
 						onclick={() => dualLeft = tone}
 						onmouseenter={() => preview = { e: cell?.e ?? longPress.item.e, n: variantDisplayName(cell, longPress.item), sc: variantShortcode(cell, longPress.item) }}
 						onmouseleave={() => preview = null}>
-						<span class="half-wrap half-left"><span class="half-glyph">{cell?.e ?? longPress.item.e}</span></span>
+						<img class="dual-half-img" src={halfSrc(cell?.e ?? longPress.item.e, cell?.cp ?? longPress.item.cp, 'left')} alt="" draggable="false">
 					</button>
 				{/each}
 			</div>
 
-			<!-- Right-tone row (shows right halves) -->
+			<!-- Right-tone row: each button shows right half colored, left half gray silhouette -->
 			<div class="dual-row">
 				{#each TONES as tone, ti}
 					{@const cell = matrix[ti + 1][ti + 1]}
@@ -610,7 +710,7 @@
 						onclick={() => dualRight = tone}
 						onmouseenter={() => preview = { e: cell?.e ?? longPress.item.e, n: variantDisplayName(cell, longPress.item), sc: variantShortcode(cell, longPress.item) }}
 						onmouseleave={() => preview = null}>
-						<span class="half-wrap half-right"><span class="half-glyph">{cell?.e ?? longPress.item.e}</span></span>
+						<img class="dual-half-img" src={halfSrc(cell?.e ?? longPress.item.e, cell?.cp ?? longPress.item.cp, 'right')} alt="" draggable="false">
 					</button>
 				{/each}
 			</div>
@@ -632,7 +732,7 @@
 					</button>
 				{:else}
 					<span class="dual-foot-btn dual-silhouette">
-						<span class="dual-foot-glyph">{longPress.item.e}</span>
+						<img class="dual-half-img" src={halfSrc(longPress.item.e, longPress.item.cp, 'gray')} alt="" draggable="false">
 					</span>
 				{/if}
 			</div>
@@ -963,38 +1063,25 @@
 	.dual-half-btn {
 		background: none;
 		border: 1.5px solid transparent;
-		border-radius: 6px;
-		width: 30px;
-		height: 34px;
+		border-radius: 8px;
+		width: 48px;
+		height: 48px;
 		display: flex;
 		align-items: center;
 		justify-content: center;
 		cursor: pointer;
-		padding: 0;
-		overflow: hidden;
+		padding: 2px;
 		transition: background 0.08s, border-color 0.08s;
 		flex-shrink: 0;
 	}
 	.dual-half-btn:hover  { background: #f0ebe3; }
 	.dual-half-btn.active { border-color: #666; background: #ede8e2; }
-	.lp-dual.noto .dual-half-btn .half-glyph { font-family: 'Noto Color Emoji', sans-serif; }
 
-	/* Clip wrappers: show left or right half of the emoji glyph */
-	.half-wrap {
+	.dual-half-img {
+		width: 44px;
+		height: 44px;
 		display: block;
-		width: 18px;
-		height: 30px;
-		overflow: hidden;
-		flex-shrink: 0;
-	}
-	.half-glyph {
-		display: block;
-		font-size: 1.75rem;
-		line-height: 30px;
-		width: 36px; /* full glyph width so both halves are available */
-	}
-	.half-right .half-glyph {
-		margin-left: -18px; /* shift left so right half is visible */
+		pointer-events: none;
 	}
 
 	/* Footer row: default emoji + composed result */
@@ -1029,8 +1116,7 @@
 		border-radius: 8px;
 		border: 1.5px dashed #ddd;
 	}
-	.dual-silhouette .dual-foot-glyph { filter: grayscale(1) opacity(0.3); }
-	.dual-foot-glyph {
+.dual-foot-glyph {
 		font-size: 1.75rem;
 		line-height: 1;
 	}

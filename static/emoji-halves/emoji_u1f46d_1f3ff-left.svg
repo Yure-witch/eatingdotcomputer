@@ -1,10 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 128.0 128.0">
 <defs>
-  <clipPath id="cc"><<rect x="0"    y="0" width="64.0" height="128.0"/></clipPath>
-  <clipPath id="gc"><<rect x="64.0" y="0" width="64.0" height="128.0"/></clipPath>
-  <filter id="gf" color-interpolation-filters="sRGB">
-    <feColorMatrix type="saturate" values="0"/>
-    <feComponentTransfer><feFuncA type="linear" slope="0.28"/></feComponentTransfer>
+  <clipPath id="cc"><rect x="0" y="0" width="64.0" height="128.0"/></clipPath>
+  <clipPath id="gc"><rect x="64.0" y="0" width="64.0" height="128.0"/></clipPath>
+  <filter id="gf" x="0" y="0" width="1" height="1" color-interpolation-filters="sRGB">
+    <feFlood flood-color="#a0a0a0" result="gray"/>
+    <feComposite in="gray" in2="SourceAlpha" operator="in"/>
   </filter>
 </defs>
 <g clip-path="url(#cc)"><g id="couple_x5F_holding_x5F_hands_x5F_wmn_x5F_right">
