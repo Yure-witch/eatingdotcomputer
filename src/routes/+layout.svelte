@@ -2,8 +2,23 @@
 	import favicon from '$lib/assets/favicon.svg';
 	import '../app.css';
 	import { updated } from '$app/stores';
+	import { onMount } from 'svelte';
 
 	let { children } = $props();
+
+	onMount(() => {
+		try {
+			const font = localStorage.getItem('emoji-font') ?? 'noto';
+			document.documentElement.classList.toggle('noto-emoji', font === 'noto');
+			if (font === 'noto' && !document.querySelector('#noto-color-emoji-font')) {
+				const link = document.createElement('link');
+				link.id = 'noto-color-emoji-font';
+				link.rel = 'stylesheet';
+				link.href = 'https://fonts.googleapis.com/css2?family=Noto+Color+Emoji&display=swap';
+				document.head.appendChild(link);
+			}
+		} catch {}
+	});
 </script>
 
 <svelte:head>

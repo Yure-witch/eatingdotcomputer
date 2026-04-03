@@ -11,16 +11,14 @@
 <script>
 	import { onMount } from 'svelte';
 
-	console.log('[EmojiPicker] script block executing — this fires at import time');
-
 	let { onSelect } = $props();
 
-	const RECENT_KEY    = 'emoji-recent';
-	const FONT_KEY      = 'emoji-font';
-	const TONE_KEY      = 'emoji-tone';
-	const GENDER_KEY    = 'emoji-gender';
-	const DUAL_LEFT_KEY = 'emoji-dual-left';
-	const DUAL_RIGHT_KEY= 'emoji-dual-right';
+	const RECENT_KEY         = 'emoji-recent';
+	const FONT_KEY           = 'emoji-font';
+	const TONE_KEY           = 'emoji-tone';
+	const GENDER_KEY         = 'emoji-gender';
+	const DUAL_SELECTIONS_KEY = 'emoji-dual-sel'; // { [cp]: { left, right } }
+	const DIR_SELECTIONS_KEY  = 'emoji-dir-sel';  // { [cp]: 'left' | 'right' }
 	const MAX_RECENT = 40;
 
 	let data         = $state(null);
@@ -44,6 +42,8 @@
 	let showDir    = $state(false); // directional popover: false=left-facing, true=right-facing
 	let dualLeft   = $state(undefined); // undefined=not yet picked, '1F3FB'–'1F3FF'=tone selected
 	let dualRight  = $state(undefined);
+	let dualSelections = $state({}); // { [cp]: { left, right } } — per-emoji dual tone picks
+	let dirSelections  = $state({}); // { [cp]: 'left' | 'right' } — per-emoji direction picks
 
 	const TONE_SET_D    = new Set(['1F3FB','1F3FC','1F3FD','1F3FE','1F3FF']);
 	const TONE_IDX_D    = {'1F3FB':1,'1F3FC':2,'1F3FD':3,'1F3FE':4,'1F3FF':5};
@@ -214,16 +214,62 @@
 		longPress = { item, x: rect.left + rect.width / 2, y: rect.top };
 	}
 
+	// When a variant popover opens, pre-populate dualLeft/dualRight/showDir from saved per-emoji selections.
+	$effect(() => {
+		if (!longPress) return;
+		const vtype = classifyVariants(longPress.item);
+		const cp = longPress.item.cp;
+		if (vtype === 'dual') {
+			const sel = dualSelections[cp];
+			dualLeft  = sel?.left  ?? undefined;
+			dualRight = sel?.right ?? undefined;
+		} else if (vtype === 'directional') {
+			showDir = dirSelections[cp] === 'right';
+		}
+	});
+
 	// Called when picking from the variant popover.
 	// vObj = { e, cp } for a variant, or null for the base emoji.
 	// parentItem = the item whose popover is open.
 	function pickVariant(vObj, parentItem) {
 		const glyph = vObj ? vObj.e : parentItem.e;
 		const cp    = vObj ? vObj.cp : parentItem.cp;
-		if (classifyVariants(parentItem) === 'dual') {
-			// Persist the dual tone selection so it restores on next open
-			try { localStorage.setItem(DUAL_LEFT_KEY,  dualLeft  ?? ''); } catch {}
-			try { localStorage.setItem(DUAL_RIGHT_KEY, dualRight ?? ''); } catch {}
+		const vtype = classifyVariants(parentItem);
+
+		if (vtype === 'dual') {
+			if (vObj === null) {
+				// User picked the untoned base — clear any saved selection for this emoji
+				const { [parentItem.cp]: _removed, ...rest } = dualSelections;
+				dualSelections = rest;
+			} else {
+				// User picked a toned result — save the left+right tone pair
+				dualSelections = { ...dualSelections, [parentItem.cp]: { left: dualLeft, right: dualRight } };
+			}
+			try { localStorage.setItem(DUAL_SELECTIONS_KEY, JSON.stringify(dualSelections)); } catch {}
+		} else if (vtype === 'directional') {
+			// Save per-emoji direction selection
+			const dir = vObj && vObj.cp.includes('27A1') ? 'right' : 'left';
+			dirSelections = { ...dirSelections, [parentItem.cp]: dir };
+			try { localStorage.setItem(DIR_SELECTIONS_KEY, JSON.stringify(dirSelections)); } catch {}
+			// Also propagate tone/gender globally (direction is the only per-emoji exception)
+			const toneInCp = cp.split(' ').find(p => TONE_SET_D.has(p)) ?? '';
+			const genderInCp = getGenderFromCp(cp);
+			const parentHasTones = (parentItem.t ?? []).some(v =>
+				v.cp.split(' ').some(p => TONE_SET_D.has(p))
+			);
+			const allGenders = new Set([
+				getGenderFromCp(parentItem.cp),
+				...(parentItem.t ?? []).map(v => getGenderFromCp(v.cp))
+			]);
+			if (parentHasTones) {
+				skinTone = toneInCp;
+				try { localStorage.setItem(TONE_KEY, toneInCp); } catch {}
+			}
+			if (allGenders.size > 1) {
+				const g = genderInCp === 'neutral' ? '' : genderInCp;
+				gender = g;
+				try { localStorage.setItem(GENDER_KEY, g); } catch {}
+			}
 		} else {
 			const toneInCp = cp.split(' ').find(p => TONE_SET_D.has(p)) ?? '';
 			const genderInCp = getGenderFromCp(cp);
@@ -240,10 +286,6 @@
 			]);
 			const parentHasGenderChoice = allGenders.size > 1;
 
-			console.log('[pickVariant] glyph=%s cp=%s toneInCp=%s genderInCp=%s parentHasTones=%s parentHasGenderChoice=%s',
-				glyph, cp, JSON.stringify(toneInCp), genderInCp, parentHasTones, parentHasGenderChoice);
-			console.log('[pickVariant] BEFORE skinTone=%s gender=%s', JSON.stringify(skinTone), JSON.stringify(gender));
-
 			if (parentHasTones) {
 				skinTone = toneInCp;
 				try { localStorage.setItem(TONE_KEY, toneInCp); } catch {}
@@ -254,8 +296,6 @@
 				gender = g;
 				try { localStorage.setItem(GENDER_KEY, g); } catch {}
 			}
-
-			console.log('[pickVariant] AFTER  skinTone=%s gender=%s', JSON.stringify(skinTone), JSON.stringify(gender));
 		}
 
 		saveRecent(glyph);
@@ -281,13 +321,12 @@
 	}
 
 	onMount(async () => {
-		console.log('[EmojiPicker] onMount fired');
 		try { recent = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]'); } catch {}
 		try { fontStyle = localStorage.getItem(FONT_KEY) ?? 'noto'; } catch {}
 		try { skinTone  = localStorage.getItem(TONE_KEY) ?? ''; } catch {}
 		try { gender    = localStorage.getItem(GENDER_KEY) ?? ''; } catch {}
-		try { const dl = localStorage.getItem(DUAL_LEFT_KEY);  dualLeft  = dl  || undefined; } catch {}
-		try { const dr = localStorage.getItem(DUAL_RIGHT_KEY); dualRight = dr || undefined; } catch {}
+		try { const raw = localStorage.getItem(DUAL_SELECTIONS_KEY); if (raw) dualSelections = JSON.parse(raw); } catch {}
+		try { const raw = localStorage.getItem(DIR_SELECTIONS_KEY);  if (raw) dirSelections  = JSON.parse(raw); } catch {}
 		data = await loadEmojiData();
 		for (const g of data.groups) {
 			for (const item of g.items) cpToName[item.cp] = item.n;
@@ -296,10 +335,11 @@
 		requestAnimationFrame(() => searchEl?.focus());
 	});
 
-	// Inject Noto Color Emoji from Google Fonts when needed
+	// Sync Noto Color Emoji font: toggle the html class + inject Google Fonts link when needed
 	$effect(() => {
-		if (fontStyle !== 'noto') return;
 		if (typeof document === 'undefined') return;
+		document.documentElement.classList.toggle('noto-emoji', fontStyle === 'noto');
+		if (fontStyle !== 'noto') return;
 		if (document.querySelector('#noto-color-emoji-font')) return;
 		const link = document.createElement('link');
 		link.id   = 'noto-color-emoji-font';
@@ -336,19 +376,46 @@
 		return 'neutral';
 	}
 
-	// skinTone and gender are passed explicitly so Svelte 5 tracks them as reactive
-	// dependencies in every template call — do not remove the parameters.
-	function resolveEmoji(item, tone = skinTone, gend = gender) {
-		// Dual-tone emoji (handshake, wrestlers, etc.) — never apply global prefs
-		if (classifyVariants(item) === 'dual') return item.e;
+	// All state params are passed explicitly so Svelte 5 tracks them as reactive
+	// dependencies in $derived.by — do not remove the parameters.
+	function resolveEmoji(item, tone = skinTone, gend = gender, ds = dualSelections, dirs = dirSelections) {
 		if (!item.t?.length) return item.e;
 
-		// Directional emoji — apply gender + skin tone to left-facing variants for grid display
+		// Dual-tone emoji — show the per-emoji saved selection if any
+		if (classifyVariants(item) === 'dual') {
+			const sel = ds[item.cp];
+			if (!sel?.left || !sel?.right) return item.e;
+			const { left, right } = sel;
+			if (left === right) {
+				// Diagonal: prefer two-tone same-color variant (e.g. "1F91D 1F3FB 1F3FB"),
+				// fall back to single-tone variant (e.g. "1F91D 1F3FB") — different emoji use different forms.
+				const v = item.t.find(v => {
+					const ts = v.cp.split(' ').filter(p => TONE_SET_D.has(p));
+					return ts.length === 2 && ts[0] === left && ts[1] === left;
+				}) ?? item.t.find(v => {
+					const ts = v.cp.split(' ').filter(p => TONE_SET_D.has(p));
+					return ts.length === 1 && ts[0] === left;
+				});
+				return v?.e ?? item.e;
+			}
+			// Off-diagonal: two-tone variant
+			const v = item.t.find(v => {
+				const ts = v.cp.split(' ').filter(p => TONE_SET_D.has(p));
+				return ts.length === 2 && ts[0] === left && ts[1] === right;
+			});
+			return v?.e ?? item.e;
+		}
+
+		// Directional emoji — respect per-emoji saved direction, apply global gender + tone
 		if (classifyVariants(item) === 'directional') {
 			const wantGender = gend || 'neutral';
-			const nonDir = item.t.filter(v => !v.cp.includes('27A1'));
-			const genderPool = nonDir.filter(v => getGenderFromCp(v.cp) === wantGender);
-			const pool = genderPool.length ? genderPool : nonDir;
+			const wantDir = dirs[item.cp]; // 'right' | undefined → default left
+			const facingPool = wantDir === 'right'
+				? item.t.filter(v => v.cp.includes('27A1'))
+				: item.t.filter(v => !v.cp.includes('27A1'));
+			const pool2 = facingPool.length ? facingPool : item.t.filter(v => !v.cp.includes('27A1'));
+			const genderPool = pool2.filter(v => getGenderFromCp(v.cp) === wantGender);
+			const pool = genderPool.length ? genderPool : (gend ? pool2 : []);
 			if (tone) {
 				return pool.find(v => v.cp.includes(tone))?.e
 					?? pool.find(v => !v.cp.split(' ').some(p => TONE_SET_D.has(p)))?.e
@@ -357,13 +424,16 @@
 			if (gend) {
 				return pool.find(v => !v.cp.split(' ').some(p => TONE_SET_D.has(p)))?.e ?? item.e;
 			}
-			return item.e;
+			return pool[0]?.e ?? item.e;
 		}
 
 		// G1 / G2 / G3 — apply gender preference then skin tone
 		const wantGender = gend || 'neutral';
 		const genderPool = item.t.filter(v => getGenderFromCp(v.cp) === wantGender);
-		const pool = genderPool.length ? genderPool : item.t;
+		// Only fall back to all variants when the user has an explicit gender preference.
+		// When gend='' (neutral) and no neutral variants exist, keep pool empty so we
+		// return item.e rather than accidentally picking a random gendered variant.
+		const pool = genderPool.length ? genderPool : (gend ? item.t : []);
 
 		if (tone) {
 			return pool.find(v => v.cp.includes(tone))?.e
@@ -371,7 +441,6 @@
 				?? item.e;
 		}
 		if (gend) {
-			// No tone — return the no-tone variant of the requested gender
 			return pool.find(v => !v.cp.split(' ').some(p => TONE_SET_D.has(p)))?.e ?? item.e;
 		}
 		return item.e;
@@ -440,7 +509,7 @@
 	}
 
 	function pickItem(item) {
-		const e = resolveEmoji(item, skinTone, gender);
+		const e = resolveEmoji(item, skinTone, gender, dualSelections, dirSelections);
 		saveRecent(e);
 		onSelect?.(e);
 	}
@@ -489,21 +558,18 @@
 	);
 
 	let resolvedGroupItems = $derived.by(() => {
-		const t = skinTone, g = gender;
-		console.log('[derived:group] recomputing — skinTone=%s gender=%s items=%d', JSON.stringify(t), JSON.stringify(g), groupItems?.length ?? 0);
-		return groupItems?.map(item => ({ item, e: resolveEmoji(item, t, g) })) ?? [];
+		const t = skinTone, g = gender, ds = dualSelections, dirs = dirSelections;
+		return groupItems?.map(item => ({ item, e: resolveEmoji(item, t, g, ds, dirs) })) ?? [];
 	});
 	let resolvedSearchItems = $derived.by(() => {
-		const t = skinTone, g = gender;
-		console.log('[derived:search] recomputing — skinTone=%s gender=%s', JSON.stringify(t), JSON.stringify(g));
-		return searchResults?.map(item => ({ item, e: resolveEmoji(item, t, g) })) ?? [];
+		const t = skinTone, g = gender, ds = dualSelections, dirs = dirSelections;
+		return searchResults?.map(item => ({ item, e: resolveEmoji(item, t, g, ds, dirs) })) ?? [];
 	});
 	let resolvedPopularItems = $derived.by(() => {
-		const t = skinTone, g = gender;
-		console.log('[derived:popular] recomputing — skinTone=%s gender=%s', JSON.stringify(t), JSON.stringify(g));
+		const t = skinTone, g = gender, ds = dualSelections, dirs = dirSelections;
 		return (data?.popular ?? []).map(raw => {
 			const item = findItem(raw);
-			return { raw, item, resolved: item ? resolveEmoji(item, t, g) : raw };
+			return { raw, item, resolved: item ? resolveEmoji(item, t, g, ds, dirs) : raw };
 		});
 	});
 
@@ -512,13 +578,6 @@
 		gridEl?.scrollTo(0, 0);
 	});
 
-	// DEBUG — remove once tone/gender reactivity is confirmed working
-	$effect(() => {
-		console.log('[state] skinTone changed →', JSON.stringify(skinTone));
-	});
-	$effect(() => {
-		console.log('[state] gender changed →', JSON.stringify(gender));
-	});
 </script>
 
 <svelte:window onkeydown={(e) => { if (e.key === 'Escape' && longPress) { longPress = null; e.stopPropagation(); } }} />
