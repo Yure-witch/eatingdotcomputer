@@ -94,6 +94,37 @@ export async function GET({ request }) {
 		}
 
 		archived += toArchive.length;
+
+		// Sweep orphaned reactions: Firebase reaction nodes for messages that are already
+		// archived in Turso (e.g. written back by the react API for old messages).
+		// Sync any new reactions to Turso then remove them from Firebase.
+		const rxSnap = await adminDb.ref(reactionsBasePath).get();
+		if (rxSnap.exists()) {
+			const orphanCleanup = {};
+			for (const [msgId, emojiMap] of Object.entries(rxSnap.val())) {
+				// Already handled above (was in toArchive)
+				if (reactionUpdates[msgId] !== undefined) continue;
+				// Check if this message is already archived in Turso
+				const inTurso = await turso.execute({
+					sql: 'SELECT id FROM chat_messages WHERE id = ?',
+					args: [msgId]
+				});
+				if (inTurso.rows.length === 0) continue; // not in Turso, leave it
+				// Sync any reactions not yet in Turso
+				for (const [emoji, users] of Object.entries(emojiMap)) {
+					for (const reactUserId of Object.keys(users)) {
+						await turso.execute({
+							sql: 'INSERT OR IGNORE INTO message_reactions (message_id, emoji, user_id) VALUES (?, ?, ?)',
+							args: [msgId, emoji, reactUserId]
+						});
+					}
+				}
+				orphanCleanup[msgId] = null;
+			}
+			if (Object.keys(orphanCleanup).length) {
+				await adminDb.ref(reactionsBasePath).update(orphanCleanup);
+			}
+		}
 	}
 
 	// Archive all channels

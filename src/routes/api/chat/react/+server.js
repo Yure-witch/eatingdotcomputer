@@ -16,9 +16,41 @@ export async function POST({ request, locals }) {
 
 	// Build the correct Firebase path based on conversation type passed by the client
 	const base = type === 'dm' ? `dms/${conversationId}` : `channels/${conversationId}`;
-	const reactionPath = `${base}/reactions/${messageId}/${emoji}/${userId}`;
+	const msgReactionsPath = `${base}/reactions/${messageId}`;
+	const reactionPath = `${msgReactionsPath}/${emoji}/${userId}`;
 
-	// Toggle: check current Firebase state
+	// If the message is archived in Turso, sync all its reactions to Firebase first.
+	// This ensures Firebase is the authoritative source so the toggle reads and writes
+	// consistent state — without this, a Turso-only reaction looks "absent" to Firebase
+	// and gets added instead of removed, and the client merge loses other users' reactions.
+	if (turso) {
+		const msgRow = await turso.execute({
+			sql: 'SELECT id FROM messages WHERE id = ?',
+			args: [messageId]
+		});
+		if (msgRow.rows.length > 0) {
+			const tursoRxRows = await turso.execute({
+				sql: 'SELECT emoji, user_id FROM message_reactions WHERE message_id = ?',
+				args: [messageId]
+			});
+			if (tursoRxRows.rows.length > 0) {
+				// Write any Turso reactions missing from Firebase using update() (non-destructive)
+				const fbMsgSnap = await adminDb.ref(msgReactionsPath).get();
+				const fbMsg = fbMsgSnap.exists() ? fbMsgSnap.val() : {};
+				const writes = {};
+				for (const row of tursoRxRows.rows) {
+					if (!fbMsg[row.emoji]?.[row.user_id]) {
+						writes[`${row.emoji}/${row.user_id}`] = true;
+					}
+				}
+				if (Object.keys(writes).length > 0) {
+					await adminDb.ref(msgReactionsPath).update(writes);
+				}
+			}
+		}
+	}
+
+	// Toggle: check Firebase state (now authoritative after any Turso sync above)
 	const snap = await adminDb.ref(reactionPath).get();
 	const removing = snap.exists();
 
@@ -28,7 +60,7 @@ export async function POST({ request, locals }) {
 		await adminDb.ref(reactionPath).set(true);
 	}
 
-	// Only sync to Turso if the message is already archived there (FK constraint)
+	// Keep Turso in sync for archived messages
 	if (turso) {
 		const msgRow = await turso.execute({
 			sql: 'SELECT id FROM messages WHERE id = ?',

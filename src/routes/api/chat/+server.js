@@ -10,16 +10,21 @@ export async function POST({ request, locals }) {
 	const session = await locals.auth();
 	await requireClassAccess(session);
 
-	const { content, channelId, to, reply_to, attachment } = await request.json();
+	const { content, channelId, to, reply_to, attachment, effect, fontSize, noSplit } = await request.json();
 	if (!content?.trim() && !attachment?.url) error(400, 'Empty message');
 	if (content && content.length > 2000) error(400, 'Message too long');
 
 	const db = getAdminDb();
 	const senderName = session.user.name || session.user.email;
-	const preview = attachment ? `📎 ${attachment.filename}` : content.trim().slice(0, 60);
+	// Strip Unicode PUA effect markers (U+E100–U+E1FF) so notifications show clean plain text
+	const plainContent = content ? content.replace(/[\uE100-\uE1FF]/g, '').trim() : '';
+	const preview = attachment ? `📎 ${attachment.filename}` : (plainContent.slice(0, 60) || '✨');
 	const now = Date.now();
-	// Compact format: { u, c, rt?, att? } — timestamp derived from push ID
+	// Compact format: { u, c, rt?, att?, fx?, fs? } — timestamp derived from push ID
 	const msg = { u: session.user.id, c: content?.trim() ?? '' };
+	if (effect) msg.fx = effect;
+	if (fontSize && Math.abs(fontSize - 1) > 0.01) msg.fs = parseFloat(Number(fontSize).toFixed(3));
+	if (noSplit) msg.nsp = 1;
 	if (reply_to?.id) {
 		msg.rt = { id: reply_to.id, u: reply_to.userId, c: String(reply_to.content ?? '').slice(0, 100) };
 	}

@@ -3,7 +3,7 @@ import { getAdminDb } from '$lib/server/firebase-admin.js';
 
 function parseBlocks(rawBlocks) {
 	return Object.entries(rawBlocks ?? {})
-		.map(([id, b]) => ({ id, type: b.type, content: b.content ?? '', position: Number(b.position ?? 0), hidden: !!b.hidden }))
+		.map(([id, b]) => ({ id, type: b.type, content: b.content ?? '', position: Number(b.position ?? 0), hidden: !!b.hidden, ...(b.type === 'section' && b.border === false ? { border: false } : {}) }))
 		.sort((a, b) => a.position - b.position);
 }
 
@@ -59,7 +59,7 @@ export async function POST({ request, locals }) {
 
 	const blocksObj = {};
 	for (const b of (blocks ?? [])) {
-		blocksObj[b.id] = { type: b.type, content: b.content ?? '', position: b.position ?? 0, hidden: b.hidden ? true : false };
+		blocksObj[b.id] = { type: b.type, content: b.content ?? '', position: b.position ?? 0, hidden: b.hidden ? true : false, ...(b.type === 'section' && b.border === false ? { border: false } : {}) };
 	}
 
 	await getAdminDb().ref(`syllabi/${classId}/${syllabusId}`).set({

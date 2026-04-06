@@ -55,7 +55,10 @@ export function normaliseMessage(id, raw, userMap) {
 		createdAt: ts,
 		replyTo,
 		attachment,
-		edited: !!(raw.ed)
+		edited: !!(raw.ed),
+		fx: raw.fx ?? null,
+		fontSize: raw.fs ?? 1,
+		noSplit: !!(raw.nsp)
 	};
 }
 

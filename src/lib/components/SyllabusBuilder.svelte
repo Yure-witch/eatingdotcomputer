@@ -15,33 +15,71 @@
 	// ── Active syllabus state ───────────────────────────────────────────────────
 	let blocks = $state([]);
 	let font = $state('Georgia, serif');
-	let customFonts = $state([]); // [{ name, url }]
+	let customFonts = $state([]); // [{ name, url, weight, style }]
+	// weight: CSS font-weight descriptor string e.g. '100 900' or '700'
+	// style: CSS font-style descriptor string e.g. 'normal' or 'italic'
+	let fontWeightUploading = $state({}); // { [fontName]: boolean }
+	let fontWeightAdding = $state({}); // { [fontName]: { weight: string, style: string } | null }
 	let margins = $state({ top: 64, right: 64, bottom: 64, left: 64 });
 	let fontSizes   = $state({ title: 24, section: 14, text: 12, weekHeader: 12, weekTopic: 11 }); // all in pt
 	let spacing     = $state({ title: 0, section: 6, text: 6, week: 8 }); // space below each block type, in pt
 	let lineHeights = $state({ title: 1.2, section: 1.3, text: 1.75, weekHeader: 1.3, weekTopic: 1.65 });
 	let syllabusName = $state('Untitled');
 	let sizesOpen = $state(false);
+	let sidebarOpen = $state(true);
 	let fontUploading = $state(false);
+	// Track which (name, weight, style) combos have been registered so we don't double-add
+	const loadedFontKeys = new Set();
 
-	// Derived font list merging built-ins with any uploaded custom fonts
+	// Derived font list merging built-ins with any uploaded custom fonts (deduplicated by name)
 	const allFonts = $derived([
 		...FONTS,
-		...customFonts.map((cf) => ({ label: cf.name + ' ✦', value: cf.name }))
+		...[...new Set(customFonts.map(cf => cf.name))].map(name => ({ label: name + ' ✦', value: name }))
 	]);
+	// Unique font family names for the chips UI
+	const customFontNames = $derived([...new Set(customFonts.map(cf => cf.name))]);
 
-	// Register custom fonts with the browser FontFace API whenever the list changes
-	const loadedFontNames = new Set();
+	// Register custom fonts with the browser FontFace API whenever the list changes.
+	// Each entry may specify weight and style; default covers all weights so bold/italic
+	// titles don't fall back to a synthesized or system font.
 	$effect(() => {
 		for (const cf of customFonts) {
-			if (loadedFontNames.has(cf.name)) continue;
-			loadedFontNames.add(cf.name);
-			new FontFace(cf.name, `url(${cf.url})`).load()
-				.then((f) => document.fonts.add(f))
-				.catch(() => {});
+			const w = cf.weight ?? '100 900';
+			const s = cf.style ?? 'normal';
+			const key = `${cf.name}|${w}|${s}|${cf.url}`;
+			if (loadedFontKeys.has(key)) continue;
+			loadedFontKeys.add(key);
+			const src = `/api/syllabus/font?url=${encodeURIComponent(cf.url)}`;
+			new FontFace(cf.name, `url(${src})`, { weight: w, style: s }).load()
+				.then((f) => {
+					document.fonts.add(f);
+					// Re-measure after font loads — sizes may change from the fallback
+					recomputePages();
+				})
+				.catch((err) => {
+					console.error(`[SyllabusBuilder] Failed to load font "${cf.name}" (${w} ${s}):`, err, cf.url);
+				});
 		}
 	});
-	let loadingDoc = $state(false);
+	// Inject a <style> into <head> that sets font-family for all syllabus elements.
+	// Bypasses Svelte's style: directive timing issues with {#if}-gated elements entirely.
+	$effect(() => {
+		const f = font;
+		// Wrap multi-word font names in quotes; leave font stacks (contain comma) as-is
+		const cssFamily = f ? (f.includes(',') ? f : `"${f}"`) : 'inherit';
+		let styleEl = document.getElementById('--syl-font-style');
+		if (!styleEl) {
+			styleEl = document.createElement('style');
+			styleEl.id = '--syl-font-style';
+			document.head.appendChild(styleEl);
+		}
+		styleEl.textContent = `.syl-blocks, .syl-measure, .float-page, .print-only { font-family: ${cssFamily} !important; }`;
+		// Re-measure after font changes — heights differ between fonts
+		requestAnimationFrame(recomputePages);
+		return () => document.getElementById('--syl-font-style')?.remove();
+	});
+
+let loadingDoc = $state(false);
 	let saving = $state(false);
 	let lastSaved = $state(null);
 
@@ -63,6 +101,14 @@
 
 	// 1 point = 1/72 inch; at 300 dpi: 1pt = 300/72 px on the canvas
 	function ptToPx(pt) { return Math.round(pt * 300 / 72); }
+	function edPx(pt) { return Math.round(pt * 80 / 72); } // screen-resolution pt→px for editor display
+
+	function autosize(node) {
+		function resize() { node.style.height = 'auto'; node.style.height = node.scrollHeight + 'px'; }
+		node.addEventListener('input', resize);
+		resize();
+		return { destroy() { node.removeEventListener('input', resize); } };
+	}
 
 	// ── Multi-page layout — independent page containers ────────────────────────
 	// Each page is a fully independent div containing only its own blocks.
@@ -77,6 +123,16 @@
 
 	// Non-hidden blocks in order — index here == data-bidx in the measurement div
 	const visibleBlocks = $derived(blocks.filter(b => !b.hidden));
+
+	// Sequential week number for each non-hidden week block (hidden weeks get undefined)
+	const weekNums = $derived((() => {
+		const map = {};
+		let n = 0;
+		for (const b of blocks) {
+			if (b.type === 'week' && !b.hidden) map[b.id] = ++n;
+		}
+		return map;
+	})());
 
 	// Printable height per page (between top and bottom margins), in 300dpi px
 	const contentAreaH = $derived(PAGE_H - margins.top - margins.bottom);
@@ -229,6 +285,8 @@
 
 	function recomputePages() {
 		if (!measureEl) return;
+		// Ensure the font is applied to the measure div before reading heights
+		if (font) measureEl.style.fontFamily = font;
 		pageBlocks = packBlocks(measureEl, contentAreaH);
 	}
 
@@ -236,14 +294,18 @@
 		if (!measureEl) return;
 		const obs = new ResizeObserver(recomputePages);
 		obs.observe(measureEl);
-		recomputePages();
+		// Use rAF so the browser applies the custom font to the freshly-mounted element before we measure
+		requestAnimationFrame(recomputePages);
 		return () => obs.disconnect();
 	});
 
-	// Re-run when margins change (contentAreaH changes, but measureEl doesn't resize)
+	// Re-run when margins or font change (measureEl doesn't resize on font changes)
+	let recomputeRafId = 0;
 	$effect(() => {
 		const _cAreaH = contentAreaH;
-		recomputePages();
+		const _font = font;
+		cancelAnimationFrame(recomputeRafId);
+		recomputeRafId = requestAnimationFrame(recomputePages);
 	});
 
 
@@ -323,7 +385,9 @@
 			const data = await res.json();
 			blocks = data.blocks.length ? data.blocks : defaultBlocks();
 			font = data.font;
-			customFonts = Array.isArray(data.customFonts) ? data.customFonts : [];
+			customFonts = Array.isArray(data.customFonts)
+				? data.customFonts.map(cf => ({ weight: '100 900', style: 'normal', ...cf }))
+				: [];
 			const m = data.margins;
 			margins = (m && typeof m === 'object')
 				? { top: m.top ?? 64, right: m.right ?? 64, bottom: m.bottom ?? 64, left: m.left ?? 64 }
@@ -507,14 +571,15 @@
 		if (block.type === 'title') {
 			return `<h1 class="syl-title"${bAttr} style="${sz(fs.title)};${mb(sp.title)};${lh('title')}">${renderText(block.content)}</h1>`;
 		} else if (block.type === 'section') {
-			return `<h2 class="syl-section"${bAttr} style="${sz(fs.section)};${mb(sp.section)};${lh('section')}">${renderText(block.content)}</h2>`;
+			const borderStyle = (block.border ?? true) ? '' : 'border-bottom:none;padding-bottom:0;';
+			return `<h2 class="syl-section"${bAttr} style="${sz(fs.section)};${mb(sp.section)};${lh('section')};${borderStyle}">${renderText(block.content)}</h2>`;
 		} else if (block.type === 'text') {
 			return `<div class="syl-text"${bAttr} style="${sz(fs.text)};${mb(sp.text)};${lh('text')}">${renderText(block.content)}</div>`;
 		} else if (block.type === 'week') {
 			const d = parseWeek(block.content);
 			const vis = (d.topics ?? []).filter(t => !t.hidden);
 			return `<div class="syl-week"${bAttr} style="${mb(sp.week)}">
-				<div class="syl-week-header" style="${sz(fs.weekHeader)};${lh('weekHeader')}">Week ${d.weekNum ?? ''}: ${d.title ? renderText(d.title) : ''}</div>
+				<div class="syl-week-header" style="${sz(fs.weekHeader)};${lh('weekHeader')}">Week ${weekNums[block.id] ?? ''}: ${d.title ? renderText(d.title) : ''}</div>
 				${vis.length ? `<ul class="syl-topics">${vis.map(t => `<li style="${sz(fs.weekTopic)};${lh('weekTopic')}">${renderText(t.text)}</li>`).join('')}</ul>` : ''}
 			</div>`;
 		}
@@ -603,41 +668,50 @@
 <!-- When preview is open, left-align the editor so the float panel has room on the right -->
 <div class="syl-root" class:preview-open={previewOpen}>
 
-	<aside class="syl-sidebar">
+	<aside class="syl-sidebar" class:sidebar-collapsed={!sidebarOpen}>
 		<div class="syl-sidebar-header">
-			<span class="syl-sidebar-label">Syllabi</span>
-			<button class="syl-new-btn" onclick={newSyllabus} title="New syllabus">+</button>
+			{#if sidebarOpen}
+				<span class="syl-sidebar-label">Syllabi</span>
+				<div class="syl-sidebar-header-btns">
+					<button class="syl-new-btn" onclick={newSyllabus} title="New syllabus">+</button>
+					<button class="syl-collapse-btn" onclick={() => sidebarOpen = false} title="Collapse sidebar">‹</button>
+				</div>
+			{:else}
+				<button class="syl-collapse-btn syl-expand-btn" onclick={() => sidebarOpen = true} title="Expand sidebar">›</button>
+			{/if}
 		</div>
 
-		{#if loadingList}
-			<div class="syl-sidebar-empty">Loading…</div>
-		{:else if syllabi.length === 0}
-			<div class="syl-sidebar-empty">No syllabi yet.</div>
-		{:else}
-			<ul class="syl-list">
-				{#each syllabi as syl (syl.id)}
-					<li class="syl-list-item" class:active={activeSyllabusId === syl.id}>
-						{#if renamingId === syl.id}
-							<input
-								class="syl-rename-input"
-								bind:value={renameValue}
-								onblur={() => commitRename(syl.id)}
-								onkeydown={(e) => { if (e.key === 'Enter') commitRename(syl.id); if (e.key === 'Escape') renamingId = null; }}
-								use:focus
-							/>
-						{:else}
-							<button class="syl-list-btn" onclick={() => openSyllabus(syl.id)}>
-								<span class="syl-list-name">{syl.name}</span>
-								<span class="syl-list-date">{new Date(syl.updatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
-							</button>
-							<div class="syl-list-actions">
-								<button class="syl-icon-btn" onclick={() => startRename(syl.id, syl.name)} title="Rename">✎</button>
-								<button class="syl-icon-btn syl-del-btn" onclick={() => deleteSyllabus(syl.id)} title="Delete">×</button>
-							</div>
-						{/if}
-					</li>
-				{/each}
-			</ul>
+		{#if sidebarOpen}
+			{#if loadingList}
+				<div class="syl-sidebar-empty">Loading…</div>
+			{:else if syllabi.length === 0}
+				<div class="syl-sidebar-empty">No syllabi yet.</div>
+			{:else}
+				<ul class="syl-list">
+					{#each syllabi as syl (syl.id)}
+						<li class="syl-list-item" class:active={activeSyllabusId === syl.id}>
+							{#if renamingId === syl.id}
+								<input
+									class="syl-rename-input"
+									bind:value={renameValue}
+									onblur={() => commitRename(syl.id)}
+									onkeydown={(e) => { if (e.key === 'Enter') commitRename(syl.id); if (e.key === 'Escape') renamingId = null; }}
+									use:focus
+								/>
+							{:else}
+								<button class="syl-list-btn" onclick={() => openSyllabus(syl.id)}>
+									<span class="syl-list-name">{syl.name}</span>
+									<span class="syl-list-date">{new Date(syl.updatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
+								</button>
+								<div class="syl-list-actions">
+									<button class="syl-icon-btn" onclick={() => startRename(syl.id, syl.name)} title="Rename">✎</button>
+									<button class="syl-icon-btn syl-del-btn" onclick={() => deleteSyllabus(syl.id)} title="Delete">×</button>
+								</div>
+							{/if}
+						</li>
+					{/each}
+				</ul>
+			{/if}
 		{/if}
 	</aside>
 
@@ -695,7 +769,7 @@
 											const res = await fetch('/api/syllabus/font', { method: 'POST', body: fd });
 											if (res.ok) {
 												const { url, name } = await res.json();
-												customFonts = [...customFonts, { name, url }];
+												customFonts = [...customFonts, { name, url, weight: '100 900', style: 'normal' }];
 												font = name;
 												scheduleSave();
 											}
@@ -708,17 +782,81 @@
 							</label>
 						</div>
 					</label>
-					{#if customFonts.length > 0}
+					{#if customFontNames.length > 0}
 						<div class="custom-fonts-list">
-							{#each customFonts as cf}
-								<span class="custom-font-chip">
-									{cf.name}
-									<button class="custom-font-remove" title="Remove font" onclick={() => {
-										customFonts = customFonts.filter(f => f !== cf);
-										if (font === cf.name) font = FONTS[0].value;
-										scheduleSave();
-									}}>×</button>
-								</span>
+							{#each customFontNames as cfName}
+								{@const cfEntries = customFonts.filter(f => f.name === cfName)}
+								<div class="custom-font-group">
+									<div class="custom-font-chip-row">
+										<span class="custom-font-chip">
+											{cfName}
+										</span>
+										<button class="custom-font-add-weight" title="Upload additional weight/style for this font"
+											onclick={() => {
+												fontWeightAdding = { ...fontWeightAdding, [cfName]: fontWeightAdding[cfName] ? null : { weight: '700', style: 'normal' } };
+											}}>+wt</button>
+										<button class="custom-font-remove" title="Remove font" onclick={() => {
+											customFonts = customFonts.filter(f => f.name !== cfName);
+											if (font === cfName) font = FONTS[0].value;
+											scheduleSave();
+										}}>×</button>
+									</div>
+									<div class="custom-font-weights">
+										{#each cfEntries as wf}
+											<span class="custom-font-weight-badge">{wf.weight ?? '100–900'}{wf.style === 'italic' ? ' italic' : ''}</span>
+										{/each}
+									</div>
+									{#if fontWeightAdding[cfName]}
+										<div class="custom-font-weight-upload">
+											<select class="font-weight-select" bind:value={fontWeightAdding[cfName].weight}>
+												<option value="100">100 Thin</option>
+												<option value="200">200 ExtraLight</option>
+												<option value="300">300 Light</option>
+												<option value="400">400 Regular</option>
+												<option value="500">500 Medium</option>
+												<option value="600">600 SemiBold</option>
+												<option value="700">700 Bold</option>
+												<option value="800">800 ExtraBold</option>
+												<option value="900">900 Black</option>
+											</select>
+											<select class="font-weight-select" bind:value={fontWeightAdding[cfName].style}>
+												<option value="normal">Normal</option>
+												<option value="italic">Italic</option>
+											</select>
+											<label class="font-upload-btn" title="Choose font file">
+												{#if fontWeightUploading[cfName]}…{:else}↑{/if}
+												<input
+													type="file"
+													accept=".ttf,.otf,.woff,.woff2"
+													style="display:none"
+													disabled={fontWeightUploading[cfName]}
+													onchange={async (e) => {
+														const file = e.target.files?.[0];
+														if (!file) return;
+														// Capture weight/style before await in case the selects change
+														const w = fontWeightAdding[cfName]?.weight ?? '700';
+														const s = fontWeightAdding[cfName]?.style ?? 'normal';
+														fontWeightUploading = { ...fontWeightUploading, [cfName]: true };
+														try {
+															const fd = new FormData();
+															fd.append('file', file);
+															const res = await fetch('/api/syllabus/font', { method: 'POST', body: fd });
+															if (res.ok) {
+																const { url } = await res.json();
+																customFonts = [...customFonts, { name: cfName, url, weight: w, style: s }];
+																fontWeightAdding = { ...fontWeightAdding, [cfName]: null };
+																scheduleSave();
+															}
+														} finally {
+															fontWeightUploading = { ...fontWeightUploading, [cfName]: false };
+															e.target.value = '';
+														}
+													}}
+												/>
+											</label>
+										</div>
+									{/if}
+								</div>
 							{/each}
 						</div>
 					{/if}
@@ -782,7 +920,7 @@
 			</div>
 			{/if}
 
-			<div class="syl-blocks" style:font-family={font}>
+			<div class="syl-blocks">
 				{#each blocks as block, idx (block.id)}
 					<div
 						class="syl-block"
@@ -796,53 +934,80 @@
 						ondragend={onDragEnd}
 						role="listitem"
 					>
-						<div class="block-meta">
-							<span class="drag-handle" title="Drag to reorder">⠿</span>
+						<div class="block-gutter">
+							<span class="drag-handle" title="Drag to reorder">⠷</span>
 							<span class="block-type-pill">{BLOCK_LABELS[block.type]}</span>
 							<div class="block-actions">
 								<button class="blk-btn" onclick={() => toggleBlockHidden(block.id)} title={block.hidden ? 'Show in output' : 'Hide from output'}>
-									{block.hidden ? '👁️‍🗨️' : '👁️'}
+									{block.hidden ? '🕶️‍🗨️' : '🕶️'}
 								</button>
 								<button class="blk-btn blk-btn-del" onclick={() => deleteBlock(block.id)} title="Delete block">×</button>
 							</div>
+							{#if block.type === 'section'}
+								<label class="syl-checkbox-label block-section-opt" title="Toggle underline">
+									<input type="checkbox" checked={block.border ?? true} onchange={(e) => { blocks = blocks.map(b => b.id === block.id ? { ...b, border: e.target.checked } : b); scheduleSave(); }} />
+									Underline
+								</label>
+							{/if}
 						</div>
 
-						{#if block.type === 'title'}
-							<input class="block-input block-title" value={block.content} oninput={(e) => updateBlock(block.id, e.target.value)} placeholder="Course title…" />
-						{:else if block.type === 'section'}
-							<input class="block-input block-section" value={block.content} oninput={(e) => updateBlock(block.id, e.target.value)} placeholder="Section heading…" />
-						{:else if block.type === 'text'}
-							<textarea class="block-input block-text" value={block.content} oninput={(e) => updateBlock(block.id, e.target.value)} placeholder="Text, **markdown**, and $LaTeX$ supported…" rows="4"></textarea>
-						{:else if block.type === 'week'}
-							{@const wd = parseWeek(block.content)}
-							<div class="week-editor">
-								<div class="week-header-row">
-									<span class="week-num-label">Week</span>
-									<input class="week-num-input" type="number" value={wd.weekNum ?? 1} oninput={(e) => updateWeekField(block.id, 'weekNum', parseInt(e.target.value)||1)} min="1" />
-									<input class="week-title-input" value={wd.title ?? ''} oninput={(e) => updateWeekField(block.id, 'title', e.target.value)} placeholder="Week title…" />
-								</div>
-								<div class="week-topics">
-									{#each (wd.topics ?? []) as topic, ti}
-										<div class="topic-row" class:topic-hidden={topic.hidden}>
-											<input class="topic-input" value={topic.text} oninput={(e) => updateTopic(block.id, topic.id, e.target.value)} placeholder="Topic…" />
-											<div class="topic-actions">
-												<button class="topic-btn" onclick={() => moveTopic(block.id, ti, -1)} disabled={ti===0} title="Move up">↑</button>
-												<button class="topic-btn" onclick={() => moveTopic(block.id, ti, 1)} disabled={ti===wd.topics.length-1} title="Move down">↓</button>
-												<button class="topic-btn" onclick={() => toggleTopic(block.id, topic.id)} title={topic.hidden ? 'Show' : 'Hide'}>{topic.hidden ? '○' : '●'}</button>
-												<button class="topic-btn topic-btn-del" onclick={() => deleteTopic(block.id, topic.id)} title="Delete">×</button>
+						<div class="block-content">
+							{#if block.type === 'title'}
+								<input
+									class="block-input block-title"
+									style="font-size:{edPx(fontSizes.title)}px;line-height:{lineHeights.title};font-weight:700"
+									value={block.content}
+									oninput={(e) => updateBlock(block.id, e.target.value)}
+									placeholder="Course title…"
+								/>
+							{:else if block.type === 'section'}
+								<input
+									class="block-input block-section"
+									class:block-section-underline={block.border ?? true}
+									style="font-size:{edPx(fontSizes.section)}px;line-height:{lineHeights.section};font-weight:700;margin-bottom:{edPx(spacing.section)}px"
+									value={block.content}
+									oninput={(e) => updateBlock(block.id, e.target.value)}
+									placeholder="Section heading…"
+								/>
+							{:else if block.type === 'text'}
+								<textarea
+									class="block-input block-text"
+									style="font-size:{edPx(fontSizes.text)}px;line-height:{lineHeights.text};margin-bottom:{edPx(spacing.text)}px"
+									value={block.content}
+									oninput={(e) => updateBlock(block.id, e.target.value)}
+									placeholder="Text, **markdown**, and $ supported…"
+									use:autosize
+								></textarea>
+							{:else if block.type === 'week'}
+								{@const wd = parseWeek(block.content)}
+								<div class="week-editor" style="margin-bottom:{edPx(spacing.week)}px">
+									<div class="week-header-row">
+										<span class="week-prefix" style="font-size:{edPx(fontSizes.weekHeader)}px;font-weight:700;line-height:{lineHeights.weekHeader}">{block.hidden ? 'Week —:' : 'Week ' + (weekNums[block.id] ?? '') + ':'} </span>
+										<input class="week-title-input" style="font-size:{edPx(fontSizes.weekHeader)}px;line-height:{lineHeights.weekHeader};font-weight:700" value={wd.title ?? ''} oninput={(e) => updateWeekField(block.id, 'title', e.target.value)} placeholder="Week title…" />
+									</div>
+									<div class="week-topics">
+										{#each (wd.topics ?? []) as topic, ti}
+											<div class="topic-row" class:topic-hidden={topic.hidden}>
+												<input class="topic-input" style="font-size:{edPx(fontSizes.weekTopic)}px;line-height:{lineHeights.weekTopic}" value={topic.text} oninput={(e) => updateTopic(block.id, topic.id, e.target.value)} placeholder="Topic…" />
+												<div class="topic-actions">
+													<button class="topic-btn" onclick={() => moveTopic(block.id, ti, -1)} disabled={ti===0} title="Move up">↑</button>
+													<button class="topic-btn" onclick={() => moveTopic(block.id, ti, 1)} disabled={ti===wd.topics.length-1} title="Move down">↓</button>
+													<button class="topic-btn" onclick={() => toggleTopic(block.id, topic.id)} title={topic.hidden ? 'Show' : 'Hide'}>{topic.hidden ? '○' : '●'}</button>
+													<button class="topic-btn topic-btn-del" onclick={() => deleteTopic(block.id, topic.id)} title="Delete">×</button>
+												</div>
 											</div>
-										</div>
-									{/each}
-									<button class="add-topic-btn" onclick={() => addTopic(block.id)}>+ Add topic</button>
+										{/each}
+										<button class="add-topic-btn" onclick={() => addTopic(block.id)}>+ Add topic</button>
+									</div>
 								</div>
-							</div>
-						{/if}
+							{/if}
 
-						<div class="add-block-row">
-							<button class="add-btn" onclick={() => addBlock('text', idx)}>+ Text</button>
-							<button class="add-btn" onclick={() => addBlock('section', idx)}>+ Section</button>
-							<button class="add-btn" onclick={() => addBlock('week', idx)}>+ Week</button>
-							<button class="add-btn" onclick={() => addBlock('title', idx)}>+ Title</button>
+							<div class="add-block-row">
+								<button class="add-btn" onclick={() => addBlock('text', idx)}>+ Text</button>
+								<button class="add-btn" onclick={() => addBlock('section', idx)}>+ Section</button>
+								<button class="add-btn" onclick={() => addBlock('week', idx)}>+ Week</button>
+								<button class="add-btn" onclick={() => addBlock('title', idx)}>+ Title</button>
+							</div>
 						</div>
 					</div>
 				{/each}
@@ -864,7 +1029,7 @@
 		class="syl-measure"
 		bind:this={measureEl}
 		style:width="{PAGE_W - margins.left - margins.right}px"
-		style:font-family={font}
+	
 	>
 		{@html renderMeasure()}
 	</div>
@@ -904,7 +1069,7 @@
 						style:padding-right="{margins.right}px"
 						style:padding-bottom="{margins.bottom}px"
 						style:padding-left="{margins.left}px"
-						style:font-family={font}
+					
 						style:zoom={pageZoom}
 					>
 						{@html renderPage(pageBlocks[pageIndex])}
@@ -916,7 +1081,7 @@
 {/if}
 
 <!-- Print-only output -->
-<div class="print-only" style:font-family={font} style:padding="{margins.top}px {margins.right}px {margins.bottom}px {margins.left}px">
+<div class="print-only" style:padding="{margins.top}px {margins.right}px {margins.bottom}px {margins.left}px">
 	{@html activeSyllabusId ? renderPrint() : ''}
 </div>
 
@@ -929,7 +1094,7 @@
 		border-radius: 12px;
 		overflow: hidden;
 		background: #fff;
-		/* default: fill available width */
+		width: 100%;
 		margin-left: 0;
 		margin-right: 0;
 		transition: margin-right 0.2s ease;
@@ -947,6 +1112,11 @@
 		border-right: 1.5px solid #e8e2d9;
 		display: flex; flex-direction: column;
 		background: #faf7f2;
+		transition: width 0.2s ease, min-width 0.2s ease;
+		overflow: hidden;
+	}
+	.syl-sidebar.sidebar-collapsed {
+		width: 36px; min-width: 36px;
 	}
 	.syl-sidebar-header {
 		display: flex; align-items: center; justify-content: space-between;
@@ -954,6 +1124,16 @@
 		border-bottom: 1px solid #e8e2d9;
 	}
 	.syl-sidebar-label { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #a09688; }
+	.syl-sidebar-header-btns { display: flex; align-items: center; gap: 0.25rem; }
+	.syl-collapse-btn {
+		width: 22px; height: 22px; border: none; background: none; cursor: pointer;
+		border-radius: 5px; font-size: 1rem; line-height: 1; color: #a09688;
+		display: flex; align-items: center; justify-content: center;
+		transition: background 0.1s, color 0.1s;
+	}
+	.syl-collapse-btn:hover { background: #ede8e0; color: var(--ink); }
+	.sidebar-collapsed .syl-sidebar-header { justify-content: center; padding: 0.75rem 0 0.5rem; border-bottom: 1px solid #e8e2d9; }
+	.syl-expand-btn { margin: 0 auto; }
 	.syl-new-btn {
 		width: 22px; height: 22px; border: 1.5px solid #c8c1b4; border-radius: 5px;
 		background: #fff; cursor: pointer; font-size: 1rem; line-height: 1;
@@ -1032,17 +1212,38 @@
 		transition: border-color 0.1s, color 0.1s;
 	}
 	.font-upload-btn:hover { border-color: var(--ink); color: var(--ink); }
-	.custom-fonts-list { display: flex; gap: 0.3rem; flex-wrap: wrap; align-items: center; }
+	.custom-fonts-list { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: flex-start; }
+	.custom-font-group { display: flex; flex-direction: column; gap: 0.2rem; }
+	.custom-font-chip-row { display: flex; align-items: center; gap: 0.2rem; }
 	.custom-font-chip {
 		display: flex; align-items: center; gap: 0.2rem;
 		font-size: 0.72rem; padding: 0.15rem 0.45rem; border-radius: 99px;
 		background: #e8e2d9; color: var(--ink);
 	}
+	.custom-font-weights { display: flex; gap: 0.2rem; flex-wrap: wrap; }
+	.custom-font-weight-badge {
+		font-size: 0.62rem; padding: 0.05rem 0.35rem; border-radius: 99px;
+		background: #f0ece5; color: #a09688; border: 1px solid #d9d3c8;
+	}
+	.custom-font-add-weight {
+		border: 1px solid #c8c0b4; background: none; cursor: pointer; font-size: 0.65rem;
+		color: #a09688; border-radius: 99px; padding: 0.1rem 0.35rem; line-height: 1;
+	}
+	.custom-font-add-weight:hover { border-color: var(--ink); color: var(--ink); }
 	.custom-font-remove {
 		border: none; background: none; cursor: pointer; font-size: 0.85rem;
 		color: #a09688; line-height: 1; padding: 0;
 	}
 	.custom-font-remove:hover { color: #c0392b; }
+	.custom-font-weight-upload {
+		display: flex; align-items: center; gap: 0.3rem; flex-wrap: wrap;
+		padding: 0.3rem 0.4rem; background: #f5f1eb; border-radius: 6px;
+		border: 1px solid #d9d3c8;
+	}
+	.font-weight-select {
+		font-size: 0.72rem; padding: 0.15rem 0.3rem; border: 1px solid #c8c0b4;
+		border-radius: 4px; background: #fff; color: var(--ink); cursor: pointer;
+	}
 
 	.margins-group { display: flex; align-items: center; gap: 0.4rem; }
 	.margins-group-label { font-size: 0.82rem; color: #666; white-space: nowrap; }
@@ -1068,69 +1269,79 @@
 	.syl-btn-active:hover { opacity: 0.85; }
 	.syl-btn-print { background: var(--ink); color: #fff; border-color: var(--ink); }
 	.syl-btn-print:hover { opacity: 0.85; }
-
+	.syl-checkbox-label { display: flex; align-items: center; gap: 0.4rem; font-size: 0.82rem; color: #666; cursor: pointer; white-space: nowrap; }
 	/* Blocks */
-	.syl-blocks { flex: 1; padding: 1rem; overflow-y: auto; display: flex; flex-direction: column; gap: 0.45rem; }
+	.syl-blocks { flex: 1; padding: 2rem 1.5rem 2rem 0.5rem; overflow-y: auto; display: flex; flex-direction: column; gap: 0; background: #fff; }
 	.syl-block {
-		border: 1.5px solid #e8e2d9; border-radius: 9px; background: #fff;
-		transition: border-color 0.12s, box-shadow 0.12s;
+		display: flex; flex-direction: row; align-items: flex-start;
+		position: relative; border-radius: 6px;
+		transition: background 0.1s;
 	}
-	.syl-block:hover { border-color: #c8c1b4; }
-	.syl-block.drag-over { border-color: var(--ink); box-shadow: 0 0 0 2px rgba(0,0,0,0.1); }
+	.syl-block:hover { background: #faf7f2; }
+	.syl-block.drag-over { outline: 2px solid var(--ink); outline-offset: -2px; border-radius: 6px; }
 	.syl-block.dragging { opacity: 0.4; }
-	.syl-block.hidden-block { opacity: 0.45; }
-	.block-meta {
-		display: flex; align-items: center; gap: 0.45rem;
-		padding: 0.3rem 0.55rem; border-bottom: 1px solid #f0ebe3;
+	.syl-block.hidden-block { opacity: 0.35; }
+
+	/* Left gutter: drag handle, type label, actions — fades in on hover */
+	.block-gutter {
+		width: 72px; flex-shrink: 0;
+		display: flex; flex-direction: column; align-items: flex-end;
+		padding: 0.25rem 0.6rem 0 0;
+		gap: 0.2rem;
+		opacity: 0; transition: opacity 0.15s;
 	}
-	.drag-handle { cursor: grab; color: #ccc; font-size: 1rem; user-select: none; }
+	.syl-block:hover .block-gutter { opacity: 1; }
+	.drag-handle { cursor: grab; color: #bbb; font-size: 1rem; user-select: none; line-height: 1; }
 	.drag-handle:active { cursor: grabbing; }
 	.block-type-pill {
-		font-size: 0.65rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em;
-		color: #a09688; background: #f5f0e8; border-radius: 4px; padding: 0.1rem 0.35rem;
+		font-size: 0.6rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em;
+		color: #b0a898; white-space: nowrap;
 	}
-	.block-actions { margin-left: auto; display: flex; gap: 0.2rem; }
+	.block-actions { display: flex; gap: 0.15rem; }
 	.blk-btn {
-		width: 21px; height: 21px; border: none; background: none; cursor: pointer;
-		border-radius: 4px; font-size: 0.82rem; display: flex; align-items: center; justify-content: center;
-		color: #999; transition: background 0.1s;
+		width: 20px; height: 20px; border: none; background: none; cursor: pointer;
+		border-radius: 4px; font-size: 0.78rem; display: flex; align-items: center; justify-content: center;
+		color: #aaa; transition: background 0.1s;
 	}
-	.blk-btn:hover { background: #f0ebe3; }
+	.blk-btn:hover { background: #ede8e0; }
 	.blk-btn-del:hover { background: #fee2e2; color: #c0392b; }
+	.block-section-opt { margin-top: 0.25rem; font-size: 0.7rem; }
+
+	/* Right content area */
+	.block-content { flex: 1; min-width: 0; padding-top: 0.15rem; }
 	.block-input {
 		width: 100%; box-sizing: border-box; border: none; outline: none;
-		font-family: inherit; background: transparent; padding: 0.55rem 0.7rem; color: var(--ink);
+		font-family: inherit; background: transparent; padding: 0; color: var(--ink);
+		display: block;
 	}
-	.block-title { font-size: 1.35rem; font-weight: 700; }
-	.block-section { font-size: 0.95rem; font-weight: 600; }
-	.block-text { font-size: 0.86rem; line-height: 1.6; min-height: 76px; resize: vertical; }
+	.block-title { /* font-size/weight/line-height via inline style */ }
+	.block-section { /* font-size/weight/line-height via inline style */ }
+	.block-section-underline { border-bottom: 1.5px solid currentColor; padding-bottom: 0.2rem; }
+	.block-text { resize: none; overflow: hidden; min-height: 2em; }
 
 	/* Week editor */
-	.week-editor { padding: 0.45rem 0.7rem 0.3rem; }
-	.week-header-row { display: flex; align-items: center; gap: 0.45rem; margin-bottom: 0.45rem; }
-	.week-num-label { font-size: 0.78rem; font-weight: 700; color: #a09688; white-space: nowrap; }
-	.week-num-input {
-		width: 50px; font-family: inherit; font-size: 0.88rem; font-weight: 700;
-		border: 1.5px solid #e8e2d9; border-radius: 6px; padding: 0.18rem 0.35rem;
-		text-align: center; background: #faf7f2;
-	}
+	.week-editor { }
+	.week-header-row { display: flex; align-items: baseline; gap: 0.2rem; margin-bottom: 0.3rem; }
+	.week-prefix { color: var(--ink); }
 	.week-title-input {
-		flex: 1; font-family: inherit; font-size: 0.92rem; font-weight: 600;
-		border: 1.5px solid #e8e2d9; border-radius: 6px; padding: 0.18rem 0.45rem; background: #faf7f2;
+		flex: 1; font-family: inherit; font-weight: 700;
+		border: none; border-bottom: 1px solid #ddd7cc; outline: none;
+		background: transparent; color: var(--ink);
 	}
-	.week-num-input:focus, .week-title-input:focus { outline: none; border-color: #a09688; }
-	.week-topics { display: flex; flex-direction: column; gap: 0.2rem; padding-left: 0.35rem; }
-	.topic-row { display: flex; align-items: center; gap: 0.3rem; padding: 0.1rem 0; }
+	.week-title-input:focus { border-bottom-color: var(--ink); }
+	.week-topics { display: flex; flex-direction: column; gap: 0.1rem; padding-left: 1.1em; }
+	.topic-row { display: flex; align-items: center; gap: 0.3rem; padding: 0.05rem 0; }
 	.topic-row.topic-hidden { opacity: 0.38; }
 	.topic-input {
-		flex: 1; font-family: inherit; font-size: 0.83rem; border: none;
-		border-bottom: 1px solid #e8e2d9; padding: 0.12rem 0.2rem; background: transparent;
+		flex: 1; font-family: inherit; border: none; outline: none;
+		border-bottom: 1px solid transparent; padding: 0; background: transparent; color: var(--ink);
 	}
-	.topic-input:focus { outline: none; border-bottom-color: var(--ink); }
-	.topic-actions { display: flex; gap: 0.12rem; }
+	.topic-input:focus { border-bottom-color: #ddd7cc; }
+	.topic-actions { display: flex; gap: 0.1rem; opacity: 0; transition: opacity 0.12s; }
+	.topic-row:hover .topic-actions { opacity: 1; }
 	.topic-btn {
-		width: 19px; height: 19px; border: none; background: none; cursor: pointer;
-		font-size: 0.75rem; border-radius: 3px; color: #aaa;
+		width: 18px; height: 18px; border: none; background: none; cursor: pointer;
+		font-size: 0.72rem; border-radius: 3px; color: #aaa;
 		display: flex; align-items: center; justify-content: center;
 	}
 	.topic-btn:hover:not(:disabled) { background: #f0ebe3; color: var(--ink); }
@@ -1138,18 +1349,18 @@
 	.topic-btn-del:hover { background: #fee2e2 !important; color: #c0392b !important; }
 	.add-topic-btn {
 		font-family: inherit; font-size: 0.75rem; color: #a09688; background: none;
-		border: 1px dashed #ddd7cc; border-radius: 5px; padding: 0.18rem 0.55rem;
-		cursor: pointer; margin: 0.2rem 0; transition: border-color 0.12s, color 0.12s;
+		border: 1px dashed #ddd7cc; border-radius: 5px; padding: 0.15rem 0.55rem;
+		cursor: pointer; margin: 0.3rem 0 0; transition: border-color 0.12s, color 0.12s;
 	}
 	.add-topic-btn:hover { border-color: var(--ink); color: var(--ink); }
 	.add-block-row {
-		display: flex; gap: 0.3rem; padding: 0.3rem 0.55rem;
-		border-top: 1px dashed #f0ebe3; opacity: 0; transition: opacity 0.12s;
+		display: flex; gap: 0.3rem; padding: 0.4rem 0 0.2rem;
+		opacity: 0; transition: opacity 0.12s;
 	}
 	.syl-block:hover .add-block-row { opacity: 1; }
 	.add-btn {
-		font-family: inherit; font-size: 0.7rem; color: #a09688; background: none;
-		border: 1px dashed #ddd7cc; border-radius: 4px; padding: 0.13rem 0.45rem;
+		font-family: inherit; font-size: 0.68rem; color: #a09688; background: none;
+		border: 1px dashed #ddd7cc; border-radius: 4px; padding: 0.12rem 0.4rem;
 		cursor: pointer; transition: border-color 0.1s, color 0.1s;
 	}
 	.add-btn:hover { border-color: var(--ink); color: var(--ink); }
@@ -1239,7 +1450,7 @@
 	:global(.float-page .syl-title, .print-only .syl-title, .syl-measure .syl-title) { font-size: 2rem; font-weight: 700; margin: 0 0 0.15rem; }
 	:global(.float-page .syl-section, .print-only .syl-section, .syl-measure .syl-section) { font-size: 1.05rem; font-weight: 700; margin: 1.75rem 0 0.4rem; border-bottom: 1.5px solid currentColor; padding-bottom: 0.2rem; }
 	:global(.float-page .syl-section:first-child, .print-only .syl-section:first-child, .syl-measure .syl-section:first-child) { margin-top: 0; }
-	:global(.float-page .syl-section p:first-child, .print-only .syl-section p:first-child, .syl-measure .syl-section p:first-child) { margin-top: 0; }
+	:global(.float-page .syl-section p, .print-only .syl-section p, .syl-measure .syl-section p) { margin: 0; }
 	:global(.float-page .syl-text, .print-only .syl-text, .syl-measure .syl-text) { font-size: 0.9rem; margin-bottom: 0.4rem; }
 	:global(.float-page .syl-text p, .print-only .syl-text p, .syl-measure .syl-text p) { margin: 0 0 0.4em; }
 	:global(.float-page .syl-week, .print-only .syl-week, .syl-measure .syl-week) { margin: 0.6rem 0; }

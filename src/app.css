@@ -1,3 +1,4 @@
+@import url('https://fonts.googleapis.com/css2?family=Google+Sans+Flex:ital,opsz,wdth,wght@0,6..144,75..125,100..700;1,6..144,75..125,100..700&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Space+Grotesk:wght@400;500;600&family=Pacifico&display=swap');
 
 @font-face {
@@ -55,10 +56,27 @@ html {
 	background: var(--paper);
 }
 
-/* Noto Color Emoji mode — prepend Noto to the stack so emoji use it throughout the app.
-   Noto Color Emoji only covers emoji codepoints, so Latin/CJK text falls through unchanged. */
+/* Noto Color Emoji mode — append Noto at the END of the stack so Space Grotesk/system fonts
+   handle all Latin/numeric glyphs first; Noto only fills in true emoji codepoints. */
 html.noto-emoji {
-	font-family: 'Noto Color Emoji', 'Space Grotesk', system-ui, -apple-system, sans-serif;
+	font-family: 'Google Sans Flex', 'Space Grotesk', system-ui, -apple-system, sans-serif, 'Noto Color Emoji';
+}
+
+/* Reaction chip + tooltip emoji: Noto FIRST so it wins over Apple Color Emoji by default.
+   Setting emoji-font=system removes the noto-emoji class, falling back to system emoji. */
+html.noto-emoji .reaction-emoji,
+html.noto-emoji .reaction-tooltip-emoji {
+	font-family: 'Noto Color Emoji', sans-serif;
+}
+
+/* Rainbow border message effect — animated conic-gradient border */
+@property --rwb {
+	syntax: '<angle>';
+	initial-value: 0deg;
+	inherits: false;
+}
+@keyframes rwb-spin {
+	to { --rwb: 360deg; }
 }
 
 body {
