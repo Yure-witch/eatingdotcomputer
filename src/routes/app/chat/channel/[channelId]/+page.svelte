@@ -650,6 +650,33 @@
 		const pastedText = e.clipboardData.getData('text/plain');
 		if (!pastedText || !inputEl) return;
 
+		// When pasted text contains EK tokens, use direct DOM insertion to avoid
+		// markup-based cursor arithmetic breaking on img nodes.
+		if (pastedText.indexOf('[ek:') !== -1) {
+			const nodes = ceMarkupToNodes(normalizeLegacyMarkup(pastedText));
+			const sel = window.getSelection();
+			if (sel && sel.rangeCount > 0 && inputEl.contains(sel.anchorNode)) {
+				const range = sel.getRangeAt(0);
+				range.deleteContents();
+				for (const node of nodes) {
+					range.insertNode(node);
+					range.setStartAfter(node);
+					range.collapse(true);
+				}
+				sel.removeAllRanges();
+				sel.addRange(range);
+			} else {
+				for (const node of nodes) inputEl.appendChild(node);
+				const r = document.createRange();
+				r.selectNodeContents(inputEl);
+				r.collapse(false);
+				window.getSelection()?.removeAllRanges();
+				window.getSelection()?.addRange(r);
+			}
+			input = serializeCe(inputEl);
+			return;
+		}
+
 		// Get caret offset and selection length as plain-text positions
 		let caretOffset = 0;
 		let selLength = 0;

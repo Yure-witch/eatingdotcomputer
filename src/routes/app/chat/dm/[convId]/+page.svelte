@@ -316,7 +316,7 @@
 		while ((m = EK_RE.exec(text)) !== null) {
 			if (m.index > lastIdx) parts.push(contentHtmlText(text.slice(lastIdx, m.index), split));
 			const url = ekTokenToUrl(m[1], m[2], m[3]);
-			parts.push(`<img class="ek-img" src="${url}" loading="lazy" alt="" />`);
+			parts.push(`<img class="ek-img" data-ek="${m[0]}" src="${url}" loading="lazy" alt="" />`);
 			lastIdx = EK_RE.lastIndex;
 		}
 		if (lastIdx < text.length) parts.push(contentHtmlText(text.slice(lastIdx), split));
@@ -372,6 +372,14 @@
 				const len = node.textContent.length;
 				if (pos + len >= target) return { node, offset: target - pos };
 				pos += len;
+				return null;
+			}
+			if (node.nodeType === Node.ELEMENT_NODE && node.tagName === 'IMG' && node.dataset.ek) {
+				pos += 1;
+				if (pos >= target) {
+					const idx = Array.from(node.parentNode.childNodes).indexOf(node);
+					return { node: node.parentNode, offset: idx + 1 };
+				}
 				return null;
 			}
 			for (const child of node.childNodes) { const r = walk(child); if (r) return r; }
@@ -634,6 +642,33 @@
 		e.preventDefault();
 		const pastedText = e.clipboardData.getData('text/plain');
 		if (!pastedText || !inputEl) return;
+
+		// When pasted text contains EK tokens, use direct DOM insertion to avoid
+		// markup-based cursor arithmetic breaking on img nodes.
+		if (pastedText.indexOf('[ek:') !== -1) {
+			const nodes = ceMarkupToNodes(normalizeLegacyMarkup(pastedText));
+			const sel = window.getSelection();
+			if (sel && sel.rangeCount > 0 && inputEl.contains(sel.anchorNode)) {
+				const range = sel.getRangeAt(0);
+				range.deleteContents();
+				for (const node of nodes) {
+					range.insertNode(node);
+					range.setStartAfter(node);
+					range.collapse(true);
+				}
+				sel.removeAllRanges();
+				sel.addRange(range);
+			} else {
+				for (const node of nodes) inputEl.appendChild(node);
+				const r = document.createRange();
+				r.selectNodeContents(inputEl);
+				r.collapse(false);
+				window.getSelection()?.removeAllRanges();
+				window.getSelection()?.addRange(r);
+			}
+			input = serializeCe(inputEl);
+			return;
+		}
 
 		// Get caret offset and selection length as plain-text positions
 		let caretOffset = 0;
