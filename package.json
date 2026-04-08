@@ -10,7 +10,8 @@
 		"prepare": "svelte-kit sync || echo ''",
 		"generate-vapid": "node scripts/generate-vapid.js",
 		"migrate": "node scripts/migrate.js",
-		"generate-icons": "node scripts/generate-icons.js"
+		"generate-icons": "node scripts/generate-icons.js",
+		"generate-emoji-embeddings": "node scripts/generate-emoji-embeddings.mjs"
 	},
 	"devDependencies": {
 		"@sveltejs/kit": "^2.50.1",
@@ -21,6 +22,7 @@
 	"dependencies": {
 		"@auth/sveltekit": "^1.11.1",
 		"@aws-sdk/client-s3": "^3.983.0",
+		"@huggingface/transformers": "^4.0.1",
 		"@libsql/client": "^0.17.0",
 		"@sveltejs/adapter-vercel": "^6.3.1",
 		"bcryptjs": "^3.0.3",

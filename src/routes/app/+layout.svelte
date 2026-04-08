@@ -151,9 +151,11 @@
 	let dismissed = $state(false);
 	let soundEnabled = $state(true);
 
+	let _audioCtx = null;
 	function playSound() {
 		try {
-			const ctx = new AudioContext();
+			if (!_audioCtx || _audioCtx.state === 'closed') _audioCtx = new AudioContext();
+			const ctx = _audioCtx;
 			const frequencies = [880, 1100];
 			let t = ctx.currentTime;
 			for (const freq of frequencies) {

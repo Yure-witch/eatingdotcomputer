@@ -19,5 +19,11 @@ export default defineConfig({
 	define: {
 		__BUILD_NUMBER__: JSON.stringify(count),
 		__BUILD_SHA__: JSON.stringify(sha)
+	},
+	optimizeDeps: {
+		exclude: ['@huggingface/transformers']
+	},
+	worker: {
+		format: 'es'
 	}
 });

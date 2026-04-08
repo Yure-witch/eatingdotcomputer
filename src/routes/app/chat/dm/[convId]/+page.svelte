@@ -4,9 +4,11 @@
 	import { ref, onChildAdded, onValue, off, query, limitToLast, set, remove } from 'firebase/database';
 	import { normaliseMessage, buildUserMap, formatTime } from '$lib/chat.js';
 	import EmojiPicker from '$lib/components/EmojiPicker.svelte';
+	import EmojiKitchen from '$lib/components/EmojiKitchen.svelte';
 	import FileTypeIcon from '$lib/components/FileTypeIcon.svelte';
 	import ProfileHover from '$lib/components/ProfileHover.svelte';
 	import { loadEmojiNames } from '$lib/emoji-names.js';
+	import { initSemanticSearch, searchEmoji, cpToChar } from '$lib/emoji-semantic.js';
 
 	let { data } = $props();
 
@@ -42,6 +44,7 @@
 	let pickerMsgId = $state(null);
 	let pickerPos = $state({ x: 0, y: 0 });
 	let showComposePicker = $state(false);
+	let showKitchen = $state(false);
 
 	// Message effects
 	let messageEffect = $state(null); // null | 'rainbow' | 'hearts'
@@ -59,6 +62,9 @@
 	let downRange = $state(80);
 	let sendWrapEl = $state(null);
 	let _szArmed = false, _szTimer = null, _szInitY = 0, _panelTopY = 8, _szUpPx = 62;
+	let _szPendingFont = 1.0;
+	let _szPillEl = null;
+	let _szRafId = 0;
 
 	const SZ_MIN = 0.55, SZ_MAX = 20.0; // Small → Massive
 	const SZ_PILL_H = 36;
@@ -151,6 +157,14 @@
 	const FX_CLOSE_CHAR = '\uE1FF';
 	const FX_OPEN_CHARS = new Set(Object.values(FX_TO_CHAR));
 
+	// Decode compact EK token [ek:DATE36:PARENT:CHILD] → gstatic URL
+	function ekTokenToUrl(d36, parentCp, childCp) {
+		const date = 20200000 + parseInt(d36, 36);
+		const pad = date < 20220500;
+		const fmt = cp => 'u' + cp.split('-').map(s => pad ? s.padStart(4, '0') : s).join('-u');
+		return `https://www.gstatic.com/android/keyboard/emojikitchen/${date}/${fmt(parentCp)}/${fmt(parentCp)}_${fmt(childCp)}.png`;
+	}
+
 	// Convert legacy [fx]...[/fx] bracket markup → Unicode PUA
 	function normalizeLegacyMarkup(text) {
 		const names = Object.keys(FX_TO_CHAR).join('|');
@@ -170,9 +184,10 @@
 		return result;
 	}
 
-	// Strip all effect markers from text (for preview/reply bars)
+	// Strip all effect markers and EK tokens from text (for preview/reply bars)
 	function stripMarkup(text) {
-		const normalized = normalizeLegacyMarkup(text);
+		const withoutEk = text.replace(/\[ek:[a-z0-9]+:[0-9a-f-]+:[0-9a-f-]+\]/gi, '');
+		const normalized = normalizeLegacyMarkup(withoutEk);
 		let result = '';
 		for (const ch of normalized) {
 			if (!FX_OPEN_CHARS.has(ch) && ch !== FX_CLOSE_CHAR) result += ch;
@@ -181,20 +196,42 @@
 	}
 
 	// Returns 1-3 if content is purely 1-3 emoji (no other text), 0 otherwise.
+	// Strips effect markers first so emoji with text effects still qualify.
+	// EK tokens count as emoji for sizing purposes.
 	const _isEmojiSeg = s => /\p{Extended_Pictographic}|\p{Regional_Indicator}/u.test(s);
 	const _segmenter = new Intl.Segmenter();
 	function jumboEmojiCount(content) {
-		const plain = stripMarkup(content).trim();
+		let ekCount = 0;
+		const withoutEk = content.replace(/\[ek:[a-z0-9]+:[0-9a-f-]+:[0-9a-f-]+\]/gi, () => { ekCount++; return ''; });
+		const plain = stripMarkup(withoutEk).trim();
+		// Pure EK images only → treat each as an emoji
+		if (!plain && ekCount > 0) return ekCount <= 3 ? ekCount : 0;
+		// Mixed EK + text/emoji → not jumbo
+		if (ekCount > 0) return 0;
+		// Original logic for pure regular emoji
 		if (!plain) return 0;
 		const segs = [..._segmenter.segment(plain)].map(s => s.segment);
 		if (segs.length > 3 || segs.length === 0) return 0;
 		if (!segs.every(_isEmojiSeg)) return 0;
 		return segs.length;
 	}
+	const _jumboCache = new Map();
+	function jumboEmojiCountM(content) {
+		let v = _jumboCache.get(content);
+		if (v === undefined) { v = jumboEmojiCount(content); _jumboCache.set(content, v); }
+		return v;
+	}
+	const _htmlCache = new Map();
+	function contentHtmlM(text, split = true) {
+		const key = (split ? '1' : '0') + text;
+		let v = _htmlCache.get(key);
+		if (v === undefined) { v = contentHtml(text, split); _htmlCache.set(key, v); }
+		return v;
+	}
 	const JUMBO_SIZES = ['2.8rem', '2.2rem', '1.8rem'];
 	function bubbleFontSize(content, fontSize) {
 		if (fontSize && fontSize !== 1) return `${(fontSize * 0.9).toFixed(2)}rem`;
-		const jc = jumboEmojiCount(content);
+		const jc = jumboEmojiCountM(content);
 		if (jc > 0) return JUMBO_SIZES[jc - 1];
 		return null;
 	}
@@ -235,7 +272,7 @@
 
 	// Render content markup → HTML string in one pass, avoiding inter-segment DOM nodes
 	// that cause newlines under white-space: pre-wrap when using {#each}.
-	function contentHtml(text, split = true) {
+	function contentHtmlText(text, split = true) {
 		const segs = markupToSegments(normalizeLegacyMarkup(text));
 		if (!segs.length) return escapeHtml(text);
 		let globalWi = 0; // cross-segment word counter for stagger
@@ -270,6 +307,22 @@
 		}).join('');
 	}
 
+	// Wrapper: splits on EK tokens, renders each as <img>, delegates text to contentHtmlText
+	function contentHtml(text, split = true) {
+		if (text.indexOf('[ek:') === -1) return contentHtmlText(text, split);
+		const EK_RE = /\[ek:([a-z0-9]+):([0-9a-f-]+):([0-9a-f-]+)\]/gi;
+		const parts = [];
+		let lastIdx = 0, m;
+		while ((m = EK_RE.exec(text)) !== null) {
+			if (m.index > lastIdx) parts.push(contentHtmlText(text.slice(lastIdx, m.index), split));
+			const url = ekTokenToUrl(m[1], m[2], m[3]);
+			parts.push(`<img class="ek-img" src="${url}" loading="lazy" alt="" />`);
+			lastIdx = EK_RE.lastIndex;
+		}
+		if (lastIdx < text.length) parts.push(contentHtmlText(text.slice(lastIdx), split));
+		return parts.join('');
+	}
+
 	let revealedInvisible = $state(new Set());
 	function revealInvisible(id) { revealedInvisible = new Set([...revealedInvisible, id]); }
 	let replayCounts = $state({});
@@ -284,6 +337,31 @@
 	let showFormatPanel = $state(false);
 	let undoStack = [];
 	let redoStack = [];
+
+	// ── Emoji suggestions (semantic) ─────────────────────────────────────
+	let emojiSuggestions = $state([]); // [{ e, cp }]
+	let _suggDebounce = null;
+	let _semanticPausedUntil = 0; // cooldown: skip embedding after a no-match result
+
+	$effect(() => {
+		const raw = input;
+		clearTimeout(_suggDebounce);
+		const plain = raw.replace(/[\uE100-\uE1FF]/g, '');
+		const word = plain.split(/\s+/).filter(Boolean).at(-1) ?? '';
+		if (word.length < 2) { emojiSuggestions = []; return; }
+		_suggDebounce = setTimeout(async () => {
+			if (Date.now() < _semanticPausedUntil) return; // in cooldown, skip
+			try {
+				const hits = await searchEmoji(word, 6); // all ML in worker — main thread just receives results
+				if (hits[0]?.score >= 0.4) {
+					emojiSuggestions = hits.map(h => ({ e: cpToChar(h.cp), cp: h.cp }));
+				} else {
+					emojiSuggestions = [];
+					_semanticPausedUntil = Date.now() + 1500;
+				}
+			} catch { emojiSuggestions = []; }
+		}, 250);
+	});
 
 	// Serialize contenteditable DOM → Unicode markup string
 	// Walk the DOM tree and find the node+offset for a given plain-text character position
@@ -308,9 +386,10 @@
 			if (node.nodeType === Node.TEXT_NODE) {
 				result += node.textContent;
 			} else if (node.nodeType === Node.ELEMENT_NODE) {
-				const fxAttr = node.dataset?.fx;
-				if (fxAttr) {
-					const fxStack = fxAttr.split(' ').filter(fx => FX_TO_CHAR[fx]);
+				if (node.tagName === 'IMG' && node.dataset.ek) {
+					result += node.dataset.ek;
+				} else if (node.dataset?.fx) {
+					const fxStack = node.dataset.fx.split(' ').filter(fx => FX_TO_CHAR[fx]);
 					result += fxStack.map(fx => FX_TO_CHAR[fx]).join('') + serializeCe(node) + FX_CLOSE_CHAR.repeat(fxStack.length);
 				} else if (node.tagName === 'BR') {
 					result += '\n';
@@ -350,7 +429,7 @@
 	}
 
 	// Unicode markup → DOM nodes (nested spans — one per effect for composable CSS animations)
-	function ceMarkupToNodes(markup) {
+	function ceMarkupToNodesText(markup) {
 		const segs = markupToSegments(normalizeLegacyMarkup(markup));
 		const nodes = [];
 		let globalWi = 0;
@@ -388,6 +467,31 @@
 		return nodes;
 	}
 
+	// Unicode markup → DOM nodes, with EK token support
+	function ceMarkupToNodes(markup) {
+		if (markup.indexOf('[ek:') === -1) return ceMarkupToNodesText(markup);
+		const EK_RE = /\[ek:([a-z0-9]+):([0-9a-f-]+):([0-9a-f-]+)\]/gi;
+		const nodes = [];
+		let lastIdx = 0, m;
+		while ((m = EK_RE.exec(markup)) !== null) {
+			if (m.index > lastIdx) {
+				for (const n of ceMarkupToNodesText(markup.slice(lastIdx, m.index))) nodes.push(n);
+			}
+			const img = document.createElement('img');
+			img.src = ekTokenToUrl(m[1], m[2], m[3]);
+			img.dataset.ek = m[0];
+			img.className = 'ek-img ek-img-ce';
+			img.setAttribute('contenteditable', 'false');
+			img.setAttribute('alt', '');
+			nodes.push(img);
+			lastIdx = EK_RE.lastIndex;
+		}
+		if (lastIdx < markup.length) {
+			for (const n of ceMarkupToNodesText(markup.slice(lastIdx))) nodes.push(n);
+		}
+		return nodes;
+	}
+
 	function setCeInput(markup) {
 		input = markup;
 		if (!inputEl) return;
@@ -406,8 +510,9 @@
 		if (!inputEl) return;
 		const newMarkup = serializeCe(inputEl);
 		if (newMarkup !== input) {
-			undoStack = [...undoStack.slice(-99), input];
-			redoStack = [];
+			if (undoStack.length >= 50) undoStack.shift();
+			undoStack.push(input);
+			redoStack.length = 0;
 		}
 		input = newMarkup;
 		onInput();
@@ -633,8 +738,10 @@
 				panelHeight = window.innerHeight - 3 - _panelTopY;
 				downRange = Math.max(20, window.innerHeight - 3 - _szInitY);
 			}
-			thumbY = _szInitY - _panelTopY - SZ_PILL_H / 2;
+			_szPendingFont = 1.0;
 			messageFontSize = 1.0;
+			// Contain layout during drag: font-size changes stay local, don't reflow ancestors
+			if (inputEl) inputEl.style.contain = 'layout';
 		}, 380);
 	}
 
@@ -647,37 +754,55 @@
 	function onSendMove(e) {
 		if (!sizeSliderActive) return;
 		const dy = e.clientY - _szInitY;
-		// Pill follows cursor exactly (centered on cursor)
 		const cursorInPanel = e.clientY - _panelTopY;
-		thumbY = Math.max(0, Math.min(panelHeight - SZ_PILL_H, cursorInPanel - SZ_PILL_H / 2));
+		const newThumb = Math.max(0, Math.min(panelHeight - SZ_PILL_H, cursorInPanel - SZ_PILL_H / 2));
 		if (dy >= 0) {
-			// Down: Normal to Small over remaining screen space
 			const t = Math.min(1, dy / downRange);
-			messageFontSize = Math.max(SZ_MIN, fracToSz(0.5 + 0.5 * t));
+			_szPendingFont = Math.max(SZ_MIN, fracToSz(0.5 + 0.5 * t));
 		} else {
-			// Up: Normal to Max over full space above hold point
 			const t = Math.max(-1, dy / _szUpPx);
-			messageFontSize = Math.min(SZ_MAX, fracToSz(0.5 + 0.5 * t));
+			_szPendingFont = Math.min(SZ_MAX, fracToSz(0.5 + 0.5 * t));
 		}
+		// Pill: synchronous, no layout
+		if (_szPillEl) {
+			_szPillEl.style.top = newThumb + 'px';
+			_szPillEl.textContent = getSizeLabel(_szPendingFont);
+		}
+		// font-size: throttled to rAF rate; contained so reflow stays local (no ancestor cascade)
+		cancelAnimationFrame(_szRafId);
+		_szRafId = requestAnimationFrame(() => {
+			if (!sizeSliderActive || !inputEl) return;
+			inputEl.style.fontSize = _szPendingFont !== 1.0 ? `${(_szPendingFont * 0.9).toFixed(2)}rem` : '';
+		});
 	}
 
 	function onSendUpArmed() {
+		cancelAnimationFrame(_szRafId);
 		_szArmed = false;
 		sizeSliderActive = false;
-		if (messageFontSize > 0.92 && messageFontSize < 1.08) messageFontSize = 1.0;
+		// Remove containment before committing final size so the bar can properly resize
+		if (inputEl) { inputEl.style.contain = ''; inputEl.style.fontSize = ''; }
+		messageFontSize = (_szPendingFont > 0.92 && _szPendingFont < 1.08) ? 1.0 : _szPendingFont;
 	}
 
 	function onSendCancel() {
+		cancelAnimationFrame(_szRafId);
 		clearTimeout(_szTimer);
 		_szArmed = false;
 		sizeSliderActive = false;
+		if (inputEl) { inputEl.style.contain = ''; inputEl.style.fontSize = ''; }
+		messageFontSize = 1.0;
 	}
+
+	let _cancelFpsLoop = () => {};
 
 	// Hearts canvas particle system
 	let heartsCanvas = $state(null);
 	let heartsCtx = null;
 	let heartParticles = [];
 	let heartsAnimId = null;
+	let _heartBubbles = [];
+	let _heartBubbleTs = 0;
 
 	function startHeartsLoop() {
 		if (heartsAnimId || !heartsCtx) return;
@@ -693,11 +818,15 @@
 		if (canvas.height !== window.innerHeight) canvas.height = window.innerHeight;
 		ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-		const bubbles = document.querySelectorAll('.bubble.fx-hearts');
+		const now = performance.now();
+		if (now - _heartBubbleTs > 1000) {
+			_heartBubbles = [...document.querySelectorAll('.bubble.fx-hearts')].map(b => b.getBoundingClientRect());
+			_heartBubbleTs = now;
+		}
+		const bubbles = _heartBubbles;
 
-		for (const b of bubbles) {
+		for (const r of bubbles) {
 			if (Math.random() < 0.05) {
-				const r = b.getBoundingClientRect();
 				heartParticles.push({
 					x: r.left + r.width * 0.1 + Math.random() * r.width * 0.8,
 					y: r.top + r.height * 0.3 + Math.random() * r.height * 0.5,
@@ -872,6 +1001,37 @@
 		input = serializeCe(inputEl);
 	}
 
+	function insertEkToken(token) {
+		const m = token.match(/^\[ek:([a-z0-9]+):([0-9a-f-]+):([0-9a-f-]+)\]$/i);
+		if (!m) return;
+		if (!inputEl) { input += token; return; }
+		inputEl.focus();
+		const img = document.createElement('img');
+		img.src = ekTokenToUrl(m[1], m[2], m[3]);
+		img.dataset.ek = token;
+		img.className = 'ek-img ek-img-ce';
+		img.setAttribute('contenteditable', 'false');
+		img.setAttribute('alt', '');
+		const sel = window.getSelection();
+		if (sel && sel.rangeCount > 0 && inputEl.contains(sel.anchorNode)) {
+			const range = sel.getRangeAt(0);
+			range.deleteContents();
+			range.insertNode(img);
+			range.setStartAfter(img);
+			range.collapse(true);
+			sel.removeAllRanges();
+			sel.addRange(range);
+		} else {
+			inputEl.appendChild(img);
+			const range = document.createRange();
+			range.setStartAfter(img);
+			range.collapse(true);
+			sel?.removeAllRanges();
+			sel?.addRange(range);
+		}
+		input = serializeCe(inputEl);
+	}
+
 
 	let firebaseRef, typingRef, reactionsRef;
 	let typingTimer;
@@ -1038,9 +1198,34 @@
 	}
 
 	onMount(() => {
+		// ── Performance monitoring ─────────────────────────────────────────────
+		if (typeof PerformanceObserver !== 'undefined') {
+			try {
+				new PerformanceObserver(list => {
+					for (const e of list.getEntries()) {
+						console.warn('[perf:longtask]', Math.round(e.duration) + 'ms', e.attribution?.[0]?.name ?? '');
+					}
+				}).observe({ type: 'longtask', buffered: true });
+			} catch {}
+		}
+		let _fpsCnt = 0, _fpsLast = performance.now(), _fpsRafId = 0;
+		const _fpsLoop = (ts) => {
+			_fpsCnt++;
+			if (ts - _fpsLast >= 1000) {
+				const fps = Math.round(_fpsCnt * 1000 / (ts - _fpsLast));
+				if (fps < 55) console.warn('[perf:fps]', fps + 'fps');
+				_fpsCnt = 0; _fpsLast = ts;
+			}
+			_fpsRafId = requestAnimationFrame(_fpsLoop);
+		};
+		_fpsRafId = requestAnimationFrame(_fpsLoop);
+		_cancelFpsLoop = () => cancelAnimationFrame(_fpsRafId);
+		// ──────────────────────────────────────────────────────────────────────
+
 		markRead();
 		scrollToBottom();
 		loadEmojiNames().then(m => { emojiNames = m; });
+		initSemanticSearch();
 		document.addEventListener('selectionchange', onCeSelect);
 		if (heartsCanvas) {
 			heartsCanvas.width = window.innerWidth;
@@ -1095,6 +1280,11 @@
 		});
 	});
 
+	function onKitchenInsert(token) {
+		showKitchen = false;
+		insertEkToken(token);
+	}
+
 	function cancelAttachment() {
 		const att = pendingAttachment;
 		if (!att) return;
@@ -1103,6 +1293,7 @@
 	}
 
 	onDestroy(() => {
+		_cancelFpsLoop();
 		if (firebaseRef) off(firebaseRef);
 		if (typingRef) off(typingRef);
 		if (reactionsRef) off(reactionsRef);
@@ -1198,9 +1389,9 @@
 		if (e.key === 'z' && !e.shiftKey) {
 			e.preventDefault();
 			if (undoStack.length) {
-				redoStack = [...redoStack, input];
+				redoStack.push(input);
 				const prev = undoStack[undoStack.length - 1];
-				undoStack = undoStack.slice(0, -1);
+				undoStack.pop();
 				setCeInput(prev);
 			}
 			return;
@@ -1208,9 +1399,9 @@
 		if (e.key === 'y' || (e.key === 'z' && e.shiftKey)) {
 			e.preventDefault();
 			if (redoStack.length) {
-				undoStack = [...undoStack, input];
+				undoStack.push(input);
 				const next = redoStack[redoStack.length - 1];
-				redoStack = redoStack.slice(0, -1);
+				redoStack.pop();
 				setCeInput(next);
 			}
 			return;
@@ -1292,7 +1483,7 @@
 				{:else}
 					{#key replayCounts[msg.id]}
 					<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-					<p class="bubble" class:pending={msg.pending} class:fx-rainbow={msg.fx === 'rainbow'} class:fx-hearts={msg.fx === 'hearts'} class:fx-slam={msg.fx === 'slam'} class:fx-loud={msg.fx === 'loud'} class:fx-gentle={msg.fx === 'gentle'} class:fx-invisible={msg.fx === 'invisible'} class:fx-shake={msg.fx === 'shake'} class:fx-bounce={msg.fx === 'bounce'} class:fx-wave={msg.fx === 'wave'} class:fx-jitter={msg.fx === 'jitter'} class:fx-big={msg.fx === 'big'} class:fx-small={msg.fx === 'small'} class:revealed={revealedInvisible.has(msg.id)} class:jumbo-emoji={jumboEmojiCount(msg.content) > 0 && !msg.replyTo} class:has-reply={!!msg.replyTo} style:font-size={bubbleFontSize(msg.content, msg.fontSize)} onclick={msg.fx === 'invisible' && !revealedInvisible.has(msg.id) ? () => revealInvisible(msg.id) : undefined}>{#if msg.replyTo}{@const _rp = stripMarkup(msg.replyTo.content)}{@const _rj = jumboEmojiCount(_rp)}<button class="reply-quote" onclick={(e) => { e.stopPropagation(); scrollToMessage(msg.replyTo.id); }}><span class="reply-author">{msg.replyTo.userName}</span><span class="reply-text" class:jumbo-reply={_rj > 0} style:font-size={_rj > 0 ? JUMBO_SIZES[_rj - 1] : null}>{@html contentHtml(msg.replyTo.content)}</span></button>{/if}{@html contentHtml(msg.content, !msg.noSplit)}{#if msg.edited}<span class="edited-tag"> (edited)</span>{/if}</p>
+					<p class="bubble" class:pending={msg.pending} class:fx-rainbow={msg.fx === 'rainbow'} class:fx-hearts={msg.fx === 'hearts'} class:fx-slam={msg.fx === 'slam'} class:fx-loud={msg.fx === 'loud'} class:fx-gentle={msg.fx === 'gentle'} class:fx-invisible={msg.fx === 'invisible'} class:fx-shake={msg.fx === 'shake'} class:fx-bounce={msg.fx === 'bounce'} class:fx-wave={msg.fx === 'wave'} class:fx-jitter={msg.fx === 'jitter'} class:fx-big={msg.fx === 'big'} class:fx-small={msg.fx === 'small'} class:revealed={revealedInvisible.has(msg.id)} class:jumbo-emoji={jumboEmojiCountM(msg.content) > 0 && !msg.replyTo} class:has-reply={!!msg.replyTo} style:font-size={bubbleFontSize(msg.content, msg.fontSize)} onclick={msg.fx === 'invisible' && !revealedInvisible.has(msg.id) ? () => revealInvisible(msg.id) : undefined}>{#if msg.replyTo}{@const _rp = stripMarkup(msg.replyTo.content)}{@const _rj = jumboEmojiCountM(_rp)}<button class="reply-quote" onclick={(e) => { e.stopPropagation(); scrollToMessage(msg.replyTo.id); }}><span class="reply-author">{msg.replyTo.userName}</span><span class="reply-text" class:jumbo-reply={_rj > 0} style:font-size={_rj > 0 ? JUMBO_SIZES[_rj - 1] : null}>{@html contentHtmlM(msg.replyTo.content)}</span></button>{/if}{@html contentHtmlM(msg.content, !msg.noSplit)}{#if msg.edited}<span class="edited-tag"> (edited)</span>{/if}</p>
 					{/key}
 				{/if}
 				{#if !msg.pending}
@@ -1412,6 +1603,13 @@
 			{/if}
 		</div>
 	{/if}
+	{#if emojiSuggestions.length > 0}
+		<div class="emoji-suggestions">
+			{#each emojiSuggestions as s (s.cp)}
+				<button class="emoji-sugg-btn" onmousedown={(e) => { e.preventDefault(); insertEmoji(s.e); }} title={s.cp}>{s.e}</button>
+			{/each}
+		</div>
+	{/if}
 	{#if showTextFxBar}
 		<div class="text-fx-bar">
 			<button class="text-fx-layer-toggle" class:text-fx-layer-on={allowFxNesting} onmousedown={(e) => { e.preventDefault(); allowFxNesting = !allowFxNesting; }} title="Stack different effects on the same text">
@@ -1457,6 +1655,23 @@
 				<div class="compose-picker-backdrop" onclick={() => showComposePicker = false}></div>
 				<div class="compose-picker-pop">
 					<EmojiPicker onSelect={insertEmoji} />
+				</div>
+			{/if}
+		</div>
+		<div class="compose-kitchen-wrap">
+			<button class="btn-kitchen" class:active={showKitchen} title="Emoji Kitchen" onclick={() => showKitchen = !showKitchen}>
+				<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+					<ellipse cx="12" cy="10" rx="8" ry="7"/>
+					<ellipse cx="6" cy="12" rx="4" ry="5"/>
+					<ellipse cx="18" cy="12" rx="4" ry="5"/>
+					<rect x="4" y="16" width="16" height="3.5" rx="1.5"/>
+				</svg>
+			</button>
+			{#if showKitchen}
+				<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+				<div class="compose-picker-backdrop" onclick={() => showKitchen = false}></div>
+				<div class="compose-kitchen-pop">
+					<EmojiKitchen onInsert={onKitchenInsert} />
 				</div>
 			{/if}
 		</div>
@@ -1536,9 +1751,7 @@
 			{#if sizeSliderActive}
 				<div class="sz-panel" style:top="{panelFixedTop}px" style:left="{panelFixedLeft}px" style:right="{panelFixedRight}px" style:height="{panelHeight}px">
 					<div class="sz-track-line"></div>
-					<div class="sz-pill" style:top="{thumbY}px">
-						{getSizeLabel(messageFontSize)}
-					</div>
+					<div class="sz-pill" bind:this={_szPillEl}>Normal</div>
 				</div>
 			{/if}
 			<button class="btn-send" class:btn-send-off={sending || uploading || (!input.trim() && !pendingAttachment)} class:sz-active={sizeSliderActive}>
@@ -1823,7 +2036,7 @@
 	.compose-wrap:focus-within { border-color: var(--ink); }
 	.compose-ce {
 		padding: 0.6rem 0.85rem 0.35rem;
-		font-family: 'Google Sans Flex', 'Space Grotesk', sans-serif; font-optical-sizing: auto; font-size: 0.9rem; color: var(--ink);
+		font-family: 'Google Sans Flex', 'Space Grotesk', sans-serif, 'Noto Color Emoji'; font-optical-sizing: auto; font-size: 0.9rem; color: var(--ink);
 		outline: none; max-height: 120px; overflow-y: auto;
 		line-height: 1.45; white-space: pre-wrap; word-break: break-word;
 		min-height: calc(1.45em + 0.95rem); scrollbar-width: none;
@@ -1861,6 +2074,34 @@
 	.btn-emoji:hover, .btn-emoji.active { color: var(--ink); border-color: #b0a898; background: #f5f2ee; }
 	.compose-picker-backdrop { position: fixed; inset: 0; z-index: 49; }
 	.compose-picker-pop { position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 50; }
+
+	/* Inline Emoji Kitchen images */
+	:global(.ek-img) {
+		height: 1em;
+		width: 1em;
+		vertical-align: -0.2em;
+		object-fit: contain;
+		display: inline;
+	}
+	:global(.ek-img-ce) {
+		height: 1em;
+		width: 1em;
+		vertical-align: -0.2em;
+		object-fit: contain;
+		cursor: default;
+		user-select: none;
+	}
+
+	.compose-kitchen-wrap { position: relative; flex-shrink: 0; }
+	.btn-kitchen {
+		display: flex; align-items: center; justify-content: center;
+		width: 36px; height: 36px;
+		border: 1.5px solid #c8c1b4; border-radius: 10px;
+		background: #fff; color: #a09688; cursor: pointer;
+		transition: color 0.15s, border-color 0.15s, background 0.15s;
+	}
+	.btn-kitchen:hover, .btn-kitchen.active { color: var(--ink); border-color: #b0a898; background: #f5f2ee; }
+	.compose-kitchen-pop { position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 50; }
 
 	.send-wrap {
 		position: relative; flex-shrink: 0; touch-action: none; user-select: none; z-index: 299;
@@ -2054,6 +2295,18 @@
 	.bubble.fx-big { font-size: 1.35em !important; }
 	.bubble.fx-small { font-size: 0.6em !important; }
 
+	.emoji-suggestions {
+		display: flex; align-items: center; gap: 0.25rem;
+		padding: 0.3rem 1rem; background: var(--paper); border-top: 1px solid #ede9e3;
+	}
+	.emoji-sugg-btn {
+		font-size: 1.35rem; line-height: 1; padding: 0.15rem 0.25rem;
+		background: none; border: none; border-radius: 6px; cursor: pointer;
+		transition: background 0.1s; flex-shrink: 0;
+		font-family: 'Google Sans Flex', 'Space Grotesk', sans-serif, 'Noto Color Emoji';
+	}
+	.emoji-sugg-btn:hover { background: #f0ece6; }
+
 	/* Text fx bar */
 	.text-fx-bar {
 		display: flex; align-items: center; gap: 0.3rem;
@@ -2167,13 +2420,17 @@
 		.compose-ce { font-size: 1rem; }
 	}
 
-	/* Noto Color Emoji: override explicit font-family on bubble/compose so Noto is in the stack */
-	:global(html.noto-emoji) .bubble,
-	:global(html.noto-emoji) .compose-ce {
+	/* Noto Color Emoji: bubble needs an explicit override since it has its own font-family */
+	:global(html.noto-emoji) .bubble {
 		font-family: 'Google Sans Flex', 'Space Grotesk', sans-serif, 'Noto Color Emoji';
 	}
 	/* Effect spans inside bubbles — ensure they inherit the Noto-aware stack */
 	:global(html.noto-emoji) .bubble :global(.tfx) {
 		font-family: inherit;
+	}
+	/* System emoji mode: strip Noto from compose/suggestions */
+	:global(html:not(.noto-emoji)) .compose-ce,
+	:global(html:not(.noto-emoji)) .emoji-sugg-btn {
+		font-family: 'Google Sans Flex', 'Space Grotesk', sans-serif;
 	}
 </style>

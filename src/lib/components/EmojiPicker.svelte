@@ -10,6 +10,7 @@
 
 <script>
 	import { onMount } from 'svelte';
+	import { initSemanticSearch, searchEmoji, isSemanticReady, onSemanticReady } from '$lib/emoji-semantic.js';
 
 	let { onSelect } = $props();
 
@@ -33,6 +34,13 @@
 	let showSettings = $state(false);
 	let searchEl     = $state(null);
 	let gridEl       = $state(null);
+
+	// ── Semantic search state ─────────────────────────────────────────────────
+	let semanticScores   = $state(null);  // Map<cp, score> for keyword-hit re-ranking
+	let semanticOnlyCps  = $state([]);    // cp[] that scored semantically but missed keywords
+	let semanticReady    = $state(false);
+	let semanticWorking  = $state(false); // spinner while embedding
+	let _semanticDebounce = null;
 
 	// ── Long press / variant picker ───────────────────────────────────────────
 	let longPress  = $state(null); // { item, x, y } | null
@@ -542,15 +550,40 @@
 				const scored = [];
 				for (const g of data.groups) {
 					for (const item of g.items) {
-						const score = scoreItem(item, q);
-						if (score > 0) scored.push({ item, score });
+						const kwScore = scoreItem(item, q);
+						if (kwScore > 0) {
+							// Semantic bonus: within same keyword tier, higher semantic score sorts earlier
+							const semBonus = semanticScores?.get(item.cp) ?? 0;
+							scored.push({ item, kwScore, semBonus });
+						}
 					}
 				}
-				scored.sort((a, b) => a.score !== b.score ? a.score - b.score : (a.item.oi ?? 0) - (b.item.oi ?? 0));
+				scored.sort((a, b) => {
+					if (a.kwScore !== b.kwScore) return a.kwScore - b.kwScore;
+					if (Math.abs(a.semBonus - b.semBonus) > 0.01) return b.semBonus - a.semBonus;
+					return (a.item.oi ?? 0) - (b.item.oi ?? 0);
+				});
 				return scored.slice(0, 96).map(s => s.item);
 			})()
 			: null
 	);
+
+	// Semantic-only items (matched semantically but not by keyword)
+	let semanticOnlyItems = $derived.by(() => {
+		if (!query.trim() || !data || !semanticOnlyCps.length) return [];
+		const cpSet = new Set(searchResults?.map(i => i.cp) ?? []);
+		const items = [];
+		for (const cp of semanticOnlyCps) {
+			if (cpSet.has(cp)) continue;
+			// Find the item in data
+			for (const g of data.groups) {
+				const found = g.items.find(i => i.cp === cp);
+				if (found) { items.push(found); break; }
+			}
+			if (items.length >= 24) break;
+		}
+		return items;
+	});
 
 	let groupItems = $derived(
 		!data || activeGroup < 0 ? null :
@@ -565,6 +598,10 @@
 		const t = skinTone, g = gender, ds = dualSelections, dirs = dirSelections;
 		return searchResults?.map(item => ({ item, e: resolveEmoji(item, t, g, ds, dirs) })) ?? [];
 	});
+	let resolvedSemanticOnlyItems = $derived.by(() => {
+		const t = skinTone, g = gender, ds = dualSelections, dirs = dirSelections;
+		return semanticOnlyItems.map(item => ({ item, e: resolveEmoji(item, t, g, ds, dirs) }));
+	});
 	let resolvedPopularItems = $derived.by(() => {
 		const t = skinTone, g = gender, ds = dualSelections, dirs = dirSelections;
 		return (data?.popular ?? []).map(raw => {
@@ -576,6 +613,29 @@
 	$effect(() => {
 		void activeGroup; void query;
 		gridEl?.scrollTo(0, 0);
+	});
+
+	// ── Semantic search effect ────────────────────────────────────────────────
+	$effect(() => {
+		const q = query.trim();
+		if (!q) { semanticScores = null; semanticOnlyCps = []; semanticWorking = false; return; }
+		clearTimeout(_semanticDebounce);
+		_semanticDebounce = setTimeout(async () => {
+			if (!isSemanticReady()) return;
+			semanticWorking = true;
+			try {
+				const hits = await searchEmoji(q, 50); // all ML in worker — main thread just receives results
+				semanticScores = new Map(hits.map(h => [h.cp, h.score]));
+				const THRESHOLD = 0.4;
+				semanticOnlyCps = hits[0]?.score >= THRESHOLD ? hits.filter(h => h.score >= THRESHOLD).map(h => h.cp) : [];
+			} catch { /* semantic unavailable, keyword-only */ }
+			semanticWorking = false;
+		}, 300);
+	});
+
+	onMount(() => {
+		// Start model loading in background
+		onSemanticReady(() => { semanticReady = true; });
 	});
 
 </script>
@@ -649,24 +709,46 @@
 		{#if loading}
 			<div class="state-msg">Loading…</div>
 		{:else if searchResults !== null}
-			{#if resolvedSearchItems.length === 0}
+			{#if resolvedSearchItems.length === 0 && resolvedSemanticOnlyItems.length === 0}
 				<div class="state-msg">No results for "{query}"</div>
 			{:else}
-				<div class="grid" class:noto={fontStyle === 'noto'}>
-					{#each resolvedSearchItems as { item, e } (item.cp)}
-						<button class="cell" class:has-variants={item.t?.length} title={item.n}
-							onpointerdown={(ev) => startLp(ev, item)}
-							onpointermove={moveLp}
-							onpointerup={cancelLp}
-							onpointerleave={cancelLp}
-							oncontextmenu={(ev) => openVariants(ev, item)}
-							onmouseenter={() => preview = { e: resolveEmoji(item, skinTone, gender), n: resolvedName(item), sc: resolvedShortcode(item) }}
-							onmouseleave={() => preview = null}
-							onclick={() => { if (lpFired) { lpFired = false; return; } pickItem(item); }}>
-							{e}
-						</button>
-					{/each}
-				</div>
+				{#if resolvedSearchItems.length > 0}
+					<div class="grid" class:noto={fontStyle === 'noto'}>
+						{#each resolvedSearchItems as { item, e } (item.cp)}
+							<button class="cell" class:has-variants={item.t?.length} title={item.n}
+								onpointerdown={(ev) => startLp(ev, item)}
+								onpointermove={moveLp}
+								onpointerup={cancelLp}
+								onpointerleave={cancelLp}
+								oncontextmenu={(ev) => openVariants(ev, item)}
+								onmouseenter={() => preview = { e: resolveEmoji(item, skinTone, gender), n: resolvedName(item), sc: resolvedShortcode(item) }}
+								onmouseleave={() => preview = null}
+								onclick={() => { if (lpFired) { lpFired = false; return; } pickItem(item); }}>
+								{e}
+							</button>
+						{/each}
+					</div>
+				{/if}
+				{#if resolvedSemanticOnlyItems.length > 0}
+					<div class="semantic-section-label">{semanticWorking ? '✦ thinking…' : '✦ also'}</div>
+					<div class="grid" class:noto={fontStyle === 'noto'}>
+						{#each resolvedSemanticOnlyItems as { item, e } (item.cp)}
+							<button class="cell" class:has-variants={item.t?.length} title={item.n}
+								onpointerdown={(ev) => startLp(ev, item)}
+								onpointermove={moveLp}
+								onpointerup={cancelLp}
+								onpointerleave={cancelLp}
+								oncontextmenu={(ev) => openVariants(ev, item)}
+								onmouseenter={() => preview = { e: resolveEmoji(item, skinTone, gender), n: resolvedName(item), sc: resolvedShortcode(item) }}
+								onmouseleave={() => preview = null}
+								onclick={() => { if (lpFired) { lpFired = false; return; } pickItem(item); }}>
+								{e}
+							</button>
+						{/each}
+					</div>
+				{:else if semanticWorking}
+					<div class="semantic-section-label">✦ thinking…</div>
+				{/if}
 			{/if}
 		{:else if activeGroup === -2}
 			<div class="grid" class:noto={fontStyle === 'noto'}>
@@ -1054,6 +1136,11 @@
 		font-size: 0.78rem;
 		text-align: center;
 		padding: 2rem 1rem;
+	}
+	.semantic-section-label {
+		font-size: 0.68rem; font-weight: 600; letter-spacing: 0.06em;
+		color: #b8a898; text-transform: uppercase;
+		padding: 0.5rem 0.75rem 0.2rem;
 	}
 
 	/* ── Preview bar ── */

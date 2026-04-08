@@ -1,5 +1,6 @@
 <script>
 	import { onMount, onDestroy } from 'svelte';
+	function focus(node) { node.focus(); node.select(); }
 	import { marked } from 'marked';
 	import katex from 'katex';
 
@@ -1474,7 +1475,3 @@ let loadingDoc = $state(false);
 		:global(.print-only .syl-topics li) { font-size: 10pt; line-height: 1.5; }
 	}
 </style>
-
-<script module>
-	function focus(node) { node.focus(); node.select(); }
-</script>

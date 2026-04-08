@@ -1,0 +1,18 @@
+# [[edge_functions]]
+#   path = "/kitchen/"
+#   function = "metadata"
+
+[[redirects]]
+  from = "/mix*"
+  to = "/kitchen/"
+  status = 301
+
+[[redirects]]
+  from = "/emojikitchen/*"
+  to = "https://www.gstatic.com/android/keyboard/emojikitchen/:splat"
+  status = 200
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Content-Security-Policy = "frame-ancestors 'self' https://figma.com https://staging.figma.com"
