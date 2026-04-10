@@ -50,6 +50,8 @@
 
 	// Font size (multiplier; 1.0 = default 0.9rem)
 	let messageFontSize = $state(1.0);
+	let messageFontWeight = $state(400);
+	let messageFontStretch = $state(100);
 	const jumboInput = $derived(jumboEmojiCount(input));
 	let sizeSliderActive = $state(false);
 	let thumbY = $state(0);
@@ -275,55 +277,63 @@
 
 	// Render content markup → HTML string in one pass, avoiding inter-segment DOM nodes
 	// that cause newlines under white-space: pre-wrap when using {#each}.
-	function contentHtmlText(text, split = true) {
+	// Renders markup text + EK tokens → HTML, correctly applying FX effects to EK images
+	function contentHtml(text, split = true) {
+		if (!text) return '';
+		const hasEk = text.indexOf('[ek:') !== -1;
+		const hasFx = /[\uE100-\uE1FF]/.test(text);
+		if (!hasEk && !hasFx) return escapeHtml(text);
+
+		const EK_RE = /\[ek:([a-z0-9]+):([0-9a-f-]+):([0-9a-f-]+)\]/gi;
 		const segs = markupToSegments(normalizeLegacyMarkup(text));
 		if (!segs.length) return escapeHtml(text);
-		let globalWi = 0; // cross-segment word counter for stagger
-		return segs.map(s => {
-			if (!s.fxStack.length) return escapeHtml(s.text);
-			// Ripple: always split per grapheme with 80ms stagger
-			if (s.fxStack.includes('ripple')) {
-				const graphemes = [..._segmenter.segment(s.text)].map(g => g.segment);
+
+		let globalWi = 0;
+
+		function renderText(chunk, fxStack) {
+			if (!chunk) return '';
+			if (!fxStack.length) return escapeHtml(chunk);
+			if (fxStack.includes('ripple')) {
+				const graphemes = [..._segmenter.segment(chunk)].map(g => g.segment);
 				const html = graphemes.map((g, i) =>
-					/^\s+$/.test(g) ? escapeHtml(g) : nestedFxHtml(s.fxStack, escapeHtml(g), `${((globalWi + i) * 0.08).toFixed(2)}s`)
+					/^\s+$/.test(g) ? escapeHtml(g) : nestedFxHtml(fxStack, escapeHtml(g), `${((globalWi + i) * 0.08).toFixed(2)}s`)
 				).join('');
 				globalWi += graphemes.filter(g => !/^\s+$/.test(g)).length;
 				return html;
 			}
 			if (split) {
-				// Pure-emoji segment: one span per grapheme, 80ms stagger
-				const graphemes = [..._segmenter.segment(s.text)].map(g => g.segment);
+				const graphemes = [..._segmenter.segment(chunk)].map(g => g.segment);
 				if (graphemes.length > 1 && graphemes.every(_isEmojiSeg)) {
-					const html = graphemes.map((g, i) => nestedFxHtml(s.fxStack, escapeHtml(g), `${((globalWi + i) * 0.08).toFixed(2)}s`)).join('');
+					const html = graphemes.map((g, i) => nestedFxHtml(fxStack, escapeHtml(g), `${((globalWi + i) * 0.08).toFixed(2)}s`)).join('');
 					globalWi += graphemes.length;
 					return html;
 				}
-				// Multi-word segment: one span per word, spaces left unwrapped, 60ms stagger
-				const tokens = s.text.split(/(\s+)/);
+				const tokens = chunk.split(/(\s+)/);
 				if (tokens.length > 1) {
-					return tokens.map(tok => /^\s+$/.test(tok) ? escapeHtml(tok) : nestedFxHtml(s.fxStack, escapeHtml(tok), `${(globalWi++ * 0.06).toFixed(2)}s`)).join('');
+					return tokens.map(tok => /^\s+$/.test(tok) ? escapeHtml(tok) : nestedFxHtml(fxStack, escapeHtml(tok), `${(globalWi++ * 0.06).toFixed(2)}s`)).join('');
 				}
-				// Single word — still use globalWi so cross-segment stagger works
-				return nestedFxHtml(s.fxStack, escapeHtml(s.text), `${(globalWi++ * 0.06).toFixed(2)}s`);
+				return nestedFxHtml(fxStack, escapeHtml(chunk), `${(globalWi++ * 0.06).toFixed(2)}s`);
 			}
-			return nestedFxHtml(s.fxStack, escapeHtml(s.text));
-		}).join('');
-	}
-
-	// Wrapper: splits on EK tokens, renders each as <img>, delegates text to contentHtmlText
-	function contentHtml(text, split = true) {
-		if (text.indexOf('[ek:') === -1) return contentHtmlText(text, split);
-		const EK_RE = /\[ek:([a-z0-9]+):([0-9a-f-]+):([0-9a-f-]+)\]/gi;
-		const parts = [];
-		let lastIdx = 0, m;
-		while ((m = EK_RE.exec(text)) !== null) {
-			if (m.index > lastIdx) parts.push(contentHtmlText(text.slice(lastIdx, m.index), split));
-			const url = ekTokenToUrl(m[1], m[2], m[3]);
-			parts.push(`<img class="ek-img" data-ek="${m[0]}" src="${url}" loading="lazy" alt="" />`);
-			lastIdx = EK_RE.lastIndex;
+			return nestedFxHtml(fxStack, escapeHtml(chunk));
 		}
-		if (lastIdx < text.length) parts.push(contentHtmlText(text.slice(lastIdx), split));
-		return parts.join('');
+
+		return segs.map(s => {
+			if (!s.text.includes('[ek:')) return renderText(s.text, s.fxStack);
+			// Segment contains EK tokens — split on them and apply fxStack to each piece
+			const parts = [];
+			let lastIdx = 0;
+			EK_RE.lastIndex = 0;
+			let m;
+			while ((m = EK_RE.exec(s.text)) !== null) {
+				if (m.index > lastIdx) parts.push(renderText(s.text.slice(lastIdx, m.index), s.fxStack));
+				const url = ekTokenToUrl(m[1], m[2], m[3]);
+				const imgHtml = `<img class="ek-img" data-ek="${escapeHtml(m[0])}" src="${url}" loading="lazy" alt="" />`;
+				parts.push(s.fxStack.length ? nestedFxHtml(s.fxStack, imgHtml, split ? `${(globalWi++ * 0.06).toFixed(2)}s` : null) : imgHtml);
+				lastIdx = EK_RE.lastIndex;
+			}
+			if (lastIdx < s.text.length) parts.push(renderText(s.text.slice(lastIdx), s.fxStack));
+			return parts.join('');
+		}).join('');
 	}
 
 	let revealedInvisible = $state(new Set());
@@ -378,11 +388,12 @@
 				return null;
 			}
 			if (node.nodeType === Node.ELEMENT_NODE && node.tagName === 'IMG' && node.dataset.ek) {
-				pos += 1;
-				if (pos >= target) {
+				const ekLen = node.dataset.ek.length;
+				if (pos + ekLen >= target) {
 					const idx = Array.from(node.parentNode.childNodes).indexOf(node);
-					return { node: node.parentNode, offset: idx + 1 };
+					return { node: node.parentNode, offset: target === pos ? idx : idx + 1 };
 				}
+				pos += ekLen;
 				return null;
 			}
 			for (const child of node.childNodes) { const r = walk(child); if (r) return r; }
@@ -441,65 +452,90 @@
 	}
 
 	// Unicode markup → DOM nodes (nested spans — one per effect for composable CSS animations)
-	function ceMarkupToNodesText(markup) {
+	// Unicode markup → DOM nodes, with EK token support and correct FX wrapping on EK images
+	function ceMarkupToNodes(markup) {
+		const EK_RE = /\[ek:([a-z0-9]+):([0-9a-f-]+):([0-9a-f-]+)\]/gi;
 		const segs = markupToSegments(normalizeLegacyMarkup(markup));
 		const nodes = [];
 		let globalWi = 0;
-		for (const seg of segs) {
-			if (seg.fxStack.length === 0) {
-				nodes.push(document.createTextNode(seg.text));
-			} else if (seg.fxStack.includes('ripple')) {
-				// Ripple: always per-grapheme with 80ms stagger
-				const graphemes = [..._segmenter.segment(seg.text)].map(g => g.segment);
-				graphemes.forEach((g, i) => {
-					if (/^\s+$/.test(g)) nodes.push(document.createTextNode(g));
-					else nodes.push(makeFxNode(seg.fxStack, g, `${((globalWi + i) * 0.08).toFixed(2)}s`));
-				});
-				globalWi += graphemes.filter(g => !/^\s+$/.test(g)).length;
-			} else if (fxSplitWords) {
-				const graphemes = [..._segmenter.segment(seg.text)].map(g => g.segment);
-				if (graphemes.length > 1 && graphemes.every(_isEmojiSeg)) {
-					graphemes.forEach((g, i) => nodes.push(makeFxNode(seg.fxStack, g, `${((globalWi + i) * 0.08).toFixed(2)}s`)));
-					globalWi += graphemes.length;
-				} else {
-					const tokens = seg.text.split(/(\s+)/);
-					if (tokens.length > 1) {
-						tokens.forEach(tok => {
-							if (/^\s+$/.test(tok)) nodes.push(document.createTextNode(tok));
-							else nodes.push(makeFxNode(seg.fxStack, tok, `${(globalWi++ * 0.06).toFixed(2)}s`));
-						});
-					} else {
-						nodes.push(makeFxNode(seg.fxStack, seg.text, `${(globalWi++ * 0.06).toFixed(2)}s`));
-					}
-				}
-			} else {
-				nodes.push(makeFxNode(seg.fxStack, seg.text));
-			}
-		}
-		return nodes;
-	}
 
-	// Unicode markup → DOM nodes, with EK token support
-	function ceMarkupToNodes(markup) {
-		if (markup.indexOf('[ek:') === -1) return ceMarkupToNodesText(markup);
-		const EK_RE = /\[ek:([a-z0-9]+):([0-9a-f-]+):([0-9a-f-]+)\]/gi;
-		const nodes = [];
-		let lastIdx = 0, m;
-		while ((m = EK_RE.exec(markup)) !== null) {
-			if (m.index > lastIdx) {
-				for (const n of ceMarkupToNodesText(markup.slice(lastIdx, m.index))) nodes.push(n);
-			}
+		function makeEkImg(token, d36, parentCp, childCp) {
 			const img = document.createElement('img');
-			img.src = ekTokenToUrl(m[1], m[2], m[3]);
-			img.dataset.ek = m[0];
+			img.src = ekTokenToUrl(d36, parentCp, childCp);
+			img.dataset.ek = token;
 			img.className = 'ek-img ek-img-ce';
 			img.setAttribute('contenteditable', 'false');
 			img.setAttribute('alt', '');
-			nodes.push(img);
-			lastIdx = EK_RE.lastIndex;
+			return img;
 		}
-		if (lastIdx < markup.length) {
-			for (const n of ceMarkupToNodesText(markup.slice(lastIdx))) nodes.push(n);
+
+		function wrapInFx(el, fxStack, delay) {
+			if (!fxStack.length) return el;
+			const decorFx = fxStack.filter(fx => fx === 'underline' || fx === 'strike');
+			const animFx  = fxStack.filter(fx => fx !== 'underline' && fx !== 'strike');
+			let node = el;
+			if (decorFx.length) {
+				const span = document.createElement('span');
+				span.className = `tfx ${decorFx.map(fx => `tfx-${fx}`).join(' ')}`;
+				span.dataset.fx = decorFx.join(' ');
+				span.style.textDecorationLine = decorFx.map(fx => fx === 'underline' ? 'underline' : 'line-through').join(' ');
+				span.style.textUnderlineOffset = '2px';
+				span.appendChild(node); node = span;
+			}
+			for (let i = animFx.length - 1; i >= 0; i--) {
+				const span = document.createElement('span');
+				span.className = `tfx tfx-${animFx[i]}`;
+				span.dataset.fx = animFx[i];
+				if (delay) span.style.animationDelay = delay;
+				span.appendChild(node); node = span;
+			}
+			return node;
+		}
+
+		function pushText(text, fxStack) {
+			if (!text) return;
+			if (!fxStack.length) { nodes.push(document.createTextNode(text)); return; }
+			if (fxStack.includes('ripple')) {
+				const gs = [..._segmenter.segment(text)].map(g => g.segment);
+				gs.forEach((g, i) => {
+					if (/^\s+$/.test(g)) nodes.push(document.createTextNode(g));
+					else nodes.push(makeFxNode(fxStack, g, `${((globalWi + i) * 0.08).toFixed(2)}s`));
+				});
+				globalWi += gs.filter(g => !/^\s+$/.test(g)).length;
+				return;
+			}
+			if (fxSplitWords) {
+				const gs = [..._segmenter.segment(text)].map(g => g.segment);
+				if (gs.length > 1 && gs.every(_isEmojiSeg)) {
+					gs.forEach((g, i) => nodes.push(makeFxNode(fxStack, g, `${((globalWi + i) * 0.08).toFixed(2)}s`)));
+					globalWi += gs.length; return;
+				}
+				const toks = text.split(/(\s+)/);
+				if (toks.length > 1) {
+					toks.forEach(tok => {
+						if (/^\s+$/.test(tok)) nodes.push(document.createTextNode(tok));
+						else nodes.push(makeFxNode(fxStack, tok, `${(globalWi++ * 0.06).toFixed(2)}s`));
+					}); return;
+				}
+				nodes.push(makeFxNode(fxStack, text, `${(globalWi++ * 0.06).toFixed(2)}s`));
+				return;
+			}
+			nodes.push(makeFxNode(fxStack, text));
+		}
+
+		for (const seg of segs) {
+			if (!seg.text.includes('[ek:')) { pushText(seg.text, seg.fxStack); continue; }
+			// Segment contains EK tokens — split and wrap each in the segment's fxStack
+			let lastIdx = 0;
+			EK_RE.lastIndex = 0;
+			let m;
+			while ((m = EK_RE.exec(seg.text)) !== null) {
+				if (m.index > lastIdx) pushText(seg.text.slice(lastIdx, m.index), seg.fxStack);
+				const img = makeEkImg(m[0], m[1], m[2], m[3]);
+				nodes.push(wrapInFx(img, seg.fxStack, fxSplitWords ? `${(globalWi++ * 0.06).toFixed(2)}s` : undefined));
+				lastIdx = EK_RE.lastIndex;
+			}
+			if (lastIdx < seg.text.length) pushText(seg.text.slice(lastIdx), seg.fxStack);
 		}
 		return nodes;
 	}
@@ -531,9 +567,65 @@
 		onInput();
 	}
 
+	// Compute markup-string character offset for a given DOM position (accounts for EK tokens + FX PUA chars)
+	function ceMarkupOffset(el, targetNode, targetOffset) {
+		let buf = '';
+		let done = false;
+		function walkFull(node) {
+			if (node.nodeType === Node.TEXT_NODE) { buf += node.textContent; return; }
+			if (node.nodeType !== Node.ELEMENT_NODE) return;
+			if (node.tagName === 'IMG' && node.dataset.ek) { buf += node.dataset.ek; return; }
+			if (node.tagName === 'BR') { buf += '\n'; return; }
+			const fx = node.dataset?.fx ? node.dataset.fx.split(' ').filter(f => FX_TO_CHAR[f]) : [];
+			if (fx.length) buf += fx.map(f => FX_TO_CHAR[f]).join('');
+			for (const c of node.childNodes) walkFull(c);
+			if (fx.length) buf += FX_CLOSE_CHAR.repeat(fx.length);
+		}
+		function walk(node) {
+			if (done) return;
+			if (node === targetNode && node.nodeType === Node.TEXT_NODE) {
+				buf += node.textContent.slice(0, targetOffset); done = true; return;
+			}
+			if (node.nodeType === Node.TEXT_NODE) { buf += node.textContent; return; }
+			if (node.nodeType !== Node.ELEMENT_NODE) return;
+			if (node === targetNode) {
+				let i = 0;
+				for (const c of node.childNodes) { if (i >= targetOffset) break; walkFull(c); i++; }
+				done = true; return;
+			}
+			if (node.tagName === 'IMG' && node.dataset.ek) { buf += node.dataset.ek; return; }
+			if (node.tagName === 'BR') { buf += '\n'; return; }
+			const fx = node.dataset?.fx ? node.dataset.fx.split(' ').filter(f => FX_TO_CHAR[f]) : [];
+			if (fx.length) buf += fx.map(f => FX_TO_CHAR[f]).join('');
+			for (const c of node.childNodes) { if (done) break; walk(c); }
+			if (!done && fx.length) buf += FX_CLOSE_CHAR.repeat(fx.length);
+		}
+		if (el === targetNode) {
+			let i = 0;
+			for (const c of el.childNodes) { if (i >= targetOffset) break; walkFull(c); i++; }
+			return buf.length;
+		}
+		for (const c of el.childNodes) { if (done) break; walk(c); }
+		return buf.length;
+	}
+
 	function onCeSelect() {
 		const sel = window.getSelection();
 		showTextFxBar = !!(sel && !sel.isCollapsed && inputEl?.contains(sel.anchorNode));
+		// Update visual highlight on EK images within the selection
+		if (!inputEl) return;
+		for (const img of inputEl.querySelectorAll('.ek-img-ce')) img.classList.remove('ek-selected');
+		if (!sel || sel.isCollapsed || !sel.rangeCount) return;
+		const range = sel.getRangeAt(0);
+		if (!inputEl.contains(range.commonAncestorContainer)) return;
+		for (const img of inputEl.querySelectorAll('.ek-img-ce')) {
+			const r = document.createRange();
+			r.selectNode(img);
+			if (range.compareBoundaryPoints(Range.START_TO_END, r) > 0 &&
+				range.compareBoundaryPoints(Range.END_TO_START, r) < 0) {
+				img.classList.add('ek-selected');
+			}
+		}
 	}
 
 	function applyTextFx(name) {
@@ -542,14 +634,10 @@
 		if (undoStack.length >= 50) undoStack.shift();
 		undoStack.push(input);
 		redoStack.length = 0;
-		const selectedText = sel.toString();
-		if (!selectedText) return;
-
-		const preRange = document.createRange();
-		preRange.setStart(inputEl, 0);
-		preRange.setEnd(sel.getRangeAt(0).startContainer, sel.getRangeAt(0).startOffset);
-		const selStart = preRange.toString().length;
-		const selEnd = selStart + selectedText.length;
+		const range = sel.getRangeAt(0);
+		const selStart = ceMarkupOffset(inputEl, range.startContainer, range.startOffset);
+		const selEnd = ceMarkupOffset(inputEl, range.endContainer, range.endOffset);
+		if (selStart >= selEnd) return;
 
 		const markup = serializeCe(inputEl);
 		const segs = markupToSegments(markup);
@@ -639,16 +727,30 @@
 		const tempDiv = document.createElement('div');
 		tempDiv.appendChild(range.cloneContents());
 		const readable = unicodeToReadable(serializeCe(tempDiv));
-		if (readable !== sel.toString()) {
-			e.clipboardData.setData('text/plain', readable);
+		let fontPrefix = '';
+		if (messageFontSize !== 1.0) fontPrefix += `[sz:${messageFontSize.toFixed(3)}]`;
+		if (messageFontWeight !== 400) fontPrefix += `[wght:${messageFontWeight}]`;
+		if (messageFontStretch !== 100) fontPrefix += `[wdth:${messageFontStretch}]`;
+		const finalReadable = fontPrefix + readable;
+		if (finalReadable !== sel.toString()) {
+			e.clipboardData.setData('text/plain', finalReadable);
 			e.preventDefault();
 		}
 	}
 
 	function onCePaste(e) {
 		e.preventDefault();
-		const pastedText = e.clipboardData.getData('text/plain');
+		let pastedText = e.clipboardData.getData('text/plain');
 		if (!pastedText || !inputEl) return;
+
+		// Parse and strip font setting tokens from start of pasted text
+		const szM = pastedText.match(/^\[sz:([\d.]+)\]/);
+		if (szM) { messageFontSize = Math.min(20, Math.max(0.55, parseFloat(szM[1]))); pastedText = pastedText.slice(szM[0].length); }
+		const wghtM = pastedText.match(/^\[wght:(\d+)\]/);
+		if (wghtM) { messageFontWeight = Math.min(700, Math.max(100, parseInt(wghtM[1]))); pastedText = pastedText.slice(wghtM[0].length); }
+		const wdthM = pastedText.match(/^\[wdth:(\d+)\]/);
+		if (wdthM) { messageFontStretch = Math.min(150, Math.max(25, parseInt(wdthM[1]))); pastedText = pastedText.slice(wdthM[0].length); }
+		if (!pastedText) return;
 
 		// When pasted text contains EK tokens, use direct DOM insertion to avoid
 		// markup-based cursor arithmetic breaking on img nodes.
@@ -759,8 +861,24 @@
 		}
 
 		const readable = unicodeToReadable(markup);
-		if (readable !== sel.toString()) {
-			e.clipboardData.setData('text/plain', readable);
+
+		// Find parent bubble for font settings
+		let fontPrefix = '';
+		let ancestor = range.commonAncestorContainer;
+		if (ancestor.nodeType === Node.TEXT_NODE) ancestor = ancestor.parentElement;
+		while (ancestor && !ancestor.classList?.contains('bubble')) ancestor = ancestor.parentElement;
+		if (ancestor) {
+			const fs = ancestor.dataset.fontSize;
+			const fw = ancestor.dataset.fontWeight;
+			const fd = ancestor.dataset.fontStretch;
+			if (fs) fontPrefix += `[sz:${parseFloat(fs).toFixed(3)}]`;
+			if (fw) fontPrefix += `[wght:${fw}]`;
+			if (fd) fontPrefix += `[wdth:${fd}]`;
+		}
+
+		const finalText = fontPrefix + readable;
+		if (finalText !== sel.toString()) {
+			e.clipboardData.setData('text/plain', finalText);
 			e.preventDefault();
 		}
 	}
@@ -1371,13 +1489,15 @@
 		const replySnap = replyingTo ? { ...replyingTo } : null;
 		const fxSnap = messageEffect;
 		const szSnap = messageFontSize !== 1.0 ? messageFontSize : undefined;
+		const wghtSnap = messageFontWeight !== 400 ? messageFontWeight : undefined;
+		const wdthSnap = messageFontStretch !== 100 ? messageFontStretch : undefined;
 		const noSplit = !fxSplitWords;
 		const optimistic = {
 			id: `opt-${Date.now()}`, userId: data.currentUser.id,
 			userName: data.currentUser.name, userRole: data.currentUser.role,
 			content: content || attSnap?.filename || '', createdAt: Date.now(),
 			pending: true, replyTo: replySnap, attachment: attSnap, fx: fxSnap,
-			fontSize: szSnap ?? 1, noSplit
+			fontSize: szSnap ?? 1, fontWeight: wghtSnap ?? 400, fontStretch: wdthSnap ?? 100, noSplit
 		};
 		messages = [...messages, optimistic];
 		setCeInput('');
@@ -1387,6 +1507,8 @@
 		messageEffect = null;
 		showEffectPanel = false;
 		messageFontSize = 1.0;
+		messageFontWeight = 400;
+		messageFontStretch = 100;
 		scrollToBottom();
 		if (fxSnap && SCREEN_FXS.some(f => f.name === fxSnap)) setTimeout(() => playScreenEffect(fxSnap), 50);
 		sending = true;
@@ -1394,7 +1516,7 @@
 			await fetch('/api/chat', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ content: content || attSnap?.filename || '', channelId: convId, reply_to: replySnap, attachment: attSnap, effect: fxSnap || undefined, fontSize: szSnap, noSplit: noSplit || undefined })
+				body: JSON.stringify({ content: content || attSnap?.filename || '', channelId: convId, reply_to: replySnap, attachment: attSnap, effect: fxSnap || undefined, fontSize: szSnap, fontWeight: wghtSnap, fontStretch: wdthSnap, noSplit: noSplit || undefined })
 			});
 			messages = messages.filter((m) => m.id !== optimistic.id);
 		} catch {
@@ -1440,7 +1562,54 @@
 
 	function onKeydown(e) {
 		if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey) { e.preventDefault(); inputEl?.focus(); send(); return; }
+
+		// Backspace: delete EK image in one keystroke
+		if (e.key === 'Backspace' && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
+			const sel = window.getSelection();
+			if (sel?.isCollapsed && inputEl?.contains(sel.anchorNode)) {
+				const r = sel.getRangeAt(0);
+				const prev = r.startContainer.nodeType === Node.TEXT_NODE
+					? (r.startOffset === 0 ? r.startContainer.previousSibling : null)
+					: (r.startOffset > 0 ? r.startContainer.childNodes[r.startOffset - 1] : null);
+				if (prev?.dataset?.ek) { e.preventDefault(); prev.remove(); input = serializeCe(inputEl); return; }
+			}
+		}
+
+		// Arrow keys: skip atomically over EK images
+		if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
+			const sel = window.getSelection();
+			if (sel?.isCollapsed && inputEl?.contains(sel.anchorNode)) {
+				const r = sel.getRangeAt(0);
+				if (e.key === 'ArrowRight') {
+					const next = r.startContainer.nodeType === Node.TEXT_NODE
+						? (r.startOffset === r.startContainer.textContent.length ? r.startContainer.nextSibling : null)
+						: r.startContainer.childNodes[r.startOffset];
+					if (next?.dataset?.ek) {
+						e.preventDefault();
+						const nr = document.createRange(); nr.setStartAfter(next); nr.collapse(true);
+						sel.removeAllRanges(); sel.addRange(nr); return;
+					}
+				} else {
+					const prev = r.startContainer.nodeType === Node.TEXT_NODE
+						? (r.startOffset === 0 ? r.startContainer.previousSibling : null)
+						: (r.startOffset > 0 ? r.startContainer.childNodes[r.startOffset - 1] : null);
+					if (prev?.dataset?.ek) {
+						e.preventDefault();
+						const nr = document.createRange(); nr.setStartBefore(prev); nr.collapse(true);
+						sel.removeAllRanges(); sel.addRange(nr); return;
+					}
+				}
+			}
+		}
+
 		const mod = e.metaKey || e.ctrlKey;
+		// Cmd/Ctrl+A: select all input content including EK images
+		if (e.key === 'a' && mod && !e.shiftKey && inputEl) {
+			e.preventDefault();
+			const sel = window.getSelection();
+			const r = document.createRange(); r.selectNodeContents(inputEl);
+			sel?.removeAllRanges(); sel?.addRange(r); return;
+		}
 		if (!mod) return;
 		if (e.key === 'b') { e.preventDefault(); applyTextFx('bold'); return; }
 		if (e.key === 'i') { e.preventDefault(); applyTextFx('italic'); return; }
@@ -1541,7 +1710,7 @@
 				{:else}
 					{#key replayCounts[msg.id]}
 					<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-					<p class="bubble" class:pending={msg.pending} class:fx-rainbow={msg.fx === 'rainbow'} class:fx-hearts={msg.fx === 'hearts'} class:fx-slam={msg.fx === 'slam'} class:fx-loud={msg.fx === 'loud'} class:fx-gentle={msg.fx === 'gentle'} class:fx-invisible={msg.fx === 'invisible'} class:fx-shake={msg.fx === 'shake'} class:fx-bounce={msg.fx === 'bounce'} class:fx-wave={msg.fx === 'wave'} class:fx-jitter={msg.fx === 'jitter'} class:fx-big={msg.fx === 'big'} class:fx-small={msg.fx === 'small'} class:revealed={revealedInvisible.has(msg.id)} class:jumbo-emoji={jumboEmojiCountM(msg.content) > 0 && !msg.replyTo} class:has-reply={!!msg.replyTo} style:font-size={bubbleFontSize(msg.content, msg.fontSize)} onclick={msg.fx === 'invisible' && !revealedInvisible.has(msg.id) ? () => revealInvisible(msg.id) : undefined}>{#if msg.replyTo}{@const _rp = stripMarkup(msg.replyTo.content)}{@const _rj = jumboEmojiCountM(_rp)}<button class="reply-quote" onclick={(e) => { e.stopPropagation(); scrollToMessage(msg.replyTo.id); }}><span class="reply-author">{msg.replyTo.userName}</span><span class="reply-text" class:jumbo-reply={_rj > 0} style:font-size={_rj > 0 ? JUMBO_SIZES[_rj - 1] : null}>{@html contentHtmlM(msg.replyTo.content)}</span></button>{/if}{@html contentHtmlM(msg.content, !msg.noSplit)}{#if msg.edited}<span class="edited-tag"> (edited)</span>{/if}</p>
+					<p class="bubble" class:pending={msg.pending} class:fx-rainbow={msg.fx === 'rainbow'} class:fx-hearts={msg.fx === 'hearts'} class:fx-slam={msg.fx === 'slam'} class:fx-loud={msg.fx === 'loud'} class:fx-gentle={msg.fx === 'gentle'} class:fx-invisible={msg.fx === 'invisible'} class:fx-shake={msg.fx === 'shake'} class:fx-bounce={msg.fx === 'bounce'} class:fx-wave={msg.fx === 'wave'} class:fx-jitter={msg.fx === 'jitter'} class:fx-big={msg.fx === 'big'} class:fx-small={msg.fx === 'small'} class:revealed={revealedInvisible.has(msg.id)} class:jumbo-emoji={jumboEmojiCountM(msg.content) > 0 && !msg.replyTo} class:has-reply={!!msg.replyTo} style:font-size={bubbleFontSize(msg.content, msg.fontSize)} style:font-weight={msg.fontWeight && msg.fontWeight !== 400 ? msg.fontWeight : null} style:font-stretch={msg.fontStretch && msg.fontStretch !== 100 ? `${msg.fontStretch}%` : null} data-font-size={msg.fontSize && msg.fontSize !== 1 ? msg.fontSize : null} data-font-weight={msg.fontWeight && msg.fontWeight !== 400 ? msg.fontWeight : null} data-font-stretch={msg.fontStretch && msg.fontStretch !== 100 ? msg.fontStretch : null} onclick={msg.fx === 'invisible' && !revealedInvisible.has(msg.id) ? () => revealInvisible(msg.id) : undefined}>{#if msg.replyTo}{@const _rp = stripMarkup(msg.replyTo.content)}{@const _rj = jumboEmojiCountM(_rp)}<button class="reply-quote" onclick={(e) => { e.stopPropagation(); scrollToMessage(msg.replyTo.id); }}><span class="reply-author">{msg.replyTo.userName}</span><span class="reply-text" class:jumbo-reply={_rj > 0} style:font-size={_rj > 0 ? JUMBO_SIZES[_rj - 1] : null}>{@html contentHtmlM(msg.replyTo.content)}</span></button>{/if}{@html contentHtmlM(msg.content, !msg.noSplit)}{#if msg.edited}<span class="edited-tag"> (edited)</span>{/if}</p>
 					{/key}
 				{/if}
 				{#if !msg.pending}
@@ -1755,6 +1924,8 @@
 				onpaste={onCePaste}
 				data-placeholder="Message #{data.channelId}"
 				style:font-size={messageFontSize !== 1.0 ? `${(messageFontSize * 0.9).toFixed(2)}rem` : (jumboInput > 0 ? JUMBO_SIZES[jumboInput - 1] : null)}
+				style:font-weight={messageFontWeight !== 400 ? messageFontWeight : null}
+				style:font-stretch={messageFontStretch !== 100 ? `${messageFontStretch}%` : null}
 			></div>
 			<div class="compose-fmt-row">
 				<button class="btn-fmt btn-fmt-bold" onmousedown={(e) => { e.preventDefault(); applyTextFx('bold'); }} title="Bold (⌘B)"><b>B</b></button>
@@ -1785,6 +1956,31 @@
 				<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 				<div class="compose-picker-backdrop" onclick={() => showEffectPanel = false}></div>
 				<div class="effect-pop">
+					<div class="effect-pop-title">Typography</div>
+					<div class="typo-sliders">
+						<div class="typo-row">
+							<span class="typo-label">Size</span>
+							<input class="typo-range" type="range" min="0.55" max="5" step="0.05"
+								value={messageFontSize}
+								oninput={(e) => messageFontSize = parseFloat(e.target.value)} />
+							<span class="typo-val">{getSizeLabel(messageFontSize)}</span>
+							{#if messageFontSize !== 1.0}<button class="typo-reset" onmousedown={(e) => { e.preventDefault(); messageFontSize = 1.0; }}>↺</button>{/if}
+						</div>
+						<div class="typo-row">
+							<span class="typo-label">Weight</span>
+							<input class="typo-range" type="range" min="100" max="700" step="50"
+								bind:value={messageFontWeight} />
+							<span class="typo-val">{messageFontWeight <= 150 ? 'Thin' : messageFontWeight <= 300 ? 'Light' : messageFontWeight <= 450 ? 'Regular' : messageFontWeight <= 600 ? 'Bold' : 'Black'}</span>
+							{#if messageFontWeight !== 400}<button class="typo-reset" onmousedown={(e) => { e.preventDefault(); messageFontWeight = 400; }}>↺</button>{/if}
+						</div>
+						<div class="typo-row">
+							<span class="typo-label">Width</span>
+							<input class="typo-range" type="range" min="25" max="150" step="1"
+								bind:value={messageFontStretch} />
+							<span class="typo-val">{messageFontStretch < 50 ? 'Ultra Cond.' : messageFontStretch < 75 ? 'Condensed' : messageFontStretch <= 95 ? 'Narrow' : messageFontStretch <= 105 ? 'Normal' : messageFontStretch <= 120 ? 'Wide' : 'Extended'}</span>
+							{#if messageFontStretch !== 100}<button class="typo-reset" onmousedown={(e) => { e.preventDefault(); messageFontStretch = 100; }}>↺</button>{/if}
+						</div>
+					</div>
 					<div class="effect-pop-title">Bubble</div>
 					<div class="effect-grid">
 						{#each BUBBLE_FXS as fx}
@@ -1847,6 +2043,7 @@
 		flex: 1; overflow-y: auto; padding: 1rem 1.5rem;
 		display: flex; flex-direction: column; gap: 0.15rem;
 		scrollbar-width: none;
+		overscroll-behavior: contain;
 	}
 	.message-list::-webkit-scrollbar { display: none; }
 	.empty { color: #a09688; font-size: 0.9rem; text-align: center; margin: auto; }
@@ -2148,7 +2345,12 @@
 		vertical-align: -0.2em;
 		object-fit: contain;
 		cursor: default;
-		user-select: none;
+		border-radius: 2px;
+	}
+	:global(.ek-img-ce.ek-selected) {
+		outline: 2px solid #4a9eff;
+		border-radius: 3px;
+		box-shadow: 0 0 0 3px rgba(74, 158, 255, 0.25);
 	}
 
 	.compose-kitchen-wrap { position: relative; flex-shrink: 0; }
@@ -2260,8 +2462,15 @@
 	.effect-pop {
 		position: absolute; bottom: calc(100% + 8px); right: 0; z-index: 50;
 		background: #fff; border: 1.5px solid #ddd7cc; border-radius: 10px;
-		box-shadow: 0 4px 16px rgba(0,0,0,0.12); min-width: 216px; overflow: hidden;
+		box-shadow: 0 4px 16px rgba(0,0,0,0.12); min-width: 240px; overflow: hidden;
 	}
+	.typo-sliders { padding: 0.25rem 0.75rem 0.5rem; display: flex; flex-direction: column; gap: 0.45rem; }
+	.typo-row { display: flex; align-items: center; gap: 0.4rem; }
+	.typo-label { font-size: 0.68rem; font-weight: 600; color: #a09688; width: 2.8rem; flex-shrink: 0; }
+	.typo-range { flex: 1; height: 3px; cursor: pointer; accent-color: var(--ink); }
+	.typo-val { font-size: 0.68rem; color: var(--ink); width: 4.2rem; text-align: right; flex-shrink: 0; }
+	.typo-reset { background: none; border: none; font-size: 0.85rem; color: #a09688; cursor: pointer; padding: 0 0 0 0.15rem; line-height: 1; flex-shrink: 0; }
+	.typo-reset:hover { color: var(--ink); }
 	.effect-pop-title {
 		padding: 0.5rem 0.85rem 0.3rem;
 		font-size: 0.7rem; font-weight: 700; letter-spacing: 0.05em;

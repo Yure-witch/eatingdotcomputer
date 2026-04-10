@@ -54,18 +54,25 @@ export async function GET({ request }) {
 			const content = isCompact ? msg.c : (msg.content ?? '');
 			const userName = userMap[userId]?.name ?? msg.userName ?? 'Unknown';
 			const userRole = userMap[userId]?.role ?? msg.userRole ?? 'student';
-			const replyToId = msg.rt?.id ?? null;
+			const replyToId   = msg.rt?.id ?? null;
 			const attUrl      = msg.att?.url  ?? null;
 			const attFilename = msg.att?.name ?? null;
 			const attMimetype = msg.att?.type ?? null;
 			const attSize     = msg.att?.size ?? null;
+			const fx          = msg.fx ?? null;
+			const fontSize    = msg.fs != null && Math.abs(msg.fs - 1) > 0.01 ? parseFloat(Number(msg.fs).toFixed(3)) : null;
+			const fontWeight  = msg.fw != null && Math.abs(msg.fw - 400) > 1 ? parseInt(msg.fw) : null;
+			const fontStretch = msg.wdth != null && Math.abs(msg.wdth - 100) > 0.5 ? parseFloat(msg.wdth) : null;
+			const noSplit     = msg.nsp ? 1 : 0;
 			await turso.execute({
 				sql: `INSERT OR IGNORE INTO chat_messages
 				      (id, conversation_id, user_id, user_name, user_role, content, created_at, reply_to_id,
-				       attachment_url, attachment_filename, attachment_mimetype, attachment_size)
-				      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				       attachment_url, attachment_filename, attachment_mimetype, attachment_size,
+				       fx, font_size, font_weight, font_stretch, no_split)
+				      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				args: [msg.key, conversationId, userId, userName, userRole, content, new Date(msg.ts).toISOString(), replyToId,
-				       attUrl, attFilename, attMimetype, attSize]
+				       attUrl, attFilename, attMimetype, attSize,
+				       fx, fontSize, fontWeight, fontStretch, noSplit]
 			});
 
 			// Archive reactions for this message → message_reactions table

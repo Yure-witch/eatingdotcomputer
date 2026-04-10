@@ -58,6 +58,8 @@ export function normaliseMessage(id, raw, userMap) {
 		edited: !!(raw.ed),
 		fx: raw.fx ?? null,
 		fontSize: raw.fs ?? 1,
+		fontWeight: raw.fw ?? 400,
+		fontStretch: raw.wdth ?? 100,
 		noSplit: !!(raw.nsp)
 	};
 }

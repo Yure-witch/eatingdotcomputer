@@ -10,7 +10,7 @@ export async function POST({ request, locals }) {
 	const session = await locals.auth();
 	await requireClassAccess(session);
 
-	const { content, channelId, to, reply_to, attachment, effect, fontSize, noSplit } = await request.json();
+	const { content, channelId, to, reply_to, attachment, effect, fontSize, fontWeight, fontStretch, noSplit } = await request.json();
 	if (!content?.trim() && !attachment?.url) error(400, 'Empty message');
 	if (content && content.length > 2000) error(400, 'Message too long');
 
@@ -24,6 +24,8 @@ export async function POST({ request, locals }) {
 	const msg = { u: session.user.id, c: content?.trim() ?? '' };
 	if (effect) msg.fx = effect;
 	if (fontSize && Math.abs(fontSize - 1) > 0.01) msg.fs = parseFloat(Number(fontSize).toFixed(3));
+	if (fontWeight && Math.abs(fontWeight - 400) > 1) msg.fw = parseInt(fontWeight);
+	if (fontStretch && Math.abs(fontStretch - 100) > 0.5) msg.wdth = parseInt(fontStretch);
 	if (noSplit) msg.nsp = 1;
 	if (reply_to?.id) {
 		msg.rt = { id: reply_to.id, u: reply_to.userId, c: String(reply_to.content ?? '').slice(0, 100) };

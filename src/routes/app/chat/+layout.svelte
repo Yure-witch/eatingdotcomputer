@@ -3,6 +3,7 @@
 	import { page } from '$app/stores';
 	import { auth } from '$lib/firebase.js';
 	import { signInWithCustomToken } from 'firebase/auth';
+	import { preload as preloadEK } from '$lib/components/EmojiKitchen.svelte';
 
 	let { data, children } = $props();
 
@@ -21,6 +22,8 @@
 			}
 		}
 		firebaseReady = true;
+		// Preload EK data in the background so the picker opens instantly
+		setTimeout(preloadEK, 1000);
 	});
 </script>
 
@@ -46,6 +49,8 @@
 	.chat-wrap {
 		display: flex;
 		flex-direction: column;
+		overflow: hidden;
+		overscroll-behavior: none;
 	}
 
 	@media (max-width: 640px) {
