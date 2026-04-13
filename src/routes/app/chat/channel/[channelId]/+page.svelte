@@ -5,10 +5,12 @@
 	import { normaliseMessage, buildUserMap, formatTime } from '$lib/chat.js';
 	import EmojiPicker from '$lib/components/EmojiPicker.svelte';
 	import EmojiKitchen from '$lib/components/EmojiKitchen.svelte';
+	import CustomEmojiPanel from '$lib/components/CustomEmojiPanel.svelte';
 	import FileTypeIcon from '$lib/components/FileTypeIcon.svelte';
 	import ProfileHover from '$lib/components/ProfileHover.svelte';
-	import { loadEmojiNames } from '$lib/emoji-names.js';
+	import { loadEmojiNames, getEmojiName } from '$lib/emoji-names.js';
 	import { initSemanticSearch, searchEmoji, cpToChar, onSemanticReady } from '$lib/emoji-semantic.js';
+	import { getCustomEmojiMap, getCachedCustomEmojiMap } from '$lib/custom-emoji-store.js';
 
 	let { data } = $props();
 
@@ -19,7 +21,9 @@
 	let messages = $state([...data.history]);
 	let input = $state('');
 	let emojiNames = $state({});
+	let emojiTooltip = $state(null); // { type, anchorX, anchorY, ...data }
 	let sending = $state(false);
+	let slowPendingIds = $state(new Set());
 	let uploading = $state(false);
 	let listEl = $state(null);
 	let inputEl = $state(null);
@@ -43,6 +47,8 @@
 	let pickerPos = $state({ x: 0, y: 0 });
 	let showComposePicker = $state(false);
 	let showKitchen = $state(false);
+	let showCustomEmoji = $state(false);
+	let _ceMap = $state({}); // custom emoji map { [id]: {shortcode, url} }
 
 	// Message effects
 	let messageEffect = $state(null); // null | 'rainbow' | 'hearts'
@@ -92,8 +98,9 @@
 		{ name: 'loud',      label: 'Loud',     icon: '📢' },
 		{ name: 'gentle',    label: 'Gentle',   icon: '🌸' },
 		{ name: 'invisible', label: 'Invisible',icon: '🫥' },
-		{ name: 'rainbow',   label: 'Rainbow',  icon: '🌈' },
-		{ name: 'hearts',    label: 'Hearts',   icon: '💗' },
+		{ name: 'rainbow',      label: 'Rainbow',      icon: '🌈' },
+		{ name: 'rainbow-fill', label: 'Rainbow Fill', icon: '🫧' },
+		{ name: 'hearts',       label: 'Hearts',       icon: '💗' },
 	];
 	const SCREEN_FXS = [
 		{ name: 'confetti',  label: 'Confetti', icon: '🎊' },
@@ -123,8 +130,17 @@
 		'color-red': '\uE110', 'color-orange': '\uE111', 'color-yellow': '\uE112',
 		'color-green': '\uE113', 'color-teal': '\uE114', 'color-blue': '\uE115',
 		'color-purple': '\uE116', 'color-pink': '\uE117',
-		underline: '\uE118', strike: '\uE119', ripple: '\uE11A', shake: '\uE100', bounce: '\uE101', wave: '\uE102', nod: '\uE103', jitter: '\uE104', big: '\uE105', small: '\uE106'
+		underline: '\uE118', strike: '\uE119', ripple: '\uE11A', shake: '\uE100', bounce: '\uE101', wave: '\uE102', nod: '\uE103', jitter: '\uE104', big: '\uE105', small: '\uE106',
+		'wdth-25': '\uE120', 'wdth-50': '\uE121', 'wdth-75': '\uE122', 'wdth-125': '\uE123', 'wdth-150': '\uE124',
+		'wght-100': '\uE130', 'wght-200': '\uE131', 'wght-300': '\uE132', 'wght-500': '\uE133', 'wght-600': '\uE134', 'wght-700': '\uE135',
+		'sz-60': '\uE140', 'sz-80': '\uE141', 'sz-125': '\uE142', 'sz-175': '\uE143', 'sz-300': '\uE144', 'sz-500': '\uE145'
 	};
+	const WDTH_FX_MAP = { 25: 'wdth-25', 50: 'wdth-50', 75: 'wdth-75', 125: 'wdth-125', 150: 'wdth-150' };
+	const WDTH_STEPS = [25, 50, 75, 100, 125, 150];
+	const WGHT_FX_MAP = { 100: 'wght-100', 200: 'wght-200', 300: 'wght-300', 500: 'wght-500', 600: 'wght-600', 700: 'wght-700' };
+	const WGHT_STEPS = [100, 200, 300, 400, 500, 600, 700];
+	const SZ_FX_MAP = { 0.6: 'sz-60', 0.8: 'sz-80', 1.25: 'sz-125', 1.75: 'sz-175', 3.0: 'sz-300', 5.0: 'sz-500' };
+	const SZ_STEPS = [0.6, 0.8, 1.0, 1.25, 1.75, 3.0, 5.0];
 	const TEXT_COLORS = [
 		{ name: 'color-red',    hex: '#e74c3c' },
 		{ name: 'color-orange', hex: '#e67e22' },
@@ -143,8 +159,23 @@
 	// to guarantee both decorations render — nested text-decoration spans are unreliable cross-browser.
 	function nestedFxHtml(fxStack, innerHtml, delay = null) {
 		const decorFx = fxStack.filter(fx => fx === 'underline' || fx === 'strike');
-		const animStack = fxStack.filter(fx => fx !== 'underline' && fx !== 'strike');
+		const wdthFx = fxStack.find(fx => fx.startsWith('wdth-'));
+		const wghtFx = fxStack.find(fx => fx.startsWith('wght-'));
+		const szFx = fxStack.find(fx => fx.startsWith('sz-'));
+		const animStack = fxStack.filter(fx => fx !== 'underline' && fx !== 'strike' && !fx.startsWith('wdth-') && !fx.startsWith('wght-') && !fx.startsWith('sz-'));
 		let html = innerHtml;
+		if (szFx) {
+			const rem = (parseFloat(szFx.replace('sz-', '')) / 100 * 0.9).toFixed(2);
+			html = `<span class="tfx tfx-${szFx}" data-fx="${szFx}" style="font-size:${rem}rem">${html}</span>`;
+		}
+		if (wghtFx) {
+			const w = wghtFx.replace('wght-', '');
+			html = `<span class="tfx tfx-${wghtFx}" data-fx="${wghtFx}" style="font-weight:${w}">${html}</span>`;
+		}
+		if (wdthFx) {
+			const pct = wdthFx.replace('wdth-', '');
+			html = `<span class="tfx tfx-${wdthFx}" data-fx="${wdthFx}" style="font-stretch:${pct}%">${html}</span>`;
+		}
 		if (decorFx.length) {
 			const tdLine = decorFx.map(fx => fx === 'underline' ? 'underline' : 'line-through').join(' ');
 			html = `<span class="tfx ${decorFx.map(fx => `tfx-${fx}`).join(' ')}" style="text-decoration-line:${tdLine};text-underline-offset:2px">${html}</span>`;
@@ -168,6 +199,58 @@
 		return `https://www.gstatic.com/android/keyboard/emojikitchen/${date}/${fmt(parentCp)}/${fmt(parentCp)}_${fmt(childCp)}.png`;
 	}
 
+	// ── Emoji tooltip ────────────────────────────────────────────────────────
+	function ekCpToChar(cp) {
+		return String.fromCodePoint(...cp.split('-').map(p => parseInt(p, 16)));
+	}
+
+	const TIP_W = 160, TIP_MARGIN = 8;
+	function tipLeft(centerX) {
+		return Math.max(TIP_MARGIN, Math.min(centerX - TIP_W / 2, window.innerWidth - TIP_W - TIP_MARGIN));
+	}
+
+	function onMsgListMouseover(e) {
+		const eTip = e.target.closest?.('.e-tip');
+		if (!eTip) return;
+		const pop = eTip.querySelector('.e-tip-pop');
+		if (!pop) return;
+		const rect = eTip.getBoundingClientRect();
+		const cx = rect.left + rect.width / 2;
+		pop.style.left = Math.max(TIP_MARGIN, Math.min(cx - TIP_W / 2, window.innerWidth - TIP_W - TIP_MARGIN)) + 'px';
+		pop.style.top = (rect.bottom + 10) + 'px';
+		pop.style.transform = 'none';
+	}
+
+	function onMsgListMousemove(e) {
+		const target = e.target;
+		// EK image
+		if (target.dataset?.ek) {
+			const m = target.dataset.ek.match(/\[ek:([a-z0-9]+):([0-9a-f-]+):([0-9a-f-]+)\]/i);
+			if (m) {
+				const parentChar = ekCpToChar(m[2]), childChar = ekCpToChar(m[3]);
+				const rect = target.getBoundingClientRect();
+				const isJumbo = !!target.closest('.jumbo-emoji');
+				emojiTooltip = { type: 'ek', left: tipLeft(rect.left + rect.width / 2), anchorY: rect.bottom,
+					url: isJumbo ? null : ekTokenToUrl(m[1], m[2], m[3]), parentChar, childChar };
+				return;
+			}
+		}
+		// CE image
+		if (target.dataset?.ce) {
+			const m = target.dataset.ce.match(/\[ce:([a-zA-Z0-9_-]+)\]/);
+			if (m) {
+				const shortcode = m[1];
+				const rect = target.getBoundingClientRect();
+				emojiTooltip = { type: 'ce', left: tipLeft(rect.left + rect.width / 2), anchorY: rect.bottom,
+					url: getCachedCustomEmojiMap()[shortcode]?.url, shortcode };
+				return;
+			}
+		}
+		emojiTooltip = null;
+	}
+
+	function onMsgListMouseleave() { emojiTooltip = null; }
+
 	// Convert legacy [fx]...[/fx] bracket markup → Unicode PUA
 	function normalizeLegacyMarkup(text) {
 		const names = Object.keys(FX_TO_CHAR).join('|');
@@ -187,9 +270,9 @@
 		return result;
 	}
 
-	// Strip all effect markers and EK tokens from text (for preview/reply bars)
+	// Strip all effect markers, EK tokens, and CE tokens from text (for preview/reply bars)
 	function stripMarkup(text) {
-		const withoutEk = text.replace(/\[ek:[a-z0-9]+:[0-9a-f-]+:[0-9a-f-]+\]/gi, '');
+		const withoutEk = text.replace(/\[ek:[a-z0-9]+:[0-9a-f-]+:[0-9a-f-]+\]/gi, '').replace(/\[ce:[a-zA-Z0-9_-]{1,32}\]/gi, '');
 		const normalized = normalizeLegacyMarkup(withoutEk);
 		let result = '';
 		for (const ch of normalized) {
@@ -205,12 +288,15 @@
 	const _segmenter = new Intl.Segmenter();
 	function jumboEmojiCount(content) {
 		let ekCount = 0;
+		let ceCount = 0;
 		const withoutEk = content.replace(/\[ek:[a-z0-9]+:[0-9a-f-]+:[0-9a-f-]+\]/gi, () => { ekCount++; return ''; });
-		const plain = stripMarkup(withoutEk).trim();
-		// Pure EK images only → treat each as an emoji
-		if (!plain && ekCount > 0) return ekCount <= 3 ? ekCount : 0;
-		// Mixed EK + text/emoji → not jumbo
-		if (ekCount > 0) return 0;
+		const withoutCe = withoutEk.replace(/\[ce:[a-zA-Z0-9_-]{1,32}\]/gi, () => { ceCount++; return ''; });
+		const plain = stripMarkup(withoutCe).trim();
+		// Pure EK/CE images only → treat each as an emoji
+		const imgCount = ekCount + ceCount;
+		if (!plain && imgCount > 0) return imgCount <= 3 ? imgCount : 0;
+		// Mixed EK/CE + text/emoji → not jumbo
+		if (ekCount > 0 || ceCount > 0) return 0;
 		// Original logic for pure regular emoji
 		if (!plain) return 0;
 		const segs = [..._segmenter.segment(plain)].map(s => s.segment);
@@ -226,6 +312,75 @@
 		if (v === undefined) { v = jumboEmojiCount(content); _jumboCache.set(content, v); }
 		return v;
 	}
+	const EMOJI_RE_G = /\p{Extended_Pictographic}/u;
+	// Strip skin-tone modifiers, ZWJ, and variation selectors to get base emoji
+	const MODIFIER_STRIP_RE = /[\u{1F3FB}-\u{1F3FF}\uFE0F\u200D]/gu;
+	const SKIN_TONE_NAMES = {
+		'\u{1F3FB}': 'light skin tone', '\u{1F3FC}': 'medium-light skin tone',
+		'\u{1F3FD}': 'medium skin tone', '\u{1F3FE}': 'medium-dark skin tone', '\u{1F3FF}': 'dark skin tone'
+	};
+	const SKIN_STRIP_RE = /[\u{1F3FB}-\u{1F3FF}]/gu;
+	function emojiDisplayName(g) {
+		const direct = getEmojiName(g);
+		if (direct) return direct;
+		// Collect all skin tones in order
+		const skinTones = [...g.matchAll(SKIN_STRIP_RE)].map(m => SKIN_TONE_NAMES[m[0]]);
+		// 1. Strip only skin tones, keep ZWJ/VS16 → try as single concept
+		const noSkin = g.replace(SKIN_STRIP_RE, '');
+		let baseName = getEmojiName(noSkin) || getEmojiName(noSkin.replace(/\uFE0F/g, ''));
+		if (baseName) return skinTones.length ? `${baseName}: ${skinTones.join(', ')}` : baseName;
+		// 2. Strip everything → try as single concept
+		const fullyStripped = g.replace(MODIFIER_STRIP_RE, '');
+		baseName = fullyStripped ? getEmojiName(fullyStripped) : null;
+		if (baseName) return skinTones.length ? `${baseName}: ${skinTones.join(', ')}` : baseName;
+		// 3. Try first pictographic base
+		if (fullyStripped) {
+			const parts = [..._segmenter.segment(fullyStripped)].filter(s => EMOJI_RE_G.test(s.segment));
+			if (parts.length === 1) {
+				baseName = getEmojiName(parts[0].segment);
+				if (baseName) {
+					const qualifiers = [...skinTones];
+					if (g.includes('\u2640')) qualifiers.unshift('woman');
+					else if (g.includes('\u2642')) qualifiers.unshift('man');
+					if (g.includes('\u27A1')) qualifiers.push('facing right');
+					else if (g.includes('\u2B05')) qualifiers.push('facing left');
+					return qualifiers.length ? `${baseName}: ${qualifiers.join(', ')}` : baseName;
+				}
+			}
+			// 4. Multiple base pictographics — name each ZWJ component
+			if (parts.length > 1) {
+				const componentNames = [];
+				const zwjParts = g.split('\u200D').filter(p => p.length > 0);
+				for (const part of zwjParts) {
+					const clean = part.replace(/\uFE0F/g, '');
+					if (clean === '\u2640' || clean === '\u2642' || clean === '\u27A1' || clean === '\u2B05') continue;
+					const skin = clean.match(SKIN_STRIP_RE)?.[0];
+					const base = clean.replace(SKIN_STRIP_RE, '');
+					const bName = base ? getEmojiName(base) : null;
+					const sName = skin ? SKIN_TONE_NAMES[skin] : null;
+					if (bName && sName) componentNames.push(`${bName}: ${sName}`);
+					else if (bName) componentNames.push(bName);
+				}
+				if (componentNames.length > 1) return componentNames.join(' + ');
+				if (componentNames.length === 1) return componentNames[0];
+			}
+		}
+		return null;
+	}
+	function wrapEmojiInText(text) {
+		const segs = [..._segmenter.segment(text)];
+		return segs.map(seg => {
+			const g = seg.segment;
+			if (EMOJI_RE_G.test(g)) {
+				const esc = escapeHtml(g);
+				const name = emojiDisplayName(g);
+				const nameHtml = name ? `<span class="e-tip-name">${escapeHtml(name)}</span>` : '';
+				return `<span class="e-tip">${esc}<span class="e-tip-pop"><span class="e-tip-char">${esc}</span>${nameHtml}</span></span>`;
+			}
+			return escapeHtml(g);
+		}).join('');
+	}
+
 	const _htmlCache = new Map();
 	function contentHtmlM(text, split = true) {
 		const key = (split ? '1' : '0') + text;
@@ -277,14 +432,16 @@
 
 	// Render content markup → HTML string in one pass, avoiding inter-segment DOM nodes
 	// that cause newlines under white-space: pre-wrap when using {#each}.
-	// Renders markup text + EK tokens → HTML, correctly applying FX effects to EK images
+	// Renders markup text + EK tokens + CE tokens → HTML, correctly applying FX effects
 	function contentHtml(text, split = true) {
 		if (!text) return '';
 		const hasEk = text.indexOf('[ek:') !== -1;
+		const hasCe = text.indexOf('[ce:') !== -1;
 		const hasFx = /[\uE100-\uE1FF]/.test(text);
-		if (!hasEk && !hasFx) return escapeHtml(text);
+		if (!hasEk && !hasCe && !hasFx) return EMOJI_RE_G.test(text) ? wrapEmojiInText(text) : escapeHtml(text);
 
 		const EK_RE = /\[ek:([a-z0-9]+):([0-9a-f-]+):([0-9a-f-]+)\]/gi;
+		const CE_RE = /\[ce:([a-zA-Z0-9_-]{1,32})\]/gi;
 		const segs = markupToSegments(normalizeLegacyMarkup(text));
 		if (!segs.length) return escapeHtml(text);
 
@@ -292,7 +449,7 @@
 
 		function renderText(chunk, fxStack) {
 			if (!chunk) return '';
-			if (!fxStack.length) return escapeHtml(chunk);
+			if (!fxStack.length) return EMOJI_RE_G.test(chunk) ? wrapEmojiInText(chunk) : escapeHtml(chunk);
 			if (fxStack.includes('ripple')) {
 				const graphemes = [..._segmenter.segment(chunk)].map(g => g.segment);
 				const html = graphemes.map((g, i) =>
@@ -318,18 +475,45 @@
 		}
 
 		return segs.map(s => {
-			if (!s.text.includes('[ek:')) return renderText(s.text, s.fxStack);
-			// Segment contains EK tokens — split on them and apply fxStack to each piece
+			const segHasEk = s.text.includes('[ek:');
+			const segHasCe = s.text.includes('[ce:');
+			if (!segHasEk && !segHasCe) return renderText(s.text, s.fxStack);
+			// Collect all EK/CE matches, sort by position, render each
+			const allMatches = [];
+			if (segHasEk) {
+				EK_RE.lastIndex = 0;
+				let m;
+				while ((m = EK_RE.exec(s.text)) !== null) {
+					allMatches.push({ index: m.index, end: EK_RE.lastIndex, type: 'ek', match: m });
+				}
+			}
+			if (segHasCe) {
+				CE_RE.lastIndex = 0;
+				let m;
+				while ((m = CE_RE.exec(s.text)) !== null) {
+					allMatches.push({ index: m.index, end: CE_RE.lastIndex, type: 'ce', match: m });
+				}
+			}
+			allMatches.sort((a, b) => a.index - b.index);
 			const parts = [];
 			let lastIdx = 0;
-			EK_RE.lastIndex = 0;
-			let m;
-			while ((m = EK_RE.exec(s.text)) !== null) {
-				if (m.index > lastIdx) parts.push(renderText(s.text.slice(lastIdx, m.index), s.fxStack));
-				const url = ekTokenToUrl(m[1], m[2], m[3]);
-				const imgHtml = `<img class="ek-img" data-ek="${escapeHtml(m[0])}" src="${url}" loading="lazy" alt="" />`;
-				parts.push(s.fxStack.length ? nestedFxHtml(s.fxStack, imgHtml, split ? `${(globalWi++ * 0.06).toFixed(2)}s` : null) : imgHtml);
-				lastIdx = EK_RE.lastIndex;
+			for (const item of allMatches) {
+				if (item.index > lastIdx) parts.push(renderText(s.text.slice(lastIdx, item.index), s.fxStack));
+				if (item.type === 'ek') {
+					const m = item.match;
+					const url = ekTokenToUrl(m[1], m[2], m[3]);
+					const imgHtml = `<img class="ek-img" data-ek="${escapeHtml(m[0])}" src="${url}" loading="lazy" alt="" />`;
+					parts.push(s.fxStack.length ? nestedFxHtml(s.fxStack, imgHtml, split ? `${(globalWi++ * 0.06).toFixed(2)}s` : null) : imgHtml);
+				} else {
+					const ceId = item.match[1];
+					const ceToken = item.match[0];
+					const ceData = getCachedCustomEmojiMap()[ceId];
+					const ceUrl = ceData?.url ?? '';
+					const ceAlt = ceData ? ':' + ceData.shortcode + ':' : ceToken;
+					const imgHtml = `<img class="ce-img" data-ce="${escapeHtml(ceToken)}" src="${escapeHtml(ceUrl)}" alt="${escapeHtml(ceAlt)}" loading="lazy" />`;
+					parts.push(s.fxStack.length ? nestedFxHtml(s.fxStack, imgHtml, split ? `${(globalWi++ * 0.06).toFixed(2)}s` : null) : imgHtml);
+				}
+				lastIdx = item.end;
 			}
 			if (lastIdx < s.text.length) parts.push(renderText(s.text.slice(lastIdx), s.fxStack));
 			return parts.join('');
@@ -355,6 +539,10 @@
 	let emojiSuggestions = $state([]); // [{ e, n }]
 	let _suggDebounce = null;
 	let _semanticPausedUntil = 0; // cooldown: skip embedding after a no-match result
+
+	// ── Custom emoji colon-shortcode autocomplete ─────────────────────────────
+	let ceSuggestions = $state([]); // [{ shortcode, url }]
+	const CE_COLON_RE = /:([a-zA-Z0-9_-]*)$/;
 
 	$effect(() => {
 		const raw = input;
@@ -387,13 +575,13 @@
 				pos += len;
 				return null;
 			}
-			if (node.nodeType === Node.ELEMENT_NODE && node.tagName === 'IMG' && node.dataset.ek) {
-				const ekLen = node.dataset.ek.length;
-				if (pos + ekLen >= target) {
+			if (node.nodeType === Node.ELEMENT_NODE && node.tagName === 'IMG' && (node.dataset.ek || node.dataset.ce)) {
+				const tokenLen = (node.dataset.ek || node.dataset.ce).length;
+				if (pos + tokenLen >= target) {
 					const idx = Array.from(node.parentNode.childNodes).indexOf(node);
 					return { node: node.parentNode, offset: target === pos ? idx : idx + 1 };
 				}
-				pos += ekLen;
+				pos += tokenLen;
 				return null;
 			}
 			for (const child of node.childNodes) { const r = walk(child); if (r) return r; }
@@ -411,6 +599,8 @@
 			} else if (node.nodeType === Node.ELEMENT_NODE) {
 				if (node.tagName === 'IMG' && node.dataset.ek) {
 					result += node.dataset.ek;
+				} else if (node.tagName === 'IMG' && node.dataset.ce) {
+					result += node.dataset.ce;
 				} else if (node.dataset?.fx) {
 					const fxStack = node.dataset.fx.split(' ').filter(fx => FX_TO_CHAR[fx]);
 					result += fxStack.map(fx => FX_TO_CHAR[fx]).join('') + serializeCe(node) + FX_CLOSE_CHAR.repeat(fxStack.length);
@@ -427,7 +617,10 @@
 	// Build a nested fx DOM node (innermost text → outermost span)
 	function makeFxNode(fxStack, text, delay = null) {
 		const decorFx = fxStack.filter(fx => fx === 'underline' || fx === 'strike');
-		const animFx = fxStack.filter(fx => fx !== 'underline' && fx !== 'strike');
+		const wdthFx = fxStack.find(fx => fx.startsWith('wdth-'));
+		const wghtFx = fxStack.find(fx => fx.startsWith('wght-'));
+		const szFx = fxStack.find(fx => fx.startsWith('sz-'));
+		const animFx = fxStack.filter(fx => fx !== 'underline' && fx !== 'strike' && !fx.startsWith('wdth-') && !fx.startsWith('wght-') && !fx.startsWith('sz-'));
 		let innerNode = document.createTextNode(text);
 		if (decorFx.length) {
 			const span = document.createElement('span');
@@ -436,6 +629,30 @@
 			const tdLine = decorFx.map(fx => fx === 'underline' ? 'underline' : 'line-through').join(' ');
 			span.style.textDecorationLine = tdLine;
 			span.style.textUnderlineOffset = '2px';
+			span.appendChild(innerNode);
+			innerNode = span;
+		}
+		if (szFx) {
+			const span = document.createElement('span');
+			span.className = `tfx tfx-${szFx}`;
+			span.dataset.fx = szFx;
+			span.style.fontSize = (parseFloat(szFx.replace('sz-', '')) / 100 * 0.9).toFixed(2) + 'rem';
+			span.appendChild(innerNode);
+			innerNode = span;
+		}
+		if (wghtFx) {
+			const span = document.createElement('span');
+			span.className = `tfx tfx-${wghtFx}`;
+			span.dataset.fx = wghtFx;
+			span.style.fontWeight = wghtFx.replace('wght-', '');
+			span.appendChild(innerNode);
+			innerNode = span;
+		}
+		if (wdthFx) {
+			const span = document.createElement('span');
+			span.className = `tfx tfx-${wdthFx}`;
+			span.dataset.fx = wdthFx;
+			span.style.fontStretch = wdthFx.replace('wdth-', '') + '%';
 			span.appendChild(innerNode);
 			innerNode = span;
 		}
@@ -455,6 +672,7 @@
 	// Unicode markup → DOM nodes, with EK token support and correct FX wrapping on EK images
 	function ceMarkupToNodes(markup) {
 		const EK_RE = /\[ek:([a-z0-9]+):([0-9a-f-]+):([0-9a-f-]+)\]/gi;
+		const CE_RE = /\[ce:([a-zA-Z0-9_-]{1,32})\]/gi;
 		const segs = markupToSegments(normalizeLegacyMarkup(markup));
 		const nodes = [];
 		let globalWi = 0;
@@ -524,16 +742,53 @@
 		}
 
 		for (const seg of segs) {
-			if (!seg.text.includes('[ek:')) { pushText(seg.text, seg.fxStack); continue; }
-			// Segment contains EK tokens — split and wrap each in the segment's fxStack
+			const hasEk = seg.text.includes('[ek:');
+			const hasCe = seg.text.includes('[ce:');
+			if (!hasEk && !hasCe) { pushText(seg.text, seg.fxStack); continue; }
+			// Segment contains EK/CE tokens — split and wrap each in the segment's fxStack
+			// Build a combined regex for both token types and sort matches by position
 			let lastIdx = 0;
-			EK_RE.lastIndex = 0;
-			let m;
-			while ((m = EK_RE.exec(seg.text)) !== null) {
-				if (m.index > lastIdx) pushText(seg.text.slice(lastIdx, m.index), seg.fxStack);
-				const img = makeEkImg(m[0], m[1], m[2], m[3]);
-				nodes.push(wrapInFx(img, seg.fxStack, fxSplitWords ? `${(globalWi++ * 0.06).toFixed(2)}s` : undefined));
-				lastIdx = EK_RE.lastIndex;
+			const allMatches = [];
+			if (hasEk) {
+				EK_RE.lastIndex = 0;
+				let m;
+				while ((m = EK_RE.exec(seg.text)) !== null) {
+					allMatches.push({ index: m.index, end: EK_RE.lastIndex, type: 'ek', match: m });
+				}
+			}
+			if (hasCe) {
+				CE_RE.lastIndex = 0;
+				let m;
+				while ((m = CE_RE.exec(seg.text)) !== null) {
+					allMatches.push({ index: m.index, end: CE_RE.lastIndex, type: 'ce', match: m });
+				}
+			}
+			allMatches.sort((a, b) => a.index - b.index);
+			for (const item of allMatches) {
+				if (item.index > lastIdx) pushText(seg.text.slice(lastIdx, item.index), seg.fxStack);
+				if (item.type === 'ek') {
+					const m = item.match;
+					const img = makeEkImg(m[0], m[1], m[2], m[3]);
+					nodes.push(wrapInFx(img, seg.fxStack, fxSplitWords ? `${(globalWi++ * 0.06).toFixed(2)}s` : undefined));
+				} else {
+					// CE token
+					const ceId = item.match[1];
+					const ceToken = item.match[0];
+					const ceData = getCachedCustomEmojiMap()[ceId];
+					const img = document.createElement('img');
+					img.dataset.ce = ceToken;
+					img.className = 'ce-img ce-img-ce';
+					img.setAttribute('contenteditable', 'false');
+					if (ceData) {
+						img.src = ceData.url;
+						img.setAttribute('alt', ':' + ceData.shortcode + ':');
+					} else {
+						img.src = '';
+						img.setAttribute('alt', ceToken);
+					}
+					nodes.push(wrapInFx(img, seg.fxStack, fxSplitWords ? `${(globalWi++ * 0.06).toFixed(2)}s` : undefined));
+				}
+				lastIdx = item.end;
 			}
 			if (lastIdx < seg.text.length) pushText(seg.text.slice(lastIdx), seg.fxStack);
 		}
@@ -555,6 +810,65 @@
 		sel?.addRange(range);
 	}
 
+	function getSerializedBeforeCursor() {
+		if (!inputEl) return input;
+		const sel = window.getSelection();
+		if (!sel || !sel.isCollapsed || !inputEl.contains(sel.anchorNode)) return input;
+		const r = document.createRange();
+		r.setStart(inputEl, 0);
+		try { r.setEnd(sel.anchorNode, sel.anchorOffset); } catch { return input; }
+		const frag = r.cloneContents();
+		const tmp = document.createElement('div');
+		tmp.appendChild(frag);
+		return serializeCe(tmp);
+	}
+
+	function updateCeSuggestions() {
+		const before = getSerializedBeforeCursor().replace(/[\uE100-\uE1FF]/g, '').replace(/\[[^\]]+\]/g, '');
+		const m = CE_COLON_RE.exec(before);
+		if (!m || m[1].length < 1) { ceSuggestions = []; return; }
+		const query = m[1].toLowerCase();
+		const map = getCachedCustomEmojiMap();
+		ceSuggestions = Object.entries(map)
+			.filter(([sc]) => sc.toLowerCase().startsWith(query))
+			.slice(0, 8)
+			.map(([shortcode, data]) => ({ shortcode, url: data.url }));
+	}
+
+	function resolveColonShortcode(shortcode) {
+		if (!inputEl) return;
+		const data = getCachedCustomEmojiMap()[shortcode];
+		if (!data) return;
+		const sel = window.getSelection();
+		if (!sel || !sel.isCollapsed || !inputEl.contains(sel.anchorNode)) return;
+		const range = sel.getRangeAt(0).cloneRange();
+		const query = ':' + shortcode;
+		// Delete ':shortcode' before cursor via text node manipulation
+		if (range.startContainer.nodeType === Node.TEXT_NODE) {
+			const txt = range.startContainer.textContent;
+			const off = range.startOffset;
+			if (txt.slice(0, off).endsWith(query)) {
+				range.setStart(range.startContainer, off - query.length);
+				range.deleteContents();
+			}
+		}
+		// Insert the ce img
+		const img = document.createElement('img');
+		img.src = data.url;
+		img.dataset.ce = '[ce:' + shortcode + ']';
+		img.className = 'ce-img ce-img-ce';
+		img.setAttribute('contenteditable', 'false');
+		img.setAttribute('alt', ':' + shortcode + ':');
+		range.insertNode(img);
+		range.setStartAfter(img);
+		range.collapse(true);
+		sel.removeAllRanges();
+		sel.addRange(range);
+		input = serializeCe(inputEl);
+		ceSuggestions = [];
+		onInput();
+	}
+
 	function onCeInput() {
 		if (!inputEl) return;
 		const newMarkup = serializeCe(inputEl);
@@ -564,7 +878,51 @@
 			redoStack.length = 0;
 		}
 		input = newMarkup;
+		// Reset all formatting when input is fully cleared
+		if (!input.trim()) {
+			messageFontSize = 1.0;
+			messageFontWeight = 400;
+			messageFontStretch = 100;
+			messageEffect = null;
+			_savedCeSel = null;
+			_lastInlineTypo = {};
+		}
+		updateCeSuggestions();
 		onInput();
+	}
+
+	// Plain-text character offset — no PUA chars, matches markupToSegments + findDomPos coordinate space.
+	// Use this in applyTextFx so selection bounds align with segment positions.
+	function cePlainOffset(el, targetNode, targetOffset) {
+		let n = 0, done = false;
+		function full(node) {
+			if (node.nodeType === Node.TEXT_NODE) { n += node.textContent.length; return; }
+			if (node.nodeType !== Node.ELEMENT_NODE) return;
+			if (node.tagName === 'IMG' && node.dataset.ek) { n += node.dataset.ek.length; return; }
+			if (node.tagName === 'IMG' && node.dataset.ce) { n += node.dataset.ce.length; return; }
+			if (node.tagName === 'BR') { n += 1; return; }
+			for (const c of node.childNodes) full(c);
+		}
+		function walk(node) {
+			if (done) return;
+			if (node === targetNode && node.nodeType === Node.TEXT_NODE) { n += targetOffset; done = true; return; }
+			if (node.nodeType === Node.TEXT_NODE) { n += node.textContent.length; return; }
+			if (node.nodeType !== Node.ELEMENT_NODE) return;
+			if (node === targetNode) {
+				let i = 0; for (const c of node.childNodes) { if (i++ >= targetOffset) break; full(c); }
+				done = true; return;
+			}
+			if (node.tagName === 'IMG' && node.dataset.ek) { n += node.dataset.ek.length; return; }
+			if (node.tagName === 'IMG' && node.dataset.ce) { n += node.dataset.ce.length; return; }
+			if (node.tagName === 'BR') { n += 1; return; }
+			for (const c of node.childNodes) { if (done) break; walk(c); }
+		}
+		if (el === targetNode) {
+			let i = 0; for (const c of el.childNodes) { if (i++ >= targetOffset) break; full(c); }
+			return n;
+		}
+		for (const c of el.childNodes) { if (done) break; walk(c); }
+		return n;
 	}
 
 	// Compute markup-string character offset for a given DOM position (accounts for EK tokens + FX PUA chars)
@@ -575,6 +933,7 @@
 			if (node.nodeType === Node.TEXT_NODE) { buf += node.textContent; return; }
 			if (node.nodeType !== Node.ELEMENT_NODE) return;
 			if (node.tagName === 'IMG' && node.dataset.ek) { buf += node.dataset.ek; return; }
+			if (node.tagName === 'IMG' && node.dataset.ce) { buf += node.dataset.ce; return; }
 			if (node.tagName === 'BR') { buf += '\n'; return; }
 			const fx = node.dataset?.fx ? node.dataset.fx.split(' ').filter(f => FX_TO_CHAR[f]) : [];
 			if (fx.length) buf += fx.map(f => FX_TO_CHAR[f]).join('');
@@ -594,6 +953,7 @@
 				done = true; return;
 			}
 			if (node.tagName === 'IMG' && node.dataset.ek) { buf += node.dataset.ek; return; }
+			if (node.tagName === 'IMG' && node.dataset.ce) { buf += node.dataset.ce; return; }
 			if (node.tagName === 'BR') { buf += '\n'; return; }
 			const fx = node.dataset?.fx ? node.dataset.fx.split(' ').filter(f => FX_TO_CHAR[f]) : [];
 			if (fx.length) buf += fx.map(f => FX_TO_CHAR[f]).join('');
@@ -609,16 +969,24 @@
 		return buf.length;
 	}
 
+	let _savedCeSel = null; // { start, end } plain-text offsets
 	function onCeSelect() {
 		const sel = window.getSelection();
 		showTextFxBar = !!(sel && !sel.isCollapsed && inputEl?.contains(sel.anchorNode));
-		// Update visual highlight on EK images within the selection
+		if (sel && !sel.isCollapsed && inputEl?.contains(sel.anchorNode)) {
+			const range = sel.getRangeAt(0);
+			_savedCeSel = {
+				start: cePlainOffset(inputEl, range.startContainer, range.startOffset),
+				end: cePlainOffset(inputEl, range.endContainer, range.endOffset)
+			};
+		}
+		// Update visual highlight on EK/CE images within the selection
 		if (!inputEl) return;
-		for (const img of inputEl.querySelectorAll('.ek-img-ce')) img.classList.remove('ek-selected');
+		for (const img of inputEl.querySelectorAll('.ek-img-ce, .ce-img-ce')) img.classList.remove('ek-selected');
 		if (!sel || sel.isCollapsed || !sel.rangeCount) return;
 		const range = sel.getRangeAt(0);
 		if (!inputEl.contains(range.commonAncestorContainer)) return;
-		for (const img of inputEl.querySelectorAll('.ek-img-ce')) {
+		for (const img of inputEl.querySelectorAll('.ek-img-ce, .ce-img-ce')) {
 			const r = document.createRange();
 			r.selectNode(img);
 			if (range.compareBoundaryPoints(Range.START_TO_END, r) > 0 &&
@@ -635,8 +1003,8 @@
 		undoStack.push(input);
 		redoStack.length = 0;
 		const range = sel.getRangeAt(0);
-		const selStart = ceMarkupOffset(inputEl, range.startContainer, range.startOffset);
-		const selEnd = ceMarkupOffset(inputEl, range.endContainer, range.endOffset);
+		const selStart = cePlainOffset(inputEl, range.startContainer, range.startOffset);
+		const selEnd = cePlainOffset(inputEl, range.endContainer, range.endOffset);
 		if (selStart >= selEnd) return;
 
 		const markup = serializeCe(inputEl);
@@ -719,6 +1087,52 @@
 		inputEl.focus();
 	}
 
+	let _lastInlineTypo = {};
+	function applyInlineTypo(rawVal, steps, defaultVal, fxMap, prefix) {
+		if (!_savedCeSel || !inputEl) return;
+		const step = steps.reduce((a, b) => Math.abs(b - rawVal) < Math.abs(a - rawVal) ? b : a);
+		if (step === _lastInlineTypo[prefix]) return;
+		_lastInlineTypo[prefix] = step;
+		const fxName = step !== defaultVal ? (fxMap[step] ?? null) : null;
+		const { start: selStart, end: selEnd } = _savedCeSel;
+		if (selStart >= selEnd) return;
+		if (undoStack.length >= 50) undoStack.shift();
+		undoStack.push(input);
+		redoStack.length = 0;
+		const markup = serializeCe(inputEl);
+		const segs = markupToSegments(markup);
+		let plain = 0;
+		const newSegs = [];
+		for (const seg of segs) {
+			const segStart = plain, segEnd = plain + seg.text.length;
+			if (segEnd <= selStart || segStart >= selEnd) {
+				newSegs.push({ text: seg.text, fxStack: [...seg.fxStack] });
+			} else {
+				const overlapStart = Math.max(segStart, selStart), overlapEnd = Math.min(segEnd, selEnd);
+				if (overlapStart > segStart) newSegs.push({ text: seg.text.slice(0, overlapStart - segStart), fxStack: [...seg.fxStack] });
+				const newStack = seg.fxStack.filter(fx => !fx.startsWith(prefix));
+				if (fxName) newStack.push(fxName);
+				newSegs.push({ text: seg.text.slice(overlapStart - segStart, overlapEnd - segStart), fxStack: newStack });
+				if (overlapEnd < segEnd) newSegs.push({ text: seg.text.slice(overlapEnd - segStart), fxStack: [...seg.fxStack] });
+			}
+			plain += seg.text.length;
+		}
+		const mergedSegs = [];
+		for (const seg of newSegs) {
+			if (!seg.text) continue;
+			const last = mergedSegs[mergedSegs.length - 1];
+			if (last && last.fxStack.join(',') === seg.fxStack.join(',')) last.text += seg.text;
+			else mergedSegs.push({ text: seg.text, fxStack: [...seg.fxStack] });
+		}
+		const newMarkup = segmentsToMarkup(mergedSegs);
+		inputEl.innerHTML = '';
+		for (const node of ceMarkupToNodes(newMarkup)) inputEl.appendChild(node);
+		input = newMarkup;
+	}
+	function applyInlineWidth(val) { applyInlineTypo(val, WDTH_STEPS, 100, WDTH_FX_MAP, 'wdth-'); }
+	function applyInlineWeight(val) { applyInlineTypo(val, WGHT_STEPS, 400, WGHT_FX_MAP, 'wght-'); }
+	function applyInlineSize(val) { applyInlineTypo(val, SZ_STEPS, 1.0, SZ_FX_MAP, 'sz-'); }
+
 	function onCeCopy(e) {
 		const sel = window.getSelection();
 		if (!sel || sel.isCollapsed || !inputEl) return;
@@ -726,36 +1140,77 @@
 		if (!inputEl.contains(range.commonAncestorContainer)) return;
 		const tempDiv = document.createElement('div');
 		tempDiv.appendChild(range.cloneContents());
-		const readable = unicodeToReadable(serializeCe(tempDiv));
-		let fontPrefix = '';
-		if (messageFontSize !== 1.0) fontPrefix += `[sz:${messageFontSize.toFixed(3)}]`;
-		if (messageFontWeight !== 400) fontPrefix += `[wght:${messageFontWeight}]`;
-		if (messageFontStretch !== 100) fontPrefix += `[wdth:${messageFontStretch}]`;
-		const finalReadable = fontPrefix + readable;
-		if (finalReadable !== sel.toString()) {
-			e.clipboardData.setData('text/plain', finalReadable);
-			e.preventDefault();
+
+		// Walk up from the selection's common ancestor to collect any wrapping
+		// fx spans that aren't included in cloneContents (same as onMsgListCopy)
+		const outerFxStack = [];
+		let cur = range.commonAncestorContainer;
+		if (cur.nodeType === Node.TEXT_NODE) cur = cur.parentElement;
+		while (cur && cur !== inputEl) {
+			const fx = cur.dataset?.fx;
+			if (fx) fx.split(' ').filter(f => FX_TO_CHAR[f]).forEach(f => outerFxStack.unshift(f));
+			cur = cur.parentElement;
 		}
+
+		let rawMarkup = serializeCe(tempDiv);
+		if (outerFxStack.length) {
+			rawMarkup = outerFxStack.map(fx => FX_TO_CHAR[fx]).join('') + rawMarkup + FX_CLOSE_CHAR.repeat(outerFxStack.length);
+		}
+
+		const readable = unicodeToReadable(rawMarkup);
+		let fontPrefix = '';
+		if (messageFontSize !== 1.0 && !_savedCeSel) fontPrefix += `[sz:${messageFontSize.toFixed(3)}]`;
+		if (messageFontWeight !== 400 && !_savedCeSel) fontPrefix += `[wght:${messageFontWeight}]`;
+		if (messageFontStretch !== 100 && !_savedCeSel) fontPrefix += `[wdth:${messageFontStretch}]`;
+		const finalReadable = fontPrefix + readable;
+
+		e.preventDefault();
+		e.clipboardData.setData('text/plain', finalReadable);
+		e.clipboardData.setData('text/x-eating-markup', rawMarkup);
 	}
 
 	function onCePaste(e) {
 		e.preventDefault();
-		let pastedText = e.clipboardData.getData('text/plain');
+		// Handle pasted images / files first
+		const items = Array.from(e.clipboardData?.items ?? []);
+		const fileItem = items.find(i => i.kind === 'file' && (i.type.startsWith('image/') || i.type.startsWith('video/')));
+		if (fileItem) {
+			const file = fileItem.getAsFile();
+			if (file) {
+				uploading = true;
+				const fd = new FormData();
+				fd.append('file', file, file.name || `paste.${file.type.split('/')[1] || 'bin'}`);
+				fd.append('contextType', 'channel');
+				fd.append('contextId', convId);
+				fd.append('classId', data.currentClass?.id ?? '');
+				fetch('/api/upload', { method: 'POST', body: fd })
+					.then(r => r.ok ? r.json() : r.text().then(t => Promise.reject(t)))
+					.then(att => { pendingAttachment = att; })
+					.catch(err => console.error('Paste upload failed', err))
+					.finally(() => { uploading = false; });
+			}
+			return;
+		}
+		// Prefer internal markup format (preserves all formatting exactly)
+		const rawMarkup = e.clipboardData.getData('text/x-eating-markup');
+		let pastedText = rawMarkup || e.clipboardData.getData('text/plain');
 		if (!pastedText || !inputEl) return;
 
-		// Parse and strip font setting tokens from start of pasted text
-		const szM = pastedText.match(/^\[sz:([\d.]+)\]/);
-		if (szM) { messageFontSize = Math.min(20, Math.max(0.55, parseFloat(szM[1]))); pastedText = pastedText.slice(szM[0].length); }
-		const wghtM = pastedText.match(/^\[wght:(\d+)\]/);
-		if (wghtM) { messageFontWeight = Math.min(700, Math.max(100, parseInt(wghtM[1]))); pastedText = pastedText.slice(wghtM[0].length); }
-		const wdthM = pastedText.match(/^\[wdth:(\d+)\]/);
-		if (wdthM) { messageFontStretch = Math.min(150, Math.max(25, parseInt(wdthM[1]))); pastedText = pastedText.slice(wdthM[0].length); }
-		if (!pastedText) return;
+		if (!rawMarkup) {
+			// Parse and strip font setting tokens from start of externally pasted text
+			const szM = pastedText.match(/^\[sz:([\d.]+)\]/);
+			if (szM) { messageFontSize = Math.min(20, Math.max(0.55, parseFloat(szM[1]))); pastedText = pastedText.slice(szM[0].length); }
+			const wghtM = pastedText.match(/^\[wght:(\d+)\]/);
+			if (wghtM) { messageFontWeight = Math.min(700, Math.max(100, parseInt(wghtM[1]))); pastedText = pastedText.slice(wghtM[0].length); }
+			const wdthM = pastedText.match(/^\[wdth:(\d+)\]/);
+			if (wdthM) { messageFontStretch = Math.min(150, Math.max(25, parseInt(wdthM[1]))); pastedText = pastedText.slice(wdthM[0].length); }
+			if (!pastedText) return;
+		}
 
 		// When pasted text contains EK tokens, use direct DOM insertion to avoid
 		// markup-based cursor arithmetic breaking on img nodes.
 		if (pastedText.indexOf('[ek:') !== -1) {
-			const nodes = ceMarkupToNodes(normalizeLegacyMarkup(pastedText));
+			const nodes = ceMarkupToNodes(rawMarkup ? pastedText : normalizeLegacyMarkup(pastedText));
 			const sel = window.getSelection();
 			if (sel && sel.rangeCount > 0 && inputEl.contains(sel.anchorNode)) {
 				const range = sel.getRangeAt(0);
@@ -795,7 +1250,7 @@
 		// Operate entirely at markup level — avoids inserting DOM nodes inside existing tfx spans
 		// which would double/triple-nest effects on repeated paste
 		const currentMarkup = serializeCe(inputEl);
-		const pastedMarkup = normalizeLegacyMarkup(pastedText);
+		const pastedMarkup = rawMarkup ? pastedText : normalizeLegacyMarkup(pastedText);
 		const pastedSegs = markupToSegments(pastedMarkup);
 		const pastedPlainLen = pastedSegs.reduce((sum, s) => sum + s.text.length, 0);
 
@@ -1223,6 +1678,7 @@
 		if (!listEl) return;
 		const dist = listEl.scrollHeight - listEl.scrollTop - listEl.clientHeight;
 		userScrolledUp = dist > 80;
+		if (emojiTooltip) emojiTooltip = null;
 	}
 
 	function scrollToMessage(id) {
@@ -1395,8 +1851,9 @@
 
 		markRead();
 		scrollToBottom();
-		loadEmojiNames().then(m => { emojiNames = m; });
+		loadEmojiNames().then(m => { emojiNames = m; _htmlCache.clear(); _jumboCache.clear(); messages = [...messages]; });
 		initSemanticSearch();
+		getCustomEmojiMap().then(m => { _ceMap = m; });
 		document.addEventListener('selectionchange', onCeSelect);
 		if (heartsCanvas) {
 			heartsCanvas.width = window.innerWidth;
@@ -1409,7 +1866,12 @@
 		onChildAdded(firebaseRef, (snap) => {
 			const _t0 = performance.now();
 			const msg = normaliseMessage(snap.key, snap.val(), userMap);
-			if (!messages.find((m) => m.id === msg.id)) {
+			if (messages.find((m) => m.id === msg.id)) return;
+			// Replace a matching pending optimistic rather than appending (prevents duplicate flash)
+			const optIdx = messages.findIndex(m => m.pending && m.userId === msg.userId && m.content === msg.content);
+			if (optIdx !== -1) {
+				messages = [...messages.slice(0, optIdx), msg, ...messages.slice(optIdx + 1)];
+			} else {
 				messages = [...messages, msg];
 				scrollToBottom();
 				markRead();
@@ -1462,6 +1924,45 @@
 		insertEkToken(token);
 	}
 
+	function insertCeImgAtCursor(shortcode, data) {
+		if (!inputEl) return;
+		const img = document.createElement('img');
+		img.src = data.url;
+		img.dataset.ce = '[ce:' + shortcode + ']';
+		img.className = 'ce-img ce-img-ce';
+		img.setAttribute('contenteditable', 'false');
+		img.setAttribute('alt', ':' + shortcode + ':');
+		const sel = window.getSelection();
+		if (sel && sel.rangeCount && inputEl.contains(sel.anchorNode)) {
+			const range = sel.getRangeAt(0);
+			range.deleteContents();
+			range.insertNode(img);
+			range.setStartAfter(img);
+			range.collapse(true);
+			sel.removeAllRanges();
+			sel.addRange(range);
+		} else {
+			inputEl.appendChild(img);
+		}
+		input = serializeCe(inputEl);
+		onInput();
+	}
+
+	function onCustomEmojiInsert(token) {
+		// token is like [ce:shortcode]
+		const shortcode = token.slice(4, -1); // strip [ce: and ]
+		const data = getCachedCustomEmojiMap()[shortcode];
+		if (!data) return;
+		insertCeImgAtCursor(shortcode, data);
+		showCustomEmoji = false;
+	}
+
+	function onReactionInsert(reaction) {
+		// Insert as pending attachment
+		pendingAttachment = { url: reaction.url, filename: reaction.name, mimetype: 'image/webp', size: 0, isReaction: true };
+		showCustomEmoji = false;
+	}
+
 	function cancelAttachment() {
 		const att = pendingAttachment;
 		if (!att) return;
@@ -1488,9 +1989,12 @@
 		clearTyping();
 		const replySnap = replyingTo ? { ...replyingTo } : null;
 		const fxSnap = messageEffect;
-		const szSnap = messageFontSize !== 1.0 ? messageFontSize : undefined;
-		const wghtSnap = messageFontWeight !== 400 ? messageFontWeight : undefined;
-		const wdthSnap = messageFontStretch !== 100 ? messageFontStretch : undefined;
+		const hasInlineSz = /[\uE140-\uE145]/.test(content);
+		const hasInlineWght = /[\uE130-\uE135]/.test(content);
+		const hasInlineWdth = /[\uE120-\uE124]/.test(content);
+		const szSnap = (messageFontSize !== 1.0 && !hasInlineSz) ? messageFontSize : undefined;
+		const wghtSnap = (messageFontWeight !== 400 && !hasInlineWght) ? messageFontWeight : undefined;
+		const wdthSnap = (messageFontStretch !== 100 && !hasInlineWdth) ? messageFontStretch : undefined;
 		const noSplit = !fxSplitWords;
 		const optimistic = {
 			id: `opt-${Date.now()}`, userId: data.currentUser.id,
@@ -1500,8 +2004,10 @@
 			fontSize: szSnap ?? 1, fontWeight: wghtSnap ?? 400, fontStretch: wdthSnap ?? 100, noSplit
 		};
 		messages = [...messages, optimistic];
+		setTimeout(() => { if (messages.some(m => m.id === optimistic.id && m.pending)) slowPendingIds = new Set([...slowPendingIds, optimistic.id]); }, 400);
 		setCeInput('');
 		undoStack = []; redoStack = [];
+		_savedCeSel = null; _lastInlineTypo = {};
 		replyingTo = null;
 		pendingAttachment = null;
 		messageEffect = null;
@@ -1560,10 +2066,84 @@
 		return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 	}
 
+	// Returns the outermost node to jump past for atomic EK/CE navigation.
+	// If node is an EK/CE img, climbs up through single-child FX span parents.
+	// If node is an FX span wrapping only an EK/CE, dives in and returns node itself.
+	function getEkOutermost(node) {
+		if (!node || node.nodeType !== Node.ELEMENT_NODE) return null;
+		if (node.tagName === 'IMG' && (node.dataset.ek || node.dataset.ce)) {
+			// Climb up through single-child FX spans that contain only this img
+			let outer = node;
+			while (outer.parentNode && outer.parentNode !== inputEl &&
+			       outer.parentNode.nodeType === Node.ELEMENT_NODE &&
+			       outer.parentNode.dataset?.fx &&
+			       outer.parentNode.childNodes.length === 1) {
+				outer = outer.parentNode;
+			}
+			return outer;
+		}
+		if (node.dataset?.fx) {
+			// Dive into single-child FX span chain to find an EK/CE img
+			let child = node;
+			while (child.childNodes.length === 1 && child.firstChild?.nodeType === Node.ELEMENT_NODE) {
+				child = child.firstChild;
+				if (child.tagName === 'IMG' && (child.dataset.ek || child.dataset.ce)) return node; // node is the outermost
+				if (!child.dataset?.fx) break;
+			}
+		}
+		return null;
+	}
+
+	// Move cursor out of FX span if it's sitting at the trailing boundary.
+	// Called before typing so new text doesn't inherit the effect.
+	function normalizeCursorOutsideFx() {
+		if (!inputEl) return;
+		const sel = window.getSelection();
+		if (!sel?.isCollapsed || !inputEl.contains(sel.anchorNode)) return;
+		const { anchorNode, anchorOffset } = sel;
+		// Only applies when cursor is at the end of a text node inside an FX span
+		if (anchorNode.nodeType !== Node.TEXT_NODE) return;
+		if (anchorOffset !== anchorNode.textContent.length) return;
+		// Climb up through FX span parents, checking we're always the last child
+		let node = anchorNode;
+		let inFx = false;
+		while (node.parentNode && node.parentNode !== inputEl) {
+			const parent = node.parentNode;
+			if (!parent.dataset?.fx) break; // not an FX span, stop
+			const siblings = parent.childNodes;
+			if (siblings[siblings.length - 1] !== node) { inFx = false; break; } // not last child
+			inFx = true;
+			node = parent;
+		}
+		if (!inFx || node === anchorNode) return;
+		// node is now the outermost FX span as a direct child of inputEl
+		const idx = Array.from(inputEl.childNodes).indexOf(node);
+		const r = document.createRange();
+		r.setStart(inputEl, idx + 1);
+		r.collapse(true);
+		sel.removeAllRanges();
+		sel.addRange(r);
+	}
+
 	function onKeydown(e) {
 		if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey) { e.preventDefault(); inputEl?.focus(); send(); return; }
 
-		// Backspace: delete EK image in one keystroke
+		// Colon autocomplete: typing ':' closes the shortcode query
+		if (e.key === ':' && ceSuggestions.length > 0 && !e.metaKey && !e.ctrlKey) {
+			const before = getSerializedBeforeCursor().replace(/[\uE100-\uE1FF]/g, '').replace(/\[[^\]]+\]/g, '');
+			const m = CE_COLON_RE.exec(before);
+			if (m) {
+				const query = m[1].toLowerCase();
+				const map = getCachedCustomEmojiMap();
+				const exact = map[query] ? query : (ceSuggestions.length === 1 ? ceSuggestions[0].shortcode : null);
+				if (exact) { e.preventDefault(); resolveColonShortcode(exact); return; }
+			}
+		}
+
+		// Normalize cursor outside FX span before any printable character is inserted
+		if (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) normalizeCursorOutsideFx();
+
+		// Backspace: delete EK image (including EK wrapped in FX span) in one keystroke
 		if (e.key === 'Backspace' && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
 			const sel = window.getSelection();
 			if (sel?.isCollapsed && inputEl?.contains(sel.anchorNode)) {
@@ -1571,33 +2151,32 @@
 				const prev = r.startContainer.nodeType === Node.TEXT_NODE
 					? (r.startOffset === 0 ? r.startContainer.previousSibling : null)
 					: (r.startOffset > 0 ? r.startContainer.childNodes[r.startOffset - 1] : null);
-				if (prev?.dataset?.ek) { e.preventDefault(); prev.remove(); input = serializeCe(inputEl); return; }
+				const ekOuter = getEkOutermost(prev);
+				if (ekOuter) { e.preventDefault(); ekOuter.remove(); input = serializeCe(inputEl); return; }
 			}
 		}
 
-		// Arrow keys: skip atomically over EK images
+		// Arrow keys: skip atomically over EK images (including EK inside FX spans)
 		if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
 			const sel = window.getSelection();
 			if (sel?.isCollapsed && inputEl?.contains(sel.anchorNode)) {
 				const r = sel.getRangeAt(0);
-				if (e.key === 'ArrowRight') {
-					const next = r.startContainer.nodeType === Node.TEXT_NODE
-						? (r.startOffset === r.startContainer.textContent.length ? r.startContainer.nextSibling : null)
-						: r.startContainer.childNodes[r.startOffset];
-					if (next?.dataset?.ek) {
-						e.preventDefault();
-						const nr = document.createRange(); nr.setStartAfter(next); nr.collapse(true);
-						sel.removeAllRanges(); sel.addRange(nr); return;
-					}
-				} else {
-					const prev = r.startContainer.nodeType === Node.TEXT_NODE
-						? (r.startOffset === 0 ? r.startContainer.previousSibling : null)
-						: (r.startOffset > 0 ? r.startContainer.childNodes[r.startOffset - 1] : null);
-					if (prev?.dataset?.ek) {
-						e.preventDefault();
-						const nr = document.createRange(); nr.setStartBefore(prev); nr.collapse(true);
-						sel.removeAllRanges(); sel.addRange(nr); return;
-					}
+				const cn = r.startContainer, co = r.startOffset;
+				const goRight = e.key === 'ArrowRight';
+				const adj = cn.nodeType === Node.TEXT_NODE
+					? (goRight
+						? (co === cn.textContent.length ? cn.nextSibling : null)
+						: (co === 0 ? cn.previousSibling : null))
+					: (goRight
+						? (cn.childNodes[co] ?? null)
+						: (co > 0 ? cn.childNodes[co - 1] : null));
+				const outer = getEkOutermost(adj);
+				if (outer) {
+					e.preventDefault();
+					const nr = document.createRange();
+					if (goRight) nr.setStartAfter(outer); else nr.setStartBefore(outer);
+					nr.collapse(true);
+					sel.removeAllRanges(); sel.addRange(nr); return;
 				}
 			}
 		}
@@ -1647,6 +2226,22 @@
 <svelte:head><title>#{data.channelId} — eating.computer</title></svelte:head>
 <canvas bind:this={heartsCanvas} class="hearts-canvas"></canvas>
 
+{#if emojiTooltip}
+	<div class="emoji-tooltip" style="--tip-x: {emojiTooltip.left}px; --tip-y: {emojiTooltip.anchorY}px">
+		{#if emojiTooltip.type === 'ek'}
+			{#if emojiTooltip.url}<img class="et-img" src={emojiTooltip.url} alt="" />{/if}
+			<div class="et-ek-mix">
+				<span class="et-mix-char">{emojiTooltip.parentChar}</span>
+				<span class="et-mix-plus">+</span>
+				<span class="et-mix-char">{emojiTooltip.childChar}</span>
+			</div>
+		{:else if emojiTooltip.type === 'ce'}
+			<img class="et-img" src={emojiTooltip.url} alt={emojiTooltip.shortcode} />
+			<span class="et-shortcode">:{emojiTooltip.shortcode}:</span>
+		{/if}
+	</div>
+{/if}
+
 <div class="chat-header">
 	<button class="sidebar-toggle" onclick={openSidebar} aria-label="Open menu">
 		<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
@@ -1654,7 +2249,7 @@
 	<h1># {data.channelId}</h1>
 </div>
 
-<div class="message-list" bind:this={listEl} style:padding-bottom="{inputAreaHeight}px" onscroll={onListScroll} oncopy={onMsgListCopy}>
+<div class="message-list" bind:this={listEl} style:padding-bottom="{inputAreaHeight}px" onscroll={onListScroll} oncopy={onMsgListCopy} onmouseover={onMsgListMouseover} onmousemove={onMsgListMousemove} onmouseleave={onMsgListMouseleave}>
 	{#if messages.length === 0}
 		<p class="empty">No messages yet. Say something!</p>
 	{/if}
@@ -1677,11 +2272,17 @@
 			<div class="bubble-row">
 				{#if msg.attachment}
 					{#if msg.attachment.mimetype?.startsWith('image/')}
-						<a href={msg.attachment.url} target="_blank" rel="noopener noreferrer" class="bubble bubble-img" class:pending={msg.pending}>
-							<img src={msg.attachment.url} alt={msg.attachment.filename} onload={scrollIfNearBottom} />
-						</a>
+						{#if msg.attachment.isReaction}
+							<div class="bubble bubble-img bubble-reaction-img">
+								<img src={msg.attachment.url} alt={msg.attachment.filename} onload={scrollIfNearBottom} />
+							</div>
+						{:else}
+							<a href={msg.attachment.url} target="_blank" rel="noopener noreferrer" class="bubble bubble-img">
+								<img src={msg.attachment.url} alt={msg.attachment.filename} onload={scrollIfNearBottom} />
+							</a>
+						{/if}
 					{:else if msg.attachment.mimetype?.startsWith('video/')}
-						<div class="bubble bubble-video" class:pending={msg.pending}>
+						<div class="bubble bubble-video" >
 							<video src={msg.attachment.url} controls preload="metadata" class="att-video" onloadedmetadata={scrollIfNearBottom}></video>
 							<div class="att-info att-info-video">
 								<span class="att-name">{msg.attachment.filename}</span>
@@ -1689,7 +2290,7 @@
 							</div>
 						</div>
 					{:else}
-						<a href={msg.attachment.url} target="_blank" rel="noopener noreferrer" class="bubble bubble-file" class:pending={msg.pending} class:mine={isMine}>
+						<a href={msg.attachment.url} target="_blank" rel="noopener noreferrer" class="bubble bubble-file"  class:mine={isMine}>
 							<FileTypeIcon filename={msg.attachment.filename} mimetype={msg.attachment.mimetype} iconSize={36} />
 							<div class="att-info">
 								<span class="att-name">{msg.attachment.filename}</span>
@@ -1710,7 +2311,7 @@
 				{:else}
 					{#key replayCounts[msg.id]}
 					<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-					<p class="bubble" class:pending={msg.pending} class:fx-rainbow={msg.fx === 'rainbow'} class:fx-hearts={msg.fx === 'hearts'} class:fx-slam={msg.fx === 'slam'} class:fx-loud={msg.fx === 'loud'} class:fx-gentle={msg.fx === 'gentle'} class:fx-invisible={msg.fx === 'invisible'} class:fx-shake={msg.fx === 'shake'} class:fx-bounce={msg.fx === 'bounce'} class:fx-wave={msg.fx === 'wave'} class:fx-jitter={msg.fx === 'jitter'} class:fx-big={msg.fx === 'big'} class:fx-small={msg.fx === 'small'} class:revealed={revealedInvisible.has(msg.id)} class:jumbo-emoji={jumboEmojiCountM(msg.content) > 0 && !msg.replyTo} class:has-reply={!!msg.replyTo} style:font-size={bubbleFontSize(msg.content, msg.fontSize)} style:font-weight={msg.fontWeight && msg.fontWeight !== 400 ? msg.fontWeight : null} style:font-stretch={msg.fontStretch && msg.fontStretch !== 100 ? `${msg.fontStretch}%` : null} data-font-size={msg.fontSize && msg.fontSize !== 1 ? msg.fontSize : null} data-font-weight={msg.fontWeight && msg.fontWeight !== 400 ? msg.fontWeight : null} data-font-stretch={msg.fontStretch && msg.fontStretch !== 100 ? msg.fontStretch : null} onclick={msg.fx === 'invisible' && !revealedInvisible.has(msg.id) ? () => revealInvisible(msg.id) : undefined}>{#if msg.replyTo}{@const _rp = stripMarkup(msg.replyTo.content)}{@const _rj = jumboEmojiCountM(_rp)}<button class="reply-quote" onclick={(e) => { e.stopPropagation(); scrollToMessage(msg.replyTo.id); }}><span class="reply-author">{msg.replyTo.userName}</span><span class="reply-text" class:jumbo-reply={_rj > 0} style:font-size={_rj > 0 ? JUMBO_SIZES[_rj - 1] : null}>{@html contentHtmlM(msg.replyTo.content)}</span></button>{/if}{@html contentHtmlM(msg.content, !msg.noSplit)}{#if msg.edited}<span class="edited-tag"> (edited)</span>{/if}</p>
+					<p class="bubble"  class:fx-rainbow={msg.fx === 'rainbow'} class:fx-rainbow-fill={msg.fx === 'rainbow-fill'} class:fx-hearts={msg.fx === 'hearts'} class:fx-slam={msg.fx === 'slam'} class:fx-loud={msg.fx === 'loud'} class:fx-gentle={msg.fx === 'gentle'} class:fx-invisible={msg.fx === 'invisible'} class:fx-shake={msg.fx === 'shake'} class:fx-bounce={msg.fx === 'bounce'} class:fx-wave={msg.fx === 'wave'} class:fx-jitter={msg.fx === 'jitter'} class:fx-big={msg.fx === 'big'} class:fx-small={msg.fx === 'small'} class:revealed={revealedInvisible.has(msg.id)} class:jumbo-emoji={jumboEmojiCountM(msg.content) > 0 && !msg.replyTo} class:has-reply={!!msg.replyTo} style:font-size={bubbleFontSize(msg.content, msg.fontSize)} style:font-weight={msg.fontWeight && msg.fontWeight !== 400 ? msg.fontWeight : null} style:font-stretch={msg.fontStretch && msg.fontStretch !== 100 ? `${msg.fontStretch}%` : null} data-font-size={msg.fontSize && msg.fontSize !== 1 ? msg.fontSize : null} data-font-weight={msg.fontWeight && msg.fontWeight !== 400 ? msg.fontWeight : null} data-font-stretch={msg.fontStretch && msg.fontStretch !== 100 ? msg.fontStretch : null} onclick={msg.fx === 'invisible' && !revealedInvisible.has(msg.id) ? () => revealInvisible(msg.id) : undefined}>{#if msg.replyTo}{@const _rp = stripMarkup(msg.replyTo.content)}{@const _rj = jumboEmojiCountM(_rp)}<button class="reply-quote" onclick={(e) => { e.stopPropagation(); scrollToMessage(msg.replyTo.id); }}><span class="reply-author">{msg.replyTo.userName}</span><span class="reply-text" class:jumbo-reply={_rj > 0} style:font-size={_rj > 0 ? JUMBO_SIZES[_rj - 1] : null}>{@html contentHtmlM(msg.replyTo.content)}</span></button>{/if}{@html contentHtmlM(msg.content, !msg.noSplit)}{#if msg.edited}<span class="edited-tag"> (edited)</span>{/if}</p>
 					{/key}
 				{/if}
 				{#if !msg.pending}
@@ -1754,6 +2355,9 @@
 				</div>
 				{/if}
 			</div>
+			{#if msg.pending && slowPendingIds.has(msg.id)}
+				<div class="msg-sending-indicator" class:mine={isMine}><span class="sending-spinner"></span></div>
+			{/if}
 			{#if ['slam', 'loud', 'gentle'].includes(msg.fx) && !msg.pending}
 				<button class="fx-replay" class:mine={isMine} onclick={() => replayEffect(msg.id)}>↺ Replay</button>
 			{/if}
@@ -1829,11 +2433,20 @@
 			{#if SCREEN_FXS.some(f => f.name === messageEffect)}
 				<span class="preview-screen-label">{SCREEN_FXS.find(f => f.name === messageEffect).icon} {SCREEN_FXS.find(f => f.name === messageEffect).label} effect</span>
 			{:else}
-				<p class="bubble" class:fx-rainbow={messageEffect === 'rainbow'} class:fx-hearts={messageEffect === 'hearts'} class:fx-slam={messageEffect === 'slam'} class:fx-loud={messageEffect === 'loud'} class:fx-gentle={messageEffect === 'gentle'} class:fx-invisible={messageEffect === 'invisible'}>{@html contentHtml(input, fxSplitWords)}</p>
+				<p class="bubble" class:fx-rainbow={messageEffect === 'rainbow'} class:fx-rainbow-fill={messageEffect === 'rainbow-fill'} class:fx-hearts={messageEffect === 'hearts'} class:fx-slam={messageEffect === 'slam'} class:fx-loud={messageEffect === 'loud'} class:fx-gentle={messageEffect === 'gentle'} class:fx-invisible={messageEffect === 'invisible'}>{@html contentHtml(input, fxSplitWords)}</p>
 			{/if}
 		</div>
 	{/if}
-	{#if emojiSuggestions.length > 0}
+	{#if ceSuggestions.length > 0}
+		<div class="emoji-suggestions ce-shortcode-suggestions">
+			{#each ceSuggestions as s (s.shortcode)}
+				<button class="emoji-sugg-btn ce-sugg-btn" onmousedown={(e) => { e.preventDefault(); resolveColonShortcode(s.shortcode); }} title={':' + s.shortcode + ':'}>
+					<img src={s.url} alt={':' + s.shortcode + ':'} class="ce-sugg-img" />
+					<span class="ce-sugg-sc">{s.shortcode}</span>
+				</button>
+			{/each}
+		</div>
+	{:else if emojiSuggestions.length > 0}
 		<div class="emoji-suggestions">
 			{#each emojiSuggestions as s (s.cp)}
 				<button class="emoji-sugg-btn" onmousedown={(e) => { e.preventDefault(); insertEmoji(s.e); }} title={s.cp}>{s.e}</button>
@@ -1905,6 +2518,25 @@
 				</div>
 			{/if}
 		</div>
+		<div class="compose-custom-emoji-wrap">
+			<button class="btn-kitchen btn-custom-emoji" class:active={showCustomEmoji} title="Custom Emoji & Reactions" onclick={() => showCustomEmoji = !showCustomEmoji}>
+				<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<circle cx="12" cy="12" r="10"/>
+					<path d="M8 14s1.5 2 4 2 4-2 4-2"/>
+					<line x1="9" y1="9" x2="9.01" y2="9" stroke-width="3"/>
+					<line x1="15" y1="9" x2="15.01" y2="9" stroke-width="3"/>
+					<path d="M16 3.5C16 3.5 20 5 20 8" stroke-width="1.5"/>
+					<circle cx="20" cy="4" r="2" fill="currentColor" stroke="none"/>
+				</svg>
+			</button>
+			{#if showCustomEmoji}
+				<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+				<div class="compose-picker-backdrop" onclick={() => showCustomEmoji = false}></div>
+				<div class="compose-kitchen-pop">
+					<CustomEmojiPanel onInsertEmoji={onCustomEmojiInsert} onInsertReaction={onReactionInsert} />
+				</div>
+			{/if}
+		</div>
 		<div class="compose-wrap">
 			<!-- svelte-ignore a11y_interactive_supports_focus -->
 			<div
@@ -1923,9 +2555,9 @@
 				oncopy={onCeCopy}
 				onpaste={onCePaste}
 				data-placeholder="Message #{data.channelId}"
-				style:font-size={messageFontSize !== 1.0 ? `${(messageFontSize * 0.9).toFixed(2)}rem` : (jumboInput > 0 ? JUMBO_SIZES[jumboInput - 1] : null)}
-				style:font-weight={messageFontWeight !== 400 ? messageFontWeight : null}
-				style:font-stretch={messageFontStretch !== 100 ? `${messageFontStretch}%` : null}
+				style:font-size={(messageFontSize !== 1.0 && !_savedCeSel) ? `${(messageFontSize * 0.9).toFixed(2)}rem` : (jumboInput > 0 ? JUMBO_SIZES[jumboInput - 1] : null)}
+				style:font-weight={(messageFontWeight !== 400 && !_savedCeSel) ? messageFontWeight : null}
+				style:font-stretch={(messageFontStretch !== 100 && !_savedCeSel) ? `${messageFontStretch}%` : null}
 			></div>
 			<div class="compose-fmt-row">
 				<button class="btn-fmt btn-fmt-bold" onmousedown={(e) => { e.preventDefault(); applyTextFx('bold'); }} title="Bold (⌘B)"><b>B</b></button>
@@ -1961,22 +2593,42 @@
 						<div class="typo-row">
 							<span class="typo-label">Size</span>
 							<input class="typo-range" type="range" min="0.55" max="5" step="0.05"
-								value={messageFontSize}
-								oninput={(e) => messageFontSize = parseFloat(e.target.value)} />
+								bind:value={messageFontSize}
+								oninput={() => {
+									if (_savedCeSel) {
+										applyInlineSize(messageFontSize);
+									} else {
+										_lastInlineTypo['sz-'] = null;
+									}
+								}} />
 							<span class="typo-val">{getSizeLabel(messageFontSize)}</span>
 							{#if messageFontSize !== 1.0}<button class="typo-reset" onmousedown={(e) => { e.preventDefault(); messageFontSize = 1.0; }}>↺</button>{/if}
 						</div>
 						<div class="typo-row">
 							<span class="typo-label">Weight</span>
 							<input class="typo-range" type="range" min="100" max="700" step="50"
-								bind:value={messageFontWeight} />
+								bind:value={messageFontWeight}
+								oninput={() => {
+									if (_savedCeSel) {
+										applyInlineWeight(messageFontWeight);
+									} else {
+										_lastInlineTypo['wght-'] = null;
+									}
+								}} />
 							<span class="typo-val">{messageFontWeight <= 150 ? 'Thin' : messageFontWeight <= 300 ? 'Light' : messageFontWeight <= 450 ? 'Regular' : messageFontWeight <= 600 ? 'Bold' : 'Black'}</span>
 							{#if messageFontWeight !== 400}<button class="typo-reset" onmousedown={(e) => { e.preventDefault(); messageFontWeight = 400; }}>↺</button>{/if}
 						</div>
 						<div class="typo-row">
 							<span class="typo-label">Width</span>
 							<input class="typo-range" type="range" min="25" max="150" step="1"
-								bind:value={messageFontStretch} />
+								bind:value={messageFontStretch}
+								oninput={() => {
+									if (_savedCeSel) {
+										applyInlineWidth(messageFontStretch);
+									} else {
+										_lastInlineTypo['wdth-'] = null;
+									}
+								}} />
 							<span class="typo-val">{messageFontStretch < 50 ? 'Ultra Cond.' : messageFontStretch < 75 ? 'Condensed' : messageFontStretch <= 95 ? 'Narrow' : messageFontStretch <= 105 ? 'Normal' : messageFontStretch <= 120 ? 'Wide' : 'Extended'}</span>
 							{#if messageFontStretch !== 100}<button class="typo-reset" onmousedown={(e) => { e.preventDefault(); messageFontStretch = 100; }}>↺</button>{/if}
 						</div>
@@ -2040,7 +2692,7 @@
 	}
 	.sidebar-toggle:active { background: rgba(0,0,0,0.06); }
 	.message-list {
-		flex: 1; overflow-y: auto; padding: 1rem 1.5rem;
+		flex: 1; overflow-y: auto; overflow-x: clip; padding: 1rem 1.5rem;
 		display: flex; flex-direction: column; gap: 0.15rem;
 		scrollbar-width: none;
 		overscroll-behavior: contain;
@@ -2187,7 +2839,10 @@
 	.message.mine .bubble { background: var(--ink); color: var(--paper); border-color: var(--ink); }
 	.message.starred:not(.mine) .bubble { background: #fff8e6; border-color: #e6cc70; }
 	.message.starred.mine .bubble { border-color: #c8900f; }
-	.bubble.pending { opacity: 0.6; }
+	.msg-sending-indicator { position: absolute; bottom: -14px; left: 4px; }
+	.msg-sending-indicator.mine { left: auto; right: 4px; }
+	.sending-spinner { display: block; width: 10px; height: 10px; border: 1.5px solid currentColor; border-top-color: transparent; border-radius: 50%; animation: spin 0.7s linear infinite; opacity: 0.35; }
+	@keyframes spin { to { transform: rotate(360deg); } }
 	.bubble.jumbo-emoji { background: transparent !important; border-color: transparent !important; box-shadow: none !important; padding: 0.1rem 0.4rem; line-height: 1.15; }
 
 	/* Attachment bubbles */
@@ -2195,6 +2850,7 @@
 		padding: 0; overflow: hidden; display: block; max-width: 260px; border-radius: 14px;
 		text-decoration: none; background: transparent !important; border-color: transparent !important;
 	}
+	.bubble-reaction-img { border-radius: 0 !important; }
 	.bubble-img img {
 		display: block; max-width: 260px; max-height: 320px;
 		width: 100%; height: auto; object-fit: cover;
@@ -2232,21 +2888,23 @@
 	.reaction-tooltip {
 		display: none;
 		position: absolute;
-		bottom: calc(100% + 8px);
+		top: calc(100% + 6px);
 		left: 50%; transform: translateX(-50%);
 		min-width: max-content;
-		background: #1a1a1a; color: #f7f2ea;
+		background: var(--paper, #f7f2ea); color: var(--ink);
+		border: 1.5px solid #ddd7cc;
 		border-radius: 10px; padding: 0.5rem 0.75rem;
 		font-size: 0.78rem; white-space: nowrap;
 		z-index: 30; pointer-events: none;
 		flex-direction: row; align-items: center; gap: 0.55rem;
-		box-shadow: 0 4px 14px rgba(0,0,0,0.3);
+		box-shadow: 0 4px 18px rgba(0,0,0,0.13), 0 1.5px 4px rgba(0,0,0,0.07);
+		font-family: 'Google Sans Flex', 'Space Grotesk', sans-serif;
 	}
 	.reaction-chip:hover .reaction-tooltip { display: flex; }
 	.reaction-tooltip-emoji { font-size: 2rem; line-height: 1; flex-shrink: 0; }
 	.reaction-tooltip-text { display: flex; flex-direction: column; gap: 0.15rem; }
 	.reaction-tooltip-names { font-weight: 600; font-size: 0.78rem; }
-	.reaction-tooltip-label { font-size: 0.7rem; opacity: 0.7; }
+	.reaction-tooltip-label { font-size: 0.7rem; opacity: 0.6; }
 
 	/* Emoji picker */
 	.picker-overlay { position: fixed; inset: 0; z-index: 40; }
@@ -2352,8 +3010,12 @@
 		border-radius: 3px;
 		box-shadow: 0 0 0 3px rgba(74, 158, 255, 0.25);
 	}
+	:global(.ce-img) { height: 1em; width: 1em; vertical-align: -0.2em; object-fit: contain; }
+	:global(.ce-img-ce) { cursor: default; }
+	:global(.ce-img-ce.ek-selected) { outline: 2px solid #4a9eff; border-radius: 3px; box-shadow: 0 0 0 3px rgba(74,158,255,0.25); }
 
 	.compose-kitchen-wrap { position: relative; flex-shrink: 0; }
+	.compose-custom-emoji-wrap { position: relative; flex-shrink: 0; }
 	.btn-kitchen {
 		display: flex; align-items: center; justify-content: center;
 		width: 36px; height: 36px;
@@ -2534,6 +3196,16 @@
 		            conic-gradient(from var(--rwb), #ff6b6b, #ffd93d, #6bcb77, #4d96ff, #c77dff, #ff6b6b) border-box !important;
 	}
 
+	/* Rainbow fill effect */
+	.bubble.fx-rainbow-fill {
+		background: linear-gradient(var(--rwb), #ff6b6b, #ffd93d, #6bcb77, #4d96ff, #c77dff, #ff6b6b) !important;
+		border-color: transparent !important;
+		color: #fff !important;
+		font-weight: 700 !important;
+		text-shadow: 0 1px 3px rgba(0,0,0,0.28);
+		animation: rwb-spin 4s linear infinite;
+	}
+
 	/* Replay button */
 	.fx-replay {
 		background: none; border: none; font-size: 0.72rem; color: #a09688;
@@ -2575,6 +3247,10 @@
 		font-family: 'Google Sans Flex', 'Space Grotesk', sans-serif, 'Noto Color Emoji';
 	}
 	.emoji-sugg-btn:hover { background: #f0ece6; }
+	.ce-shortcode-suggestions { gap: 0.3rem; }
+	.ce-sugg-btn { display: flex; align-items: center; gap: 0.3rem; padding: 0.2rem 0.45rem; font-size: 0.78rem; }
+	.ce-sugg-img { width: 22px; height: 22px; object-fit: contain; flex-shrink: 0; }
+	.ce-sugg-sc { color: var(--ink); font-family: inherit; font-size: 0.78rem; white-space: nowrap; }
 	.text-fx-bar {
 		display: flex; align-items: center; gap: 0.3rem;
 		padding: 0.35rem 1.5rem; background: var(--paper); border-top: 1px solid #ddd7cc;
@@ -2698,5 +3374,66 @@
 	:global(html:not(.noto-emoji)) .compose-ce,
 	:global(html:not(.noto-emoji)) .emoji-sugg-btn {
 		font-family: 'Google Sans Flex', 'Space Grotesk', sans-serif;
+	}
+
+	/* Emoji/EK/CE hover tooltip */
+	.emoji-tooltip {
+		position: fixed;
+		z-index: 9999;
+		pointer-events: none;
+		width: 160px;
+		left: var(--tip-x, 8px);
+		top: var(--tip-y, 0px);
+		transform: translateY(10px);
+		border-radius: 10px;
+		background: var(--paper, #f7f2ea);
+		border: 1.5px solid #ddd7cc;
+		box-shadow: 0 4px 18px rgba(0,0,0,0.13), 0 1.5px 4px rgba(0,0,0,0.07);
+		padding: 0.55rem 0.75rem 0.45rem;
+		display: flex; flex-direction: column; align-items: center; gap: 0.25rem;
+		font-family: 'Google Sans Flex', 'Space Grotesk', sans-serif;
+		animation: et-pop 0.12s cubic-bezier(0.2, 1.2, 0.4, 1) both;
+	}
+	@keyframes et-pop { from { opacity: 0; transform: translateY(4px) scale(0.88); } to { opacity: 1; transform: translateY(10px) scale(1); } }
+	.et-img { width: 64px; height: 64px; object-fit: contain; }
+	.et-ek-mix { display: flex; align-items: center; gap: 0.3rem; font-size: 1.4rem; line-height: 1; }
+	.et-mix-char { font-family: 'Google Sans Flex', 'Space Grotesk', sans-serif, 'Noto Color Emoji'; }
+	.et-mix-plus { font-size: 0.85rem; color: #a09688; }
+	.et-name {
+		font-size: 0.72rem; color: #6b5f54; text-align: center; line-height: 1.3;
+		text-transform: capitalize; max-width: 160px;
+	}
+	.et-shortcode { font-size: 0.75rem; color: #6b5f54; font-family: monospace; }
+
+	/* CSS-only inline emoji tooltip */
+	:global(.e-tip) {
+		position: relative;
+		display: inline;
+	}
+	:global(.e-tip-pop) {
+		display: none;
+		position: fixed;
+		left: 0;
+		top: 0;
+		width: 160px;
+		z-index: 9999;
+		pointer-events: none;
+		border-radius: 10px;
+		flex-direction: column; align-items: center; gap: 0.25rem;
+		background: var(--paper, #f7f2ea);
+		border: 1.5px solid #ddd7cc;
+		box-shadow: 0 4px 18px rgba(0,0,0,0.13), 0 1.5px 4px rgba(0,0,0,0.07);
+		padding: 0.55rem 0.75rem 0.45rem;
+		font-family: 'Google Sans Flex', 'Space Grotesk', sans-serif;
+		animation: et-pop 0.12s cubic-bezier(0.2, 1.2, 0.4, 1) both;
+	}
+	:global(.e-tip:hover .e-tip-pop) { display: flex; }
+	:global(.e-tip-char) {
+		font-size: 2.6rem; line-height: 1.1;
+		font-family: 'Google Sans Flex', 'Space Grotesk', sans-serif, 'Noto Color Emoji';
+	}
+	:global(.e-tip-name) {
+		font-size: 0.72rem; color: #6b5f54; text-align: center; line-height: 1.3;
+		text-transform: capitalize; word-break: break-word;
 	}
 </style>

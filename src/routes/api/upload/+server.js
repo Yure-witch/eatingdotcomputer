@@ -4,6 +4,7 @@ import { uploadToR2 } from '$lib/server/r2.js';
 import { getDb } from '$lib/server/turso.js';
 import { requireClassAccess } from '$lib/server/access.js';
 import { cleanupStaleUploads } from '$lib/server/cleanup-uploads.js';
+import { toWebp } from '$lib/server/media.js';
 
 const MAX_BYTES = 25 * 1024 * 1024; // 25 MB
 
@@ -22,13 +23,30 @@ export async function POST({ request, locals }) {
 	if (!contextId) error(400, 'Missing contextId');
 	if (file.size > MAX_BYTES) error(413, 'File too large (max 25 MB)');
 
-	const ext = file.name.split('.').pop() ?? '';
 	const id = crypto.randomUUID();
-	const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+	let buffer = Buffer.from(await file.arrayBuffer());
+	let mimetype = file.type || 'application/octet-stream';
+	let filename = file.name;
+
+	if (mimetype.startsWith('image/')) {
+		// Convert all images to WebP for consistency and size reduction
+		try {
+			const converted = await toWebp(buffer);
+			buffer = converted.buffer;
+			mimetype = converted.mimetype;
+			// Replace the file extension with .webp
+			filename = filename.replace(/\.[^.]+$/, '') + '.' + converted.ext;
+		} catch (convErr) {
+			console.warn('WebP conversion failed, uploading original', convErr);
+		}
+	} else if (mimetype.startsWith('video/')) {
+		// TODO: transcode video to WebM/H.264 — skipped for now (FFmpeg is too large for Vercel serverless)
+	}
+
+	const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
 	const key = `uploads/${id}-${safeName}`;
 
-	const buffer = Buffer.from(await file.arrayBuffer());
-	await uploadToR2(key, buffer, file.type || 'application/octet-stream');
+	await uploadToR2(key, buffer, mimetype);
 
 	const publicBase = (env.R2_PUBLIC_BASE_URL ?? env.PUBLIC_R2_PUBLIC_BASE_URL ?? '').replace(/\/$/, '');
 	if (!publicBase) error(503, 'Storage public URL not configured');
@@ -41,9 +59,9 @@ export async function POST({ request, locals }) {
 			      VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, 0)`,
 			args: [
 				id, url, key,
-				file.name,
-				file.type || 'application/octet-stream',
-				file.size,
+				filename,
+				mimetype,
+				buffer.length,
 				session.user.id,
 				session.user.name || session.user.email,
 				contextType, contextId, classId
@@ -53,5 +71,5 @@ export async function POST({ request, locals }) {
 		cleanupStaleUploads(db).catch(() => {});
 	}
 
-	return json({ id, url, filename: file.name, size: file.size, mimetype: file.type });
+	return json({ id, url, filename, size: buffer.length, mimetype });
 }
