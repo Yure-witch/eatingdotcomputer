@@ -51,8 +51,8 @@
 <div class="shell">
 	<header>
 		<div class="wordmark-wrap">
-			<a class="wordmark" href="/app">eating.computer</a>
-			<ClassSwitcher {data} />
+			<a class="wordmark" href="/">eating.computer</a>
+			<ClassSwitcher currentClass={data.currentClass} allClasses={data.allClasses} />
 		</div>
 	</header>
 
@@ -169,21 +169,20 @@
 	header {
 		display: flex;
 		align-items: center;
-		justify-content: space-between;
-		gap: 1rem;
-		padding: 1rem 1.5rem;
+		gap: 2rem;
+		padding: 1rem 2rem;
 		border-bottom: 1.5px solid #ddd7cc;
 		flex-shrink: 0;
 	}
 	.wordmark-wrap {
 		display: flex;
-		align-items: center;
-		gap: 0.75rem;
-		min-width: 0;
+		flex-direction: column;
+		gap: 0.1rem;
+		flex-shrink: 0;
 	}
 	.wordmark {
 		font-family: 'Avara', serif;
-		font-size: 1.1rem;
+		font-size: 1.25rem;
 		color: var(--ink);
 		text-decoration: none;
 		white-space: nowrap;

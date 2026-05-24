@@ -1,6 +1,6 @@
 <script>
 	import { enhance } from '$app/forms';
-	import ClassSwitcher from '$lib/components/ClassSwitcher.svelte';
+	import AppHeader from '$lib/components/AppHeader.svelte';
 	import SyllabusBuilder from '$lib/components/SyllabusBuilder.svelte';
 	import { onMount, onDestroy, getContext } from 'svelte';
 	import { invalidateAll } from '$app/navigation';
@@ -310,13 +310,7 @@
 </svelte:head>
 
 <div class="shell">
-	<header>
-		<div class="wordmark-wrap">
-			<a class="wordmark" href="/">eating.computer</a>
-			<ClassSwitcher currentClass={data.currentClass} allClasses={data.allClasses} />
-		</div>
-
-	</header>
+	<AppHeader currentClass={data.currentClass} allClasses={data.allClasses} user={data.currentUser ?? null} />
 
 	<main style:margin-left={syllabusPreviewOpen ? '0px' : null}>
 		<div class="page-header">
@@ -736,6 +730,37 @@
 		{/if}
 	</section>
 
+	<section class="members-section">
+		<h2>Last online</h2>
+		<div class="last-online-list">
+			{#each data.members.slice().sort((a, b) => (b.lastSeen ?? 0) - (a.lastSeen ?? 0)) as m}
+				<div class="last-online-row">
+					<span class="last-online-dot" class:online={m.online}></span>
+					<span class="last-online-name">{m.name}</span>
+					<span class="last-online-time">
+						{#if m.online}
+							Online now
+						{:else if m.lastSeen}
+							{(() => {
+								const diff = Date.now() - m.lastSeen;
+								const mins = Math.floor(diff / 60000);
+								if (mins < 1) return 'Just now';
+								if (mins < 60) return `${mins}m ago`;
+								const hrs = Math.floor(mins / 60);
+								if (hrs < 24) return `${hrs}h ago`;
+								const days = Math.floor(hrs / 24);
+								if (days < 30) return `${days}d ago`;
+								return new Date(m.lastSeen).toLocaleDateString();
+							})()}
+						{:else}
+							Never
+						{/if}
+					</span>
+				</div>
+			{/each}
+		</div>
+	</section>
+
 		{/if}
 
 		{#if activeTab === 'members'}
@@ -822,36 +847,9 @@
 		background: var(--paper);
 	}
 
-	header {
-		display: flex;
-		align-items: center;
-		gap: 2rem;
-		padding: 1rem 2rem;
-		border-bottom: 1.5px solid #ddd7cc;
-	}
-
-	.wordmark-wrap {
-		display: flex;
-		flex-direction: column;
-		gap: 0.1rem;
-		flex-shrink: 0;
-	}
-
-	.wordmark {
-		font-family: 'Avara', serif;
-		font-size: 1.25rem;
-		color: var(--ink);
-		text-decoration: none;
-	}
-	.wordmark:hover { opacity: 0.7; }
-
-
-	nav { display: flex; gap: 1.25rem; font-size: 0.875rem; }
-	nav a { color: #a09688; text-decoration: none; font-weight: 500; }
-	nav a:hover, nav a.active { color: var(--ink); }
-
 	main {
 		padding: 2rem;
+		padding-top: calc(2rem + 52px);
 		max-width: 860px;
 		width: 100%;
 		margin: 0 auto;
@@ -1209,6 +1207,13 @@
 	.members-section { margin-top: 2.5rem; }
 	.members-section h2 { font-family: 'Avara', serif; font-size: 1.25rem; font-weight: 400; margin: 0; }
 
+	.last-online-list { display: flex; flex-direction: column; gap: 0.35rem; margin-top: 0.75rem; }
+	.last-online-row { display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; }
+	.last-online-dot { width: 8px; height: 8px; border-radius: 50%; background: #ccc; flex-shrink: 0; }
+	.last-online-dot.online { background: #27ae60; }
+	.last-online-name { font-weight: 500; color: var(--ink); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.last-online-time { margin-left: auto; color: #a09688; font-size: 0.78rem; white-space: nowrap; }
+
 	.chart-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 0.75rem; flex-wrap: wrap; }
 
 	.range-tabs { display: flex; gap: 2px; }
@@ -1340,14 +1345,6 @@
 	}
 
 	@media (max-width: 640px) {
-		header {
-			flex-wrap: wrap;
-			padding: 0.75rem 1rem;
-			gap: 0.4rem 1.5rem;
-			align-items: flex-start;
-		}
-		nav { font-size: 0.8rem; gap: 0.75rem; }
-
 		main { padding: 1.25rem 1rem; padding-bottom: calc(56px + env(safe-area-inset-bottom, 0px) + 1.25rem); }
 		h1 { font-size: 1.4rem; }
 		.subtitle { font-size: 0.8rem; }

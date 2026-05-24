@@ -4,7 +4,8 @@
 	import { enhance } from '$app/forms';
 	import { invalidateAll } from '$app/navigation';
 	import { subscribeToPush, unsubscribeFromPush, isPushSubscribed } from '$lib/push.js';
-	import ClassSwitcher from '$lib/components/ClassSwitcher.svelte';
+	import AppHeader from '$lib/components/AppHeader.svelte';
+	import FileTypeIcon from '$lib/components/FileTypeIcon.svelte';
 
 	let { data, form } = $props();
 	const user = data.session.user;
@@ -18,41 +19,31 @@
 	let notifPermission = $state('default');
 	let installPrompt = $state(null);
 	let isStandalone = $state(false);
-	let isMobile = $state(false);   // on a phone/tablet (regardless of PWA)
-	let isIOS = $state(false);      // iOS device in browser (not standalone)
+	let isMobile = $state(false);
+	let isIOS = $state(false);
 	let isAndroid = $state(false);
 
-	// PWA notification gate — shown once on first PWA launch
-	let notifOnboarded = $state(true); // default true to avoid flash; set properly in onMount
+	let notifOnboarded = $state(true);
 	let gateLoading = $state(false);
 
 	onMount(async () => {
 		if (!browser) return;
-
-		// Auto-refresh so new assignments appear without a manual reload
 		const refreshTimer = setInterval(() => invalidateAll(), 30_000);
-
 		isStandalone = window.matchMedia('(display-mode: standalone)').matches || !!window.navigator.standalone;
 		const iosDevice = /iphone|ipad|ipod/i.test(navigator.userAgent);
 		const androidDevice = /android/i.test(navigator.userAgent);
 		isMobile = iosDevice || androidDevice;
 		isIOS = iosDevice && !isStandalone;
 		isAndroid = androidDevice && !isStandalone;
-
 		pushSupported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window && !(iosDevice && !isStandalone);
 		if (pushSupported) {
 			pushSubscribed = await isPushSubscribed();
 			notifPermission = Notification.permission;
 		}
-
-		// PWA gate: show if in standalone and user hasn't been through the flow yet
 		const onboarded = localStorage.getItem('pwa_notif_onboarded') === '1';
-		// Also consider already-granted/denied as onboarded
 		notifOnboarded = onboarded || !isStandalone || !pushSupported || notifPermission !== 'default';
-
 		window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installPrompt = e; });
 		window.addEventListener('appinstalled', () => { isStandalone = true; installPrompt = null; });
-
 		return () => clearInterval(refreshTimer);
 	});
 
@@ -82,7 +73,6 @@
 		if (result === 'granted') await togglePush();
 	}
 
-	// Gate actions
 	async function gateEnable() {
 		gateLoading = true;
 		await requestPermission();
@@ -96,47 +86,45 @@
 		notifOnboarded = true;
 	}
 
-	// ── Instructor: create form ──
-	let linkUrl = $state('');
-	let linkLabel = $state('');
-	let attachedLinks = $state([]);
-	let allowSubmissions = $state(false);
+	// ── Instructor: create form state ──
+	let items = $state([{ label: '', requiresSubmission: false, acceptedTypes: ['link'], resourceUrl: '', resourceLabel: '', resourceFile: null }]);
 
-	function addLink() {
-		if (!linkUrl.trim()) return;
-		try { new URL(linkUrl.trim()); } catch { return; }
-		attachedLinks = [...attachedLinks, { url: linkUrl.trim(), label: linkLabel.trim() }];
-		linkUrl = '';
-		linkLabel = '';
+	function addItem() {
+		items = [...items, { label: '', requiresSubmission: false, acceptedTypes: ['link'], resourceUrl: '', resourceLabel: '', resourceFile: null }];
 	}
 
-	function removeLink(i) {
-		attachedLinks = attachedLinks.filter((_, idx) => idx !== i);
+	function removeItem(i) {
+		items = items.filter((_, idx) => idx !== i);
+	}
+
+	function toggleItemType(i, type) {
+		const cur = items[i].acceptedTypes;
+		if (cur.includes(type)) {
+			items[i].acceptedTypes = cur.filter((t) => t !== type);
+			if (items[i].acceptedTypes.length === 0) items[i].acceptedTypes = ['link'];
+		} else {
+			items[i].acceptedTypes = [...cur, type];
+		}
+		items = [...items];
 	}
 
 	// ── Student: UI state ──
-	let showPrevious = $state(false);
-	let showNext = $state(false);
-	let submitting = $state(false);
+	let expandedItemId = $state(null);
 	let submitType = $state('');
-	let submitError = $state(form?.error ?? null);
 
-	$effect(() => { submitError = form?.error ?? null; });
+	// Optimistic completions (clone from server data)
+	let completions = $state({ ...data.completions });
 
 	function formatDate(iso) {
 		if (!iso) return null;
 		const d = new Date(iso + 'T00:00:00');
 		return d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
 	}
-
-	function getDomain(url) {
-		try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return url; }
-	}
 </script>
 
 <svelte:head><title>eating.computer</title></svelte:head>
 
-<!-- ── PWA notification gate (blocks app until dismissed) ── -->
+<!-- PWA notification gate -->
 {#if !notifOnboarded}
 	<div class="gate-overlay">
 		<div class="gate-card">
@@ -158,106 +146,149 @@
 {/if}
 
 <div class="shell">
-	<header>
-		<a class="wordmark" href="/">eating.computer</a>
-		<div class="header-sub">
-			<ClassSwitcher currentClass={data.currentClass} allClasses={data.allClasses} />
-			<div class="header-right">
-				<a href="/app/profile/{user.id}" class="hdr-link">{user.name || user.email}</a>
-				<form method="POST" action="?/signout">
-					<button type="submit" class="hdr-btn">Sign out</button>
-				</form>
-			</div>
-		</div>
-	</header>
+	<AppHeader currentClass={data.currentClass} allClasses={data.allClasses} user={user} />
 
 	<main>
 		{#if isInstructor}
 			<!-- ══════════════ INSTRUCTOR VIEW ══════════════ -->
-			<div class="page-header">
-				<h1>Create assignment</h1>
-				<p class="subtitle">Week {data.nextWeek}</p>
-			</div>
-
-			<form method="POST" action="?/create" class="create-form" use:enhance>
+			<form method="POST" action="?/createWeekPlan" enctype="multipart/form-data" class="create-form" use:enhance={() => {
+				return async ({ update }) => {
+					await update();
+					items = [{ label: '', requiresSubmission: false, acceptedTypes: ['link'], resourceUrl: '', resourceLabel: '', resourceFile: null }];
+				};
+			}}>
 				<input type="hidden" name="class_id" value={data.classId} />
-				<input type="hidden" name="week" value={data.nextWeek} />
+				<input type="hidden" name="week" value={data.nextWeekNumber} />
+
+				<p class="week-number">Week {data.nextWeekNumber}</p>
 
 				<div class="field">
-					<label for="title">Title</label>
-					<input id="title" name="title" type="text" placeholder="e.g. Project proposal" required />
+					<label for="headline">Headline</label>
+					<input id="headline" name="headline" type="text" class="headline-input" placeholder="e.g. Read Chapter 3 and sketch 2 concepts" required />
 				</div>
 
-				<div class="field-row">
-					<div class="field">
-						<label for="due_date">Due date</label>
-						<input id="due_date" name="due_date" type="date" />
+				<div class="field">
+					<label for="due_date">Due date</label>
+					<input id="due_date" name="due_date" type="date" />
+				</div>
+
+				<div class="field">
+					<label>Checklist items</label>
+					<div class="items-list">
+						{#each items as item, i}
+							<div class="item-row">
+								<div class="item-main">
+									<input type="text" name="item_label" bind:value={item.label} placeholder="e.g. Read the assigned article" class="item-input" />
+									<input type="hidden" name="item_requires_submission" value={item.requiresSubmission ? '1' : '0'} />
+									<label class="req-toggle">
+										<input type="checkbox" bind:checked={item.requiresSubmission} />
+										Requires submission
+									</label>
+									{#if items.length > 1}
+										<button type="button" class="remove-item" onclick={() => removeItem(i)}>×</button>
+									{/if}
+								</div>
+								<div class="item-resource">
+									{#if item.resourceFile}
+										<div class="resource-file-preview">
+											<FileTypeIcon filename={item.resourceFile.name} mimetype={item.resourceFile.type} iconSize={24} />
+											<span class="resource-file-name">{item.resourceFile.name}</span>
+											<button type="button" class="remove-item" onclick={() => { item.resourceFile = null; items = [...items]; }}>×</button>
+										</div>
+										<input type="hidden" name="item_resource_url" value="" />
+										<input type="hidden" name="item_resource_label" value="" />
+									{:else}
+										<input type="text" name="item_resource_url" bind:value={item.resourceUrl} placeholder="Attach a link (optional)" class="resource-input" />
+										{#if item.resourceUrl.trim()}
+											<input type="text" name="item_resource_label" bind:value={item.resourceLabel} placeholder="Label (optional)" class="resource-label-input" />
+										{:else}
+											<input type="hidden" name="item_resource_label" value="" />
+										{/if}
+										<label class="upload-btn" title="Upload a file">
+											<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+											<input type="file" name="item_resource_file_{i}" class="sr-only" onchange={(e) => { item.resourceFile = e.target.files[0] || null; items = [...items]; }} />
+										</label>
+									{/if}
+								</div>
+								{#if item.requiresSubmission}
+									<div class="item-types">
+										<span class="types-label">Accept:</span>
+										{#each ['link', 'text', 'image', 'video'] as t}
+											<label class="type-check">
+												<input type="checkbox" name="item_accepted_types_{i}" value={t} checked={item.acceptedTypes.includes(t)} onchange={() => toggleItemType(i, t)} />
+												{t.charAt(0).toUpperCase() + t.slice(1)}
+											</label>
+										{/each}
+									</div>
+								{/if}
+							</div>
+						{/each}
 					</div>
+					<button type="button" class="btn-add-item" onclick={addItem}>+ Add item</button>
 				</div>
 
 				<div class="field">
-					<label for="description">Description</label>
-					<textarea id="description" name="description" placeholder="Instructions, context, links to readings…" rows="5"></textarea>
+					<label for="topic_preview">Next week preview <span class="optional">(optional)</span></label>
+					<input id="topic_preview" name="topic_preview" type="text" placeholder="e.g. Introduction to Prototyping" />
 				</div>
 
-				<!-- Attached links -->
-				<div class="field">
-					<label>Attach links</label>
-					{#each attachedLinks as link, i}
-						<input type="hidden" name="link_url" value={link.url} />
-						<input type="hidden" name="link_label" value={link.label} />
-						<div class="link-chip-row">
-							<span class="link-chip-item">
-								{#if link.label}<strong>{link.label}</strong> — {/if}{getDomain(link.url)}
-							</span>
-							<button type="button" class="remove-link" onclick={() => removeLink(i)}>×</button>
-						</div>
-					{/each}
-					<div class="link-add-row">
-						<input
-							type="url"
-							bind:value={linkUrl}
-							placeholder="https://…"
-							class="link-url-input"
-							onkeydown={(e) => e.key === 'Enter' && (e.preventDefault(), addLink())}
-						/>
-						<input type="text" bind:value={linkLabel} placeholder="Label (optional)" class="link-label-input" />
-						<button type="button" class="btn-add-link" onclick={addLink}>Add</button>
-					</div>
-				</div>
-
-				<!-- Submissions -->
-				<div class="field">
-					<label>Submissions</label>
-					<label class="toggle-row">
-						<input type="checkbox" bind:checked={allowSubmissions} />
-						Students submit work for this assignment
-					</label>
-					{#if allowSubmissions}
-						<div class="sub-types">
-							<label class="check-label"><input type="checkbox" name="accepted_types" value="link" checked /> Link</label>
-							<label class="check-label"><input type="checkbox" name="accepted_types" value="image" /> Image</label>
-							<label class="check-label"><input type="checkbox" name="accepted_types" value="video" /> Video</label>
-						</div>
-					{/if}
-				</div>
-
-				{#if form?.error && form?.action === 'create'}
+				{#if form?.error && form?.action === 'createWeekPlan'}
 					<p class="form-error">{form.error}</p>
 				{/if}
 
-				<button type="submit" class="btn-primary">Publish assignment</button>
+				<button type="submit" class="btn-primary">Publish week</button>
 			</form>
 
-			{#if data.previous.length > 0}
-				<div class="prev-section">
-					<p class="section-label">Past assignments</p>
-					{#each data.previous as a}
-						<a href="/app/assignments" class="prev-item">
-							<span class="prev-week">Wk {a.week}</span>
-							<span class="prev-title">{a.title}</span>
-							{#if a.dueDate}<span class="prev-date">{formatDate(a.dueDate)}</span>{/if}
-						</a>
+			<!-- Current week preview for instructor -->
+			{#if data.currentPlan}
+				<div class="divider"></div>
+				<div class="current-preview">
+					<div class="week-meta">
+						<span class="week-tag">Week {data.currentPlan.week}</span>
+						{#if data.currentPlan.dueDate}
+							<span class="due-date">Due {formatDate(data.currentPlan.dueDate)}</span>
+						{/if}
+					</div>
+					<h2 class="preview-headline">{data.currentPlan.headline}</h2>
+					{#if data.currentPlan.items.length > 0}
+						<div class="preview-items">
+							{#each data.currentPlan.items as item}
+								<div class="preview-item">
+									<span class="preview-check">☐</span>
+									<span class="preview-label">{item.label}</span>
+									{#if item.resourceUrl}
+										<a href={item.resourceUrl} target="_blank" rel="noopener noreferrer" class="preview-resource">
+											{item.resourceLabel || '🔗'}
+										</a>
+									{/if}
+									{#if item.requiresSubmission}
+										<span class="preview-badge">submission</span>
+									{/if}
+									{#if data.progress[item.id] > 0}
+										<span class="preview-progress">{data.progress[item.id]} completed</span>
+									{/if}
+								</div>
+							{/each}
+						</div>
+					{/if}
+					<form method="POST" action="?/deleteWeekPlan" use:enhance style="margin-top: 0.75rem;">
+						<input type="hidden" name="id" value={data.currentPlan.id} />
+						<button type="submit" class="btn-delete-plan">Delete this week</button>
+					</form>
+				</div>
+			{/if}
+
+			<!-- Past weeks -->
+			{#if data.pastPlans.length > 0}
+				<div class="divider"></div>
+				<p class="section-label">Past weeks</p>
+				<div class="past-list">
+					{#each data.pastPlans as plan}
+						<div class="past-item">
+							<span class="past-week">Wk {plan.week}</span>
+							<span class="past-title">{plan.headline}</span>
+							{#if plan.dueDate}<span class="past-date">{formatDate(plan.dueDate)}</span>{/if}
+						</div>
 					{/each}
 				</div>
 			{/if}
@@ -265,91 +296,148 @@
 		{:else}
 			<!-- ══════════════ STUDENT VIEW ══════════════ -->
 
-			{#if data.current}
-				<div class="assignment-card">
-					<div class="assign-meta">
-						<span class="assign-week">Week {data.current.week}</span>
-						{#if data.current.dueDate}
-							<span class="assign-due">Due {formatDate(data.current.dueDate)}</span>
-						{/if}
-					</div>
-					<h1 class="assign-title">{data.current.title}</h1>
-
-					{#if data.current.description}
-						<p class="assign-desc">{data.current.description}</p>
-					{/if}
-
-					{#if data.current.attachments?.length}
-						<div class="assign-links">
-							{#each data.current.attachments as att}
-								<a href={att.url} target="_blank" rel="noopener noreferrer" class="assign-link-chip">
-									{#if att.label}{att.label}{:else}{getDomain(att.url)}{/if}
-									<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-								</a>
-							{/each}
-						</div>
-					{/if}
-
-					<!-- Submit work -->
-					{#if data.current.acceptedTypes?.length > 0}
-						{#if data.mySubmission}
-							<div class="submitted-badge">
-								<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-								Submitted
-							</div>
-						{:else if submitting}
-							<div class="submit-form-inline">
-								{#if submitError}<p class="form-error">{submitError}</p>{/if}
-								<div class="submit-type-tabs">
-									{#each data.current.acceptedTypes as t}
-										<button type="button" class="type-tab" class:active={submitType === t} onclick={() => submitType = t}>
-											{t.charAt(0).toUpperCase() + t.slice(1)}
-										</button>
-									{/each}
-								</div>
-								{#if submitType}
-									<form method="POST" action="?/submit" enctype="multipart/form-data" use:enhance>
-										<input type="hidden" name="assignment_id" value={data.current.id} />
-										<input type="hidden" name="type" value={submitType} />
-										{#if submitType === 'link'}
-											<input type="url" name="link" placeholder="https://…" class="submit-input" required />
-										{:else}
-											<input type="file" name="file" accept={submitType === 'image' ? 'image/*' : 'video/*'} class="submit-input" required />
-										{/if}
-										<div class="submit-row">
-											<button type="submit" class="btn-primary sm">Submit</button>
-											<button type="button" class="btn-ghost sm" onclick={() => { submitting = false; submitType = ''; }}>Cancel</button>
-										</div>
-									</form>
-								{/if}
-							</div>
-						{:else}
-							<button class="btn-primary" onclick={() => { submitting = true; submitType = data.current.acceptedTypes[0]; }}>
-								Submit work
-							</button>
-						{/if}
+			{#if data.currentPlan}
+				<div class="week-meta">
+					<span class="week-tag">Week {data.currentPlan.week}</span>
+					{#if data.currentPlan.dueDate}
+						<span class="due-date">Due {formatDate(data.currentPlan.dueDate)}</span>
 					{/if}
 				</div>
 
-				<!-- Next assignment peek -->
-				{#if data.next}
-					<button class="peek-btn" onclick={() => showNext = !showNext}>
-						{showNext ? 'Hide' : 'View'} next assignment
-						<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style:transform={showNext ? 'rotate(180deg)' : ''} style:transition="transform 0.2s">
-							<polyline points="6 9 12 15 18 9"/>
-						</svg>
-					</button>
-					{#if showNext}
-						<div class="peek-card">
-							<div class="assign-meta">
-								<span class="assign-week">Week {data.next.week}</span>
-								{#if data.next.dueDate}<span class="assign-due">Due {formatDate(data.next.dueDate)}</span>{/if}
+				<h1 class="headline">{data.currentPlan.headline}</h1>
+
+				{#if data.currentPlan.items.length > 0}
+					<div class="checklist">
+						{#each data.currentPlan.items as item (item.id)}
+							{@const done = !!completions[item.id]}
+							<div class="check-row" class:completed={done}>
+								{#if item.requiresSubmission}
+									<!-- Submission item -->
+									<div class="check-box-wrap">
+										<div class="check-box" class:checked={done}>
+											{#if done}
+												<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+											{/if}
+										</div>
+									</div>
+									<div class="check-content">
+										<span class="check-label" class:done>{item.label}</span>
+										{#if item.resourceUrl}
+											<a href={item.resourceUrl} target="_blank" rel="noopener noreferrer" class="item-resource-chip">
+												{#if item.resourceFilename}
+													<FileTypeIcon filename={item.resourceFilename} mimetype={item.resourceMimetype ?? ''} url={item.resourceMimetype?.startsWith('image/') ? item.resourceUrl : ''} iconSize={22} />
+													<span class="resource-chip-name">{item.resourceLabel || item.resourceFilename}</span>
+												{:else}
+													<svg class="resource-chip-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+													<span class="resource-chip-name">{item.resourceLabel || item.resourceUrl}</span>
+												{/if}
+												<svg class="resource-chip-ext" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+											</a>
+										{/if}
+										{#if done}
+											<span class="submitted-tag">Submitted</span>
+										{:else if expandedItemId === item.id}
+											<div class="inline-submit">
+												{#if form?.error && form?.action === 'completeItem' && form?.itemId === item.id}
+													<p class="form-error">{form.error}</p>
+												{/if}
+												<div class="submit-type-tabs">
+													{#each item.acceptedTypes as t}
+														<button type="button" class="type-tab" class:active={submitType === t} onclick={() => submitType = t}>
+															{t.charAt(0).toUpperCase() + t.slice(1)}
+														</button>
+													{/each}
+												</div>
+												{#if submitType}
+													<form method="POST" action="?/completeItem" enctype="multipart/form-data" use:enhance={() => {
+														return async ({ update }) => {
+															await update();
+															expandedItemId = null;
+															submitType = '';
+														};
+													}}>
+														<input type="hidden" name="item_id" value={item.id} />
+														<input type="hidden" name="requires_submission" value="1" />
+														<input type="hidden" name="type" value={submitType} />
+														{#if submitType === 'link'}
+															<input type="url" name="link" placeholder="https://…" class="submit-input" required />
+														{:else if submitType === 'text'}
+															<textarea name="text" placeholder="Type your response…" class="submit-input submit-textarea" rows="4" required></textarea>
+														{:else}
+															<input type="file" name="file" accept={submitType === 'image' ? 'image/*' : 'video/*'} class="submit-input" required />
+														{/if}
+														<div class="submit-row">
+															<button type="submit" class="btn-primary sm">Submit</button>
+															<button type="button" class="btn-ghost sm" onclick={() => { expandedItemId = null; submitType = ''; }}>Cancel</button>
+														</div>
+													</form>
+												{/if}
+											</div>
+										{:else}
+											<button class="btn-submit-inline" onclick={() => { expandedItemId = item.id; submitType = item.acceptedTypes[0]; }}>
+												Submit
+											</button>
+										{/if}
+									</div>
+								{:else}
+									<!-- Self-check item -->
+									{#if done}
+										<form method="POST" action="?/uncompleteItem" use:enhance={() => {
+											completions = { ...completions };
+											delete completions[item.id];
+											return async ({ update }) => { await update({ reset: false }); };
+										}}>
+											<input type="hidden" name="item_id" value={item.id} />
+											<button type="submit" class="check-box-wrap check-btn">
+												<div class="check-box checked">
+													<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+												</div>
+											</button>
+										</form>
+									{:else}
+										<form method="POST" action="?/completeItem" use:enhance={() => {
+											completions = { ...completions, [item.id]: { completedAt: new Date().toISOString() } };
+											return async ({ update }) => { await update({ reset: false }); };
+										}}>
+											<input type="hidden" name="item_id" value={item.id} />
+											<input type="hidden" name="requires_submission" value="0" />
+											<button type="submit" class="check-box-wrap check-btn">
+												<div class="check-box"></div>
+											</button>
+										</form>
+									{/if}
+									<div class="check-content">
+										<span class="check-label" class:done>{item.label}</span>
+										{#if item.resourceUrl}
+											<a href={item.resourceUrl} target="_blank" rel="noopener noreferrer" class="item-resource-chip">
+												{#if item.resourceFilename}
+													<FileTypeIcon filename={item.resourceFilename} mimetype={item.resourceMimetype ?? ''} url={item.resourceMimetype?.startsWith('image/') ? item.resourceUrl : ''} iconSize={22} />
+													<span class="resource-chip-name">{item.resourceLabel || item.resourceFilename}</span>
+												{:else}
+													<svg class="resource-chip-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+													<span class="resource-chip-name">{item.resourceLabel || item.resourceUrl}</span>
+												{/if}
+												<svg class="resource-chip-ext" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+											</a>
+										{/if}
+									</div>
+								{/if}
 							</div>
-							<p class="peek-title">{data.next.title}</p>
-							{#if data.next.description}<p class="peek-desc">{data.next.description}</p>{/if}
-						</div>
-					{/if}
+						{/each}
+					</div>
 				{/if}
+
+				<!-- Next week preview -->
+				{#if data.nextPlan}
+					<div class="next-preview">
+						<span class="next-label">Next week</span>
+						<span class="next-text">{data.nextPlan.topicPreview || data.nextPlan.headline}</span>
+					</div>
+				{/if}
+
+				<div class="bottom-links">
+					<a href="/app/atlas" class="atlas-link">View previous weeks →</a>
+				</div>
 
 			{:else}
 				<div class="empty-state">
@@ -357,46 +445,22 @@
 					<p>Check back soon.</p>
 				</div>
 			{/if}
-
-			<!-- Quick links -->
-			<div class="quick-links">
-				<a href="/app/assignments" class="quick-link">View syllabus →</a>
-				<button class="quick-link" onclick={() => showPrevious = !showPrevious}>
-					{showPrevious ? 'Hide' : 'Previous'} assignments {showPrevious ? '↑' : '↓'}
-				</button>
-			</div>
-
-			{#if showPrevious && data.previous.length > 0}
-				<div class="prev-section">
-					{#each data.previous as a}
-						<a href="/app/assignments" class="prev-item">
-							<span class="prev-week">Wk {a.week}</span>
-							<span class="prev-title">{a.title}</span>
-							{#if a.dueDate}<span class="prev-date">{formatDate(a.dueDate)}</span>{/if}
-						</a>
-					{/each}
-				</div>
-			{:else if showPrevious}
-				<p class="muted">No previous assignments.</p>
-			{/if}
-
 		{/if}
 
-		<!-- ── Mobile install instructions (not in PWA) ── -->
+		<!-- Mobile install instructions -->
 		{#if isMobile && !isStandalone}
 			<div class="install-banner">
 				<p class="install-banner-title">📲 Install eating.computer</p>
 				{#if installPrompt}
-					<p class="install-banner-sub">Add to your home screen for the full experience — offline access, notifications, and no browser chrome.</p>
+					<p class="install-banner-sub">Add to your home screen for the full experience.</p>
 					<button class="btn-primary" onclick={install}>Install app</button>
 				{:else if isIOS}
 					<p class="install-banner-sub">To install on iPhone or iPad:</p>
 					<ol class="install-steps">
 						<li>Tap the <strong>Share</strong> button <span class="ios-share">⎙</span> at the bottom of Safari</li>
 						<li>Scroll down and tap <strong>"Add to Home Screen"</strong></li>
-						<li>Tap <strong>Add</strong> — done!</li>
+						<li>Tap <strong>Add</strong></li>
 					</ol>
-					<p class="install-note">Once installed, you can enable push notifications for new assignments and messages.</p>
 				{:else if isAndroid}
 					<p class="install-banner-sub">To install on Android:</p>
 					<ol class="install-steps">
@@ -408,7 +472,7 @@
 			</div>
 		{/if}
 
-		<!-- ── Notification settings (in PWA, after onboarding) ── -->
+		<!-- Notification settings -->
 		{#if isStandalone && notifOnboarded && pushSupported}
 			<div class="utility-row">
 				{#if pushSubscribed}
@@ -420,7 +484,7 @@
 						🔕 {pushLoading ? '…' : 'Re-enable notifications'}
 					</button>
 				{:else if notifPermission === 'denied'}
-					<p class="muted">Notifications blocked — enable them in Settings → Safari → eating.computer.</p>
+					<p class="muted">Notifications blocked — enable them in Settings.</p>
 				{/if}
 				{#if pushError}<p class="form-error">{pushError}</p>{/if}
 			</div>
@@ -431,78 +495,256 @@
 <style>
 	.shell { min-height: 100dvh; display: flex; flex-direction: column; background: var(--paper); }
 
-	/* Header */
-	header {
-		display: flex; align-items: center; gap: 0.75rem;
-		padding: 1rem 1.5rem; border-bottom: 1.5px solid #ddd7cc; flex-shrink: 0;
-	}
-	.wordmark { font-family: 'Avara', serif; font-size: 1.1rem; color: var(--ink); text-decoration: none; flex-shrink: 0; }
-	.wordmark:hover { opacity: 0.7; }
-	.header-sub { display: flex; align-items: center; gap: 0.75rem; flex: 1; min-width: 0; }
-	.header-right { display: flex; align-items: center; gap: 0.6rem; margin-left: auto; flex-shrink: 0; }
-	.hdr-link { font-size: 0.82rem; color: #a09688; text-decoration: none; font-weight: 500; }
-	.hdr-link:hover { color: var(--ink); }
-	.hdr-btn {
-		background: none; border: 1.5px solid #ddd7cc; border-radius: 6px;
-		padding: 0.25rem 0.6rem; font-family: inherit; font-size: 0.78rem;
-		color: #a09688; cursor: pointer;
-	}
-	.hdr-btn:hover { border-color: var(--ink); color: var(--ink); }
-
 	/* Main */
 	main {
-		flex: 1; padding: 2rem 1.5rem; max-width: 680px;
+		flex: 1; padding: 2.5rem 1.5rem; padding-top: calc(2.5rem + 52px); max-width: 680px;
 		width: 100%; margin: 0 auto; box-sizing: border-box;
 	}
-	.page-header { margin-bottom: 1.75rem; }
-	.page-header h1 { font-family: 'Avara', serif; font-size: 2rem; font-weight: 400; margin: 0 0 0.2rem; }
-	.subtitle { font-size: 0.85rem; color: #a09688; margin: 0; }
 
-	/* Create form */
+	/* ── Week meta ── */
+	.week-meta { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.75rem; }
+	.week-tag {
+		font-size: 0.78rem; font-weight: 700; text-transform: uppercase;
+		letter-spacing: 0.08em; color: #b0a898;
+	}
+	.due-date { font-size: 0.88rem; color: #e07550; font-weight: 500; }
+
+	/* ── Student: headline ── */
+	.headline {
+		font-family: 'Avara', serif; font-size: 2.25rem; font-weight: 400;
+		color: var(--ink); margin: 0 0 2rem; line-height: 1.2;
+	}
+
+	/* ── Student: checklist ── */
+	.checklist { display: flex; flex-direction: column; gap: 0; }
+	.check-row {
+		display: flex; align-items: flex-start; gap: 0.875rem;
+		padding: 1rem 0; border-bottom: 1px solid #f0ece4;
+	}
+	.check-row:first-child { border-top: 1px solid #f0ece4; }
+
+	.check-box-wrap {
+		flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+		width: 28px; height: 28px; padding: 0; margin-top: 1px;
+	}
+	.check-btn {
+		background: none; border: none; cursor: pointer; padding: 0;
+		display: flex; align-items: center; justify-content: center;
+		width: 28px; height: 28px;
+	}
+	.check-box {
+		width: 24px; height: 24px; border: 2px solid #c8c1b4; border-radius: 6px;
+		display: flex; align-items: center; justify-content: center;
+		transition: all 0.15s; background: #fff;
+	}
+	.check-box.checked {
+		background: var(--ink); border-color: var(--ink); color: var(--paper);
+	}
+	.check-btn:hover .check-box:not(.checked) { border-color: #888; }
+
+	.check-content {
+		flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.5rem;
+	}
+	.check-label {
+		font-size: 1.05rem; color: var(--ink); line-height: 1.4;
+	}
+	.check-label.done { color: #a09688; text-decoration: line-through; }
+
+	.submitted-tag {
+		display: inline-flex; align-items: center; gap: 0.3rem;
+		font-size: 0.78rem; font-weight: 600; color: #2e7d32;
+	}
+
+	.item-resource-chip {
+		display: inline-flex; align-items: center; gap: 0.4rem;
+		padding: 0.3rem 0.6rem; background: #f5f0e8; border: 1.5px solid #e8e2d8;
+		border-radius: 8px; text-decoration: none; color: var(--ink);
+		font-size: 0.82rem; transition: background 0.15s;
+	}
+	.item-resource-chip:hover { background: #ede8df; }
+	.resource-chip-name {
+		overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 240px;
+	}
+	.resource-chip-icon { flex-shrink: 0; color: #a09688; }
+	.resource-chip-ext { flex-shrink: 0; color: #c8c1b4; }
+
+	.resource-file-preview {
+		display: flex; align-items: center; gap: 0.4rem;
+		padding: 0.3rem 0.5rem; background: #f5f0e8; border-radius: 8px;
+		font-size: 0.82rem;
+	}
+	.resource-file-name {
+		overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0;
+	}
+
+	.upload-btn {
+		display: flex; align-items: center; justify-content: center;
+		width: 34px; height: 34px; border: 1.5px solid #ddd7cc; border-radius: 8px;
+		cursor: pointer; color: #a09688; transition: all 0.15s; flex-shrink: 0;
+		text-transform: none; letter-spacing: 0; font-weight: 400;
+	}
+	.upload-btn:hover { border-color: var(--ink); color: var(--ink); }
+	.sr-only {
+		position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+		overflow: hidden; clip: rect(0,0,0,0); border: 0;
+	}
+
+	.submit-textarea {
+		resize: vertical; min-height: 80px; font-family: inherit; line-height: 1.5;
+	}
+
+	.btn-submit-inline {
+		align-self: flex-start;
+		padding: 0.4rem 1rem; background: var(--ink); color: var(--paper);
+		border: none; border-radius: 8px; font-family: inherit; font-size: 0.82rem;
+		font-weight: 600; cursor: pointer; transition: opacity 0.15s;
+	}
+	.btn-submit-inline:hover { opacity: 0.82; }
+
+	/* Inline submit form */
+	.inline-submit { display: flex; flex-direction: column; gap: 0.6rem; }
+	.submit-type-tabs { display: flex; gap: 0.4rem; }
+	.type-tab {
+		padding: 0.3rem 0.75rem; border: 1.5px solid #ddd7cc; border-radius: 99px;
+		background: none; font-family: inherit; font-size: 0.8rem; color: #888; cursor: pointer;
+	}
+	.type-tab.active { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+	.submit-input {
+		width: 100%; box-sizing: border-box; padding: 0.55rem 0.75rem;
+		border: 1.5px solid #ddd7cc; border-radius: 8px; background: #fff;
+		font-family: inherit; font-size: 0.88rem; color: var(--ink); outline: none;
+	}
+	.submit-input:focus { border-color: var(--ink); }
+	.submit-row { display: flex; gap: 0.5rem; align-items: center; }
+
+	/* Next week preview */
+	.next-preview {
+		display: flex; align-items: baseline; gap: 0.6rem;
+		margin-top: 2rem; padding: 1rem 0;
+		border-top: 2px solid #ddd7cc;
+	}
+	.next-label {
+		font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
+		letter-spacing: 0.07em; color: #b0a898; flex-shrink: 0;
+	}
+	.next-text { font-size: 1rem; color: #888; font-style: italic; }
+
+	/* Bottom links */
+	.bottom-links { margin-top: 1.5rem; }
+	.atlas-link {
+		font-size: 0.88rem; color: #a09688; text-decoration: none; font-weight: 500;
+	}
+	.atlas-link:hover { color: var(--ink); }
+
+	/* ── Instructor ── */
+	.week-number {
+		font-size: 0.78rem; font-weight: 700; text-transform: uppercase;
+		letter-spacing: 0.08em; color: #b0a898; margin: 0 0 1rem;
+	}
 	.create-form { display: flex; flex-direction: column; gap: 1.25rem; }
 	.field { display: flex; flex-direction: column; gap: 0.4rem; }
-	.field-row { display: flex; gap: 1rem; }
-	.field-row .field { flex: 1; }
 	label { font-size: 0.78rem; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.05em; }
+	.optional { font-weight: 400; text-transform: none; letter-spacing: 0; color: #b0a898; }
+
 	input[type="text"], input[type="url"], input[type="date"], textarea {
 		padding: 0.6rem 0.85rem; border: 1.5px solid #ddd7cc; border-radius: 10px;
 		background: #fff; font-family: inherit; font-size: 0.9rem; color: var(--ink);
 		outline: none; transition: border-color 0.15s; width: 100%; box-sizing: border-box;
 	}
 	input:focus, textarea:focus { border-color: var(--ink); }
-	textarea { resize: vertical; min-height: 100px; }
 
-	.toggle-row {
-		display: flex; align-items: center; gap: 0.5rem;
-		font-size: 0.88rem; color: var(--ink); font-weight: 400;
-		text-transform: none; letter-spacing: 0; cursor: pointer;
+	.headline-input { font-size: 1.1rem; padding: 0.75rem 0.85rem; }
+
+	/* Checklist item builder */
+	.items-list { display: flex; flex-direction: column; gap: 0.5rem; }
+	.item-row {
+		background: #faf8f5; border: 1.5px solid #e8e2d8; border-radius: 10px;
+		padding: 0.75rem; display: flex; flex-direction: column; gap: 0.5rem;
 	}
-	.sub-types { display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 0.5rem; }
-	.check-label {
+	.item-main { display: flex; align-items: center; gap: 0.5rem; }
+	.item-input { flex: 1; min-width: 0; }
+	.req-toggle {
 		display: flex; align-items: center; gap: 0.35rem;
-		font-size: 0.88rem; color: var(--ink); font-weight: 400;
+		font-size: 0.78rem; color: var(--ink); font-weight: 400;
+		text-transform: none; letter-spacing: 0; cursor: pointer;
+		white-space: nowrap; flex-shrink: 0;
+	}
+	.remove-item {
+		background: none; border: none; font-size: 1.2rem; color: #c8c1b4;
+		cursor: pointer; padding: 0 0.25rem; line-height: 1; flex-shrink: 0;
+	}
+	.remove-item:hover { color: #c0392b; }
+
+	.item-resource { display: flex; gap: 0.5rem; }
+	.resource-input { flex: 2; min-width: 0; font-size: 0.82rem !important; padding: 0.4rem 0.7rem !important; }
+	.resource-label-input { flex: 1; min-width: 60px; font-size: 0.82rem !important; padding: 0.4rem 0.7rem !important; }
+
+	.item-types {
+		display: flex; align-items: center; gap: 0.6rem; padding-left: 0.25rem;
+	}
+	.types-label { font-size: 0.72rem; color: #a09688; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+	.type-check {
+		display: flex; align-items: center; gap: 0.3rem;
+		font-size: 0.82rem; color: var(--ink); font-weight: 400;
 		text-transform: none; letter-spacing: 0; cursor: pointer;
 	}
 
-	/* Link attach */
-	.link-chip-row {
-		display: flex; align-items: center; justify-content: space-between;
-		padding: 0.4rem 0.75rem; background: #f5f0e8; border-radius: 8px;
-		font-size: 0.82rem; color: var(--ink); margin-bottom: 0.35rem;
+	.btn-add-item {
+		align-self: flex-start; padding: 0.4rem 0.9rem;
+		background: none; border: 1.5px dashed #c8c1b4; border-radius: 8px;
+		font-family: inherit; font-size: 0.82rem; color: #a09688;
+		cursor: pointer; transition: all 0.15s;
 	}
-	.remove-link {
-		background: none; border: none; color: #a09688; font-size: 1.1rem;
-		cursor: pointer; line-height: 1; padding: 0;
+	.btn-add-item:hover { border-color: var(--ink); color: var(--ink); }
+
+	/* Divider */
+	.divider { border-top: 2px solid #ddd7cc; margin: 2rem 0; }
+
+	/* Current plan preview (instructor) */
+	.current-preview { }
+	.preview-headline {
+		font-family: 'Avara', serif; font-size: 1.5rem; font-weight: 400;
+		color: var(--ink); margin: 0 0 1rem; line-height: 1.25;
 	}
-	.link-add-row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
-	.link-url-input { flex: 2; min-width: 0; }
-	.link-label-input { flex: 1; min-width: 80px; }
-	.btn-add-link {
-		padding: 0.6rem 1rem; background: #f5f0e8; border: 1.5px solid #ddd7cc;
-		border-radius: 10px; font-family: inherit; font-size: 0.85rem;
-		color: var(--ink); cursor: pointer; white-space: nowrap;
+	.preview-items { display: flex; flex-direction: column; gap: 0.35rem; }
+	.preview-item {
+		display: flex; align-items: center; gap: 0.5rem;
+		font-size: 0.9rem; color: var(--ink);
 	}
-	.btn-add-link:hover { background: #ede8df; }
+	.preview-check { color: #c8c1b4; font-size: 1rem; }
+	.preview-label { flex: 1; }
+	.preview-resource {
+		font-size: 0.75rem; color: var(--ink); text-decoration: underline;
+		text-underline-offset: 2px; opacity: 0.6;
+	}
+	.preview-resource:hover { opacity: 1; }
+	.preview-badge {
+		font-size: 0.68rem; font-weight: 600; text-transform: uppercase;
+		letter-spacing: 0.05em; color: #a09688; background: #f0ece4;
+		padding: 0.1rem 0.4rem; border-radius: 99px;
+	}
+	.preview-progress {
+		font-size: 0.75rem; color: #2e7d32; font-weight: 500;
+	}
+	.btn-delete-plan {
+		background: none; border: none; font-family: inherit; font-size: 0.78rem;
+		color: #c0392b; cursor: pointer; padding: 0; opacity: 0.6;
+	}
+	.btn-delete-plan:hover { opacity: 1; }
+
+	/* Past weeks */
+	.section-label {
+		font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
+		letter-spacing: 0.07em; color: #b0a898; margin: 0 0 0.6rem;
+	}
+	.past-list { display: flex; flex-direction: column; gap: 0.2rem; }
+	.past-item {
+		display: flex; align-items: baseline; gap: 0.6rem;
+		padding: 0.4rem 0; font-size: 0.88rem; color: var(--ink);
+	}
+	.past-week { font-size: 0.72rem; font-weight: 700; color: #b0a898; flex-shrink: 0; }
+	.past-title { flex: 1; }
+	.past-date { font-size: 0.75rem; color: #a09688; white-space: nowrap; }
 
 	/* Buttons */
 	.btn-primary {
@@ -511,99 +753,16 @@
 		font-weight: 600; cursor: pointer; transition: opacity 0.15s; align-self: flex-start;
 	}
 	.btn-primary:hover { opacity: 0.82; }
-	.btn-primary.sm { padding: 0.5rem 1rem; font-size: 0.85rem; }
+	.btn-primary.sm { padding: 0.45rem 1rem; font-size: 0.82rem; }
 	.btn-ghost {
-		padding: 0.65rem 1rem; background: none; border: 1.5px solid #ddd7cc;
-		border-radius: 10px; font-family: inherit; font-size: 0.9rem;
+		padding: 0.45rem 0.9rem; background: none; border: 1.5px solid #ddd7cc;
+		border-radius: 8px; font-family: inherit; font-size: 0.82rem;
 		color: var(--ink); cursor: pointer;
 	}
-	.btn-ghost.sm { padding: 0.5rem 0.9rem; font-size: 0.85rem; }
+	.btn-ghost.sm { padding: 0.4rem 0.8rem; font-size: 0.8rem; }
 	.btn-ghost:hover { border-color: var(--ink); }
 
 	.form-error { font-size: 0.82rem; color: #c0392b; margin: 0; }
-
-	/* Assignment card */
-	.assignment-card {
-		background: #fff; border: 1.5px solid #ddd7cc; border-radius: 16px;
-		padding: 1.5rem; margin-bottom: 1rem; display: flex; flex-direction: column; gap: 0.875rem;
-	}
-	.assign-meta { display: flex; align-items: center; gap: 0.75rem; }
-	.assign-week {
-		font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
-		letter-spacing: 0.07em; color: #b0a898;
-	}
-	.assign-due { font-size: 0.82rem; color: #e07550; font-weight: 500; }
-	.assign-title {
-		font-family: 'Avara', serif; font-size: 1.75rem; font-weight: 400;
-		color: var(--ink); margin: 0; line-height: 1.2;
-	}
-	.assign-desc { font-size: 0.9rem; color: #555; line-height: 1.6; margin: 0; white-space: pre-wrap; }
-
-	.assign-links { display: flex; flex-wrap: wrap; gap: 0.4rem; }
-	.assign-link-chip {
-		display: inline-flex; align-items: center; gap: 0.3rem;
-		padding: 0.3rem 0.7rem; background: #f5f0e8; border-radius: 99px;
-		font-size: 0.8rem; color: var(--ink); text-decoration: none;
-		border: 1.5px solid #e8e2d8; transition: background 0.15s;
-	}
-	.assign-link-chip:hover { background: #ede8df; }
-
-	/* Submitted badge */
-	.submitted-badge {
-		display: inline-flex; align-items: center; gap: 0.4rem;
-		font-size: 0.82rem; font-weight: 600; color: #2e7d32;
-	}
-
-	/* Submit form inline */
-	.submit-form-inline { display: flex; flex-direction: column; gap: 0.75rem; }
-	.submit-type-tabs { display: flex; gap: 0.4rem; }
-	.type-tab {
-		padding: 0.35rem 0.85rem; border: 1.5px solid #ddd7cc; border-radius: 99px;
-		background: none; font-family: inherit; font-size: 0.82rem; color: #888; cursor: pointer;
-	}
-	.type-tab.active { background: var(--ink); color: var(--paper); border-color: var(--ink); }
-	.submit-input { width: 100%; box-sizing: border-box; }
-	.submit-row { display: flex; gap: 0.5rem; align-items: center; }
-
-	/* Peek next assignment */
-	.peek-btn {
-		display: flex; align-items: center; gap: 0.4rem;
-		background: none; border: none; font-family: inherit; font-size: 0.85rem;
-		color: #a09688; cursor: pointer; padding: 0; margin-bottom: 0.75rem;
-	}
-	.peek-btn:hover { color: var(--ink); }
-	.peek-card {
-		background: #faf8f5; border: 1.5px solid #e8e2d8; border-radius: 12px;
-		padding: 1rem 1.25rem; margin-bottom: 1rem; display: flex; flex-direction: column; gap: 0.5rem;
-	}
-	.peek-title { font-size: 1rem; font-weight: 600; color: var(--ink); margin: 0; }
-	.peek-desc { font-size: 0.85rem; color: #888; margin: 0; line-height: 1.5; }
-
-	/* Quick links */
-	.quick-links {
-		display: flex; gap: 1rem; flex-wrap: wrap; margin: 1rem 0 0.5rem;
-	}
-	.quick-link {
-		font-size: 0.85rem; color: #a09688; text-decoration: none; font-weight: 500;
-		background: none; border: none; font-family: inherit; cursor: pointer; padding: 0;
-	}
-	.quick-link:hover { color: var(--ink); }
-
-	/* Previous assignments */
-	.section-label {
-		font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
-		letter-spacing: 0.07em; color: #b0a898; margin: 0 0 0.6rem;
-	}
-	.prev-section { display: flex; flex-direction: column; gap: 0.3rem; margin-top: 1rem; }
-	.prev-item {
-		display: flex; align-items: baseline; gap: 0.6rem;
-		padding: 0.5rem 0.75rem; border-radius: 8px; text-decoration: none; color: var(--ink);
-		transition: background 0.1s;
-	}
-	.prev-item:hover { background: #f5f0e8; }
-	.prev-week { font-size: 0.72rem; font-weight: 700; color: #b0a898; flex-shrink: 0; }
-	.prev-title { font-size: 0.88rem; flex: 1; }
-	.prev-date { font-size: 0.75rem; color: #a09688; white-space: nowrap; }
 	.muted { font-size: 0.85rem; color: #a09688; margin: 0.5rem 0; }
 
 	/* Empty state */
@@ -611,90 +770,59 @@
 	.empty-state h1 { font-family: 'Avara', serif; font-size: 1.75rem; font-weight: 400; color: var(--ink); margin: 0 0 0.5rem; }
 	.empty-state p { color: #a09688; font-size: 0.9rem; margin: 0; }
 
-	/* Utility chips */
+	/* Utility */
 	.utility-row { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 2rem; }
 	.utility-chip {
 		padding: 0.4rem 0.9rem; background: #f5f0e8; border: 1.5px solid #e8e2d8;
 		border-radius: 99px; font-family: inherit; font-size: 0.82rem;
-		color: var(--ink); cursor: pointer; transition: background 0.15s;
+		color: var(--ink); cursor: pointer;
 	}
 	.utility-chip:hover { background: #ede8df; }
 	.utility-chip:disabled { opacity: 0.5; cursor: default; }
 
-	/* Notification gate overlay */
+	/* Gate overlay */
 	.gate-overlay {
-		position: fixed; inset: 0; z-index: 9000;
-		background: var(--paper);
-		display: flex; align-items: center; justify-content: center;
-		padding: 2rem 1.5rem;
+		position: fixed; inset: 0; z-index: 9000; background: var(--paper);
+		display: flex; align-items: center; justify-content: center; padding: 2rem 1.5rem;
 	}
 	.gate-card {
 		display: flex; flex-direction: column; align-items: center;
 		text-align: center; max-width: 360px; width: 100%; gap: 0.85rem;
 	}
-	.gate-wordmark {
-		font-family: 'Avara', serif; font-size: 1.1rem; color: var(--ink);
-		text-decoration: none; margin-bottom: 0.5rem;
-	}
+	.gate-wordmark { font-family: 'Avara', serif; font-size: 1.1rem; color: var(--ink); text-decoration: none; margin-bottom: 0.5rem; }
 	.gate-wordmark:hover { opacity: 0.7; }
 	.gate-icon { font-size: 2.5rem; line-height: 1; }
-	.gate-title {
-		font-family: 'Avara', serif; font-size: 1.75rem; font-weight: 400;
-		color: var(--ink); margin: 0;
-	}
-	.gate-body {
-		font-size: 0.9rem; color: #666; line-height: 1.6; margin: 0;
-	}
+	.gate-title { font-family: 'Avara', serif; font-size: 1.75rem; font-weight: 400; color: var(--ink); margin: 0; }
+	.gate-body { font-size: 0.9rem; color: #666; line-height: 1.6; margin: 0; }
 	.gate-btn-primary {
 		width: 100%; padding: 0.8rem 1.4rem; background: var(--ink); color: var(--paper);
 		border: none; border-radius: 12px; font-family: inherit; font-size: 0.95rem;
-		font-weight: 600; cursor: pointer; transition: opacity 0.15s; margin-top: 0.25rem;
+		font-weight: 600; cursor: pointer; margin-top: 0.25rem;
 	}
 	.gate-btn-primary:hover { opacity: 0.82; }
 	.gate-btn-primary:disabled { opacity: 0.5; cursor: default; }
-	.gate-btn-skip {
-		background: none; border: none; font-family: inherit; font-size: 0.85rem;
-		color: #a09688; cursor: pointer; padding: 0.25rem;
-	}
+	.gate-btn-skip { background: none; border: none; font-family: inherit; font-size: 0.85rem; color: #a09688; cursor: pointer; }
 	.gate-btn-skip:hover { color: var(--ink); }
 	.gate-denied { font-size: 0.8rem; color: #c0392b; margin: 0; }
 
-	/* Mobile install banner */
+	/* Install banner */
 	.install-banner {
 		background: #f5f0e8; border: 1.5px solid #e8e2d8; border-radius: 14px;
-		padding: 1.25rem 1.25rem; margin-top: 2rem;
-		display: flex; flex-direction: column; gap: 0.6rem;
+		padding: 1.25rem; margin-top: 2rem; display: flex; flex-direction: column; gap: 0.6rem;
 	}
 	.install-banner-title { font-size: 0.95rem; font-weight: 700; color: var(--ink); margin: 0; }
 	.install-banner-sub { font-size: 0.85rem; color: #666; margin: 0; }
-	.install-steps {
-		font-size: 0.85rem; color: var(--ink); margin: 0; padding-left: 1.25rem;
-		display: flex; flex-direction: column; gap: 0.35rem;
-	}
-	.install-note { font-size: 0.8rem; color: #a09688; margin: 0; }
-	.ios-share {
-		display: inline-block; font-style: normal; font-weight: 700;
-		background: #e8e2d8; border-radius: 4px; padding: 0 0.25rem; font-size: 0.8rem;
-	}
+	.install-steps { font-size: 0.85rem; color: var(--ink); margin: 0; padding-left: 1.25rem; display: flex; flex-direction: column; gap: 0.35rem; }
+	.ios-share { display: inline-block; font-weight: 700; background: #e8e2d8; border-radius: 4px; padding: 0 0.25rem; font-size: 0.8rem; }
 
 	/* Mobile */
 	@media (max-width: 640px) {
-		header {
-			position: fixed; top: 0; left: 0; right: 0; z-index: 10;
-			background: var(--paper); padding: 0.6rem 1rem 0.5rem;
-			flex-direction: column; align-items: flex-start; gap: 0.2rem;
-		}
-		.header-sub {
-			width: 100%; gap: 0.5rem;
-		}
 		main {
 			padding: 1.25rem 1rem;
-			padding-top: 5rem;
 			padding-bottom: calc(56px + env(safe-area-inset-bottom, 0px) + 1.25rem);
 		}
-		.assign-title { font-size: 1.4rem; }
-		.field-row { flex-direction: column; gap: 0; }
-		.link-add-row { flex-direction: column; }
-		.link-url-input, .link-label-input { width: 100%; }
+		.headline { font-size: 1.6rem; margin-bottom: 1.5rem; }
+		.item-main { flex-wrap: wrap; }
+		.req-toggle { width: 100%; margin-top: 0.25rem; }
 	}
 </style>

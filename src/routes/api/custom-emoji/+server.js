@@ -1,8 +1,8 @@
 import { json, error } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
 import { getDb } from '$lib/server/turso.js';
-import { uploadToR2 } from '$lib/server/r2.js';
-import { resizeToWebp, toWebp, hasTransparency } from '$lib/server/media.js';
+import { uploadToR2, deleteFromR2 } from '$lib/server/r2.js';
+import { resizeToWebp, toWebp, hasTransparency, removeBackground } from '$lib/server/media.js';
 import { requireClassAccess } from '$lib/server/access.js';
 
 const SHORTCODE_RE = /^[a-zA-Z0-9_-]{1,32}$/;
@@ -47,22 +47,44 @@ export async function POST({ request, locals }) {
 	if (!shortcode) error(400, 'Missing shortcode');
 	if (!SHORTCODE_RE.test(shortcode)) error(400, 'Invalid shortcode: only alphanumeric, underscores, hyphens, 1-32 chars');
 	if (file.size > MAX_BYTES) error(413, 'File too large (max 5 MB)');
-	if (!file.type.startsWith('image/')) error(400, 'File must be an image');
+	const fname = (file.name ?? '').toLowerCase();
+	const isHeic = fname.endsWith('.heic') || fname.endsWith('.heif') || file.type === 'image/heic' || file.type === 'image/heif';
+	if (!file.type.startsWith('image/') && !isHeic) error(400, 'File must be an image');
 
 	const db = getDb();
 	if (db) await db.execute(CREATE_TABLE);
 
-	const inputBuffer = Buffer.from(await file.arrayBuffer());
-
-	// Check transparency before resizing (transparent → emoji only; opaque → emoji + reaction image)
-	const transparent = await hasTransparency(inputBuffer);
-
-	const converted = await resizeToWebp(inputBuffer, 512);
+	const removeBg = formData.get('removeBg') === '1';
+	const removeBgColorStr = formData.get('removeBgColor');
+	const removeBgColor = removeBgColorStr ? removeBgColorStr.split(',').map(Number) : null;
+	let inputBuffer = Buffer.from(await file.arrayBuffer());
+	const isGif = file.type === 'image/gif';
 
 	const id = crypto.randomUUID();
-	const key = `custom-emoji/${id}.webp`;
+	let key, uploadBuffer, uploadMime;
 
-	await uploadToR2(key, converted.buffer, converted.mimetype);
+	if (removeBg) {
+		let result;
+		try { result = await removeBackground(inputBuffer, removeBgColor); }
+		catch (e) { error(422, 'Background removal failed: ' + (e?.message ?? e)); }
+		key = `custom-emoji/${id}.${result.ext}`;
+		uploadBuffer = result.buffer;
+		uploadMime = result.mimetype;
+	} else if (isGif) {
+		key = `custom-emoji/${id}.gif`;
+		uploadBuffer = inputBuffer;
+		uploadMime = 'image/gif';
+	} else {
+		const converted = await resizeToWebp(inputBuffer, 512);
+		key = `custom-emoji/${id}.webp`;
+		uploadBuffer = converted.buffer;
+		uploadMime = converted.mimetype;
+	}
+
+	// Check transparency (removeBg → always transparent; GIF → treat as opaque for reaction copy)
+	const transparent = removeBg ? true : (isGif ? false : await hasTransparency(inputBuffer));
+
+	await uploadToR2(key, uploadBuffer, uploadMime);
 
 	const publicBase = (env.R2_PUBLIC_BASE_URL ?? env.PUBLIC_R2_PUBLIC_BASE_URL ?? '').replace(/\/$/, '');
 	if (!publicBase) error(503, 'Storage public URL not configured');
@@ -84,10 +106,17 @@ export async function POST({ request, locals }) {
 
 		// Opaque image → also add to reaction images at original resolution
 		if (!transparent) {
-			const reactionConverted = await toWebp(inputBuffer);
+			const isGif = file.type === 'image/gif';
+			let reactionBuf, reactionMime, reactionExt;
+			if (isGif) {
+				reactionBuf = inputBuffer; reactionMime = 'image/gif'; reactionExt = 'gif';
+			} else {
+				const reactionConverted = await toWebp(inputBuffer);
+				reactionBuf = reactionConverted.buffer; reactionMime = reactionConverted.mimetype; reactionExt = 'webp';
+			}
 			const reactionId = crypto.randomUUID();
-			const reactionKey = `reaction-images/${reactionId}.webp`;
-			await uploadToR2(reactionKey, reactionConverted.buffer, reactionConverted.mimetype);
+			const reactionKey = `reaction-images/${reactionId}.${reactionExt}`;
+			await uploadToR2(reactionKey, reactionBuf, reactionMime);
 			const reactionUrl = `${publicBase}/${reactionKey}`;
 			await db.execute({
 				sql: `INSERT INTO reaction_images (id, name, url, r2_key, tags, created_by_id, created_by_name)
@@ -98,4 +127,19 @@ export async function POST({ request, locals }) {
 	}
 
 	return json({ id, shortcode, url, tags, addedToReactions: !transparent });
+}
+
+export async function DELETE({ request, locals }) {
+	const session = await locals.auth();
+	if (!session?.user || session.user.role !== 'instructor') error(403, 'Instructors only');
+	const { id } = await request.json();
+	if (!id) error(400, 'Missing id');
+	const db = getDb();
+	if (!db) error(503, 'Database unavailable');
+	await db.execute(CREATE_TABLE);
+	const row = (await db.execute({ sql: 'SELECT r2_key FROM custom_emoji WHERE id = ?', args: [id] })).rows[0];
+	if (!row) error(404, 'Not found');
+	if (row.r2_key) try { await deleteFromR2(String(row.r2_key)); } catch {}
+	await db.execute({ sql: 'DELETE FROM custom_emoji WHERE id = ?', args: [id] });
+	return json({ ok: true });
 }

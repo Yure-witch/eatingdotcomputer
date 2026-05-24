@@ -21,16 +21,16 @@
 			icon: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>`
 		},
 		{
-			href: '/app/assignments',
-			label: 'Roadmap',
-			active: (p) => p.startsWith('/app/assignments'),
-			icon: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"/><line x1="9" y1="3" x2="9" y2="18"/><line x1="15" y1="6" x2="15" y2="21"/></svg>`
+			href: '/app/atlas',
+			label: 'Atlas',
+			active: (p) => p.startsWith('/app/atlas') || p.startsWith('/app/collection') || p.startsWith('/app/assignments') || p.startsWith('/app/files'),
+			icon: `<svg width="18" height="18" viewBox="0 -960 960 960" fill="currentColor"><path d="M280-80q-50 0-85-35t-35-85q0-39 22.5-70t57.5-43v-334q-35-12-57.5-43T160-760q0-50 35-85t85-35q50 0 85 35t35 85q0 39-22.5 70T320-647v7q0 50 35 85t85 35h80q83 0 141.5 58.5T720-320v7q35 12 57.5 43t22.5 70q0 50-35 85t-85 35q-50 0-85-35t-35-85q0-39 22.5-70t57.5-43v-7q0-50-35-85t-85-35h-80q-34 0-64.5-10.5T320-480v167q35 12 57.5 43t22.5 70q0 50-35 85t-85 35Zm0-80q17 0 28.5-11.5T320-200q0-17-11.5-28.5T280-240q-17 0-28.5 11.5T240-200q0 17 11.5 28.5T280-160Zm400 0q17 0 28.5-11.5T720-200q0-17-11.5-28.5T680-240q-17 0-28.5 11.5T640-200q0 17 11.5 28.5T680-160ZM280-720q17 0 28.5-11.5T320-760q0-17-11.5-28.5T280-800q-17 0-28.5 11.5T240-760q0 17 11.5 28.5T280-720Z"/></svg>`
 		},
 		{
-			href: '/app/files',
-			label: 'Files',
-			active: (p) => p.startsWith('/app/files'),
-			icon: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`
+			href: '/app/playground',
+			label: 'Lab',
+			active: (p) => p.startsWith('/app/playground'),
+			icon: `<svg width="18" height="18" viewBox="0 0 18 18" fill="currentColor"><path d="M17.1778 13.7607L12.0833 5.96232C11.7775 5.50541 11.6077 4.98344 11.6077 4.46125V1.29615H12.0153C12.355 1.29615 12.6266 1.03506 12.6266 0.708906C12.6266 0.415179 12.3548 0.154297 12.0153 0.154297H5.96984C5.63013 0.154297 5.39255 0.415388 5.39255 0.708906C5.39255 1.03527 5.63035 1.29615 5.96984 1.29615H6.37749V4.46125C6.37749 4.98323 6.20764 5.50541 5.93587 5.96232L0.807364 13.7607C-0.0756596 15.2618 1.04516 17.1543 2.87915 17.1543H15.1402C16.9402 17.1543 18.095 15.2618 17.178 13.7607H17.1778ZM6.30933 12.1946C5.29042 12.4883 3.28658 12.162 3.93181 11.1831L6.92059 6.5822C7.32824 5.92968 7.56582 5.21168 7.56582 4.46125V1.29615H10.4527V4.46125C10.4527 5.21168 10.6565 5.92968 11.0639 6.5822L12.796 9.25776C13.1018 9.71467 12.6262 9.94291 12.2527 9.97555C9.53569 10.1714 8.55053 11.5743 6.30911 12.1944L6.30933 12.1946Z"/></svg>`
 		},
 		{
 			href: '/app/manage',
@@ -44,6 +44,26 @@
 	// ── Sidebar state ──
 	let sidebarOpen = $state(false);
 	let sidebarCollapsed = $state(false);
+	let sidebarWidth = $state(220);
+	let resizing = $state(false);
+
+	function startResize(e) {
+		e.preventDefault();
+		resizing = true;
+		const onMove = (ev) => {
+			const w = Math.max(160, Math.min(400, ev.clientX));
+			sidebarWidth = w;
+			document.documentElement.style.setProperty('--sidebar-width', w + 'px');
+		};
+		const onUp = () => {
+			resizing = false;
+			document.removeEventListener('pointermove', onMove);
+			document.removeEventListener('pointerup', onUp);
+			localStorage.setItem('sidebar_width', String(sidebarWidth));
+		};
+		document.addEventListener('pointermove', onMove);
+		document.addEventListener('pointerup', onUp);
+	}
 
 	setContext('openSidebar', () => { sidebarOpen = !sidebarOpen; });
 	// Expose rawPresence to child pages (e.g. manage) via a getter so the manage
@@ -330,6 +350,11 @@
 		} catch { /* BroadcastChannel not available */ }
 
 		sidebarCollapsed = localStorage.getItem('sidebar_collapsed') === '1';
+		const savedWidth = parseInt(localStorage.getItem('sidebar_width') ?? '220');
+		if (savedWidth >= 160 && savedWidth <= 400) {
+			sidebarWidth = savedWidth;
+			document.documentElement.style.setProperty('--sidebar-width', savedWidth + 'px');
+		}
 		soundEnabled = localStorage.getItem('notif_sound') !== 'false';
 
 		if (window.matchMedia('(display-mode: standalone)').matches) installed = true;
@@ -668,6 +693,11 @@
 	}
 
 	$effect(() => {
+		const w = sidebarCollapsed ? 52 : sidebarWidth;
+		document.documentElement.style.setProperty('--sidebar-width', w + 'px');
+	});
+
+	$effect(() => {
 		$page.url.pathname;
 		sidebarOpen = false;
 	});
@@ -703,7 +733,7 @@
 {/if}
 
 <!-- Global sidebar -->
-<nav class="global-sidebar" class:open={sidebarOpen} class:collapsed={sidebarCollapsed}>
+<nav class="global-sidebar" class:open={sidebarOpen} class:collapsed={sidebarCollapsed} style:width={sidebarCollapsed ? null : `${sidebarWidth}px`} style:transition={resizing ? 'none' : null}>
 	<!-- Header: logo + collapse toggle in one row -->
 	<div class="sidebar-header">
 		<a class="sidebar-logo" href="/app" title="eating.computer">eating.computer</a>
@@ -735,6 +765,7 @@
 
 	<div class="sidebar-divider"></div>
 
+	<div class="sidebar-scroll">
 	{#if data.channels?.length}
 		<!-- Channels -->
 		<div class="sidebar-section">
@@ -821,6 +852,9 @@
 			{/each}
 		</div>
 	{/if}
+	</div>
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="sidebar-resize-handle" onpointerdown={startResize} class:active={resizing}></div>
 </nav>
 
 <!-- Mobile hamburger -->
@@ -830,7 +864,7 @@
 
 <BottomNav isInstructor={data.currentUser?.role === 'instructor'} {totalUnread} />
 
-<div class="app-shell" style:margin-left={sidebarCollapsed ? '52px' : null}>
+<div class="app-shell" style:margin-left={sidebarCollapsed ? '52px' : `${sidebarWidth}px`} style:transition={resizing ? 'none' : null}>
 	{@render children()}
 </div>
 
@@ -878,13 +912,19 @@
 			width: var(--sidebar-width);
 			background: #1a1a1a;
 			color: #c8c1b4;
-			overflow-y: auto;
-			overflow-x: hidden;
+			overflow: hidden;
 			z-index: 200;
-			scrollbar-width: none;
 			transition: width 0.2s ease;
 		}
-		.global-sidebar::-webkit-scrollbar { display: none; }
+		.sidebar-resize-handle {
+			position: absolute; top: 0; right: 0; bottom: 0; width: 4px;
+			cursor: col-resize; z-index: 201;
+			transition: background 0.15s;
+		}
+		.sidebar-resize-handle:hover, .sidebar-resize-handle.active {
+			background: rgba(255,255,255,0.15);
+		}
+		.global-sidebar.collapsed .sidebar-resize-handle { display: none; }
 		.global-sidebar.collapsed { width: 52px; }
 		.global-sidebar.collapsed .sidebar-logo,
 		.global-sidebar.collapsed .nav-label,
@@ -989,6 +1029,13 @@
 		margin: 0.25rem 0.75rem;
 		flex-shrink: 0;
 	}
+
+	/* ── Scroll area ── */
+	.sidebar-scroll {
+		flex: 1; overflow-y: auto; overflow-x: hidden;
+		overscroll-behavior: none; scrollbar-width: none;
+	}
+	.sidebar-scroll::-webkit-scrollbar { display: none; }
 
 	/* ── Sections ── */
 	.sidebar-section { padding: 0.5rem 0.5rem 0; flex-shrink: 0; }
@@ -1104,6 +1151,7 @@
 			color: #c8c1b4;
 			overflow-y: auto;
 			overflow-x: hidden;
+			overscroll-behavior: contain;
 			z-index: 500;
 			scrollbar-width: none;
 			transform: translateX(-100%);
@@ -1186,6 +1234,7 @@
 	.btn-dismiss:hover { opacity: 1; }
 
 	@media (max-width: 640px) {
+		.app-shell { margin-left: 0 !important; }
 		.install-banner { bottom: calc(56px + env(safe-area-inset-bottom, 0px) + 0.75rem); }
 	}
 </style>

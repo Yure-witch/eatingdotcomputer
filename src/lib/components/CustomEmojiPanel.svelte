@@ -1,8 +1,8 @@
 <script>
 	import { onMount } from 'svelte';
-	import { invalidateCustomEmojiCache } from '$lib/custom-emoji-store.js';
+	import { invalidateCustomEmojiCache, addToCustomEmojiCache, removeFromCustomEmojiCache } from '$lib/custom-emoji-store.js';
 
-	let { onInsertEmoji, onInsertReaction } = $props();
+	let { onInsertEmoji, onInsertReaction, isInstructor = false } = $props();
 
 	let tab = $state('emoji'); // 'emoji' | 'reactions'
 
@@ -16,6 +16,9 @@
 	let emojiUploading = $state(false);
 	let emojiUploadError = $state(null);
 	let emojiFileInput = $state(null);
+	let emojiRemoveBg = $state(false);
+	let emojiBgColor = $state(null); // [r,g,b] sampled color
+	let emojiBgCanvas = $state(null);
 
 	// Reactions tab state
 	let reactionList = $state([]);
@@ -29,13 +32,16 @@
 	let reactionUploading = $state(false);
 	let reactionUploadError = $state(null);
 	let reactionFileInput = $state(null);
+	let reactionRemoveBg = $state(false);
+	let reactionBgColor = $state(null); // [r,g,b]
+	let reactionBgCanvas = $state(null);
 	let corsStatus = $state(null); // null | 'checking' | 'ok' | 'fail'
 	let corsTimer = null;
 
 	async function loadEmoji() {
 		emojiLoading = true; emojiError = null;
 		try {
-			const r = await fetch('/api/custom-emoji');
+			const r = await fetch('/api/custom-emoji', { cache: 'no-store' });
 			if (!r.ok) throw new Error('Failed');
 			emojiList = await r.json();
 		} catch { emojiError = 'Failed to load'; }
@@ -45,7 +51,7 @@
 	async function loadReactions() {
 		reactionsLoading = true; reactionsError = null;
 		try {
-			const r = await fetch('/api/reaction-images');
+			const r = await fetch('/api/reaction-images', { cache: 'no-store' });
 			if (!r.ok) throw new Error('Failed');
 			reactionList = await r.json();
 		} catch { reactionsError = 'Failed to load'; }
@@ -60,13 +66,17 @@
 			fd.append('file', emojiFile);
 			fd.append('shortcode', emojiShortcode.trim());
 			fd.append('tags', emojiTags.trim());
+			if (emojiRemoveBg && emojiBgColor) {
+				fd.append('removeBg', '1');
+				fd.append('removeBgColor', emojiBgColor.join(','));
+			}
 			const r = await fetch('/api/custom-emoji', { method: 'POST', body: fd });
-			if (!r.ok) { const t = await r.text(); throw new Error(t); }
+			if (!r.ok) { const t = await r.text(); try { throw new Error(JSON.parse(t).message); } catch { throw new Error(t); } }
 			const newEmoji = await r.json();
 			emojiList = [...emojiList, newEmoji];
-			emojiShortcode = ''; emojiTags = ''; emojiFile = null;
+			emojiShortcode = ''; emojiTags = ''; emojiFile = null; emojiRemoveBg = false; emojiBgColor = null;
 			if (emojiFileInput) emojiFileInput.value = '';
-			invalidateCustomEmojiCache();
+			addToCustomEmojiCache(newEmoji.shortcode, newEmoji.url);
 		} catch (e) { emojiUploadError = e.message || 'Upload failed'; }
 		finally { emojiUploading = false; }
 	}
@@ -99,14 +109,18 @@
 			fd.append('tags', reactionTags.trim());
 			if (reactionMode === 'file') {
 				fd.append('file', reactionFile);
+				if (reactionRemoveBg && reactionBgColor) {
+					fd.append('removeBg', '1');
+					fd.append('removeBgColor', reactionBgColor.join(','));
+				}
 			} else {
 				fd.append('url', reactionUrl.trim());
 			}
 			const r = await fetch('/api/reaction-images', { method: 'POST', body: fd });
-			if (!r.ok) { const t = await r.text(); throw new Error(t); }
+			if (!r.ok) { const t = await r.text(); try { throw new Error(JSON.parse(t).message); } catch { throw new Error(t); } }
 			const newReaction = await r.json();
 			reactionList = [...reactionList, newReaction];
-			reactionName = ''; reactionTags = ''; reactionFile = null; reactionUrl = ''; corsStatus = null;
+			reactionName = ''; reactionTags = ''; reactionFile = null; reactionUrl = ''; corsStatus = null; reactionRemoveBg = false; reactionBgColor = null;
 			if (reactionFileInput) reactionFileInput.value = '';
 		} catch (e) { reactionUploadError = e.message || 'Upload failed'; }
 		finally { reactionUploading = false; }
@@ -114,9 +128,56 @@
 
 	const canSubmitReaction = $derived(
 		reactionName.trim().length > 0 && !reactionUploading && (
-			reactionMode === 'file' ? !!reactionFile : (corsStatus === 'ok')
+			reactionMode === 'file' ? (!!reactionFile && (!reactionRemoveBg || !!reactionBgColor)) : (corsStatus === 'ok')
 		)
 	);
+
+	async function deleteEmoji(id) {
+		if (!confirm('Remove this custom emote?')) return;
+		try {
+			const r = await fetch('/api/custom-emoji', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) });
+			if (!r.ok) throw new Error(await r.text());
+			const removed = emojiList.find(e => e.id === id);
+			emojiList = emojiList.filter(e => e.id !== id);
+			if (removed) removeFromCustomEmojiCache(removed.shortcode);
+		} catch (e) { alert('Delete failed: ' + e.message); }
+	}
+
+	async function deleteReaction(id) {
+		if (!confirm('Remove this reaction image?')) return;
+		try {
+			const r = await fetch('/api/reaction-images', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) });
+			if (!r.ok) throw new Error(await r.text());
+			reactionList = reactionList.filter(e => e.id !== id);
+		} catch (e) { alert('Delete failed: ' + e.message); }
+	}
+
+	function sampleColor(e, setBgColor) {
+		const canvas = e.currentTarget;
+		const rect = canvas.getBoundingClientRect();
+		const x = Math.floor((e.clientX - rect.left) * (canvas.width / rect.width));
+		const y = Math.floor((e.clientY - rect.top) * (canvas.height / rect.height));
+		const ctx = canvas.getContext('2d');
+		const [r, g, b] = ctx.getImageData(x, y, 1, 1).data;
+		setBgColor([r, g, b]);
+	}
+
+	function renderPreview(canvasEl, file) {
+		if (!file || !canvasEl) return;
+		const url = URL.createObjectURL(file);
+		const img = new Image();
+		img.onload = () => {
+			const maxW = 280, maxH = 140;
+			const scale = Math.min(1, maxW / img.width, maxH / img.height);
+			canvasEl.width = Math.round(img.width * scale);
+			canvasEl.height = Math.round(img.height * scale);
+			canvasEl.getContext('2d').drawImage(img, 0, 0, canvasEl.width, canvasEl.height);
+			URL.revokeObjectURL(url);
+		};
+		img.src = url;
+	}
+	$effect(() => { if (emojiBgCanvas && emojiFile) renderPreview(emojiBgCanvas, emojiFile); });
+	$effect(() => { if (reactionBgCanvas && reactionFile) renderPreview(reactionBgCanvas, reactionFile); });
 
 	onMount(() => { loadEmoji(); loadReactions(); });
 </script>
@@ -131,15 +192,34 @@
 		<div class="ce-upload-section">
 			<label class="ce-file-label">
 				<span class="ce-file-btn">{emojiFile ? emojiFile.name.slice(0, 20) : 'Choose image…'}</span>
-				<input type="file" accept="image/*" style="display:none" bind:this={emojiFileInput}
+				<input type="file" accept="image/*,.heic,.heif" style="display:none" bind:this={emojiFileInput}
 					onchange={(e) => { emojiFile = e.target.files?.[0] ?? null; }} />
 			</label>
 			<input class="ce-text-input" type="text" placeholder="shortcode (e.g. party_blob)"
 				bind:value={emojiShortcode} maxlength="32" />
 			<input class="ce-text-input" type="text" placeholder="tags (comma separated)"
 				bind:value={emojiTags} />
+			<label class="ce-checkbox-label">
+				<input type="checkbox" bind:checked={emojiRemoveBg} onchange={() => { emojiBgColor = null; }} />
+				<span>Remove solid background</span>
+			</label>
+			{#if emojiRemoveBg && emojiFile}
+				<div class="ce-bg-picker">
+					<span class="ce-bg-hint">Click image to sample background color</span>
+					<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+					<canvas class="ce-bg-canvas"
+						bind:this={emojiBgCanvas}
+						onclick={(e) => sampleColor(e, c => emojiBgColor = c)}></canvas>
+					{#if emojiBgColor}
+						<div class="ce-bg-swatch-row">
+							<span class="ce-bg-swatch" style="background: rgb({emojiBgColor.join(',')})"></span>
+							<span class="ce-bg-swatch-label">rgb({emojiBgColor.join(', ')})</span>
+						</div>
+					{/if}
+				</div>
+			{/if}
 			<button class="ce-upload-btn" onclick={uploadEmoji}
-				disabled={emojiUploading || !emojiFile || !emojiShortcode.trim()}>
+				disabled={emojiUploading || !emojiFile || !emojiShortcode.trim() || (emojiRemoveBg && !emojiBgColor)}>
 				{emojiUploading ? 'Uploading…' : 'Upload'}
 			</button>
 			{#if emojiUploadError}<div class="ce-error">{emojiUploadError}</div>{/if}
@@ -155,8 +235,9 @@
 				<div class="ce-emoji-grid">
 					{#each emojiList as e}
 						<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-						<div class="ce-emoji-item" title=":${e.shortcode}:" onclick={() => onInsertEmoji('[ce:' + e.shortcode + ']')}>
+						<div class="ce-emoji-item" title=":${e.shortcode}:" onclick={() => onInsertEmoji({ shortcode: e.shortcode, url: e.url })}>
 							<img src={e.url} alt={':' + e.shortcode + ':'} width="56" height="56" loading="lazy" />
+							{#if isInstructor}<button class="ce-delete-btn" title="Remove" onclick={(ev) => { ev.stopPropagation(); deleteEmoji(e.id); }}>x</button>{/if}
 						</div>
 					{/each}
 				</div>
@@ -173,7 +254,7 @@
 			{#if reactionMode === 'file'}
 				<label class="ce-file-label">
 					<span class="ce-file-btn">{reactionFile ? reactionFile.name.slice(0, 20) : 'Choose image…'}</span>
-					<input type="file" accept="image/*" style="display:none" bind:this={reactionFileInput}
+					<input type="file" accept="image/*,.heic,.heif" style="display:none" bind:this={reactionFileInput}
 						onchange={(e) => { reactionFile = e.target.files?.[0] ?? null; }} />
 				</label>
 			{:else}
@@ -192,6 +273,27 @@
 
 			<input class="ce-text-input" type="text" placeholder="name" bind:value={reactionName} />
 			<input class="ce-text-input" type="text" placeholder="tags (comma separated)" bind:value={reactionTags} />
+			{#if reactionMode === 'file'}
+				<label class="ce-checkbox-label">
+					<input type="checkbox" bind:checked={reactionRemoveBg} onchange={() => { reactionBgColor = null; }} />
+					<span>Remove solid background</span>
+				</label>
+				{#if reactionRemoveBg && reactionFile}
+					<div class="ce-bg-picker">
+						<span class="ce-bg-hint">Click image to sample background color</span>
+						<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+						<canvas class="ce-bg-canvas"
+							bind:this={reactionBgCanvas}
+							onclick={(e) => sampleColor(e, c => reactionBgColor = c)}></canvas>
+						{#if reactionBgColor}
+							<div class="ce-bg-swatch-row">
+								<span class="ce-bg-swatch" style="background: rgb({reactionBgColor.join(',')})"></span>
+								<span class="ce-bg-swatch-label">rgb({reactionBgColor.join(', ')})</span>
+							</div>
+						{/if}
+					</div>
+				{/if}
+			{/if}
 			<button class="ce-upload-btn" onclick={uploadReaction} disabled={!canSubmitReaction}>
 				{reactionUploading ? 'Saving…' : reactionMode === 'url' ? 'Add link' : 'Upload'}
 			</button>
@@ -210,7 +312,8 @@
 					{#each reactionList as r}
 						<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 						<div class="ce-reaction-item" title={r.name} onclick={() => onInsertReaction({ url: r.url, name: r.name })}>
-							<img src={r.url} alt={r.name} loading="lazy" crossorigin="anonymous" />
+							<img src={r.url} alt={r.name} loading="lazy" />
+							{#if isInstructor}<button class="ce-delete-btn" title="Remove" onclick={(ev) => { ev.stopPropagation(); deleteReaction(r.id); }}>x</button>{/if}
 						</div>
 					{/each}
 				</div>
@@ -233,7 +336,7 @@
 	.ce-tab:hover { color: var(--ink, #1a1a1a); background: #ece5d8; }
 	.ce-tab.active { color: var(--ink, #1a1a1a); background: var(--paper, #f7f2ea); border-bottom: 2px solid var(--ink, #1a1a1a); margin-bottom: -1.5px; }
 
-	.ce-upload-section { padding: 0.5rem 0.65rem 0.4rem; border-bottom: 1px solid #e8e0d2; display: flex; flex-direction: column; gap: 0.3rem; flex-shrink: 0; }
+	.ce-upload-section { padding: 0.5rem 0.65rem 0.4rem; border-bottom: 1px solid #e8e0d2; display: flex; flex-direction: column; gap: 0.3rem; flex-shrink: 0; max-height: 55%; overflow-y: auto; }
 
 	.ce-mode-toggle { display: flex; gap: 0.3rem; }
 	.ce-mode-btn { flex: 1; padding: 0.22rem 0; border: 1.5px solid #d5cdc0; border-radius: 6px; background: #fff; color: #8a8078; font-family: inherit; font-size: 0.75rem; cursor: pointer; transition: all 0.13s; }
@@ -258,6 +361,15 @@
 	.ce-upload-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 	.ce-upload-btn:not(:disabled):hover { opacity: 0.82; }
 
+	.ce-checkbox-label { display: flex; align-items: center; gap: 0.35rem; font-size: 0.75rem; color: #6b5f54; cursor: pointer; user-select: none; }
+	.ce-checkbox-label input[type="checkbox"] { margin: 0; accent-color: var(--ink, #1a1a1a); cursor: pointer; }
+
+	.ce-bg-picker { display: flex; flex-direction: column; gap: 0.3rem; }
+	.ce-bg-hint { font-size: 0.7rem; color: #a09688; }
+	.ce-bg-canvas { border: 1.5px solid #d5cdc0; border-radius: 6px; cursor: crosshair; max-width: 100%; align-self: flex-start; }
+	.ce-bg-swatch-row { display: flex; align-items: center; gap: 0.35rem; }
+	.ce-bg-swatch { width: 16px; height: 16px; border-radius: 3px; border: 1px solid #ccc; flex-shrink: 0; }
+	.ce-bg-swatch-label { font-size: 0.7rem; color: #6b5f54; font-family: monospace; }
 	.ce-error { font-size: 0.72rem; color: #c0392b; }
 
 	.ce-grid-wrap { flex: 1; overflow-y: auto; padding: 0.5rem 0.65rem; min-height: 0; }
@@ -273,12 +385,23 @@
 	.ce-empty { color: #a09688; font-size: 0.8rem; text-align: center; padding: 1.5rem 0; }
 
 	.ce-emoji-grid { display: flex; flex-wrap: wrap; gap: 0.35rem; }
-	.ce-emoji-item { width: 64px; height: 64px; border-radius: 10px; border: 1.5px solid #e0d9cc; background: #fff; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: border-color 0.13s, transform 0.1s; overflow: hidden; }
+	.ce-emoji-item { position: relative; width: 64px; height: 64px; border-radius: 10px; border: 1.5px solid #e0d9cc; background: #fff; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: border-color 0.13s, transform 0.1s; overflow: hidden; }
 	.ce-emoji-item:hover { border-color: var(--ink, #1a1a1a); transform: scale(1.06); }
 	.ce-emoji-item img { width: 56px; height: 56px; object-fit: contain; display: block; }
 
 	.ce-reaction-grid { display: flex; flex-wrap: wrap; gap: 0.35rem; }
-	.ce-reaction-item { border-radius: 8px; border: 1.5px solid #e0d9cc; background: #fff; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: border-color 0.13s, transform 0.1s; overflow: hidden; height: 80px; }
+	.ce-reaction-item { position: relative; border-radius: 8px; border: 1.5px solid #e0d9cc; background: #fff; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: border-color 0.13s, transform 0.1s; overflow: hidden; height: 80px; }
 	.ce-reaction-item:hover { border-color: var(--ink, #1a1a1a); transform: scale(1.04); }
 	.ce-reaction-item img { height: 80px; width: auto; max-width: 140px; object-fit: contain; display: block; }
+
+	.ce-delete-btn {
+		position: absolute; top: 2px; right: 2px;
+		width: 16px; height: 16px; padding: 0;
+		border: none; border-radius: 50%;
+		background: rgba(0,0,0,0.55); color: #fff;
+		font-size: 10px; line-height: 1; cursor: pointer;
+		display: none; align-items: center; justify-content: center;
+	}
+	.ce-emoji-item:hover .ce-delete-btn,
+	.ce-reaction-item:hover .ce-delete-btn { display: flex; }
 </style>

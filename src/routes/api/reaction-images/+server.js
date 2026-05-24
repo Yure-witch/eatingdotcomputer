@@ -1,8 +1,8 @@
 import { json, error } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
 import { getDb } from '$lib/server/turso.js';
-import { uploadToR2 } from '$lib/server/r2.js';
-import { toWebp } from '$lib/server/media.js';
+import { uploadToR2, deleteFromR2 } from '$lib/server/r2.js';
+import { toWebp, removeBackground } from '$lib/server/media.js';
 import { requireClassAccess } from '$lib/server/access.js';
 
 const MAX_BYTES = 25 * 1024 * 1024; // 25 MB
@@ -92,15 +92,38 @@ export async function POST({ request, locals }) {
 	const file = formData.get('file');
 	if (!file || typeof file === 'string' || file.size === 0) error(400, 'No file or URL provided');
 	if (file.size > MAX_BYTES) error(413, 'File too large (max 25 MB)');
-	if (!file.type.startsWith('image/')) error(400, 'File must be an image');
+	const fname = (file.name ?? '').toLowerCase();
+	const isHeic = fname.endsWith('.heic') || fname.endsWith('.heif') || file.type === 'image/heic' || file.type === 'image/heif';
+	if (!file.type.startsWith('image/') && !isHeic) error(400, 'File must be an image');
 
-	const inputBuffer = Buffer.from(await file.arrayBuffer());
-	const converted = await toWebp(inputBuffer);
+	const removeBg = formData.get('removeBg') === '1';
+	const removeBgColorStr = formData.get('removeBgColor');
+	const removeBgColor = removeBgColorStr ? removeBgColorStr.split(',').map(Number) : null;
+	let inputBuffer = Buffer.from(await file.arrayBuffer());
+	const isGif = file.type === 'image/gif';
 
 	const id = crypto.randomUUID();
-	const key = `reaction-images/${id}.webp`;
+	let key, uploadBuffer, uploadMime;
 
-	await uploadToR2(key, converted.buffer, converted.mimetype);
+	if (removeBg) {
+		let result;
+		try { result = await removeBackground(inputBuffer, removeBgColor); }
+		catch (e) { error(422, 'Background removal failed: ' + (e?.message ?? e)); }
+		key = `reaction-images/${id}.${result.ext}`;
+		uploadBuffer = result.buffer;
+		uploadMime = result.mimetype;
+	} else if (isGif) {
+		key = `reaction-images/${id}.gif`;
+		uploadBuffer = inputBuffer;
+		uploadMime = 'image/gif';
+	} else {
+		const converted = await toWebp(inputBuffer);
+		key = `reaction-images/${id}.webp`;
+		uploadBuffer = converted.buffer;
+		uploadMime = converted.mimetype;
+	}
+
+	await uploadToR2(key, uploadBuffer, uploadMime);
 
 	const publicBase = (env.R2_PUBLIC_BASE_URL ?? env.PUBLIC_R2_PUBLIC_BASE_URL ?? '').replace(/\/$/, '');
 	if (!publicBase) error(503, 'Storage public URL not configured');
@@ -115,4 +138,19 @@ export async function POST({ request, locals }) {
 	}
 
 	return json({ id, name, url, tags });
+}
+
+export async function DELETE({ request, locals }) {
+	const session = await locals.auth();
+	if (!session?.user || session.user.role !== 'instructor') error(403, 'Instructors only');
+	const { id } = await request.json();
+	if (!id) error(400, 'Missing id');
+	const db = getDb();
+	if (!db) error(503, 'Database unavailable');
+	await db.execute(CREATE_TABLE);
+	const row = (await db.execute({ sql: 'SELECT r2_key FROM reaction_images WHERE id = ?', args: [id] })).rows[0];
+	if (!row) error(404, 'Not found');
+	if (row.r2_key) try { await deleteFromR2(String(row.r2_key)); } catch {}
+	await db.execute({ sql: 'DELETE FROM reaction_images WHERE id = ?', args: [id] });
+	return json({ ok: true });
 }

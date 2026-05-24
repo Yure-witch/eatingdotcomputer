@@ -10,12 +10,15 @@ export async function load({ params, parent }) {
 	if (!participants.includes(currentUser.id)) error(403, 'Forbidden');
 
 	const db = getDb();
+	const PAGE_SIZE = 40;
 	const result = db ? await db.execute({
-		sql: `SELECT id, user_id, user_name, user_role, content, created_at,
-		             attachment_url, attachment_filename, attachment_mimetype, attachment_size,
-		             fx, font_size, font_weight, font_stretch, no_split, is_edited
-		      FROM chat_messages WHERE conversation_id = ? ORDER BY created_at ASC`,
-		args: [convId]
+		sql: `SELECT * FROM (
+		        SELECT id, user_id, user_name, user_role, content, created_at,
+		               attachment_url, attachment_filename, attachment_mimetype, attachment_size,
+		               fx, font_size, font_weight, font_stretch, no_split, is_edited
+		        FROM chat_messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT ?
+		      ) sub ORDER BY created_at ASC`,
+		args: [convId, PAGE_SIZE]
 	}) : { rows: [] };
 
 	const reactionsResult = db ? await db.execute({
@@ -44,6 +47,7 @@ export async function load({ params, parent }) {
 		convId,
 		initialReactions,
 		starredMessageIds,
+		hasMoreHistory: result.rows.length >= PAGE_SIZE,
 		history: result.rows.map((r) => ({
 			id: String(r.id),
 			userId: String(r.user_id),

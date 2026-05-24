@@ -428,6 +428,29 @@ let loadingDoc = $state(false);
 		await saveNow();
 	}
 
+	async function duplicateSyllabus(id) {
+		// Load the source syllabus data
+		const res = await fetch(`/api/syllabus?classId=${enc(classId)}&syllabusId=${enc(id)}`);
+		if (!res.ok) return;
+		const src = await res.json();
+		// Create a new syllabus with copied data and fresh IDs
+		const newId = uid();
+		const newName = (src.name ?? 'Syllabus') + ' (copy)';
+		const newBlocks = (src.blocks ?? []).map(b => ({ ...b, id: uid() }));
+		syllabi = [{ id: newId, name: newName, updatedAt: Date.now() }, ...syllabi];
+		activeSyllabusId = newId;
+		blocks = newBlocks;
+		font = src.font ?? 'Georgia, serif';
+		customFonts = Array.isArray(src.customFonts) ? src.customFonts : [];
+		margins = src.margins ?? { top: 64, right: 64, bottom: 64, left: 64 };
+		fontSizes = src.fontSizes ?? { title: 24, section: 14, text: 12, weekHeader: 12, weekTopic: 11 };
+		spacing = src.spacing ?? { title: 0, section: 6, text: 6, week: 8 };
+		lineHeights = src.lineHeights ?? { title: 1.2, section: 1.3, text: 1.75, weekHeader: 1.3, weekTopic: 1.65 };
+		syllabusName = newName;
+		lastSaved = null;
+		await saveNow();
+	}
+
 	async function deleteSyllabus(id) {
 		if (!confirm('Delete this syllabus? This cannot be undone.')) return;
 		await fetch(`/api/syllabus?classId=${enc(classId)}&syllabusId=${enc(id)}`, { method: 'DELETE' });
@@ -705,6 +728,7 @@ let loadingDoc = $state(false);
 									<span class="syl-list-date">{new Date(syl.updatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
 								</button>
 								<div class="syl-list-actions">
+									<button class="syl-icon-btn" onclick={() => duplicateSyllabus(syl.id)} title="Duplicate">⧉</button>
 									<button class="syl-icon-btn" onclick={() => startRename(syl.id, syl.name)} title="Rename">✎</button>
 									<button class="syl-icon-btn syl-del-btn" onclick={() => deleteSyllabus(syl.id)} title="Delete">×</button>
 								</div>

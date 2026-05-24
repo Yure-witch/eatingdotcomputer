@@ -18,3 +18,12 @@ export function getCustomEmojiMap() {
 export function getCachedCustomEmojiMap() { return _map ?? {}; }
 
 export function invalidateCustomEmojiCache() { _map = null; _promise = null; }
+
+export function addToCustomEmojiCache(shortcode, url) {
+	if (!_map) _map = {};
+	_map[shortcode] = { url, shortcode };
+}
+
+export function removeFromCustomEmojiCache(shortcode) {
+	if (_map) delete _map[shortcode];
+}

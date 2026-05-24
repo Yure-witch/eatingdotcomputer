@@ -6,11 +6,56 @@
 	import EmojiPicker from '$lib/components/EmojiPicker.svelte';
 	import EmojiKitchen from '$lib/components/EmojiKitchen.svelte';
 	import CustomEmojiPanel from '$lib/components/CustomEmojiPanel.svelte';
+	import GifPicker from '$lib/components/GifPicker.svelte';
 	import FileTypeIcon from '$lib/components/FileTypeIcon.svelte';
 	import ProfileHover from '$lib/components/ProfileHover.svelte';
+	import UserMenu from '$lib/components/UserMenu.svelte';
 	import { loadEmojiNames, getEmojiName } from '$lib/emoji-names.js';
 	import { initSemanticSearch, searchEmoji, cpToChar } from '$lib/emoji-semantic.js';
 	import { getCustomEmojiMap, getCachedCustomEmojiMap } from '$lib/custom-emoji-store.js';
+	import hljs from 'highlight.js/lib/core';
+	import hljsJavascript from 'highlight.js/lib/languages/javascript';
+	import hljsPython from 'highlight.js/lib/languages/python';
+	import hljsHtml from 'highlight.js/lib/languages/xml';
+	import hljsCss from 'highlight.js/lib/languages/css';
+	import hljsJson from 'highlight.js/lib/languages/json';
+	import hljsTypescript from 'highlight.js/lib/languages/typescript';
+	import hljsBash from 'highlight.js/lib/languages/bash';
+	import hljsMarkdown from 'highlight.js/lib/languages/markdown';
+	import hljsSql from 'highlight.js/lib/languages/sql';
+	import hljsJava from 'highlight.js/lib/languages/java';
+	import hljsCpp from 'highlight.js/lib/languages/cpp';
+	import hljsRust from 'highlight.js/lib/languages/rust';
+	import hljsGo from 'highlight.js/lib/languages/go';
+	import hljsSwift from 'highlight.js/lib/languages/swift';
+	import hljsIni from 'highlight.js/lib/languages/ini';
+	hljs.registerLanguage('javascript', hljsJavascript);
+	hljs.registerLanguage('js', hljsJavascript);
+	hljs.registerLanguage('python', hljsPython);
+	hljs.registerLanguage('py', hljsPython);
+	hljs.registerLanguage('html', hljsHtml);
+	hljs.registerLanguage('xml', hljsHtml);
+	hljs.registerLanguage('svg', hljsHtml);
+	hljs.registerLanguage('css', hljsCss);
+	hljs.registerLanguage('json', hljsJson);
+	hljs.registerLanguage('typescript', hljsTypescript);
+	hljs.registerLanguage('ts', hljsTypescript);
+	hljs.registerLanguage('bash', hljsBash);
+	hljs.registerLanguage('sh', hljsBash);
+	hljs.registerLanguage('shell', hljsBash);
+	hljs.registerLanguage('markdown', hljsMarkdown);
+	hljs.registerLanguage('md', hljsMarkdown);
+	hljs.registerLanguage('sql', hljsSql);
+	hljs.registerLanguage('java', hljsJava);
+	hljs.registerLanguage('cpp', hljsCpp);
+	hljs.registerLanguage('c', hljsCpp);
+	hljs.registerLanguage('rust', hljsRust);
+	hljs.registerLanguage('go', hljsGo);
+	hljs.registerLanguage('swift', hljsSwift);
+	hljs.registerLanguage('ini', hljsIni);
+	hljs.registerLanguage('env', hljsIni);
+	hljs.registerLanguage('properties', hljsIni);
+	hljs.registerLanguage('csv', () => ({ name: 'CSV', contains: [{ className: 'string', begin: '"', end: '"' }] }));
 
 	let { data } = $props();
 
@@ -21,6 +66,8 @@
 	const userMap = buildUserMap(data.currentUser, data.users);
 
 	let messages = $state([...data.history]);
+	let hasMoreHistory = $state(data.hasMoreHistory ?? false);
+	let loadingMore = $state(false);
 	let input = $state('');
 	let emojiNames = $state({});
 	let emojiTooltip = $state(null);
@@ -50,6 +97,7 @@
 	let showComposePicker = $state(false);
 	let showKitchen = $state(false);
 	let showCustomEmoji = $state(false);
+	let showGifPicker = $state(false);
 	let _ceMap = $state({}); // custom emoji map { [id]: {shortcode, url} }
 
 	// Message effects
@@ -422,8 +470,70 @@
 	// Render content markup → HTML string in one pass, avoiding inter-segment DOM nodes
 	// that cause newlines under white-space: pre-wrap when using {#each}.
 	// Renders markup text + EK tokens + CE tokens → HTML, correctly applying FX effects
+	const CODE_BLOCK_RE = /```(\w*)\n([\s\S]*?)```/g;
+	const INLINE_CODE_RE = /`([^`\n]+)`/g;
+
+	function highlightCode(code, lang) {
+		try {
+			if (lang && hljs.getLanguage(lang)) return hljs.highlight(code, { language: lang }).value;
+			return hljs.highlightAuto(code).value;
+		} catch { return escapeHtml(code); }
+	}
+
+	function processCodeBlocks(text) {
+		if (!text.includes('`')) return null;
+		CODE_BLOCK_RE.lastIndex = 0;
+		const blockMatches = [];
+		let m;
+		while ((m = CODE_BLOCK_RE.exec(text)) !== null) {
+			blockMatches.push({ index: m.index, end: CODE_BLOCK_RE.lastIndex, lang: m[1], code: m[2] });
+		}
+		if (!blockMatches.length) return null;
+		const parts = [];
+		let last = 0;
+		for (const bm of blockMatches) {
+			if (bm.index > last) parts.push({ type: 'text', content: text.slice(last, bm.index) });
+			parts.push({ type: 'codeblock', lang: bm.lang, code: bm.code });
+			last = bm.end;
+		}
+		if (last < text.length) parts.push({ type: 'text', content: text.slice(last) });
+		return parts;
+	}
+
 	function contentHtml(text, split = true) {
 		if (!text) return '';
+		const codeParts = processCodeBlocks(text);
+		if (codeParts) {
+			return codeParts.map((p, i) => {
+				if (p.type === 'codeblock') {
+					const rawCode = p.code.replace(/\n$/, '');
+					const highlighted = highlightCode(rawCode, p.lang);
+					const lineCount = rawCode.split('\n').length;
+					const lineNums = Array.from({ length: lineCount }, (_, i) => `<span class="code-ln">${i + 1}</span>`).join('');
+					const langIcon = p.lang ? (_ci[p.lang] || _ci[{javascript:'js',typescript:'ts',python:'py',html:'html',css:'css',json:'json',bash:'bash',sh:'bash',shell:'bash',sql:'sql',java:'java',cpp:'cpp',c:'cpp',rust:'rust',go:'go',swift:'swift',markdown:'md',md:'md',csv:'csv',env:'env',properties:'env','env.example':'envex'}[p.lang]] || '') : '';
+					const langLabel = p.lang ? `<span class="code-lang">${escapeHtml(p.lang)}${langIcon ? ` <img class="code-lang-icon" src="${langIcon}" alt="" />` : ''}</span>` : '';
+					const copyBtn = `<button class="code-copy-btn" title="Copy"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><span class="copy-label"> Copy</span></button>`;
+					const truncated = lineCount > 20;
+					const truncAttr = truncated ? ' data-truncated="1"' : '';
+					const showMore = truncated ? `<button class="code-show-more">Show all ${lineCount} lines</button>` : '';
+					return `<div class="code-block"${truncAttr}><div class="code-block-header">${copyBtn}${langLabel}</div><div class="code-body"><pre class="code-lines" aria-hidden="true">${lineNums}</pre><pre class="code-content"><code>${highlighted}</code></pre></div>${showMore}</div>`;
+				}
+				const trimmed = p.content.replace(/^\n+/, '').replace(/\n+$/, '');
+				if (!trimmed) return '';
+				return contentHtml(trimmed, split);
+			}).join('');
+		}
+		if (text.includes('`')) {
+			const inlined = text.replace(INLINE_CODE_RE, (_, code) => `<code class="inline-code">${escapeHtml(code)}</code>`);
+			if (inlined !== text) {
+				const splitParts = inlined.split(/(<code class="inline-code">.*?<\/code>)/);
+				return splitParts.map(part => {
+					if (part.startsWith('<code class="inline-code">')) return part;
+					const raw = part.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+					return contentHtml(raw, split);
+				}).join('');
+			}
+		}
 		const hasEk = text.indexOf('[ek:') !== -1;
 		const hasCe = text.indexOf('[ce:') !== -1;
 		const hasFx = /[\uE100-\uE1FF]/.test(text);
@@ -521,6 +631,102 @@
 	let allowFxMultiply = $state(false);
 	let fxSplitWords = $state(true);
 	let showFormatPanel = $state(false);
+	let showCodePanel = $state(false);
+	let ceCodeLangPicker = $state(null);
+	function _codeIcon(svg) { return `data:image/svg+xml,${encodeURIComponent(svg)}`; }
+	const _ci = {
+		js: _codeIcon(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><text x="8" y="13" text-anchor="middle" font-size="11" font-weight="700" font-family="sans-serif" fill="#CBCB41">JS</text></svg>`),
+		ts: _codeIcon(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><text x="8" y="13" text-anchor="middle" font-size="11" font-weight="700" font-family="sans-serif" fill="#3178C6">TS</text></svg>`),
+		py: _codeIcon(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M8 1C5.5 1 4 2 4 3.5V5h4v1H3C1.5 6 0 7.5 0 9.5S1.5 13 3 13h1.5v-2c0-1 1-2 2-2h3c1 0 2-1 2-2V3.5C11.5 2 10.5 1 8 1zm-2 1.5a.75.75 0 110 1.5.75.75 0 010-1.5z" fill="#3776AB"/><path d="M8 15c2.5 0 4-1 4-2.5V11H8v-1h5c1.5 0 3-1.5 3-3.5S14.5 3 13 3h-1.5v2c0 1-1 2-2 2h-3c-1 0-2 1-2 2v3.5C4.5 14 5.5 15 8 15zm2-1.5a.75.75 0 110-1.5.75.75 0 010 1.5z" fill="#FFD43B"/></svg>`),
+		html: _codeIcon(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M5 2.5L1.5 8L5 13.5" fill="none" stroke="#E44D26" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M11 2.5L14.5 8L11 13.5" fill="none" stroke="#E44D26" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`),
+		css: _codeIcon(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><text x="8" y="13" text-anchor="middle" font-size="14" font-weight="700" font-family="sans-serif" fill="#519aba">#</text></svg>`),
+		json: _codeIcon(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><text x="8" y="13" text-anchor="middle" font-size="12" font-weight="700" font-family="sans-serif" fill="#CBCB41">{ }</text></svg>`),
+		bash: _codeIcon(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><rect width="16" height="16" rx="2" fill="#333"/><text x="8" y="12" text-anchor="middle" font-size="9" font-weight="700" font-family="monospace" fill="#0f0">&gt;_</text></svg>`),
+		sql: _codeIcon(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><ellipse cx="8" cy="4" rx="6" ry="2.5" fill="#e8c33a"/><path d="M2 4v8c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5V4" fill="none" stroke="#e8c33a" stroke-width="1.5"/><ellipse cx="8" cy="12" rx="6" ry="2.5" fill="none" stroke="#e8c33a" stroke-width="0"/></svg>`),
+		java: _codeIcon(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><text x="8" y="13" text-anchor="middle" font-size="11" font-weight="700" font-family="serif" fill="#E76F00">☕</text></svg>`),
+		cpp: _codeIcon(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><rect width="16" height="16" rx="2" fill="#659AD2"/><text x="8" y="12" text-anchor="middle" font-size="7" font-weight="700" font-family="sans-serif" fill="#fff">C++</text></svg>`),
+		rust: _codeIcon(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5" fill="none" stroke="#a72145" stroke-width="1.5"/><text x="8" y="11.5" text-anchor="middle" font-size="8" font-weight="700" font-family="sans-serif" fill="#a72145">R</text></svg>`),
+		go: _codeIcon(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><text x="8" y="12" text-anchor="middle" font-size="9" font-weight="700" font-family="sans-serif" fill="#00ADD8">Go</text></svg>`),
+		swift: _codeIcon(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><rect width="16" height="16" rx="3" fill="#F05138"/><text x="8" y="12" text-anchor="middle" font-size="9" font-weight="700" font-family="sans-serif" fill="#fff">S</text></svg>`),
+		md: _codeIcon(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><rect width="16" height="16" rx="2" fill="#555"/><text x="8" y="12" text-anchor="middle" font-size="9" font-weight="700" font-family="sans-serif" fill="#fff">M↓</text></svg>`),
+		csv: _codeIcon(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><rect x="1" y="2" width="14" height="12" rx="1.5" fill="none" stroke="#89d185" stroke-width="1.3"/><line x1="1" y1="6" x2="15" y2="6" stroke="#89d185" stroke-width="1"/><line x1="1" y1="10" x2="15" y2="10" stroke="#89d185" stroke-width="1"/><line x1="6" y1="2" x2="6" y2="14" stroke="#89d185" stroke-width="1"/><line x1="11" y1="2" x2="11" y2="14" stroke="#89d185" stroke-width="1"/></svg>`),
+		env: _codeIcon(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><circle cx="8" cy="8" r="3" fill="none" stroke="#9b9b9b" stroke-width="1.5"/><g stroke="#9b9b9b" stroke-width="1.3" stroke-linecap="round"><line x1="8" y1="1.5" x2="8" y2="3.5"/><line x1="8" y1="12.5" x2="8" y2="14.5"/><line x1="1.5" y1="8" x2="3.5" y2="8"/><line x1="12.5" y1="8" x2="14.5" y2="8"/><line x1="3.4" y1="3.4" x2="4.8" y2="4.8"/><line x1="11.2" y1="11.2" x2="12.6" y2="12.6"/><line x1="3.4" y1="12.6" x2="4.8" y2="11.2"/><line x1="11.2" y1="4.8" x2="12.6" y2="3.4"/></g></svg>`),
+		envex: _codeIcon(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><text x="8" y="13" text-anchor="middle" font-size="14" font-weight="700" font-family="monospace" fill="#89d185">$</text></svg>`),
+		plain: _codeIcon(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><rect x="2" y="1" width="12" height="14" rx="1.5" fill="none" stroke="#9399b2" stroke-width="1.3"/><line x1="5" y1="5" x2="11" y2="5" stroke="#9399b2" stroke-width="1"/><line x1="5" y1="8" x2="11" y2="8" stroke="#9399b2" stroke-width="1"/><line x1="5" y1="11" x2="9" y2="11" stroke="#9399b2" stroke-width="1"/></svg>`),
+	};
+	const CODE_LANGUAGES = [
+		{ id: 'javascript', label: 'JavaScript', icon: _ci.js },
+		{ id: 'typescript', label: 'TypeScript', icon: _ci.ts },
+		{ id: 'python', label: 'Python', icon: _ci.py },
+		{ id: 'html', label: 'HTML', icon: _ci.html },
+		{ id: 'css', label: 'CSS', icon: _ci.css },
+		{ id: 'json', label: 'JSON', icon: _ci.json },
+		{ id: 'bash', label: 'Bash', icon: _ci.bash },
+		{ id: 'sql', label: 'SQL', icon: _ci.sql },
+		{ id: 'java', label: 'Java', icon: _ci.java },
+		{ id: 'cpp', label: 'C/C++', icon: _ci.cpp },
+		{ id: 'rust', label: 'Rust', icon: _ci.rust },
+		{ id: 'go', label: 'Go', icon: _ci.go },
+		{ id: 'swift', label: 'Swift', icon: _ci.swift },
+		{ id: 'markdown', label: 'Markdown', icon: _ci.md },
+		{ id: 'csv', label: 'CSV', icon: _ci.csv },
+		{ id: 'env', label: '.env', icon: _ci.env },
+		{ id: 'env', label: '.env.example', icon: _ci.envex },
+		{ id: '', label: 'Plain / Generic', icon: _ci.plain },
+	];
+	function toggleCodeBlock() {
+		if (!inputEl) return;
+		if (undoStack.length >= 50) undoStack.shift();
+		undoStack.push(input);
+		redoStack.length = 0;
+		const markup = serializeCe(inputEl);
+		const trimmed = markup.trim();
+		if (/^```\w*\n[\s\S]*\n```$/.test(trimmed)) {
+			const unwrapped = trimmed.replace(/^```\w*\n/, '').replace(/\n```$/, '');
+			setCeInput(unwrapped);
+			detectedCodeLang = detectCode(unwrapped);
+			return;
+		}
+		insertCodeBlock('');
+	}
+	function insertCodeBlock(lang) {
+		if (!inputEl) return;
+		const sel = window.getSelection();
+		let selStart = 0, selEnd = 0, hasSelection = false;
+		if (sel && !sel.isCollapsed && inputEl.contains(sel.anchorNode)) {
+			const range = sel.getRangeAt(0);
+			selStart = cePlainOffset(inputEl, range.startContainer, range.startOffset);
+			selEnd = cePlainOffset(inputEl, range.endContainer, range.endOffset);
+			hasSelection = selEnd > selStart;
+		}
+		const currentMarkup = serializeCe(inputEl);
+		let before, selected, after;
+		if (hasSelection) {
+			const segs = markupToSegments(currentMarkup);
+			let pos = 0; before = ''; selected = ''; after = '';
+			for (const seg of segs) {
+				const segStart = pos, segEnd = pos + seg.text.length;
+				if (segEnd <= selStart) { before += segmentsToMarkup([seg]); }
+				else if (segStart >= selEnd) { after += segmentsToMarkup([seg]); }
+				else {
+					const oStart = Math.max(segStart, selStart) - segStart;
+					const oEnd = Math.min(segEnd, selEnd) - segStart;
+					if (oStart > 0) before += segmentsToMarkup([{ text: seg.text.slice(0, oStart), fxStack: seg.fxStack }]);
+					selected += seg.text.slice(oStart, oEnd);
+					if (oEnd < seg.text.length) after += segmentsToMarkup([{ text: seg.text.slice(oEnd), fxStack: seg.fxStack }]);
+				}
+				pos += seg.text.length;
+			}
+		} else {
+			before = currentMarkup;
+			selected = '';
+			after = '';
+		}
+		const block = '```' + lang + '\n' + selected + '\n```';
+		const newMarkup = before + block + after;
+		setCeInput(newMarkup);
+		showCodePanel = false;
+	}
 	let undoStack = [];
 	let redoStack = [];
 
@@ -594,6 +800,15 @@
 					result += fxStack.map(fx => FX_TO_CHAR[fx]).join('') + serializeCe(node) + FX_CLOSE_CHAR.repeat(fxStack.length);
 				} else if (node.tagName === 'BR') {
 					result += '\n';
+				} else if (node.classList?.contains('e-tip-pop')) {
+					// Skip tooltip popups — not content
+				} else if (node.classList?.contains('code-block') || node.classList?.contains('code-block-ce')) {
+					const lang = node.dataset?.lang ?? (node.querySelector('.code-lang')?.textContent ?? '').trim();
+					const cePre = node.querySelector('.code-block-ce-code');
+					const code = cePre ? cePre.textContent : (node.querySelector('code')?.textContent ?? '');
+					result += '```' + lang + '\n' + code + '\n```';
+				} else if (node.classList?.contains('inline-code')) {
+					result += '`' + node.textContent + '`';
 				} else {
 					result += serializeCe(node);
 				}
@@ -658,7 +873,90 @@
 
 	// Unicode markup → DOM nodes (nested spans — one per effect for composable CSS animations)
 	// Unicode markup → DOM nodes, with EK/CE token support and correct FX wrapping on EK/CE images
+	let _ceCodeRehighlightTimer = null;
+	function rehighlightCodeBlock(pre, lang) {
+		const sel = window.getSelection();
+		let cursorOff = 0;
+		if (sel?.rangeCount && pre.contains(sel.anchorNode)) {
+			const r = document.createRange();
+			r.setStart(pre, 0);
+			r.setEnd(sel.anchorNode, sel.anchorOffset);
+			cursorOff = r.toString().length;
+		}
+		const raw = pre.textContent;
+		const highlighted = highlightCode(raw.replace(/\n$/, ''), lang);
+		pre.innerHTML = `<code>${highlighted}</code>`;
+		try {
+			let pos = 0, done = false;
+			function walk(node) {
+				if (done) return;
+				if (node.nodeType === Node.TEXT_NODE) {
+					if (pos + node.length >= cursorOff) {
+						const r = document.createRange();
+						r.setStart(node, cursorOff - pos);
+						r.collapse(true);
+						sel.removeAllRanges();
+						sel.addRange(r);
+						done = true;
+						return;
+					}
+					pos += node.length;
+				} else {
+					for (const c of node.childNodes) { if (done) break; walk(c); }
+				}
+			}
+			walk(pre);
+		} catch {}
+	}
+
+	function makeCodeBlockNode(lang, code) {
+		const div = document.createElement('div');
+		div.className = 'code-block-ce';
+		div.dataset.lang = lang;
+		div.dataset.code = code;
+		const header = document.createElement('div');
+		header.className = 'code-block-ce-header';
+		header.setAttribute('contenteditable', 'false');
+		const langIcon = lang ? (_ci[lang] || _ci[{javascript:'js',typescript:'ts',python:'py',html:'html',css:'css',json:'json',bash:'bash',sh:'bash',sql:'sql',java:'java',cpp:'cpp',c:'cpp',rust:'rust',go:'go',swift:'swift',markdown:'md',md:'md',csv:'csv',env:'env'}[lang]] || '') : '';
+		header.innerHTML = `<span class="code-block-ce-lang">${lang ? escapeHtml(lang) : 'code'}${langIcon ? ` <img class="ce-code-icon" src="${langIcon}" alt="" />` : ''}</span><button class="ce-code-lang-btn" title="Change language">▾</button>`;
+		div.appendChild(header);
+		const pre = document.createElement('pre');
+		pre.className = 'code-block-ce-code';
+		const highlighted = highlightCode(code.replace(/\n$/, ''), lang);
+		pre.innerHTML = `<code>${highlighted}</code>`;
+		pre.addEventListener('input', () => {
+			clearTimeout(_ceCodeRehighlightTimer);
+			_ceCodeRehighlightTimer = setTimeout(() => rehighlightCodeBlock(pre, div.dataset.lang), 300);
+		});
+		div.appendChild(pre);
+		return div;
+	}
+
 	function ceMarkupToNodes(markup) {
+		const CB_RE = /```(\w*)\n([\s\S]*?)\n```/g;
+		const parts = [];
+		let last = 0, m;
+		while ((m = CB_RE.exec(markup)) !== null) {
+			if (m.index > last) parts.push({ type: 'text', content: markup.slice(last, m.index) });
+			parts.push({ type: 'codeblock', lang: m[1], code: m[2] });
+			last = CB_RE.lastIndex;
+		}
+		if (last < markup.length) parts.push({ type: 'text', content: markup.slice(last) });
+		if (parts.some(p => p.type === 'codeblock')) {
+			const allNodes = [];
+			for (let i = 0; i < parts.length; i++) {
+				const part = parts[i];
+				if (part.type === 'codeblock') {
+					allNodes.push(makeCodeBlockNode(part.lang, part.code));
+					const hasMore = parts.slice(i + 1).some(p => p.type !== 'codeblock' ? p.content?.trim() : true);
+					if (hasMore) allNodes.push(document.createTextNode('\u200B'));
+				} else if (part.content) {
+					allNodes.push(...ceMarkupToNodes(part.content));
+				}
+			}
+			return allNodes;
+		}
+
 		const EK_RE = /\[ek:([a-z0-9]+):([0-9a-f-]+):([0-9a-f-]+)\]/gi;
 		const CE_RE = /\[ce:([a-zA-Z0-9_-]{1,32})\]/gi;
 		const segs = markupToSegments(normalizeLegacyMarkup(markup));
@@ -820,6 +1118,41 @@
 			.map(([shortcode, data]) => ({ shortcode, url: data.url }));
 	}
 
+	let detectedCodeLang = $state(null);
+	const CODE_PATTERNS = [
+		{ lang: 'python', re: /\b(def |class |import |from .+ import|print\(|if __name__|elif |lambda )/m },
+		{ lang: 'javascript', re: /\b(const |let |var |function |=>|console\.|document\.|window\.|export |import .+ from)/m },
+		{ lang: 'typescript', re: /\b(interface |type |enum |readonly |as |implements |\?: )/m },
+		{ lang: 'html', re: /(<\/?[a-z][\w-]*[\s>]|<!DOCTYPE|<html|<div|<span|<head|<body)/im },
+		{ lang: 'css', re: /(\{[\s\S]*?:[\s\S]*?;[\s\S]*?\}|@media |@keyframes |\.[\w-]+\s*\{|#[\w-]+\s*\{)/m },
+		{ lang: 'json', re: /^\s*[\[{]\s*"[\w-]+"\s*:/m },
+		{ lang: 'sql', re: /\b(SELECT |INSERT |UPDATE |DELETE |CREATE TABLE|ALTER TABLE|DROP |FROM .+ WHERE)/im },
+		{ lang: 'bash', re: /(^#!\/bin\/(ba)?sh|^\$ |\b(echo |cd |mkdir |npm |yarn |git |curl |chmod |sudo ))/m },
+		{ lang: 'java', re: /\b(public class |private |protected |void |System\.out|@Override|new [\w]+\()/m },
+		{ lang: 'rust', re: /\b(fn |let mut |impl |struct |enum |pub fn |use |mod |match |\bprintln!)/m },
+		{ lang: 'go', re: /\b(func |package |import |fmt\.|go |chan |defer |:= )/m },
+		{ lang: 'swift', re: /\b(func |var |let |guard |struct |protocol |@objc|print\(|import (UIKit|SwiftUI))/m },
+		{ lang: 'cpp', re: /\b(#include |std::|cout|cin|nullptr|template|namespace |class .+\{)/m },
+	];
+	function detectCode(text) {
+		if (!text || text.length < 10) return null;
+		if (/^```/.test(text.trim())) return null;
+		const plain = text.replace(/[\uE100-\uE1FF]/g, '').replace(/\[ek:[^\]]+\]/g, '').replace(/\[ce:[^\]]+\]/g, '');
+		const lines = plain.split('\n').filter(l => l.trim());
+		if (lines.length < 2 && !/[{};]/.test(plain)) return null;
+		for (const p of CODE_PATTERNS) {
+			if (p.re.test(plain)) return p.lang;
+		}
+		return null;
+	}
+	function wrapAsCode(lang) {
+		if (!inputEl) return;
+		const text = serializeCe(inputEl);
+		const wrapped = '```' + lang + '\n' + text + '\n```';
+		setCeInput(wrapped);
+		detectedCodeLang = null;
+	}
+
 	function resolveColonShortcode(shortcode) {
 		if (!inputEl) return;
 		const data = getCachedCustomEmojiMap()[shortcode];
@@ -870,6 +1203,7 @@
 			_lastInlineTypo = {};
 		}
 		updateCeSuggestions();
+		detectedCodeLang = detectCode(input);
 		onInput();
 	}
 
@@ -993,7 +1327,7 @@
 
 		const isColorFx = name.startsWith('color-') || name === 'rainbow';
 		const isFormatFx = name === 'bold' || name === 'italic' || name === 'underline' || name === 'strike' || isColorFx;
-		const isFmtFx = (fx) => fx === 'bold' || fx === 'italic' || fx === 'underline' || fx === 'strike' || fx === 'rainbow' || fx.startsWith('color-');
+		const isFmtFx = (fx) => fx === 'bold' || fx === 'italic' || fx === 'underline' || fx === 'strike' || fx === 'rainbow' || fx.startsWith('color-') || fx.startsWith('wdth-') || fx.startsWith('wght-') || fx.startsWith('sz-');
 
 		// Check if every selected segment already has this effect → toggle off
 		let p0 = 0, allHaveIt = true;
@@ -1107,6 +1441,17 @@
 		const newMarkup = segmentsToMarkup(mergedSegs);
 		inputEl.innerHTML = '';
 		for (const node of ceMarkupToNodes(newMarkup)) inputEl.appendChild(node);
+		try {
+			const startPos = findDomPos(inputEl, selStart);
+			const endPos = findDomPos(inputEl, selEnd);
+			const newRange = document.createRange();
+			newRange.setStart(startPos.node, startPos.offset);
+			newRange.setEnd(endPos.node, endPos.offset);
+			const sel = window.getSelection();
+			sel.removeAllRanges();
+			sel.addRange(newRange);
+			showTextFxBar = true;
+		} catch {}
 		input = newMarkup;
 	}
 	function applyInlineWidth(val) { applyInlineTypo(val, WDTH_STEPS, 100, WDTH_FX_MAP, 'wdth-'); }
@@ -1147,12 +1492,57 @@
 		e.clipboardData.setData('text/x-eating-markup', rawMarkup);
 	}
 
+	function matchPastedImage(clipboardData) {
+		const html = clipboardData.getData('text/html');
+		if (!html) return null;
+		const doc = new DOMParser().parseFromString(html, 'text/html');
+		const img = doc.querySelector('img');
+		if (!img) return null;
+		if (img.dataset?.ce) return { type: 'ce', token: img.dataset.ce };
+		if (img.dataset?.ek) return { type: 'ek', token: img.dataset.ek };
+		const src = img.getAttribute('src');
+		if (src) {
+			const ceMap = getCachedCustomEmojiMap();
+			for (const [sc, d] of Object.entries(ceMap)) {
+				if (d.url === src) return { type: 'ce', token: `[ce:${sc}]` };
+			}
+			if (src.includes('/reaction-images/')) {
+				return { type: 'reaction', url: src, name: img.alt || 'reaction' };
+			}
+		}
+		return null;
+	}
+
 	function onCePaste(e) {
 		e.preventDefault();
-		// Handle pasted images / files first
+		const internalMarkup = e.clipboardData.getData('text/x-eating-markup');
+		const plainText = e.clipboardData.getData('text/plain');
+		const hasMarkupTokens = internalMarkup || (plainText && (/\[ce:|^\[sz:|^\[wght:|^\[wdth:|\[ek:|\[bold\]|\[italic\]/i.test(plainText)));
 		const items = Array.from(e.clipboardData?.items ?? []);
 		const fileItem = items.find(i => i.kind === 'file' && (i.type.startsWith('image/') || i.type.startsWith('video/')));
-		if (fileItem) {
+		if (fileItem && !hasMarkupTokens) {
+			const match = matchPastedImage(e.clipboardData);
+			if (match) {
+				if (match.type === 'ce' || match.type === 'ek') {
+					const nodes = ceMarkupToNodes(match.token);
+					const sel = window.getSelection();
+					if (sel?.rangeCount && inputEl?.contains(sel.anchorNode)) {
+						const range = sel.getRangeAt(0);
+						range.deleteContents();
+						for (const node of nodes) { range.insertNode(node); range.setStartAfter(node); range.collapse(true); }
+						sel.removeAllRanges(); sel.addRange(range);
+					} else {
+						for (const node of nodes) inputEl.appendChild(node);
+					}
+					input = serializeCe(inputEl);
+					detectedCodeLang = detectCode(input);
+					return;
+				}
+				if (match.type === 'reaction') {
+					pendingAttachment = { url: match.url, filename: match.name, mimetype: 'image/webp', size: 0, isReaction: true };
+					return;
+				}
+			}
 			const file = fileItem.getAsFile();
 			if (file) {
 				uploading = true;
@@ -1185,7 +1575,7 @@
 
 		// When pasted text contains EK tokens, use direct DOM insertion to avoid
 		// markup-based cursor arithmetic breaking on img nodes.
-		if (pastedText.indexOf('[ek:') !== -1) {
+		if (pastedText.indexOf('[ek:') !== -1 || pastedText.indexOf('[ce:') !== -1) {
 			const nodes = ceMarkupToNodes(rawMarkup ? pastedText : normalizeLegacyMarkup(pastedText));
 			const sel = window.getSelection();
 			if (sel && sel.rangeCount > 0 && inputEl.contains(sel.anchorNode)) {
@@ -1207,6 +1597,7 @@
 				window.getSelection()?.addRange(r);
 			}
 			input = serializeCe(inputEl);
+			detectedCodeLang = detectCode(input);
 			return;
 		}
 
@@ -1263,6 +1654,7 @@
 		const newSel = window.getSelection();
 		newSel?.removeAllRanges();
 		newSel?.addRange(newRange);
+		detectedCodeLang = detectCode(input);
 	}
 
 	// Copy from message bubbles: cloneContents preserves partial spans with data-fx, serialize them.
@@ -1284,6 +1676,7 @@
 
 		const tempDiv = document.createElement('div');
 		tempDiv.appendChild(range.cloneContents());
+		for (const pop of tempDiv.querySelectorAll('.e-tip-pop')) pop.remove();
 		let markup = serializeCe(tempDiv);
 
 		// Wrap with outer effects (those whose span was the ancestor container, not in the clone)
@@ -1291,7 +1684,16 @@
 			markup = outerFxStack.map(fx => FX_TO_CHAR[fx] ?? '').join('') + markup + FX_CLOSE_CHAR.repeat(outerFxStack.length);
 		}
 
-		const readable = unicodeToReadable(markup);
+		let readable = unicodeToReadable(markup);
+
+		// If selection is inside a code block, wrap in triple backticks
+		let codeAncestor = range.commonAncestorContainer;
+		if (codeAncestor.nodeType === Node.TEXT_NODE) codeAncestor = codeAncestor.parentElement;
+		const codeBlock = codeAncestor?.closest?.('.code-block');
+		if (codeBlock && !readable.startsWith('```')) {
+			const lang = (codeBlock.querySelector('.code-lang')?.textContent ?? '').trim();
+			readable = '```' + lang + '\n' + readable + '\n```';
+		}
 
 		// Find parent bubble for font settings
 		let fontPrefix = '';
@@ -1647,6 +2049,30 @@
 		const dist = listEl.scrollHeight - listEl.scrollTop - listEl.clientHeight;
 		userScrolledUp = dist > 80;
 		if (emojiTooltip) emojiTooltip = null;
+		if (listEl.scrollTop < 200 && hasMoreHistory && !loadingMore) loadMoreHistory();
+	}
+
+	async function loadMoreHistory() {
+		if (loadingMore || !hasMoreHistory || !messages.length) return;
+		loadingMore = true;
+		const oldest = messages[0];
+		const before = new Date(oldest.createdAt).toISOString();
+		try {
+			const r = await fetch(`/api/chat/history?channelId=${encodeURIComponent(data.convId)}&before=${encodeURIComponent(before)}&limit=40`);
+			if (!r.ok) throw new Error('Failed');
+			const { messages: older, hasMore } = await r.json();
+			hasMoreHistory = hasMore;
+			if (older.length) {
+				const prevHeight = listEl.scrollHeight;
+				const existingIds = new Set(messages.map(m => m.id));
+				const newMsgs = older.filter(m => !existingIds.has(m.id));
+				messages = [...newMsgs, ...messages];
+				requestAnimationFrame(() => {
+					if (listEl) listEl.scrollTop += listEl.scrollHeight - prevHeight;
+				});
+			}
+		} catch (e) { console.error('Load more failed', e); }
+		finally { loadingMore = false; }
 	}
 
 	function scrollToMessage(id) {
@@ -1816,9 +2242,42 @@
 
 		markRead();
 		scrollToBottom();
+		if (listEl) listEl.addEventListener('error', (e) => {
+			const img = e.target;
+			if (img.tagName === 'IMG' && (img.classList.contains('ce-img') || img.classList.contains('ek-img'))) {
+				const retries = parseInt(img.dataset.retries ?? '0');
+				if (retries < 3) {
+					img.dataset.retries = retries + 1;
+					setTimeout(() => { img.src = img.src; }, 1000 * (retries + 1));
+				} else {
+					const span = document.createElement('span');
+					span.className = 'img-removed-inline';
+					span.textContent = '[removed]';
+					img.replaceWith(span);
+				}
+			}
+		}, true);
+		if (listEl) listEl.addEventListener('click', (e) => {
+			const copyBtn = e.target.closest?.('.code-copy-btn');
+			if (copyBtn) {
+				const block = copyBtn.closest('.code-block');
+				const code = block?.querySelector('code')?.textContent ?? '';
+				navigator.clipboard.writeText(code).then(() => {
+					copyBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#a6e3a1" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span class="copy-label"> Copied</span>`;
+					copyBtn.title = 'Copied!';
+					setTimeout(() => { copyBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><span class="copy-label"> Copy</span>`; copyBtn.title = 'Copy'; }, 1500);
+				});
+				return;
+			}
+			const showMore = e.target.closest?.('.code-show-more');
+			if (showMore) {
+				const block = showMore.closest('.code-block');
+				if (block) { block.removeAttribute('data-truncated'); showMore.remove(); }
+			}
+		});
 		loadEmojiNames().then(m => { emojiNames = m; _htmlCache.clear(); _jumboCache.clear(); messages = [...messages]; });
 		initSemanticSearch();
-		getCustomEmojiMap().then(m => { _ceMap = m; });
+		getCustomEmojiMap().then(m => { _ceMap = m; _htmlCache.clear(); messages = [...messages]; });
 		document.addEventListener('selectionchange', onCeSelect);
 		if (heartsCanvas) {
 			heartsCanvas.width = window.innerWidth;
@@ -1827,7 +2286,7 @@
 			if (messages.some(m => m.fx === 'hearts')) startHeartsLoop();
 		}
 
-		firebaseRef = query(ref(db, `dms/${data.convId}/messages`), limitToLast(200));
+		firebaseRef = query(ref(db, `dms/${data.convId}/messages`), limitToLast(50));
 		onChildAdded(firebaseRef, (snap) => {
 			const msg = normaliseMessage(snap.key, snap.val(), userMap);
 			if (messages.find((m) => m.id === msg.id)) return;
@@ -1907,19 +2366,29 @@
 		onInput();
 	}
 
-	function onCustomEmojiInsert(token) {
-		// token is like [ce:shortcode]
-		const shortcode = token.slice(4, -1); // strip [ce: and ]
-		const data = getCachedCustomEmojiMap()[shortcode];
-		if (!data) return;
-		insertCeImgAtCursor(shortcode, data);
+	function onCustomEmojiInsert(emojiOrToken) {
+		let shortcode, ceData;
+		if (typeof emojiOrToken === 'object') {
+			shortcode = emojiOrToken.shortcode;
+			ceData = emojiOrToken;
+		} else {
+			shortcode = emojiOrToken.slice(4, -1);
+			ceData = getCachedCustomEmojiMap()[shortcode];
+		}
+		if (!shortcode || !ceData?.url) return;
+		insertCeImgAtCursor(shortcode, ceData);
+		_htmlCache.clear();
 		showCustomEmoji = false;
 	}
 
 	function onReactionInsert(reaction) {
-		// Insert as pending attachment
 		pendingAttachment = { url: reaction.url, filename: reaction.name, mimetype: 'image/webp', size: 0, isReaction: true };
 		showCustomEmoji = false;
+	}
+
+	function onGifSelect(gif) {
+		pendingAttachment = { url: gif.gif, filename: gif.title || 'GIF', mimetype: 'image/gif', size: 0 };
+		showGifPicker = false;
 	}
 
 	function cancelAttachment() {
@@ -1944,7 +2413,6 @@
 		const content = input.trim();
 		const attSnap = pendingAttachment ? { ...pendingAttachment } : null;
 		if (!content && !attSnap) return;
-		if (sending) return;
 		clearTyping();
 		const replySnap = replyingTo ? { ...replyingTo } : null;
 		const fxSnap = messageEffect;
@@ -1956,7 +2424,7 @@
 		const wdthSnap = (messageFontStretch !== 100 && !hasInlineWdth) ? messageFontStretch : undefined;
 		const noSplit = !fxSplitWords;
 		const optimistic = {
-			id: `opt-${Date.now()}`, userId: data.currentUser.id,
+			id: `opt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, userId: data.currentUser.id,
 			userName: data.currentUser.name, userRole: data.currentUser.role,
 			content: content || (attSnap ? attSnap.filename : ''), createdAt: Date.now(),
 			pending: true, replyTo: replySnap, attachment: attSnap, fx: fxSnap,
@@ -1976,24 +2444,24 @@
 		messageFontStretch = 100;
 		scrollToBottom();
 		if (fxSnap && SCREEN_FXS.some(f => f.name === fxSnap)) setTimeout(() => playScreenEffect(fxSnap), 50);
-		sending = true;
-		try {
-			await fetch('/api/chat', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ content, to: otherUser.id, reply_to: replySnap, attachment: attSnap, effect: fxSnap || undefined, fontSize: szSnap, fontWeight: wghtSnap, fontStretch: wdthSnap, noSplit: noSplit || undefined })
-			});
+		fetch('/api/chat', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ content, to: otherUser.id, reply_to: replySnap, attachment: attSnap, effect: fxSnap || undefined, fontSize: szSnap, fontWeight: wghtSnap, fontStretch: wdthSnap, noSplit: noSplit || undefined })
+		}).then(() => {
+			if (messages.some((m) => m.id === optimistic.id && m.pending)) {
+				messages = messages.filter((m) => m.id !== optimistic.id);
+			}
+		}).catch(() => {
 			messages = messages.filter((m) => m.id !== optimistic.id);
-		} catch {
-			messages = messages.filter((m) => m.id !== optimistic.id);
-			setCeInput(content);
-			replyingTo = replySnap;
-			pendingAttachment = attSnap;
-			messageEffect = fxSnap;
-			messageFontSize = szSnap ?? 1.0;
-		}
-		sending = false;
-		inputEl?.focus();
+			if (!input.trim() && !pendingAttachment) {
+				setCeInput(content);
+				replyingTo = replySnap;
+				pendingAttachment = attSnap;
+				messageEffect = fxSnap;
+				messageFontSize = szSnap ?? 1.0;
+			}
+		});
 	}
 
 	async function handleFileSelect(e) {
@@ -2023,6 +2491,53 @@
 		if (bytes < 1024) return `${bytes} B`;
 		if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
 		return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+	}
+
+	const VIEWABLE_EXTS = new Set(['js','mjs','cjs','ts','tsx','jsx','py','html','htm','css','json','md','txt','csv','sql','sh','bash','env','yml','yaml','xml','svg','toml','ini','cfg','conf','log','c','h','cpp','hpp','rs','go','java','swift','svelte','vue','rb','php','pl','r','lua','kt','scala','ex','exs','hs','ml','clj','dockerfile','makefile','gitignore','env.example','env.local']);
+	const MAX_VIEW_SIZE = 500 * 1024;
+	function isViewableFile(filename, mimetype, size) {
+		if (size > MAX_VIEW_SIZE) return false;
+		if (mimetype?.startsWith('text/')) return true;
+		if (mimetype === 'application/json' || mimetype === 'application/xml') return true;
+		const ext = (filename ?? '').split('.').pop()?.toLowerCase();
+		return VIEWABLE_EXTS.has(ext) || VIEWABLE_EXTS.has(filename?.toLowerCase());
+	}
+	function langFromFilename(filename) {
+		const ext = (filename ?? '').split('.').pop()?.toLowerCase();
+		const map = { js:'javascript', mjs:'javascript', cjs:'javascript', jsx:'javascript', ts:'typescript', tsx:'typescript', py:'python', html:'html', htm:'html', css:'css', json:'json', md:'markdown', txt:'plaintext', csv:'csv', sql:'sql', sh:'bash', bash:'bash', env:'env', yml:'yaml', yaml:'yaml', xml:'xml', svg:'xml', toml:'ini', ini:'ini', cfg:'ini', conf:'ini', log:'plaintext', c:'cpp', h:'cpp', cpp:'cpp', hpp:'cpp', rs:'rust', go:'go', java:'java', swift:'swift', svelte:'html', vue:'html', rb:'ruby', php:'php', r:'r', lua:'lua' };
+		return map[ext] ?? 'plaintext';
+	}
+
+	const _extToIcon = { js:_ci.js, mjs:_ci.js, cjs:_ci.js, jsx:_ci.js, ts:_ci.ts, tsx:_ci.ts, py:_ci.py, html:_ci.html, htm:_ci.html, css:_ci.css, json:_ci.json, md:_ci.md, csv:_ci.csv, sql:_ci.sql, sh:_ci.bash, bash:_ci.bash, env:_ci.env, java:_ci.java, cpp:_ci.cpp, c:_ci.cpp, h:_ci.cpp, hpp:_ci.cpp, rs:_ci.rust, go:_ci.go, swift:_ci.swift, svelte:_ci.html, vue:_ci.html };
+	function fileCodeIcon(filename) {
+		const ext = (filename ?? '').split('.').pop()?.toLowerCase();
+		return _extToIcon[ext] ?? null;
+	}
+	const FILE_TYPE_NAMES = { js:'JavaScript file', mjs:'JavaScript file', cjs:'JavaScript file', jsx:'JSX file', ts:'TypeScript file', tsx:'TSX file', py:'Python file', html:'HTML file', htm:'HTML file', css:'CSS file', json:'JSON file', md:'Markdown file', txt:'Text file', csv:'CSV file', sql:'SQL file', sh:'Shell script', bash:'Shell script', env:'Environment file', yml:'YAML file', yaml:'YAML file', xml:'XML file', svg:'SVG file', toml:'TOML file', ini:'Config file', cfg:'Config file', conf:'Config file', log:'Log file', c:'C file', h:'C header', cpp:'C++ file', hpp:'C++ header', rs:'Rust file', go:'Go file', java:'Java file', swift:'Swift file', svelte:'Svelte file', vue:'Vue file', rb:'Ruby file', php:'PHP file', lua:'Lua file', kt:'Kotlin file', pdf:'PDF document', zip:'ZIP archive', gz:'GZIP archive', tar:'TAR archive', png:'PNG image', jpg:'JPEG image', jpeg:'JPEG image', gif:'GIF image', webp:'WebP image', mp4:'MP4 video', mov:'MOV video', mp3:'MP3 audio', wav:'WAV audio' };
+	function fileTypeName(filename) {
+		const ext = (filename ?? '').split('.').pop()?.toLowerCase();
+		return FILE_TYPE_NAMES[ext] ?? null;
+	}
+	let fileViewer = $state(null);
+	async function downloadFile(url, filename) {
+		try {
+			const r = await fetch(`/api/file-proxy?url=${encodeURIComponent(url)}`);
+			const blob = await r.blob();
+			const a = document.createElement('a');
+			a.href = URL.createObjectURL(blob);
+			a.download = filename;
+			a.click();
+			URL.revokeObjectURL(a.href);
+		} catch { window.open(url, '_blank'); }
+	}
+	async function viewFile(url, filename) {
+		try {
+			const r = await fetch(`/api/file-proxy?url=${encodeURIComponent(url)}`);
+			if (!r.ok) throw new Error('Failed to fetch');
+			const text = await r.text();
+			const lang = langFromFilename(filename);
+			fileViewer = { filename, url, content: text, lang };
+		} catch { fileViewer = { filename, url, content: 'Failed to load file.', lang: 'plaintext' }; }
 	}
 
 	// Returns the outermost node to jump past for atomic EK/CE navigation.
@@ -2102,11 +2617,70 @@
 		// Normalize cursor outside FX span before any printable character is inserted
 		if (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) normalizeCursorOutsideFx();
 
+		// Backspace/Delete with selection that includes code blocks
+		if ((e.key === 'Backspace' || e.key === 'Delete') && !e.metaKey && !e.ctrlKey) {
+			const sel = window.getSelection();
+			if (sel && !sel.isCollapsed && inputEl?.contains(sel.anchorNode)) {
+				const hasCodeBlock = inputEl.querySelector('.code-block-ce');
+				if (hasCodeBlock) {
+					e.preventDefault();
+					if (undoStack.length >= 50) undoStack.shift();
+					undoStack.push(input);
+					redoStack.length = 0;
+					sel.deleteFromDocument();
+					for (const cb of inputEl.querySelectorAll('.code-block-ce')) {
+						if (!cb.querySelector('.code-block-ce-code')?.textContent?.trim()) cb.remove();
+					}
+					input = serializeCe(inputEl);
+					detectedCodeLang = detectCode(input);
+					if (!input.trim()) {
+						messageFontSize = 1.0; messageFontWeight = 400; messageFontStretch = 100;
+						messageEffect = null; _savedCeSel = null; _lastInlineTypo = {};
+					}
+					return;
+				}
+			}
+		}
+
 		// Backspace: delete EK image (including EK wrapped in FX span) in one keystroke
 		if (e.key === 'Backspace' && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
 			const sel = window.getSelection();
 			if (sel?.isCollapsed && inputEl?.contains(sel.anchorNode)) {
+				const codeBlock = sel.anchorNode.closest?.('.code-block-ce') ?? sel.anchorNode.parentElement?.closest?.('.code-block-ce');
+				if (codeBlock && inputEl.contains(codeBlock)) {
+					const pre = codeBlock.querySelector('.code-block-ce-code');
+					if (pre) {
+						const rr = document.createRange();
+						rr.setStart(pre, 0);
+						rr.setEnd(sel.anchorNode, sel.anchorOffset);
+						if (rr.toString().length === 0) {
+							e.preventDefault();
+							if (undoStack.length >= 50) undoStack.shift();
+							undoStack.push(input);
+							redoStack.length = 0;
+							const code = pre.textContent ?? '';
+							codeBlock.replaceWith(document.createTextNode(code));
+							input = serializeCe(inputEl);
+							detectedCodeLang = detectCode(input);
+							return;
+						}
+					}
+				}
 				const r = sel.getRangeAt(0);
+				const prevNode = r.startContainer.nodeType === Node.TEXT_NODE
+					? (r.startOffset === 0 ? r.startContainer.previousSibling : null)
+					: (r.startOffset > 0 ? r.startContainer.childNodes[r.startOffset - 1] : null);
+				if (prevNode?.classList?.contains('code-block-ce')) {
+					e.preventDefault();
+					if (undoStack.length >= 50) undoStack.shift();
+					undoStack.push(input);
+					redoStack.length = 0;
+					const code = prevNode.dataset.code ?? '';
+					prevNode.replaceWith(document.createTextNode(code));
+					input = serializeCe(inputEl);
+					detectedCodeLang = detectCode(input);
+					return;
+				}
 				const prev = r.startContainer.nodeType === Node.TEXT_NODE
 					? (r.startOffset === 0 ? r.startContainer.previousSibling : null)
 					: (r.startOffset > 0 ? r.startContainer.childNodes[r.startOffset - 1] : null);
@@ -2136,6 +2710,56 @@
 					if (goRight) nr.setStartAfter(outer); else nr.setStartBefore(outer);
 					nr.collapse(true);
 					sel.removeAllRanges(); sel.addRange(nr); return;
+				}
+			}
+		}
+
+		// Arrow keys: escape code block when at start/end
+		if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowDown') && !e.metaKey && !e.ctrlKey) {
+			const sel = window.getSelection();
+			if (sel?.isCollapsed && inputEl?.contains(sel.anchorNode)) {
+				const codeBlock = sel.anchorNode.closest?.('.code-block-ce') ?? sel.anchorNode.parentElement?.closest?.('.code-block-ce');
+				if (codeBlock) {
+					const pre = codeBlock.querySelector('.code-block-ce-code');
+					if (pre) {
+						const r = document.createRange();
+						r.setStart(pre, 0);
+						r.setEnd(sel.anchorNode, sel.anchorOffset);
+						const fullText = pre.textContent;
+						const fullLen = fullText.length;
+						let curOff = 0;
+						try { const tr = new Range(); tr.setStart(pre, 0); tr.setEnd(sel.anchorNode, sel.anchorOffset); curOff = tr.cloneContents().textContent.length; } catch { curOff = r.toString().length; }
+						const atStart = curOff === 0;
+						const isAtEnd = curOff >= fullLen;
+						const onLastLine = fullText.indexOf('\n', curOff) === -1;
+						const onFirstLine = fullText.lastIndexOf('\n', curOff - 1) === -1;
+						if ((e.key === 'ArrowLeft' && atStart) || (e.key === 'ArrowUp' && onFirstLine)) {
+							e.preventDefault();
+							let before = codeBlock.previousSibling;
+							if (!before || before.nodeType !== Node.TEXT_NODE) {
+								before = document.createTextNode('\u200B');
+								codeBlock.before(before);
+							}
+							const nr = document.createRange();
+							nr.setStart(before, before.length);
+							nr.collapse(true);
+							sel.removeAllRanges(); sel.addRange(nr);
+							return;
+						}
+						if ((e.key === 'ArrowRight' && isAtEnd) || (e.key === 'ArrowDown' && onLastLine)) {
+							e.preventDefault();
+							let after = codeBlock.nextSibling;
+							if (!after || after.nodeType !== Node.TEXT_NODE) {
+								after = document.createTextNode('\u200B');
+								codeBlock.after(after);
+							}
+							const nr = document.createRange();
+							nr.setStart(after, 0);
+							nr.collapse(true);
+							sel.removeAllRanges(); sel.addRange(nr);
+							return;
+						}
+					}
 				}
 			}
 		}
@@ -2208,9 +2832,13 @@
 	<span class="avatar">{otherUser.name[0].toUpperCase()}</span>
 	<h1>{otherUser.name}</h1>
 	{#if otherUser.role === 'instructor'}<span class="badge">instructor</span>{/if}
+	<UserMenu user={data.currentUser} />
 </div>
 
 <div class="message-list" bind:this={listEl} style:padding-bottom="{inputAreaHeight}px" onscroll={onListScroll} oncopy={onMsgListCopy} onmouseover={onMsgListMouseover} onmousemove={onMsgListMousemove} onmouseleave={onMsgListMouseleave}>
+	{#if loadingMore}
+		<div class="load-more-spinner"><span class="sending-spinner"></span></div>
+	{/if}
 	{#if messages.length === 0}
 		<p class="empty">Start your conversation with {otherUser.name}.</p>
 	{/if}
@@ -2234,11 +2862,11 @@
 					{#if msg.attachment.mimetype?.startsWith('image/')}
 						{#if msg.attachment.isReaction}
 							<div class="bubble bubble-img bubble-reaction-img">
-								<img src={msg.attachment.url} alt={msg.attachment.filename} onload={scrollIfNearBottom} />
+								<img src={msg.attachment.url} alt={msg.attachment.filename} onload={scrollIfNearBottom} onerror={(e) => { const img = e.target; const r = parseInt(img.dataset.retries ?? '0'); if (r < 3) { img.dataset.retries = r + 1; setTimeout(() => { img.src = img.src; }, 1000 * (r + 1)); } else { img.replaceWith(Object.assign(document.createElement('div'), { className: 'img-removed', textContent: 'Image removed' })); } }} />
 							</div>
 						{:else}
 							<a href={msg.attachment.url} target="_blank" rel="noopener noreferrer" class="bubble bubble-img">
-								<img src={msg.attachment.url} alt={msg.attachment.filename} onload={scrollIfNearBottom} />
+								<img src={msg.attachment.url} alt={msg.attachment.filename} onload={scrollIfNearBottom} onerror={(e) => { const img = e.target; const r = parseInt(img.dataset.retries ?? '0'); if (r < 3) { img.dataset.retries = r + 1; setTimeout(() => { img.src = img.src; }, 1000 * (r + 1)); } else { img.replaceWith(Object.assign(document.createElement('div'), { className: 'img-removed', textContent: 'Image removed' })); } }} />
 							</a>
 						{/if}
 					{:else if msg.attachment.mimetype?.startsWith('video/')}
@@ -2250,13 +2878,35 @@
 							</div>
 						</div>
 					{:else}
-						<a href={msg.attachment.url} target="_blank" rel="noopener noreferrer" class="bubble bubble-file"  class:mine={isMine}>
-							<FileTypeIcon filename={msg.attachment.filename} mimetype={msg.attachment.mimetype} iconSize={36} />
-							<div class="att-info">
+						{@const viewable = isViewableFile(msg.attachment.filename, msg.attachment.mimetype, msg.attachment.size)}
+						{@const codeIcon = fileCodeIcon(msg.attachment.filename)}
+						<div class="bubble bubble-file" class:mine={isMine}>
+							{#if codeIcon}
+								<img class="att-code-icon" src={codeIcon} alt="" />
+							{:else}
+								<FileTypeIcon filename={msg.attachment.filename} mimetype={msg.attachment.mimetype} iconSize={36} />
+							{/if}
+							<div class="att-file-body">
 								<span class="att-name">{msg.attachment.filename}</span>
-								<span class="att-size">{formatSize(msg.attachment.size)}</span>
+								<span class="att-size">{fileTypeName(msg.attachment.filename) ? `${fileTypeName(msg.attachment.filename)} · ` : ''}{formatSize(msg.attachment.size)}</span>
+								<div class="att-btns">
+									{#if viewable}
+										<button class="att-btn" onclick={() => viewFile(msg.attachment.url, msg.attachment.filename)}>
+											<svg class="att-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+											View
+										</button>
+									{/if}
+									<a class="att-btn" href={msg.attachment.url} target="_blank" rel="noopener noreferrer">
+										<svg class="att-btn-icon" viewBox="0 -960 960 960" fill="currentColor"><path d="M320-240 80-480l240-240 57 57-184 184 183 183-56 56Zm320 0-57-57 184-184-183-183 56-56 240 240-240 240Z"/></svg>
+										Source
+									</a>
+									<button class="att-btn" onclick={() => downloadFile(msg.attachment.url, msg.attachment.filename)}>
+										<svg class="att-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+										Download
+									</button>
+								</div>
 							</div>
-						</a>
+						</div>
 					{/if}
 				{:else if editingMsgId === msg.id}
 					<div class="bubble edit-bubble" class:mine={isMine}>
@@ -2347,6 +2997,44 @@
 	{/each}
 </div>
 
+{#if ceCodeLangPicker}
+	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+	<div class="compose-picker-backdrop" style="z-index:9999" onclick={() => ceCodeLangPicker = null}></div>
+	<div class="format-pop code-lang-pop" style="position:fixed; left:{ceCodeLangPicker.x}px; top:{ceCodeLangPicker.y}px; z-index:10000">
+		{#each CODE_LANGUAGES as lang}
+			<button class="code-lang-btn" onmousedown={(e) => { e.preventDefault(); const block = ceCodeLangPicker.el; const code = block.dataset.code ?? ''; const newBlock = makeCodeBlockNode(lang.id, code); block.replaceWith(newBlock); newBlock.after(document.createTextNode('\u200B')); input = serializeCe(inputEl); ceCodeLangPicker = null; }}><img class="code-lang-icon" src={lang.icon} alt="" /> {lang.label}</button>
+		{/each}
+	</div>
+{/if}
+
+{#if fileViewer}
+	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+	<div class="file-viewer-overlay" onclick={() => fileViewer = null}>
+		<div class="file-viewer" onclick={(e) => e.stopPropagation()}>
+			<div class="file-viewer-header">
+				{#if fileCodeIcon(fileViewer.filename)}
+					<img class="file-viewer-icon" src={fileCodeIcon(fileViewer.filename)} alt="" />
+				{/if}
+				<span class="file-viewer-name">{fileViewer.filename}</span>
+				<button class="file-viewer-dl" onclick={(e) => { const btn = e.currentTarget; navigator.clipboard.writeText(fileViewer.content).then(() => { btn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#a6e3a1" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Copied!`; setTimeout(() => { btn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copy`; }, 1500); }); }}>
+					<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+					Copy
+				</button>
+				<a class="file-viewer-dl" href={fileViewer.url} target="_blank" rel="noopener noreferrer">
+					<svg width="13" height="13" viewBox="0 -960 960 960" fill="currentColor"><path d="M320-240 80-480l240-240 57 57-184 184 183 183-56 56Zm320 0-57-57 184-184-183-183 56-56 240 240-240 240Z"/></svg>
+					Source
+				</a>
+				<button class="file-viewer-dl" onclick={() => downloadFile(fileViewer.url, fileViewer.filename)}>
+					<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+					Download
+				</button>
+				<button class="file-viewer-close" onclick={() => fileViewer = null}>×</button>
+			</div>
+			<pre class="file-viewer-code"><code>{@html highlightCode(fileViewer.content, fileViewer.lang)}</code></pre>
+		</div>
+	</div>
+{/if}
+
 {#if pickerMsgId}
 	<div class="picker-overlay" onclick={() => pickerMsgId = null} onkeydown={(e) => e.key === 'Escape' && (pickerMsgId = null)} role="presentation"></div>
 	<div class="picker-popover" style:left="{pickerPos.x}px" style:top="{pickerPos.y}px">
@@ -2366,18 +3054,21 @@
 		</div>
 	{/if}
 	{#if pendingAttachment}
-		<div class="reply-bar att-bar">
-			{#if pendingAttachment.mimetype?.startsWith('image/')}
-				<img class="att-bar-thumb" src={pendingAttachment.url} alt={pendingAttachment.filename} />
-			{:else}
-				<FileTypeIcon filename={pendingAttachment.filename} mimetype={pendingAttachment.mimetype} iconSize={32} />
-			{/if}
-			<div class="reply-bar-content">
-				<span class="reply-bar-to">{pendingAttachment.filename}</span>
-				<span class="reply-bar-text">{formatSize(pendingAttachment.size)}</span>
+		{#if pendingAttachment.mimetype?.startsWith('image/')}
+			<div class="att-img-preview">
+				<img class="att-img-large" src={pendingAttachment.url} alt={pendingAttachment.filename} />
+				<button class="att-img-close" onclick={cancelAttachment}>×</button>
 			</div>
-			<button class="reply-bar-close" onclick={cancelAttachment}>×</button>
-		</div>
+		{:else}
+			<div class="reply-bar att-bar">
+				<FileTypeIcon filename={pendingAttachment.filename} mimetype={pendingAttachment.mimetype} iconSize={32} />
+				<div class="reply-bar-content">
+					<span class="reply-bar-to">{pendingAttachment.filename}</span>
+					<span class="reply-bar-text">{formatSize(pendingAttachment.size)}</span>
+				</div>
+				<button class="reply-bar-close" onclick={cancelAttachment}>×</button>
+			</div>
+		{/if}
 	{/if}
 	{#if typingUsers.length}
 		<p class="typing-indicator">
@@ -2410,7 +3101,44 @@
 			{/each}
 		</div>
 	{/if}
+	{#if detectedCodeLang && ceSuggestions.length === 0}
+		<div class="emoji-suggestions code-suggest-bar">
+			<button class="code-suggest-pill" onmousedown={(e) => { e.preventDefault(); wrapAsCode(detectedCodeLang); }}>
+				Format as <strong>{detectedCodeLang}</strong>
+			</button>
+		</div>
+	{/if}
 	{#if showTextFxBar}
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div class="text-typo-bar" onfocusin={() => { showTextFxBar = true; }}>
+			<div class="typo-inline-row">
+				<span class="typo-inline-label">Size</span>
+				<input class="typo-inline-range" type="range" min="0.55" max="5" step="0.05"
+					bind:value={messageFontSize}
+					oninput={() => { if (_savedCeSel) { applyInlineSize(messageFontSize); showTextFxBar = true; } }} />
+				{#if messageFontSize !== 1.0}<button class="typo-inline-reset" onmousedown={(e) => { e.preventDefault(); messageFontSize = 1.0; _lastInlineTypo['sz-'] = null; if (_savedCeSel) applyInlineSize(1.0); }}>↺</button>{/if}
+			</div>
+			<div class="typo-inline-row">
+				<span class="typo-inline-label">Weight</span>
+				<input class="typo-inline-range" type="range" min="100" max="700" step="50"
+					bind:value={messageFontWeight}
+					oninput={() => { if (_savedCeSel) { applyInlineWeight(messageFontWeight); showTextFxBar = true; } }} />
+				{#if messageFontWeight !== 400}<button class="typo-inline-reset" onmousedown={(e) => { e.preventDefault(); messageFontWeight = 400; _lastInlineTypo['wght-'] = null; if (_savedCeSel) applyInlineWeight(400); }}>↺</button>{/if}
+			</div>
+			<div class="typo-inline-row">
+				<span class="typo-inline-label">Width</span>
+				<input class="typo-inline-range" type="range" min="25" max="150" step="1"
+					bind:value={messageFontStretch}
+					oninput={() => { if (_savedCeSel) { applyInlineWidth(messageFontStretch); showTextFxBar = true; } }} />
+				{#if messageFontStretch !== 100}<button class="typo-inline-reset" onmousedown={(e) => { e.preventDefault(); messageFontStretch = 100; _lastInlineTypo['wdth-'] = null; if (_savedCeSel) applyInlineWidth(100); }}>↺</button>{/if}
+			</div>
+			<button class="typo-default-btn" onmousedown={(e) => {
+				e.preventDefault();
+				messageFontSize = 1.0; messageFontWeight = 400; messageFontStretch = 100;
+				_lastInlineTypo = {};
+				if (_savedCeSel) { applyInlineSize(1.0); applyInlineWeight(400); applyInlineWidth(100); }
+			}}>Default</button>
+		</div>
 		<div class="text-fx-bar">
 			<button class="text-fx-layer-toggle" class:text-fx-layer-on={allowFxNesting} onmousedown={(e) => { e.preventDefault(); allowFxNesting = !allowFxNesting; }} title="Stack different effects on the same text">
 				<span class="layer-toggle-track"><span class="layer-toggle-knob"></span></span>
@@ -2476,6 +3204,16 @@
 			{/if}
 		</div>
 		<div class="compose-custom-emoji-wrap">
+			<button class="btn-kitchen btn-gif" class:active={showGifPicker} title="GIF" onclick={() => showGifPicker = !showGifPicker}>GIF</button>
+			{#if showGifPicker}
+				<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+				<div class="compose-picker-backdrop" onclick={() => showGifPicker = false}></div>
+				<div class="compose-kitchen-pop">
+					<GifPicker onSelect={onGifSelect} />
+				</div>
+			{/if}
+		</div>
+		<div class="compose-custom-emoji-wrap">
 			<button class="btn-kitchen btn-custom-emoji" class:active={showCustomEmoji} title="Custom Emoji & Reactions" onclick={() => showCustomEmoji = !showCustomEmoji}>
 				<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 					<circle cx="12" cy="12" r="10"/>
@@ -2488,9 +3226,9 @@
 			</button>
 			{#if showCustomEmoji}
 				<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-				<div class="compose-picker-backdrop" onclick={() => showCustomEmoji = false}></div>
+				<div class="compose-picker-backdrop" onclick={() => { showCustomEmoji = false; _htmlCache.clear(); }}></div>
 				<div class="compose-kitchen-pop">
-					<CustomEmojiPanel onInsertEmoji={onCustomEmojiInsert} onInsertReaction={onReactionInsert} />
+					<CustomEmojiPanel onInsertEmoji={onCustomEmojiInsert} onInsertReaction={onReactionInsert} isInstructor={data.currentUser.role === 'instructor'} />
 				</div>
 			{/if}
 		</div>
@@ -2501,14 +3239,37 @@
 				role="textbox"
 				aria-multiline="true"
 				aria-label="Message {otherUser.name}"
-			contenteditable={!sending && !uploading}
+			contenteditable={!uploading}
 			bind:this={inputEl}
 			oninput={onCeInput}
 			onkeydown={onKeydown}
+			onclick={(e) => {
+				const langBtn = e.target.closest?.('.ce-code-lang-btn');
+				if (langBtn) {
+					e.preventDefault();
+					const block = langBtn.closest('.code-block-ce');
+					if (block) {
+						const rect = langBtn.getBoundingClientRect();
+						ceCodeLangPicker = { el: block, x: rect.left, y: rect.bottom + 4 };
+					}
+					return;
+				}
+				if (e.target === inputEl) {
+					const last = inputEl.lastChild;
+					if (last?.classList?.contains('code-block-ce')) {
+						const tn = document.createTextNode('\u200B');
+						inputEl.appendChild(tn);
+						const sel = window.getSelection();
+						const r = document.createRange();
+						r.setStart(tn, 0); r.collapse(true);
+						sel.removeAllRanges(); sel.addRange(r);
+					}
+				}
+			}}
 			onmouseup={onCeSelect}
 			onkeyup={onCeSelect}
 			onfocus={() => keyboardOpen = true}
-			onblur={() => { keyboardOpen = false; setTimeout(() => { const ae = document.activeElement; if (!ae?.closest('.text-fx-bar') && !ae?.closest('.compose-format-wrap')) showTextFxBar = false; }, 120); }}
+			onblur={() => { keyboardOpen = false; setTimeout(() => { const ae = document.activeElement; if (!ae?.closest('.text-fx-bar') && !ae?.closest('.text-typo-bar') && !ae?.closest('.compose-format-wrap')) showTextFxBar = false; }, 120); }}
 			oncopy={onCeCopy}
 			onpaste={onCePaste}
 			data-placeholder="Message {otherUser.name}"
@@ -2522,7 +3283,7 @@
 				<button class="btn-fmt btn-fmt-underline" onmousedown={(e) => { e.preventDefault(); applyTextFx('underline'); }} title="Underline (⌘U)"><u>U</u></button>
 				<button class="btn-fmt btn-fmt-strike" onmousedown={(e) => { e.preventDefault(); applyTextFx('strike'); }} title="Strikethrough"><s>S</s></button>
 				<div class="compose-format-wrap">
-					<button class="btn-fmt btn-fmt-color" class:active={showFormatPanel} onmousedown={(e) => { e.preventDefault(); showFormatPanel = !showFormatPanel; }} title="Text color">A</button>
+					<button class="btn-fmt btn-fmt-color" class:active={showFormatPanel} onmousedown={(e) => { e.preventDefault(); showFormatPanel = !showFormatPanel; showCodePanel = false; }} title="Text color">A</button>
 					{#if showFormatPanel}
 						<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 						<div class="compose-picker-backdrop" onclick={() => showFormatPanel = false}></div>
@@ -2536,6 +3297,19 @@
 						</div>
 					{/if}
 				</div>
+				<div class="compose-format-wrap code-btn-group">
+					<button class="btn-fmt btn-fmt-code" onmousedown={(e) => { e.preventDefault(); toggleCodeBlock(); }} title="Toggle code block">&lt;/&gt;</button>
+					<button class="btn-fmt btn-fmt-code-arrow" class:active={showCodePanel} onmousedown={(e) => { e.preventDefault(); showCodePanel = !showCodePanel; showFormatPanel = false; }} title="Choose language">▾</button>
+					{#if showCodePanel}
+						<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+						<div class="compose-picker-backdrop" onclick={() => showCodePanel = false}></div>
+						<div class="format-pop code-lang-pop">
+							{#each CODE_LANGUAGES as lang}
+								<button class="code-lang-btn" onmousedown={(e) => { e.preventDefault(); insertCodeBlock(lang.id); }}><img class="code-lang-icon" src={lang.icon} alt="" /> {lang.label}</button>
+							{/each}
+						</div>
+					{/if}
+				</div>
 			</div>
 		</div>
 		<div class="compose-effect-wrap">
@@ -2543,60 +3317,13 @@
 					title="Message effects" onclick={() => showEffectPanel = !showEffectPanel}>✨</button>
 			{#if showEffectPanel}
 				<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-				<div class="compose-picker-backdrop" onclick={() => showEffectPanel = false}></div>
+				<div class="compose-picker-backdrop" onclick={() => { showEffectPanel = false; _savedCeSel = null; _lastInlineTypo = {}; }}></div>
 				<div class="effect-pop">
-					<div class="effect-pop-title">Typography</div>
-					<div class="typo-sliders">
-						<div class="typo-row">
-							<span class="typo-label">Size</span>
-							<input class="typo-range" type="range" min="0.55" max="5" step="0.05"
-								bind:value={messageFontSize}
-								oninput={() => {
-									if (_savedCeSel) {
-										applyInlineSize(messageFontSize);
-									} else {
-										_lastInlineTypo['sz-'] = null;
-									}
-								}} />
-							<span class="typo-val">{getSizeLabel(messageFontSize)}</span>
-							{#if messageFontSize !== 1.0}<button class="typo-reset" onmousedown={(e) => { e.preventDefault(); messageFontSize = 1.0; }}>↺</button>{/if}
-						</div>
-						<div class="typo-row">
-							<span class="typo-label">Weight</span>
-							<input class="typo-range" type="range" min="100" max="700" step="50"
-								bind:value={messageFontWeight}
-								oninput={() => {
-									if (_savedCeSel) {
-										applyInlineWeight(messageFontWeight);
-									} else {
-										_lastInlineTypo['wght-'] = null;
-									}
-								}} />
-							<span class="typo-val">{messageFontWeight <= 150 ? 'Thin' : messageFontWeight <= 300 ? 'Light' : messageFontWeight <= 450 ? 'Regular' : messageFontWeight <= 600 ? 'Bold' : 'Black'}</span>
-							{#if messageFontWeight !== 400}<button class="typo-reset" onmousedown={(e) => { e.preventDefault(); messageFontWeight = 400; }}>↺</button>{/if}
-						</div>
-						<div class="typo-row">
-							<span class="typo-label">Width</span>
-							<input class="typo-range" type="range" min="25" max="150" step="1"
-								bind:value={messageFontStretch}
-								oninput={() => {
-									const sel = window.getSelection();
-									const hasSel = (sel && !sel.isCollapsed && inputEl?.contains(sel.anchorNode)) || (_savedCeRange && inputEl?.contains(_savedCeRange.commonAncestorContainer));
-									if (hasSel) {
-										applyInlineWidth(messageFontStretch);
-									} else {
-										_lastInlineTypo['wdth-'] = null;
-									}
-								}} />
-							<span class="typo-val">{messageFontStretch < 50 ? 'Ultra Cond.' : messageFontStretch < 75 ? 'Condensed' : messageFontStretch <= 95 ? 'Narrow' : messageFontStretch <= 105 ? 'Normal' : messageFontStretch <= 120 ? 'Wide' : 'Extended'}</span>
-							{#if messageFontStretch !== 100}<button class="typo-reset" onmousedown={(e) => { e.preventDefault(); messageFontStretch = 100; }}>↺</button>{/if}
-						</div>
-					</div>
 					<div class="effect-pop-title">Bubble</div>
 					<div class="effect-grid">
 						{#each BUBBLE_FXS as fx}
 							<button class="effect-tile" class:active={messageEffect === fx.name}
-									onclick={() => { messageEffect = messageEffect === fx.name ? null : fx.name; showEffectPanel = false; }}>
+									onclick={() => { messageEffect = messageEffect === fx.name ? null : fx.name; showEffectPanel = false; _savedCeSel = null; _lastInlineTypo = {}; }}>
 								<span class="effect-tile-icon">{fx.icon}</span>
 								<span class="effect-tile-label">{fx.label}</span>
 							</button>
@@ -2606,7 +3333,7 @@
 					<div class="effect-grid">
 						{#each SCREEN_FXS as fx}
 							<button class="effect-tile" class:active={messageEffect === fx.name}
-									onclick={() => { messageEffect = messageEffect === fx.name ? null : fx.name; showEffectPanel = false; }}>
+									onclick={() => { messageEffect = messageEffect === fx.name ? null : fx.name; showEffectPanel = false; _savedCeSel = null; _lastInlineTypo = {}; }}>
 								<span class="effect-tile-icon">{fx.icon}</span>
 								<span class="effect-tile-label">{fx.label}</span>
 							</button>
@@ -2663,6 +3390,7 @@
 	}
 	.message-list::-webkit-scrollbar { display: none; }
 	.empty { color: #a09688; font-size: 0.9rem; text-align: center; margin: auto; }
+	.load-more-spinner { display: flex; justify-content: center; padding: 0.75rem 0; }
 	.message { display: flex; flex-direction: column; max-width: 75%; gap: 0.15rem; position: relative; }
 	.message.mine { align-self: flex-end; align-items: flex-end; }
 	.message:not(.mine) { align-self: flex-start; align-items: flex-start; }
@@ -2692,7 +3420,7 @@
 	.message.mine .bubble .reply-text { color: rgba(255,255,255,0.92); }
 
 	/* Bubble row */
-	.bubble-row { position: relative; display: flex; align-items: flex-end; gap: 0.3rem; }
+	.bubble-row { position: relative; display: flex; align-items: flex-end; gap: 0.3rem; max-width: 100%; min-width: 0; }
 	.message.mine .bubble-row { flex-direction: row-reverse; }
 
 	.msg-actions-bar {
@@ -2799,6 +3527,131 @@
 	@keyframes spin { to { transform: rotate(360deg); } }
 	.bubble.jumbo-emoji { background: transparent !important; border-color: transparent !important; box-shadow: none !important; padding: 0.1rem 0.4rem; line-height: 1.15; }
 
+	:global(.code-block-ce) {
+		margin: 0.3rem 0; border-radius: 8px;
+		background: #1e1e2e; color: #cdd6f4; overflow: hidden;
+		white-space: normal; word-break: normal;
+	}
+	:global(.code-block-ce-header) {
+		padding: 0.2rem 0.5rem; background: #181825;
+		font-size: 0.6rem; color: #6c7086; text-transform: uppercase; letter-spacing: 0.04em;
+		display: flex; align-items: center;
+	}
+	:global(.code-block-ce-lang) { display: inline-flex; align-items: center; gap: 0.2rem; }
+	:global(.ce-code-icon) { width: 11px; height: 11px; display: block; margin-top: -1px; }
+	:global(.ce-code-lang-btn) {
+		background: none; border: none; color: #6c7086; font-size: 0.5rem;
+		cursor: pointer; padding: 0 0.2rem; margin-left: 0.15rem; border-radius: 3px;
+		transition: color 0.1s, background 0.1s;
+	}
+	:global(.ce-code-lang-btn:hover) { color: #cdd6f4; background: #313244; }
+	:global(.code-block-ce-code) {
+		margin: 0; padding: 0.45rem 0.6rem; font-size: 0.75rem; line-height: 1.5;
+		overflow-x: auto; max-height: 200px; overflow-y: auto;
+		font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace; white-space: pre;
+		outline: none; caret-color: #cdd6f4;
+	}
+	:global(.code-block-ce-code code) { font-family: inherit; white-space: pre; }
+	:global(.code-block-ce-code .hljs-keyword) { color: #cba6f7; }
+	:global(.code-block-ce-code .hljs-string) { color: #a6e3a1; }
+	:global(.code-block-ce-code .hljs-number) { color: #fab387; }
+	:global(.code-block-ce-code .hljs-comment) { color: #6c7086; font-style: italic; }
+	:global(.code-block-ce-code .hljs-function),
+	:global(.code-block-ce-code .hljs-title) { color: #89b4fa; }
+	:global(.code-block-ce-code .hljs-params) { color: #f2cdcd; }
+	:global(.code-block-ce-code .hljs-built_in),
+	:global(.code-block-ce-code .hljs-type) { color: #f9e2af; }
+	:global(.code-block-ce-code .hljs-attr),
+	:global(.code-block-ce-code .hljs-tag) { color: #89b4fa; }
+	:global(.code-block-ce-code .hljs-name) { color: #cba6f7; }
+	:global(.code-block-ce-code .hljs-variable) { color: #f5c2e7; }
+	:global(.code-block-ce-code .hljs-operator) { color: #94e2d5; }
+	:global(.code-block-ce-code .hljs-literal) { color: #fab387; }
+	:global(.code-block-ce-code .hljs-attribute) { color: #a6e3a1; }
+	:global(.code-block-ce-code .hljs-meta) { color: #f9e2af; }
+	:global(.code-block-ce-code .hljs-punctuation) { color: #9399b2; }
+	:global(.code-block-ce-code .hljs-selector-class) { color: #a6e3a1; }
+	:global(.code-block-ce-code .hljs-subst) { color: #cdd6f4; }
+	:global(.code-block) {
+		margin: 0.3rem 0; border-radius: 8px;
+		background: #1e1e2e; color: #cdd6f4; overflow: hidden;
+		white-space: normal; word-break: normal;
+		width: 100%;
+	}
+	:global(.code-block-header) {
+		display: flex; align-items: center; justify-content: space-between;
+		padding: 0.25rem 0.65rem 0.25rem 4px;
+		background: #181825;
+		container-type: inline-size;
+		user-select: none;
+	}
+	@container (max-width: 120px) {
+		:global(.copy-label) { display: none; }
+	}
+	:global(.code-lang) {
+		font-size: 0.62rem; color: #6c7086; font-family: inherit;
+		text-transform: uppercase; letter-spacing: 0.04em;
+		display: inline-flex; align-items: center; gap: 0.25rem;
+		line-height: 1;
+	}
+	:global(.code-copy-btn) {
+		display: inline-flex; align-items: center; gap: 0.25rem;
+		background: none; border: none; color: #6c7086; font-size: 0.62rem;
+		font-family: inherit; cursor: pointer; padding: 0.15rem 0.4rem;
+		border-radius: 4px; transition: color 0.1s, background 0.1s;
+	}
+	:global(.code-copy-btn:hover) { color: #cdd6f4; background: #313244; }
+	:global(.code-body) { display: grid; grid-template-columns: auto 1fr; overflow: auto; }
+	:global(.code-lines) {
+		margin: 0; padding: 0.65rem 0; padding-left: 0.65rem; padding-right: 0.5rem;
+		font-size: 0.78rem; line-height: 1.55; text-align: right;
+		color: #45475a; user-select: none; flex-shrink: 0;
+		border-right: 1px solid #313244;
+		font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+		position: sticky; left: 0; background: #1e1e2e; z-index: 2;
+	}
+	:global(.code-ln) { display: block; }
+	:global(.code-content) { margin: 0; padding: 0.65rem 0.85rem; font-size: 0.78rem; line-height: 1.55; flex: 1; min-width: 0; position: relative; z-index: 0; }
+	:global(.code-block code) { font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace; white-space: pre; }
+	:global(.code-block[data-truncated="1"] .code-body) { max-height: calc(20 * 1.55 * 0.78rem); overflow: auto; }
+	:global(.code-show-more) {
+		display: block; width: 100%; padding: 0.4rem; border: none;
+		background: #181825; color: #89b4fa; font-size: 0.72rem; font-weight: 600;
+		font-family: inherit; cursor: pointer; text-align: center;
+		transition: background 0.1s;
+	}
+	:global(.code-show-more:hover) { background: #313244; }
+	:global(.inline-code) {
+		background: rgba(0,0,0,0.07); padding: 0.1em 0.35em; border-radius: 4px;
+		font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace; font-size: 0.88em;
+	}
+	:global(.message.mine .inline-code) { background: rgba(255,255,255,0.15); }
+	:global(.code-block .hljs-keyword), :global(.file-viewer-code .hljs-keyword) { color: #cba6f7; }
+	:global(.code-block .hljs-string), :global(.file-viewer-code .hljs-string) { color: #a6e3a1; }
+	:global(.code-block .hljs-number), :global(.file-viewer-code .hljs-number) { color: #fab387; }
+	:global(.code-block .hljs-comment), :global(.file-viewer-code .hljs-comment) { color: #6c7086; font-style: italic; }
+	:global(.code-block .hljs-function), :global(.file-viewer-code .hljs-function) { color: #89b4fa; }
+	:global(.code-block .hljs-title), :global(.file-viewer-code .hljs-title) { color: #89b4fa; }
+	:global(.code-block .hljs-params), :global(.file-viewer-code .hljs-params) { color: #f2cdcd; }
+	:global(.code-block .hljs-built_in), :global(.file-viewer-code .hljs-built_in) { color: #f9e2af; }
+	:global(.code-block .hljs-literal), :global(.file-viewer-code .hljs-literal) { color: #fab387; }
+	:global(.code-block .hljs-type), :global(.file-viewer-code .hljs-type) { color: #f9e2af; }
+	:global(.code-block .hljs-attr), :global(.file-viewer-code .hljs-attr) { color: #89b4fa; }
+	:global(.code-block .hljs-attribute), :global(.file-viewer-code .hljs-attribute) { color: #a6e3a1; }
+	:global(.code-block .hljs-tag), :global(.file-viewer-code .hljs-tag) { color: #89b4fa; }
+	:global(.code-block .hljs-name), :global(.file-viewer-code .hljs-name) { color: #cba6f7; }
+	:global(.code-block .hljs-selector-class), :global(.file-viewer-code .hljs-selector-class) { color: #a6e3a1; }
+	:global(.code-block .hljs-selector-id), :global(.file-viewer-code .hljs-selector-id) { color: #fab387; }
+	:global(.code-block .hljs-variable), :global(.file-viewer-code .hljs-variable) { color: #f5c2e7; }
+	:global(.code-block .hljs-meta), :global(.file-viewer-code .hljs-meta) { color: #f9e2af; }
+	:global(.code-block .hljs-operator), :global(.file-viewer-code .hljs-operator) { color: #94e2d5; }
+	:global(.code-block .hljs-punctuation), :global(.file-viewer-code .hljs-punctuation) { color: #9399b2; }
+	:global(.code-block .hljs-subst), :global(.file-viewer-code .hljs-subst) { color: #cdd6f4; }
+	:global(.code-block .hljs-doctag), :global(.file-viewer-code .hljs-doctag) { color: #cba6f7; }
+	:global(.code-block .hljs-regexp), :global(.file-viewer-code .hljs-regexp) { color: #f5c2e7; }
+	:global(.code-block .hljs-symbol), :global(.file-viewer-code .hljs-symbol) { color: #f2cdcd; }
+	:global(.code-block .hljs-section), :global(.file-viewer-code .hljs-section) { color: #89b4fa; }
+
 	.saved-label {
 		display: flex; align-items: center; gap: 0.2rem;
 		font-size: 0.62rem; font-weight: 600; color: #c8900f;
@@ -2807,6 +3660,16 @@
 	.message.mine .saved-label { justify-content: flex-end; }
 
 	.bubble-reaction-img { border-radius: 0 !important; }
+	.img-removed {
+		display: flex; align-items: center; justify-content: center;
+		width: 200px; height: 120px; background: #eae5dc; color: #a09688;
+		font-size: 0.78rem; font-family: inherit; border-radius: 8px;
+	}
+	:global(.img-removed-inline) {
+		display: inline-block; padding: 0.1em 0.4em;
+		background: #eae5dc; color: #a09688; border-radius: 4px;
+		font-size: 0.72em; vertical-align: middle;
+	}
 	.bubble-img {
 		padding: 0; overflow: hidden; display: block; max-width: 260px; border-radius: 14px;
 		text-decoration: none; background: transparent !important; border-color: transparent !important;
@@ -2824,14 +3687,65 @@
 	}
 	.att-info-video { padding: 0.1rem 0.35rem 0; }
 	.bubble-file {
-		display: flex; align-items: center; gap: 0.65rem;
+		display: flex; align-items: flex-start; gap: 0.65rem;
 		padding: 0.6rem 0.85rem; text-decoration: none; color: var(--ink);
 		min-width: 0;
 	}
 	.bubble-file.mine { color: var(--paper); }
-	.att-info { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
+	.att-code-icon { width: 32px; height: 32px; flex-shrink: 0; margin-top: 0.1rem; }
+	.att-file-body { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; flex: 1; }
+	.att-info { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; flex: 1; }
 	.att-name { font-size: 0.85rem; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	.att-size { font-size: 0.7rem; opacity: 0.6; }
+	.att-btns { display: flex; gap: 0.3rem; margin-top: 0.25rem; }
+	.att-btn {
+		display: inline-flex; align-items: center; gap: 0.3rem;
+		padding: 0.22rem 0.55rem; border-radius: 5px; font-family: inherit; font-size: 0.7rem;
+		font-weight: 600; cursor: pointer; text-decoration: none; transition: background 0.1s;
+		border: 1px solid #c8c1b4; background: transparent; color: inherit;
+	}
+	.att-btn:hover { background: rgba(0,0,0,0.06); }
+	.att-btn-icon { width: 13px; height: 13px; flex-shrink: 0; }
+	.message.mine .att-btn { border-color: rgba(255,255,255,0.3); }
+	.message.mine .att-btn:hover { background: rgba(255,255,255,0.12); }
+	.file-viewer-overlay {
+		position: fixed; inset: 0; z-index: 10000;
+		background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center;
+		padding: 2rem;
+	}
+	.file-viewer {
+		background: #1e1e2e; border-radius: 12px; overflow: hidden;
+		max-width: 700px; width: 100%; max-height: 80vh; display: flex; flex-direction: column;
+		box-shadow: 0 8px 40px rgba(0,0,0,0.4);
+	}
+	.file-viewer-header {
+		display: flex; align-items: center; justify-content: space-between;
+		padding: 0.6rem 1rem; background: #181825; border-bottom: 1px solid #313244;
+		font-size: 0.78rem; color: #cdd6f4; font-family: 'Google Sans Flex', 'Space Grotesk', sans-serif;
+	}
+	.file-viewer-icon { width: 16px; height: 16px; flex-shrink: 0; margin-right: 0.35rem; }
+	.file-viewer-name { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.file-viewer-dl {
+		display: inline-flex; align-items: center; gap: 0.3rem;
+		color: #cdd6f4; padding: 0.2rem 0.6rem; border-radius: 5px;
+		background: #313244; font-size: 0.72rem; font-weight: 600;
+		text-decoration: none; flex-shrink: 0; margin-right: 0.5rem;
+		transition: background 0.12s;
+		border: none; cursor: pointer; font-family: inherit;
+	}
+	.file-viewer-dl:hover { background: #45475a; }
+	.file-viewer-close {
+		background: none; border: none; color: #6c7086; font-size: 1.2rem;
+		cursor: pointer; padding: 0 0.3rem; line-height: 1; border-radius: 4px;
+	}
+	.file-viewer-close:hover { color: #cdd6f4; background: #313244; }
+	.file-viewer-code {
+		margin: 0; padding: 1rem; overflow: auto; flex: 1;
+		font-size: 0.78rem; line-height: 1.6; color: #cdd6f4;
+	}
+	.file-viewer-code code {
+		font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace; white-space: pre;
+	}
 
 	/* Reactions */
 	.reactions { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.2rem; }
@@ -2886,7 +3800,21 @@
 	.reply-bar-close:hover { color: var(--ink); background: #ede8df; }
 
 	.att-bar { align-items: center; gap: 0.6rem; }
-	.att-bar-thumb { width: 36px; height: 36px; object-fit: cover; border-radius: 6px; flex-shrink: 0; }
+	.att-img-preview {
+		position: relative; padding: 0.5rem 1.5rem; border-top: 1px solid #ddd7cc; background: #faf8f5;
+	}
+	.att-img-large {
+		display: block; max-width: 240px; max-height: 200px; object-fit: contain;
+		border-radius: 10px; border: 1.5px solid #e0d9cc;
+	}
+	.att-img-close {
+		position: absolute; top: 0.6rem; right: 1.6rem;
+		width: 24px; height: 24px; border-radius: 50%;
+		background: rgba(0,0,0,0.5); color: #fff; border: none;
+		font-size: 1rem; line-height: 1; cursor: pointer;
+		display: flex; align-items: center; justify-content: center;
+	}
+	.att-img-close:hover { background: rgba(0,0,0,0.7); }
 
 	.input-area { flex-shrink: 0; }
 	.typing-indicator {
@@ -2909,6 +3837,16 @@
 		background: #fff; transition: border-color 0.15s; min-width: 0;
 	}
 	.compose-wrap:focus-within { border-color: var(--ink); }
+	.code-suggest-bar { justify-content: flex-start; }
+	.code-suggest-pill {
+		display: flex; align-items: center; gap: 0.3rem;
+		padding: 0.3rem 0.75rem;
+		background: #1e1e2e; color: #cdd6f4; border: none; border-radius: 8px;
+		font-family: inherit; font-size: 0.75rem; cursor: pointer;
+		transition: background 0.12s;
+	}
+	.code-suggest-pill:hover { background: #313244; }
+	.code-suggest-pill strong { color: #89b4fa; }
 	.compose-ce {
 		padding: 0.6rem 0.85rem 0.35rem;
 		font-family: 'Google Sans Flex', 'Space Grotesk', sans-serif, 'Noto Color Emoji'; font-optical-sizing: auto; font-size: 0.9rem; color: var(--ink);
@@ -2952,16 +3890,16 @@
 
 	/* Inline Emoji Kitchen images */
 	:global(.ek-img) {
-		height: 1em;
-		width: 1em;
-		vertical-align: -0.2em;
+		height: 1.2em;
+		width: 1.2em;
+		vertical-align: -0.25em;
 		object-fit: contain;
 		display: inline;
 	}
 	:global(.ek-img-ce) {
-		height: 1em;
-		width: 1em;
-		vertical-align: -0.2em;
+		height: 1.2em;
+		width: 1.2em;
+		vertical-align: -0.25em;
 		object-fit: contain;
 		cursor: default;
 		border-radius: 2px;
@@ -2971,7 +3909,7 @@
 		border-radius: 3px;
 		box-shadow: 0 0 0 3px rgba(74, 158, 255, 0.25);
 	}
-	:global(.ce-img) { height: 1em; width: 1em; vertical-align: -0.2em; object-fit: contain; }
+	:global(.ce-img) { height: 1.2em; width: 1.2em; vertical-align: -0.25em; object-fit: contain; }
 	:global(.ce-img-ce) { cursor: default; }
 	:global(.ce-img-ce.ek-selected) { outline: 2px solid #4a9eff; border-radius: 3px; box-shadow: 0 0 0 3px rgba(74,158,255,0.25); }
 
@@ -2985,6 +3923,7 @@
 		transition: color 0.15s, border-color 0.15s, background 0.15s;
 	}
 	.btn-kitchen:hover, .btn-kitchen.active { color: var(--ink); border-color: #b0a898; background: #f5f2ee; }
+	.btn-gif { font-size: 0.65rem; font-weight: 700; font-family: inherit; letter-spacing: -0.02em; }
 	.compose-kitchen-pop { position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 50; }
 
 	.send-wrap {
@@ -3071,6 +4010,21 @@
 		cursor: pointer; text-align: left; color: var(--ink); transition: background 0.1s;
 	}
 	.format-rainbow-btn:hover { background: #f5f2ee; }
+
+	.btn-fmt-code { font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace; font-size: 0.65rem !important; letter-spacing: -0.02em; border-top-right-radius: 0 !important; border-bottom-right-radius: 0 !important; }
+	.btn-fmt-code-arrow { font-size: 0.55rem !important; padding: 0 0.15rem !important; border-top-left-radius: 0 !important; border-bottom-left-radius: 0 !important; margin-left: -1px; min-width: 0; }
+	.code-btn-group { display: flex; align-items: center; }
+	.code-lang-pop {
+		display: flex; flex-wrap: wrap; gap: 0.2rem; padding: 0.45rem; width: 200px;
+	}
+	.code-lang-btn {
+		padding: 0.22rem 0.5rem; border: 1px solid #e0d9cc; border-radius: 5px;
+		background: #fff; font-family: inherit; font-size: 0.7rem; cursor: pointer;
+		color: var(--ink); transition: background 0.1s, border-color 0.1s;
+	}
+	.code-lang-btn:hover { background: #1e1e2e; color: #cdd6f4; border-color: #1e1e2e; }
+	.code-lang-icon { width: 14px; height: 14px; vertical-align: -2px; flex-shrink: 0; }
+	:global(.code-lang .code-lang-icon) { width: 15px; height: 15px; display: block; margin-top: -2.5px; }
 
 	/* Effects button */
 	.compose-effect-wrap { position: relative; flex-shrink: 0; }
@@ -3213,6 +4167,34 @@
 	.ce-sugg-sc { color: var(--ink); font-family: inherit; font-size: 0.78rem; white-space: nowrap; }
 
 	/* Text fx bar */
+	.text-typo-bar {
+		display: flex; gap: 0.5rem; padding: 0.35rem 1.5rem;
+		border-top: 1px solid #e8e0d2; background: #faf8f5;
+		flex-wrap: wrap;
+	}
+	.typo-inline-row {
+		display: flex; align-items: center; gap: 0.35rem; flex: 1; min-width: 100px;
+	}
+	.typo-inline-label {
+		font-size: 0.65rem; font-weight: 600; color: #a09688;
+		text-transform: uppercase; letter-spacing: 0.03em; width: 2.5rem; flex-shrink: 0;
+	}
+	.typo-inline-range {
+		flex: 1; height: 3px; accent-color: var(--ink, #1a1a1a); cursor: pointer;
+	}
+	.typo-inline-reset {
+		background: none; border: none; color: #a09688; font-size: 0.7rem;
+		cursor: pointer; padding: 0 0.15rem; line-height: 1; flex-shrink: 0;
+		transition: color 0.1s;
+	}
+	.typo-inline-reset:hover { color: var(--ink); }
+	.typo-default-btn {
+		padding: 0.15rem 0.5rem; border: 1px solid #d5cdc0; border-radius: 5px;
+		background: none; font-family: inherit; font-size: 0.62rem; font-weight: 600;
+		color: #a09688; cursor: pointer; white-space: nowrap; flex-shrink: 0;
+		transition: background 0.1s, color 0.1s;
+	}
+	.typo-default-btn:hover { background: #ede8df; color: var(--ink); }
 	.text-fx-bar {
 		display: flex; align-items: center; gap: 0.3rem;
 		padding: 0.35rem 1.5rem; background: var(--paper); border-top: 1px solid #ddd7cc;

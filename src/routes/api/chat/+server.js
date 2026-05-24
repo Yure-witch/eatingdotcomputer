@@ -12,7 +12,7 @@ export async function POST({ request, locals }) {
 
 	const { content, channelId, to, reply_to, attachment, effect, fontSize, fontWeight, fontStretch, noSplit } = await request.json();
 	if (!content?.trim() && !attachment?.url) error(400, 'Empty message');
-	if (content && content.length > 2000) error(400, 'Message too long');
+	if (content && content.length > 20000) error(400, 'Message too long (max 20,000 characters)');
 
 	const db = getAdminDb();
 	const senderName = session.user.name || session.user.email;

@@ -78,20 +78,39 @@ export async function load({ locals, parent }) {
 		}
 	}
 
-	const members = usersResult.rows.map((r) => ({
-		id: String(r.id),
-		name: String(r.name ?? ''),
-		email: String(r.email ?? ''),
-		role: String(r.role ?? 'student'),
-		joinedAt: String(r.created_at ?? ''),
-		online: presenceData[String(r.id)]?.online ?? false,
-		lastSeen: presenceData[String(r.id)]?.lastSeen ?? null,
-		ua: presenceData[String(r.id)]?.ua ?? null,
-		screen: presenceData[String(r.id)]?.screen ?? null,
-		pwa: presenceData[String(r.id)]?.pwa ?? null,
-		mobile: presenceData[String(r.id)]?.mobile ?? null,
-		notif: presenceData[String(r.id)]?.notif ?? null
-	}));
+	// Most recent session per user from Turso (archived sessions — more reliable than presence heartbeats)
+	const lastSessionRows = db ? await db.execute({
+		sql: `SELECT user_id,
+		             MAX(COALESCE(session_end, datetime('now'))) AS last_active
+		      FROM user_sessions GROUP BY user_id`
+	}) : { rows: [] };
+	const lastSessionMap = {};
+	for (const r of lastSessionRows.rows) {
+		lastSessionMap[String(r.user_id)] = new Date(String(r.last_active)).getTime();
+	}
+
+	const members = usersResult.rows.map((r) => {
+		const uid = String(r.id);
+		const presence = presenceData[uid];
+		// Use the most recent timestamp from either Firebase presence or Turso sessions
+		const presenceLastSeen = presence?.lastSeen ?? null;
+		const sessionLastSeen = lastSessionMap[uid] ?? null;
+		const lastSeen = Math.max(presenceLastSeen ?? 0, sessionLastSeen ?? 0) || null;
+		return {
+			id: uid,
+			name: String(r.name ?? ''),
+			email: String(r.email ?? ''),
+			role: String(r.role ?? 'student'),
+			joinedAt: String(r.created_at ?? ''),
+			online: presence?.online ?? false,
+			lastSeen,
+			ua: presence?.ua ?? null,
+			screen: presence?.screen ?? null,
+			pwa: presence?.pwa ?? null,
+			mobile: presence?.mobile ?? null,
+			notif: presence?.notif ?? null
+		};
+	});
 
 	// Activity: hourly for last 7 days (drives 12h / 1d / 7d views)
 	// Uses user_sessions (session ranges) — each hour a session overlaps counts as 1.

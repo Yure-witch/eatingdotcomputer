@@ -50,16 +50,16 @@
 			icon: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>`
 		},
 		{
-			href: '/app/assignments',
-			label: 'Roadmap',
-			active: (p) => p.startsWith('/app/assignments'),
-			icon: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"/><line x1="9" y1="3" x2="9" y2="18"/><line x1="15" y1="6" x2="15" y2="21"/></svg>`
+			href: '/app/atlas',
+			label: 'Atlas',
+			active: (p) => p.startsWith('/app/atlas') || p.startsWith('/app/collection') || p.startsWith('/app/assignments') || p.startsWith('/app/files'),
+			icon: `<svg width="20" height="20" viewBox="0 -960 960 960" fill="currentColor"><path d="M280-80q-50 0-85-35t-35-85q0-39 22.5-70t57.5-43v-334q-35-12-57.5-43T160-760q0-50 35-85t85-35q50 0 85 35t35 85q0 39-22.5 70T320-647v7q0 50 35 85t85 35h80q83 0 141.5 58.5T720-320v7q35 12 57.5 43t22.5 70q0 50-35 85t-85 35q-50 0-85-35t-35-85q0-39 22.5-70t57.5-43v-7q0-50-35-85t-85-35h-80q-34 0-64.5-10.5T320-480v167q35 12 57.5 43t22.5 70q0 50-35 85t-85 35Zm0-80q17 0 28.5-11.5T320-200q0-17-11.5-28.5T280-240q-17 0-28.5 11.5T240-200q0 17 11.5 28.5T280-160Zm400 0q17 0 28.5-11.5T720-200q0-17-11.5-28.5T680-240q-17 0-28.5 11.5T640-200q0 17 11.5 28.5T680-160ZM280-720q17 0 28.5-11.5T320-760q0-17-11.5-28.5T280-800q-17 0-28.5 11.5T240-760q0 17 11.5 28.5T280-720Z"/></svg>`
 		},
 		{
-			href: '/app/files',
-			label: 'Files',
-			active: (p) => p.startsWith('/app/files'),
-			icon: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`
+			href: '/app/playground',
+			label: 'Lab',
+			active: (p) => p.startsWith('/app/playground'),
+			icon: `<svg width="20" height="20" viewBox="0 0 18 18" fill="currentColor"><path d="M17.1778 13.7607L12.0833 5.96232C11.7775 5.50541 11.6077 4.98344 11.6077 4.46125V1.29615H12.0153C12.355 1.29615 12.6266 1.03506 12.6266 0.708906C12.6266 0.415179 12.3548 0.154297 12.0153 0.154297H5.96984C5.63013 0.154297 5.39255 0.415388 5.39255 0.708906C5.39255 1.03527 5.63035 1.29615 5.96984 1.29615H6.37749V4.46125C6.37749 4.98323 6.20764 5.50541 5.93587 5.96232L0.807364 13.7607C-0.0756596 15.2618 1.04516 17.1543 2.87915 17.1543H15.1402C16.9402 17.1543 18.095 15.2618 17.178 13.7607H17.1778ZM6.30933 12.1946C5.29042 12.4883 3.28658 12.162 3.93181 11.1831L6.92059 6.5822C7.32824 5.92968 7.56582 5.21168 7.56582 4.46125V1.29615H10.4527V4.46125C10.4527 5.21168 10.6565 5.92968 11.0639 6.5822L12.796 9.25776C13.1018 9.71467 12.6262 9.94291 12.2527 9.97555C9.53569 10.1714 8.55053 11.5743 6.30911 12.1944L6.30933 12.1946Z"/></svg>`
 		}
 	];
 

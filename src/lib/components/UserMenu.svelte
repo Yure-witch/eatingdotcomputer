@@ -1,0 +1,88 @@
+<script>
+	import { onMount } from 'svelte';
+
+	let { user = null } = $props();
+
+	let menuOpen = $state(false);
+	let menuEl = $state(null);
+
+	function firstName(name) {
+		return (name || '').split(/\s+/)[0] || name;
+	}
+
+	function onClickOutside(e) {
+		if (menuEl && !menuEl.contains(e.target)) menuOpen = false;
+	}
+
+	onMount(() => {
+		document.addEventListener('pointerdown', onClickOutside);
+		return () => document.removeEventListener('pointerdown', onClickOutside);
+	});
+</script>
+
+{#if user}
+	<div class="user-menu-wrap" bind:this={menuEl}>
+		<button
+			class="user-trigger"
+			onclick={() => menuOpen = !menuOpen}
+			onpointerdown={(e) => e.stopPropagation()}
+		>
+			<span class="user-avatar">{(user.name || user.email || '?')[0].toUpperCase()}</span>
+			<span class="user-first-name">{firstName(user.name || user.email)}</span>
+		</button>
+		{#if menuOpen}
+			<div class="user-dropdown">
+				<a href="/app/profile/{user.id}" class="dropdown-item" onclick={() => menuOpen = false}>
+					Profile
+				</a>
+				<form method="POST" action="/app?/signout" style="display:contents">
+					<button type="submit" class="dropdown-item dropdown-item-btn">Sign out</button>
+				</form>
+			</div>
+		{/if}
+	</div>
+{/if}
+
+<style>
+	.user-menu-wrap {
+		position: relative; flex-shrink: 0;
+	}
+	.user-trigger {
+		display: flex; align-items: center; gap: 0.5rem;
+		background: none; border: none; padding: 0.25rem 0.5rem;
+		border-radius: 8px; cursor: pointer; font-family: inherit;
+		transition: background 0.15s;
+	}
+	.user-trigger:hover { background: rgba(0,0,0,0.04); }
+	.user-avatar {
+		width: 28px; height: 28px; border-radius: 50%;
+		background: #1a1a1a; color: #f7f2ea;
+		display: flex; align-items: center; justify-content: center;
+		font-size: 0.72rem; font-weight: 700; flex-shrink: 0;
+		letter-spacing: -0.02em;
+	}
+	.user-first-name {
+		font-size: 0.82rem; font-weight: 500; color: #a09688;
+	}
+
+	.user-dropdown {
+		position: absolute; top: calc(100% + 6px); right: 0;
+		background: #fff; border: 1.5px solid #ddd7cc; border-radius: 10px;
+		box-shadow: 0 4px 16px rgba(0,0,0,0.1);
+		min-width: 160px; overflow: hidden; z-index: 20;
+		display: flex; flex-direction: column;
+	}
+	.dropdown-item {
+		display: block; padding: 0.6rem 0.85rem;
+		font-size: 0.82rem; font-weight: 500; color: var(--ink);
+		text-decoration: none; transition: background 0.1s;
+		white-space: nowrap;
+	}
+	.dropdown-item:hover { background: #f5f0e8; }
+	.dropdown-item-btn {
+		background: none; border: none; border-top: 1px solid #f0ece4;
+		font-family: inherit; cursor: pointer; text-align: left; width: 100%;
+		color: #a09688;
+	}
+	.dropdown-item-btn:hover { background: #f5f0e8; color: var(--ink); }
+</style>
