@@ -1,0 +1,64 @@
+.fun-frame-2 {
+    border: 15px solid transparent;
+    border-image: url("https://i.imgur.com/h6pF1SN.png") 454 439 454 446 / 1260px / 1px round; /* "1260" is abnormally large */
+    
+    resize: both;
+    overflow: hidden;
+    position: relative;
+    
+    &::before {
+      content: '';
+      position: absolute;
+      right: 0;
+      bottom: 0;
+      height: 3rem;
+      width: 3rem;
+      border: 0.5rem solid orangered;
+      border-radius: 50%;
+      translate: 50% 50%;
+    }
+  }
+  
+  /* FOR CODEPEN */
+  
+  body {
+    max-width: 900px;
+    margin: auto;
+    border: 1px solid gray;
+    padding: 1rem;
+    padding-top: 0;
+    font-family: sans-serif;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+  
+  .code-pen-divider {
+    font-size: 2rem;
+    max-width: 100%;
+    background-color: gray;
+    color: white;
+    padding: 1rem;
+    margin: 3rem 0;
+  }
+  
+  .flex-element.group {
+    max-width: calc(100% - 2rem);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    background-size: cover;
+    background-repeat: no-repeat;
+    background-position: 50% 50%;
+    position: relative;
+  }
+  
+  .image-bg {
+    align-items: flex-start;
+    min-height: 160px;
+    max-height: 100%;
+    row-gap: 24px;
+    column-gap: 4%;
+    background-image: url(https://irp.cdn-website.com/0ee4747e/dms3rep/multi/JOR09818.jpg);
+  }
+  

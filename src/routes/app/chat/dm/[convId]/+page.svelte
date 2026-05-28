@@ -1,18 +1,33 @@
 <script>
 	import { onMount, onDestroy, tick, getContext } from 'svelte';
 	import { db } from '$lib/firebase.js';
-	import { ref, onChildAdded, onValue, off, query, limitToLast, set, remove } from 'firebase/database';
+	import { ref, onChildAdded, onValue, off, query, limitToLast, set, remove, get } from 'firebase/database';
 	import { normaliseMessage, buildUserMap, formatTime } from '$lib/chat.js';
+	import { scallopedClip, starburstClip } from '$lib/scalloped.js';
 	import EmojiPicker from '$lib/components/EmojiPicker.svelte';
 	import EmojiKitchen from '$lib/components/EmojiKitchen.svelte';
 	import CustomEmojiPanel from '$lib/components/CustomEmojiPanel.svelte';
+	import TelegramEmojiPanel from '$lib/components/TelegramEmojiPanel.svelte';
 	import GifPicker from '$lib/components/GifPicker.svelte';
+	import lottie from 'lottie-web';
+	import { loadTelegramEmoji, getCachedTgEmoji, tgEntry, tgAnimatedUrl, tgFlagUrl, tgAnimationUrl, fetchLottie, cpToToken,
+		loadCustomPacks, getCachedCustomPacks, tgcUrl, tgcToToken, tgcEntry, isStaticPack, STATIC_FRAME_INDEX } from '$lib/telegram-emoji-store.js';
+	import { tryPlay as _tgTryPlay, yieldPlay as _tgYieldPlay } from '$lib/lottie-throttle.js';
+	import { tgStaticFrame, tgcStaticFrame, TG_PLACEHOLDER } from '$lib/tg-frame.js';
 	import FileTypeIcon from '$lib/components/FileTypeIcon.svelte';
 	import ProfileHover from '$lib/components/ProfileHover.svelte';
 	import UserMenu from '$lib/components/UserMenu.svelte';
 	import { loadEmojiNames, getEmojiName } from '$lib/emoji-names.js';
 	import { initSemanticSearch, searchEmoji, cpToChar } from '$lib/emoji-semantic.js';
 	import { getCustomEmojiMap, getCachedCustomEmojiMap } from '$lib/custom-emoji-store.js';
+	import {
+		SCREEN_FXS, EXPRESSIVE_FXS, TEXT_FXS, FX_TO_CHAR, CHAR_TO_FX, FX_CLOSE_CHAR, FX_OPEN_CHARS,
+		TEXT_COLORS, WDTH_FX_MAP, WDTH_STEPS, WGHT_FX_MAP, WGHT_STEPS, SZ_FX_MAP, SZ_STEPS,
+		JUMBO_SIZES, EMOJI_RE_G,
+		escapeHtml, nestedFxHtml, ekTokenToUrl, normalizeLegacyMarkup, unicodeToReadable, stripMarkup,
+		markupToSegments, segmentsToMarkup, jumboEmojiCount, jumboEmojiCountM, bubbleFontSize,
+		createContentRenderer, clearJumboCache
+	} from '$lib/message-render.js';
 	import hljs from 'highlight.js/lib/core';
 	import hljsJavascript from 'highlight.js/lib/languages/javascript';
 	import hljsPython from 'highlight.js/lib/languages/python';
@@ -97,6 +112,7 @@
 	let showComposePicker = $state(false);
 	let showKitchen = $state(false);
 	let showCustomEmoji = $state(false);
+	let showTgEmoji = $state(false);
 	let showGifPicker = $state(false);
 	let _ceMap = $state({}); // custom emoji map { [id]: {shortcode, url} }
 
@@ -108,6 +124,7 @@
 	let messageFontSize = $state(1.0);
 	let messageFontWeight = $state(400);
 	let messageFontStretch = $state(100);
+	let wiggleSize = $state(6);
 	const jumboInput = $derived(jumboEmojiCount(input));
 	let sizeSliderActive = $state(false);
 	let thumbY = $state(0);
@@ -148,103 +165,11 @@
 		{ name: 'rainbow',      label: 'Rainbow',      icon: '🌈' },
 		{ name: 'rainbow-fill', label: 'Rainbow Fill', icon: '🫧' },
 		{ name: 'hearts',       label: 'Hearts',       icon: '💗' },
+		{ name: 'wiggly',       label: 'Wiggly',       icon: '〰️' },
+		{ name: 'cursed',       label: 'Cursed',       icon: '🌀' },
+		{ name: 'scalloped',    label: 'Scalloped',    icon: '🫧' },
+		{ name: 'starburst',    label: 'Starburst',    icon: '✴️' },
 	];
-	const SCREEN_FXS = [
-		{ name: 'confetti',  label: 'Confetti', icon: '🎊' },
-		{ name: 'fireworks', label: 'Fireworks',icon: '🎆' },
-		{ name: 'balloons',  label: 'Balloons', icon: '🎈' },
-	];
-	const EXPRESSIVE_FXS = [
-		{ name: 'shake',  label: 'Shake',  icon: '🫨' },
-		{ name: 'bounce', label: 'Bounce', icon: '🏀' },
-		{ name: 'wave',   label: 'Wave',   icon: '🌊' },
-		{ name: 'jitter', label: 'Jitter', icon: '⚡' },
-		{ name: 'big',    label: 'Big',    icon: '🔠' },
-		{ name: 'small',  label: 'Small',  icon: '🔡' },
-	];
-	const TEXT_FXS = [
-		{ name: 'shake',     label: 'Shake'     },
-		{ name: 'wave',      label: 'Wave'      },
-		{ name: 'ripple',    label: 'Ripple'    },
-		{ name: 'jitter',    label: 'Jitter'    },
-		{ name: 'big',       label: 'Big'       },
-		{ name: 'small',     label: 'Small'     },
-	];
-
-	// Unicode PUA markers — invisible, won't conflict with typed text
-	const FX_TO_CHAR = {
-		bold: '\uE107', italic: '\uE108', rainbow: '\uE109',
-		'color-red': '\uE110', 'color-orange': '\uE111', 'color-yellow': '\uE112',
-		'color-green': '\uE113', 'color-teal': '\uE114', 'color-blue': '\uE115',
-		'color-purple': '\uE116', 'color-pink': '\uE117',
-		underline: '\uE118', strike: '\uE119', ripple: '\uE11A', shake: '\uE100', bounce: '\uE101', wave: '\uE102', nod: '\uE103', jitter: '\uE104', big: '\uE105', small: '\uE106',
-		'wdth-25': '\uE120', 'wdth-50': '\uE121', 'wdth-75': '\uE122', 'wdth-125': '\uE123', 'wdth-150': '\uE124',
-		'wght-100': '\uE130', 'wght-200': '\uE131', 'wght-300': '\uE132', 'wght-500': '\uE133', 'wght-600': '\uE134', 'wght-700': '\uE135',
-		'sz-60': '\uE140', 'sz-80': '\uE141', 'sz-125': '\uE142', 'sz-175': '\uE143', 'sz-300': '\uE144', 'sz-500': '\uE145'
-	};
-	const WDTH_FX_MAP = { 25: 'wdth-25', 50: 'wdth-50', 75: 'wdth-75', 125: 'wdth-125', 150: 'wdth-150' };
-	const WDTH_STEPS = [25, 50, 75, 100, 125, 150];
-	const WGHT_FX_MAP = { 100: 'wght-100', 200: 'wght-200', 300: 'wght-300', 500: 'wght-500', 600: 'wght-600', 700: 'wght-700' };
-	const WGHT_STEPS = [100, 200, 300, 400, 500, 600, 700];
-	const SZ_FX_MAP = { 0.6: 'sz-60', 0.8: 'sz-80', 1.25: 'sz-125', 1.75: 'sz-175', 3.0: 'sz-300', 5.0: 'sz-500' };
-	const SZ_STEPS = [0.6, 0.8, 1.0, 1.25, 1.75, 3.0, 5.0];
-	const TEXT_COLORS = [
-		{ name: 'color-red',    hex: '#e74c3c' },
-		{ name: 'color-orange', hex: '#e67e22' },
-		{ name: 'color-yellow', hex: '#d4ac0d' },
-		{ name: 'color-green',  hex: '#27ae60' },
-		{ name: 'color-teal',   hex: '#16a085' },
-		{ name: 'color-blue',   hex: '#2980b9' },
-		{ name: 'color-purple', hex: '#8e44ad' },
-		{ name: 'color-pink',   hex: '#e91e8c' },
-	];
-	function escapeHtml(s) {
-		return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-	}
-	// Generate nested <span> HTML for layered effects.
-	// Underline and strike are collapsed onto a single span with combined text-decoration-line
-	// to guarantee both decorations render — nested text-decoration spans are unreliable cross-browser.
-	function nestedFxHtml(fxStack, innerHtml, delay = null) {
-		const decorFx = fxStack.filter(fx => fx === 'underline' || fx === 'strike');
-		const wdthFx = fxStack.find(fx => fx.startsWith('wdth-'));
-		const wghtFx = fxStack.find(fx => fx.startsWith('wght-'));
-		const szFx = fxStack.find(fx => fx.startsWith('sz-'));
-		const animStack = fxStack.filter(fx => fx !== 'underline' && fx !== 'strike' && !fx.startsWith('wdth-') && !fx.startsWith('wght-') && !fx.startsWith('sz-'));
-		let html = innerHtml;
-		if (szFx) {
-			const rem = (parseFloat(szFx.replace('sz-', '')) / 100 * 0.9).toFixed(2);
-			html = `<span class="tfx tfx-${szFx}" data-fx="${szFx}" style="font-size:${rem}rem">${html}</span>`;
-		}
-		if (wghtFx) {
-			const w = wghtFx.replace('wght-', '');
-			html = `<span class="tfx tfx-${wghtFx}" data-fx="${wghtFx}" style="font-weight:${w}">${html}</span>`;
-		}
-		if (wdthFx) {
-			const pct = wdthFx.replace('wdth-', '');
-			html = `<span class="tfx tfx-${wdthFx}" data-fx="${wdthFx}" style="font-stretch:${pct}%">${html}</span>`;
-		}
-		if (decorFx.length) {
-			const tdLine = decorFx.map(fx => fx === 'underline' ? 'underline' : 'line-through').join(' ');
-			html = `<span class="tfx ${decorFx.map(fx => `tfx-${fx}`).join(' ')}" style="text-decoration-line:${tdLine};text-underline-offset:2px">${html}</span>`;
-		}
-		for (let i = animStack.length - 1; i >= 0; i--) {
-			const fx = animStack[i];
-			const style = delay ? ` style="animation-delay:${delay}"` : '';
-			html = `<span class="tfx tfx-${fx}" data-fx="${fx}"${style}>${html}</span>`;
-		}
-		return html;
-	}
-	const CHAR_TO_FX = Object.fromEntries(Object.entries(FX_TO_CHAR).map(([k,v]) => [v,k]));
-	const FX_CLOSE_CHAR = '\uE1FF';
-	const FX_OPEN_CHARS = new Set(Object.values(FX_TO_CHAR));
-
-	// Decode compact EK token [ek:DATE36:PARENT:CHILD] → gstatic URL
-	function ekTokenToUrl(d36, parentCp, childCp) {
-		const date = 20200000 + parseInt(d36, 36);
-		const pad = date < 20220500;
-		const fmt = cp => 'u' + cp.split('-').map(s => pad ? s.padStart(4, '0') : s).join('-u');
-		return `https://www.gstatic.com/android/keyboard/emojikitchen/${date}/${fmt(parentCp)}/${fmt(parentCp)}_${fmt(childCp)}.png`;
-	}
 
 	// ── Emoji tooltip ─────────────────────────────────────────────────────
 	function ekCpToChar(cp) {
@@ -295,67 +220,8 @@
 	}
 
 	function onMsgListMouseleave() { emojiTooltip = null; }
-
-	// Convert legacy [fx]...[/fx] bracket markup → Unicode PUA
-	function normalizeLegacyMarkup(text) {
-		const names = Object.keys(FX_TO_CHAR).join('|');
-		text = text.replace(new RegExp(`\\[(${names})\\]`, 'g'), (_, fx) => FX_TO_CHAR[fx] ?? _);
-		text = text.replace(new RegExp(`\\[\\/(${names})\\]`, 'g'), () => FX_CLOSE_CHAR);
-		return text;
-	}
-
-	// Convert Unicode PUA markers → readable [fx]...[/fx] (for clipboard)
-	function unicodeToReadable(markup) {
-		let result = '', stack = [];
-		for (const ch of markup) {
-			if (FX_OPEN_CHARS.has(ch)) { result += `[${CHAR_TO_FX[ch]}]`; stack.push(CHAR_TO_FX[ch]); }
-			else if (ch === FX_CLOSE_CHAR) { const fx = stack.pop(); if (fx) result += `[/${fx}]`; }
-			else result += ch;
-		}
-		return result;
-	}
-
-	// Strip all effect markers, EK tokens, and CE tokens from text (for preview/reply bars)
-	function stripMarkup(text) {
-		const withoutEk = text.replace(/\[ek:[a-z0-9]+:[0-9a-f-]+:[0-9a-f-]+\]/gi, '').replace(/\[ce:[a-zA-Z0-9_-]{1,32}\]/gi, '');
-		const normalized = normalizeLegacyMarkup(withoutEk);
-		let result = '';
-		for (const ch of normalized) {
-			if (!FX_OPEN_CHARS.has(ch) && ch !== FX_CLOSE_CHAR) result += ch;
-		}
-		return result;
-	}
-
-	// Returns 1-3 if content is purely 1-3 emoji (no other text), 0 otherwise.
-	// Strips effect markers first so emoji with text effects still qualify.
-	// EK tokens count as emoji for sizing purposes.
 	const _isEmojiSeg = s => /\p{Extended_Pictographic}|\p{Regional_Indicator}/u.test(s);
 	const _segmenter = new Intl.Segmenter();
-	function jumboEmojiCount(content) {
-		let ekCount = 0;
-		let ceCount = 0;
-		const withoutEk = content.replace(/\[ek:[a-z0-9]+:[0-9a-f-]+:[0-9a-f-]+\]/gi, () => { ekCount++; return ''; });
-		const withoutCe = withoutEk.replace(/\[ce:[a-zA-Z0-9_-]{1,32}\]/gi, () => { ceCount++; return ''; });
-		const plain = stripMarkup(withoutCe).trim();
-		// Pure EK/CE images only → treat each as an emoji
-		const imgCount = ekCount + ceCount;
-		if (!plain && imgCount > 0) return imgCount <= 3 ? imgCount : 0;
-		// Mixed EK/CE + text/emoji → not jumbo
-		if (ekCount > 0 || ceCount > 0) return 0;
-		// Original logic for pure regular emoji
-		if (!plain) return 0;
-		const segs = [..._segmenter.segment(plain)].map(s => s.segment);
-		if (segs.length > 3 || segs.length === 0) return 0;
-		if (!segs.every(_isEmojiSeg)) return 0;
-		return segs.length;
-	}
-	const _jumboCache = new Map();
-	function jumboEmojiCountM(content) {
-		let v = _jumboCache.get(content);
-		if (v === undefined) { v = jumboEmojiCount(content); _jumboCache.set(content, v); }
-		return v;
-	}
-	const EMOJI_RE_G = /\p{Extended_Pictographic}/u;
 	const MODIFIER_STRIP_RE = /[\u{1F3FB}-\u{1F3FF}\uFE0F\u200D]/gu;
 	const SKIN_TONE_NAMES = {
 		'\u{1F3FB}': 'light skin tone', '\u{1F3FC}': 'medium-light skin tone',
@@ -418,207 +284,6 @@
 		}).join('');
 	}
 
-	const _htmlCache = new Map();
-	function contentHtmlM(text, split = true) {
-		const key = (split ? '1' : '0') + text;
-		let v = _htmlCache.get(key);
-		if (v === undefined) { v = contentHtml(text, split); _htmlCache.set(key, v); }
-		return v;
-	}
-	const JUMBO_SIZES = ['2.8rem', '2.2rem', '1.8rem'];
-	function bubbleFontSize(content, fontSize) {
-		if (fontSize && fontSize !== 1) return `${(fontSize * 0.9).toFixed(2)}rem`;
-		const jc = jumboEmojiCountM(content);
-		if (jc > 0) return JUMBO_SIZES[jc - 1];
-		return null;
-	}
-
-	// Unicode markup → flat segments: [{ text: string, fxStack: string[] }, ...]
-	function markupToSegments(markup) {
-		const segs = [];
-		let stack = [], textBuf = '';
-		for (const ch of markup) {
-			if (FX_OPEN_CHARS.has(ch)) {
-				if (textBuf) { segs.push({ text: textBuf, fxStack: [...stack] }); textBuf = ''; }
-				stack.push(CHAR_TO_FX[ch]);
-			} else if (ch === FX_CLOSE_CHAR) {
-				if (textBuf) { segs.push({ text: textBuf, fxStack: [...stack] }); textBuf = ''; }
-				stack.pop();
-			} else {
-				textBuf += ch;
-			}
-		}
-		if (textBuf) segs.push({ text: textBuf, fxStack: [...stack] });
-		return segs;
-	}
-
-	// Flat segments → Unicode markup (closes/reopens efficiently)
-	function segmentsToMarkup(segs) {
-		let result = '', prevStack = [];
-		for (const seg of segs) {
-			let common = 0;
-			while (common < prevStack.length && common < seg.fxStack.length && prevStack[common] === seg.fxStack[common]) common++;
-			for (let i = prevStack.length; i > common; i--) result += FX_CLOSE_CHAR;
-			for (let i = common; i < seg.fxStack.length; i++) result += FX_TO_CHAR[seg.fxStack[i]];
-			result += seg.text;
-			prevStack = seg.fxStack;
-		}
-		for (let i = prevStack.length; i > 0; i--) result += FX_CLOSE_CHAR;
-		return result;
-	}
-
-	// Render content markup → HTML string in one pass, avoiding inter-segment DOM nodes
-	// that cause newlines under white-space: pre-wrap when using {#each}.
-	// Renders markup text + EK tokens + CE tokens → HTML, correctly applying FX effects
-	const CODE_BLOCK_RE = /```(\w*)\n([\s\S]*?)```/g;
-	const INLINE_CODE_RE = /`([^`\n]+)`/g;
-
-	function highlightCode(code, lang) {
-		try {
-			if (lang && hljs.getLanguage(lang)) return hljs.highlight(code, { language: lang }).value;
-			return hljs.highlightAuto(code).value;
-		} catch { return escapeHtml(code); }
-	}
-
-	function processCodeBlocks(text) {
-		if (!text.includes('`')) return null;
-		CODE_BLOCK_RE.lastIndex = 0;
-		const blockMatches = [];
-		let m;
-		while ((m = CODE_BLOCK_RE.exec(text)) !== null) {
-			blockMatches.push({ index: m.index, end: CODE_BLOCK_RE.lastIndex, lang: m[1], code: m[2] });
-		}
-		if (!blockMatches.length) return null;
-		const parts = [];
-		let last = 0;
-		for (const bm of blockMatches) {
-			if (bm.index > last) parts.push({ type: 'text', content: text.slice(last, bm.index) });
-			parts.push({ type: 'codeblock', lang: bm.lang, code: bm.code });
-			last = bm.end;
-		}
-		if (last < text.length) parts.push({ type: 'text', content: text.slice(last) });
-		return parts;
-	}
-
-	function contentHtml(text, split = true) {
-		if (!text) return '';
-		const codeParts = processCodeBlocks(text);
-		if (codeParts) {
-			return codeParts.map((p, i) => {
-				if (p.type === 'codeblock') {
-					const rawCode = p.code.replace(/\n$/, '');
-					const highlighted = highlightCode(rawCode, p.lang);
-					const lineCount = rawCode.split('\n').length;
-					const lineNums = Array.from({ length: lineCount }, (_, i) => `<span class="code-ln">${i + 1}</span>`).join('');
-					const langIcon = p.lang ? (_ci[p.lang] || _ci[{javascript:'js',typescript:'ts',python:'py',html:'html',css:'css',json:'json',bash:'bash',sh:'bash',shell:'bash',sql:'sql',java:'java',cpp:'cpp',c:'cpp',rust:'rust',go:'go',swift:'swift',markdown:'md',md:'md',csv:'csv',env:'env',properties:'env','env.example':'envex'}[p.lang]] || '') : '';
-					const langLabel = p.lang ? `<span class="code-lang">${escapeHtml(p.lang)}${langIcon ? ` <img class="code-lang-icon" src="${langIcon}" alt="" />` : ''}</span>` : '';
-					const copyBtn = `<button class="code-copy-btn" title="Copy"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><span class="copy-label"> Copy</span></button>`;
-					const truncated = lineCount > 20;
-					const truncAttr = truncated ? ' data-truncated="1"' : '';
-					const showMore = truncated ? `<button class="code-show-more">Show all ${lineCount} lines</button>` : '';
-					return `<div class="code-block"${truncAttr}><div class="code-block-header">${copyBtn}${langLabel}</div><div class="code-body"><pre class="code-lines" aria-hidden="true">${lineNums}</pre><pre class="code-content"><code>${highlighted}</code></pre></div>${showMore}</div>`;
-				}
-				const trimmed = p.content.replace(/^\n+/, '').replace(/\n+$/, '');
-				if (!trimmed) return '';
-				return contentHtml(trimmed, split);
-			}).join('');
-		}
-		if (text.includes('`')) {
-			const inlined = text.replace(INLINE_CODE_RE, (_, code) => `<code class="inline-code">${escapeHtml(code)}</code>`);
-			if (inlined !== text) {
-				const splitParts = inlined.split(/(<code class="inline-code">.*?<\/code>)/);
-				return splitParts.map(part => {
-					if (part.startsWith('<code class="inline-code">')) return part;
-					const raw = part.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
-					return contentHtml(raw, split);
-				}).join('');
-			}
-		}
-		const hasEk = text.indexOf('[ek:') !== -1;
-		const hasCe = text.indexOf('[ce:') !== -1;
-		const hasFx = /[\uE100-\uE1FF]/.test(text);
-		if (!hasEk && !hasCe && !hasFx) return EMOJI_RE_G.test(text) ? wrapEmojiInText(text) : escapeHtml(text);
-
-		const EK_RE = /\[ek:([a-z0-9]+):([0-9a-f-]+):([0-9a-f-]+)\]/gi;
-		const CE_RE = /\[ce:([a-zA-Z0-9_-]{1,32})\]/gi;
-		const segs = markupToSegments(normalizeLegacyMarkup(text));
-		if (!segs.length) return escapeHtml(text);
-
-		let globalWi = 0;
-
-		function renderText(chunk, fxStack) {
-			if (!chunk) return '';
-			if (!fxStack.length) return EMOJI_RE_G.test(chunk) ? wrapEmojiInText(chunk) : escapeHtml(chunk);
-			if (fxStack.includes('ripple')) {
-				const graphemes = [..._segmenter.segment(chunk)].map(g => g.segment);
-				const html = graphemes.map((g, i) =>
-					/^\s+$/.test(g) ? escapeHtml(g) : nestedFxHtml(fxStack, escapeHtml(g), `${((globalWi + i) * 0.08).toFixed(2)}s`)
-				).join('');
-				globalWi += graphemes.filter(g => !/^\s+$/.test(g)).length;
-				return html;
-			}
-			if (split) {
-				const graphemes = [..._segmenter.segment(chunk)].map(g => g.segment);
-				if (graphemes.length > 1 && graphemes.every(_isEmojiSeg)) {
-					const html = graphemes.map((g, i) => nestedFxHtml(fxStack, escapeHtml(g), `${((globalWi + i) * 0.08).toFixed(2)}s`)).join('');
-					globalWi += graphemes.length;
-					return html;
-				}
-				const tokens = chunk.split(/(\s+)/);
-				if (tokens.length > 1) {
-					return tokens.map(tok => /^\s+$/.test(tok) ? escapeHtml(tok) : nestedFxHtml(fxStack, escapeHtml(tok), `${(globalWi++ * 0.06).toFixed(2)}s`)).join('');
-				}
-				return nestedFxHtml(fxStack, escapeHtml(chunk), `${(globalWi++ * 0.06).toFixed(2)}s`);
-			}
-			return nestedFxHtml(fxStack, escapeHtml(chunk));
-		}
-
-		return segs.map(s => {
-			const segHasEk = s.text.includes('[ek:');
-			const segHasCe = s.text.includes('[ce:');
-			if (!segHasEk && !segHasCe) return renderText(s.text, s.fxStack);
-			// Collect all EK/CE matches, sort by position, render each
-			const allMatches = [];
-			if (segHasEk) {
-				EK_RE.lastIndex = 0;
-				let m;
-				while ((m = EK_RE.exec(s.text)) !== null) {
-					allMatches.push({ index: m.index, end: EK_RE.lastIndex, type: 'ek', match: m });
-				}
-			}
-			if (segHasCe) {
-				CE_RE.lastIndex = 0;
-				let m;
-				while ((m = CE_RE.exec(s.text)) !== null) {
-					allMatches.push({ index: m.index, end: CE_RE.lastIndex, type: 'ce', match: m });
-				}
-			}
-			allMatches.sort((a, b) => a.index - b.index);
-			const parts = [];
-			let lastIdx = 0;
-			for (const item of allMatches) {
-				if (item.index > lastIdx) parts.push(renderText(s.text.slice(lastIdx, item.index), s.fxStack));
-				if (item.type === 'ek') {
-					const m = item.match;
-					const url = ekTokenToUrl(m[1], m[2], m[3]);
-					const imgHtml = `<img class="ek-img" data-ek="${escapeHtml(m[0])}" src="${url}" loading="lazy" alt="" />`;
-					parts.push(s.fxStack.length ? nestedFxHtml(s.fxStack, imgHtml, split ? `${(globalWi++ * 0.06).toFixed(2)}s` : null) : imgHtml);
-				} else {
-					const ceId = item.match[1];
-					const ceToken = item.match[0];
-					const ceData = getCachedCustomEmojiMap()[ceId];
-					const ceUrl = ceData?.url ?? '';
-					const ceAlt = ceData ? ':' + ceData.shortcode + ':' : ceToken;
-					const imgHtml = `<img class="ce-img" data-ce="${escapeHtml(ceToken)}" src="${escapeHtml(ceUrl)}" alt="${escapeHtml(ceAlt)}" loading="lazy" />`;
-					parts.push(s.fxStack.length ? nestedFxHtml(s.fxStack, imgHtml, split ? `${(globalWi++ * 0.06).toFixed(2)}s` : null) : imgHtml);
-				}
-				lastIdx = item.end;
-			}
-			if (lastIdx < s.text.length) parts.push(renderText(s.text.slice(lastIdx), s.fxStack));
-			return parts.join('');
-		}).join('');
-	}
-
 	let revealedInvisible = $state(new Set());
 	function revealInvisible(id) { revealedInvisible = new Set([...revealedInvisible, id]); }
 	let replayCounts = $state({});
@@ -654,6 +319,7 @@
 		envex: _codeIcon(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><text x="8" y="13" text-anchor="middle" font-size="14" font-weight="700" font-family="monospace" fill="#89d185">$</text></svg>`),
 		plain: _codeIcon(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><rect x="2" y="1" width="12" height="14" rx="1.5" fill="none" stroke="#9399b2" stroke-width="1.3"/><line x1="5" y1="5" x2="11" y2="5" stroke="#9399b2" stroke-width="1"/><line x1="5" y1="8" x2="11" y2="8" stroke="#9399b2" stroke-width="1"/><line x1="5" y1="11" x2="9" y2="11" stroke="#9399b2" stroke-width="1"/></svg>`),
 	};
+	const { contentHtml, contentHtmlM, clearCache: _clearHtmlCache } = createContentRenderer({ hljs, codeIcons: _ci, getCeMap: getCachedCustomEmojiMap, wrapEmoji: wrapEmojiInText });
 	const CODE_LANGUAGES = [
 		{ id: 'javascript', label: 'JavaScript', icon: _ci.js },
 		{ id: 'typescript', label: 'TypeScript', icon: _ci.ts },
@@ -770,8 +436,8 @@
 				pos += len;
 				return null;
 			}
-			if (node.nodeType === Node.ELEMENT_NODE && node.tagName === 'IMG' && (node.dataset.ek || node.dataset.ce)) {
-				const tokenLen = (node.dataset.ek || node.dataset.ce).length;
+			if (node.nodeType === Node.ELEMENT_NODE && node.tagName === 'IMG' && (node.dataset.ek || node.dataset.ce || node.dataset.tg)) {
+				const tokenLen = (node.dataset.ek || node.dataset.ce || node.dataset.tg).length;
 				if (pos + tokenLen >= target) {
 					const idx = Array.from(node.parentNode.childNodes).indexOf(node);
 					return { node: node.parentNode, offset: target === pos ? idx : idx + 1 };
@@ -795,6 +461,8 @@
 					result += node.dataset.ek;
 				} else if (node.tagName === 'IMG' && node.dataset.ce) {
 					result += node.dataset.ce;
+				} else if (node.tagName === 'IMG' && node.dataset.tg) {
+					result += node.dataset.tg;
 				} else if (node.dataset?.fx) {
 					const fxStack = node.dataset.fx.split(' ').filter(fx => FX_TO_CHAR[fx]);
 					result += fxStack.map(fx => FX_TO_CHAR[fx]).join('') + serializeCe(node) + FX_CLOSE_CHAR.repeat(fxStack.length);
@@ -959,6 +627,8 @@
 
 		const EK_RE = /\[ek:([a-z0-9]+):([0-9a-f-]+):([0-9a-f-]+)\]/gi;
 		const CE_RE = /\[ce:([a-zA-Z0-9_-]{1,32})\]/gi;
+		const TG_RE = /\[tg:([0-9a-f-]+)\]/gi;
+		const TGC_RE = /\[tgc:([A-Za-z0-9_]+):(\d+)\]/g;
 		const segs = markupToSegments(normalizeLegacyMarkup(markup));
 		const nodes = [];
 		let globalWi = 0;
@@ -1030,7 +700,9 @@
 		for (const seg of segs) {
 			const hasEk = seg.text.includes('[ek:');
 			const hasCe = seg.text.includes('[ce:');
-			if (!hasEk && !hasCe) { pushText(seg.text, seg.fxStack); continue; }
+			const hasTg = seg.text.includes('[tg:');
+			const hasTgc = seg.text.includes('[tgc:');
+			if (!hasEk && !hasCe && !hasTg && !hasTgc) { pushText(seg.text, seg.fxStack); continue; }
 			// Segment contains EK/CE tokens — collect all matches, sort by position, render
 			const allMatches = [];
 			if (hasEk) {
@@ -1047,6 +719,20 @@
 					allMatches.push({ index: m.index, end: CE_RE.lastIndex, type: 'ce', match: m });
 				}
 			}
+			if (hasTg) {
+				TG_RE.lastIndex = 0;
+				let m;
+				while ((m = TG_RE.exec(seg.text)) !== null) {
+					allMatches.push({ index: m.index, end: TG_RE.lastIndex, type: 'tg', match: m });
+				}
+			}
+			if (hasTgc) {
+				TGC_RE.lastIndex = 0;
+				let m;
+				while ((m = TGC_RE.exec(seg.text)) !== null) {
+					allMatches.push({ index: m.index, end: TGC_RE.lastIndex, type: 'tgc', match: m });
+				}
+			}
 			allMatches.sort((a, b) => a.index - b.index);
 			let lastIdx = 0;
 			for (const item of allMatches) {
@@ -1054,6 +740,12 @@
 				if (item.type === 'ek') {
 					const m = item.match;
 					const img = makeEkImg(m[0], m[1], m[2], m[3]);
+					nodes.push(wrapInFx(img, seg.fxStack, fxSplitWords ? `${(globalWi++ * 0.06).toFixed(2)}s` : undefined));
+				} else if (item.type === 'tg') {
+					const img = makeTgImg(item.match[1], item.match[0]);
+					nodes.push(wrapInFx(img, seg.fxStack, fxSplitWords ? `${(globalWi++ * 0.06).toFixed(2)}s` : undefined));
+				} else if (item.type === 'tgc') {
+					const img = makeTgcImg(item.match[1], item.match[2], item.match[0]);
 					nodes.push(wrapInFx(img, seg.fxStack, fxSplitWords ? `${(globalWi++ * 0.06).toFixed(2)}s` : undefined));
 				} else {
 					const ceId = item.match[1];
@@ -1216,6 +908,7 @@
 			if (node.nodeType !== Node.ELEMENT_NODE) return;
 			if (node.tagName === 'IMG' && node.dataset.ek) { n += node.dataset.ek.length; return; }
 			if (node.tagName === 'IMG' && node.dataset.ce) { n += node.dataset.ce.length; return; }
+			if (node.tagName === 'IMG' && node.dataset.tg) { n += node.dataset.tg.length; return; }
 			if (node.tagName === 'BR') { n += 1; return; }
 			for (const c of node.childNodes) full(c);
 		}
@@ -1230,6 +923,7 @@
 			}
 			if (node.tagName === 'IMG' && node.dataset.ek) { n += node.dataset.ek.length; return; }
 			if (node.tagName === 'IMG' && node.dataset.ce) { n += node.dataset.ce.length; return; }
+			if (node.tagName === 'IMG' && node.dataset.tg) { n += node.dataset.tg.length; return; }
 			if (node.tagName === 'BR') { n += 1; return; }
 			for (const c of node.childNodes) { if (done) break; walk(c); }
 		}
@@ -1250,6 +944,7 @@
 			if (node.nodeType !== Node.ELEMENT_NODE) return;
 			if (node.tagName === 'IMG' && node.dataset.ek) { buf += node.dataset.ek; return; }
 			if (node.tagName === 'IMG' && node.dataset.ce) { buf += node.dataset.ce; return; }
+			if (node.tagName === 'IMG' && node.dataset.tg) { buf += node.dataset.tg; return; }
 			if (node.tagName === 'BR') { buf += '\n'; return; }
 			const fx = node.dataset?.fx ? node.dataset.fx.split(' ').filter(f => FX_TO_CHAR[f]) : [];
 			if (fx.length) buf += fx.map(f => FX_TO_CHAR[f]).join('');
@@ -1270,6 +965,7 @@
 			}
 			if (node.tagName === 'IMG' && node.dataset.ek) { buf += node.dataset.ek; return; }
 			if (node.tagName === 'IMG' && node.dataset.ce) { buf += node.dataset.ce; return; }
+			if (node.tagName === 'IMG' && node.dataset.tg) { buf += node.dataset.tg; return; }
 			if (node.tagName === 'BR') { buf += '\n'; return; }
 			const fx = node.dataset?.fx ? node.dataset.fx.split(' ').filter(f => FX_TO_CHAR[f]) : [];
 			if (fx.length) buf += fx.map(f => FX_TO_CHAR[f]).join('');
@@ -2215,7 +1911,7 @@
 		tooltip.style.transform = 'none';
 	}
 
-	onMount(() => {
+	onMount(async () => {
 		// ── Performance monitoring ─────────────────────────────────────────────
 		if (typeof PerformanceObserver !== 'undefined') {
 			try {
@@ -2240,6 +1936,12 @@
 		_cancelFpsLoop = () => cancelAnimationFrame(_fpsRafId);
 		// ──────────────────────────────────────────────────────────────────────
 
+		// Snapshot lastRead BEFORE markRead writes Date.now() over it, so we can
+		// distinguish "already seen" messages from "still unread" ones for FX auto-play.
+		try {
+			const snap = await get(ref(db, `lastRead/${data.currentUser.id}/${data.convId}`));
+			_lastReadAtMount = snap.exists() ? Number(snap.val()) || 0 : 0;
+		} catch { _lastReadAtMount = 0; }
 		markRead();
 		scrollToBottom();
 		if (listEl) listEl.addEventListener('error', (e) => {
@@ -2258,6 +1960,8 @@
 			}
 		}, true);
 		if (listEl) listEl.addEventListener('click', (e) => {
+			const tgEl = e.target.closest?.('.tg-emoji.tg-fx');
+			if (tgEl) { playTgInteraction(tgEl); return; }
 			const copyBtn = e.target.closest?.('.code-copy-btn');
 			if (copyBtn) {
 				const block = copyBtn.closest('.code-block');
@@ -2275,9 +1979,10 @@
 				if (block) { block.removeAttribute('data-truncated'); showMore.remove(); }
 			}
 		});
-		loadEmojiNames().then(m => { emojiNames = m; _htmlCache.clear(); _jumboCache.clear(); messages = [...messages]; });
+		loadEmojiNames().then(m => { emojiNames = m; _clearHtmlCache(); clearJumboCache(); messages = [...messages]; });
 		initSemanticSearch();
-		getCustomEmojiMap().then(m => { _ceMap = m; _htmlCache.clear(); messages = [...messages]; });
+		getCustomEmojiMap().then(m => { _ceMap = m; _clearHtmlCache(); messages = [...messages]; });
+		Promise.all([loadTelegramEmoji(), loadCustomPacks()]).then(() => { mountTgStickers(); });
 		document.addEventListener('selectionchange', onCeSelect);
 		if (heartsCanvas) {
 			heartsCanvas.width = window.innerWidth;
@@ -2377,9 +2082,215 @@
 		}
 		if (!shortcode || !ceData?.url) return;
 		insertCeImgAtCursor(shortcode, ceData);
-		_htmlCache.clear();
+		_clearHtmlCache();
 		showCustomEmoji = false;
 	}
+
+	// ── Telegram animated emoji ──────────────────────────────────────────────
+	const _tgAnims = new WeakMap();
+	const _tgPlayedFx = new Set();   // "msgId:cp" — auto-played click overlays
+	let _tgObserver = null;
+	// Snapshot of lastRead at page open — anything sent AFTER this is "unseen" for
+	// auto-play purposes. Default to now so we don't replay anything if the snapshot
+	// hasn't resolved yet (the 5-min freshness check still covers very recent msgs).
+	let _lastReadAtMount = Date.now();
+
+	function makeTgImg(cp, token) {
+		const img = document.createElement('img');
+		img.dataset.tg = token;
+		img.className = 'tg-img tg-img-ce';
+		img.setAttribute('contenteditable', 'false');
+		img.setAttribute('alt', token);
+		img.src = TG_PLACEHOLDER;
+		loadTelegramEmoji().then(() => {
+			const entry = tgEntry(cp);
+			if (entry?.flag) { img.src = tgFlagUrl(cp); return; }
+			tgStaticFrame(cp, false).then((src) => { if (src) img.src = src; });
+		});
+		return img;
+	}
+	function makeTgcImg(short, id, token) {
+		const img = document.createElement('img');
+		img.dataset.tg = token;
+		img.className = 'tg-img tg-img-ce';
+		img.setAttribute('contenteditable', 'false');
+		img.setAttribute('alt', token);
+		img.src = TG_PLACEHOLDER;
+		loadCustomPacks().then(() => {
+			tgcStaticFrame(short, id).then((src) => { if (src) img.src = src; });
+		});
+		return img;
+	}
+
+	function onTgEmojiInsert(it) {
+		showTgEmoji = false;
+		let node;
+		if (it.custom) {
+			if (it.mode === 'emoji') {
+				node = document.createTextNode(it.alt || '');
+			} else {
+				node = makeTgcImg(it.short, it.id, tgcToToken(it.short, it.id));
+			}
+		} else {
+			node = makeTgImg(it.cp, cpToToken(it.cp));
+		}
+		const sel = window.getSelection();
+		if (sel && sel.rangeCount && inputEl?.contains(sel.anchorNode)) {
+			const range = sel.getRangeAt(0);
+			range.deleteContents();
+			range.insertNode(node);
+			range.setStartAfter(node); range.collapse(true);
+			sel.removeAllRanges(); sel.addRange(range);
+		} else if (inputEl) {
+			inputEl.appendChild(node);
+		}
+		input = serializeCe(inputEl);
+		onInput();
+		_clearHtmlCache();
+		inputEl?.focus();
+	}
+
+	// Mount live Lottie players into rendered .tg-emoji spans — SAME setup as the
+	// picker's LottieSticker: lottie-web SVG, autoplay:false, and the IO observer
+	// gates each play() through the shared PLAY_CAP=24 throttle so the main thread
+	// never has more than 24 SVG engines ticking. That cap is what alleviates the
+	// frame-render artifacts certain emoji show when too many compete for CPU.
+	const _tgPlayingSet = new WeakSet();
+	let _tgHeldSlots = 0;
+	function tgTryStart(span, anim) {
+		if (_tgPlayingSet.has(span)) return;
+		if (_tgTryPlay()) { _tgPlayingSet.add(span); _tgHeldSlots++; anim.play(); }
+	}
+	function tgPause(span, anim) {
+		if (!_tgPlayingSet.has(span)) return;
+		_tgPlayingSet.delete(span);
+		_tgYieldPlay(); _tgHeldSlots--;
+		anim.pause();
+	}
+	function ensureTgObserver() {
+		if (_tgObserver) return;
+		_tgObserver = new IntersectionObserver((entries) => {
+			for (const e of entries) {
+				const span = e.target;
+				const frozen = !!(span.dataset.tgPack && isStaticPack(span.dataset.tgPack));
+				const anim = _tgAnims.get(span);
+				if (e.isIntersecting) {
+					ensureTgAnim(span);
+					if (!frozen && anim) tgTryStart(span, anim);
+				} else if (!frozen && anim) {
+					tgPause(span, anim);
+				}
+			}
+		}, { rootMargin: '150px' });
+	}
+	async function ensureTgAnim(span) {
+		if (_tgAnims.has(span)) return;
+		_tgAnims.set(span, null);
+		let url = '';
+		if (span.dataset.tgCp) url = tgAnimatedUrl(span.dataset.tgCp);
+		else if (span.dataset.tgPack && span.dataset.tgId) url = tgcUrl(span.dataset.tgPack, span.dataset.tgId);
+		if (!url) return;
+		const data = await fetchLottie(url);
+		if (!data || !span.isConnected) return;
+		const frozen = !!(span.dataset.tgPack && isStaticPack(span.dataset.tgPack));
+		const anim = lottie.loadAnimation({
+			container: span, renderer: 'svg', loop: !frozen, autoplay: false,
+			animationData: data, rendererSettings: { progressiveLoad: true }
+		});
+		// Same as picker — disable subframe interpolation to suppress lottie-web's
+		// transient mid-frame layer state that causes the one-frame flicker.
+		try { anim.setSubframe(false); } catch {}
+		if (frozen) {
+			const t = Math.min(STATIC_FRAME_INDEX, Math.max(0, (anim.totalFrames || 1) - 1));
+			anim.goToAndStop(t, true);
+		}
+		_tgAnims.set(span, anim);
+		// IO may have already marked us intersecting before this async load resolved.
+		if (!frozen) {
+			const r = span.getBoundingClientRect();
+			const inView = r.bottom > -150 && r.top < window.innerHeight + 150;
+			if (inView) tgTryStart(span, anim);
+		}
+	}
+	function mountTgStickers() {
+		if (!listEl) return;
+		// Bail until manifests are loaded — otherwise we'd mark spans as "processed"
+		// while tgEntry returns null, and they'd never get .tg-fx or a lottie player.
+		if (!getCachedTgEmoji() || !getCachedCustomPacks()) return;
+		ensureTgObserver();
+		for (const span of listEl.querySelectorAll('.tg-emoji:not([data-tgm])')) {
+			span.dataset.tgm = '1';
+			// ── Standard Telegram emoji (cp-based) ───────────────────────────
+			if (span.dataset.tgCp) {
+				const cp = span.dataset.tgCp;
+				const entry = tgEntry(cp);
+				if (entry?.flag) {
+					const img = document.createElement('img');
+					img.src = tgFlagUrl(cp); img.className = 'tg-emoji-img'; img.alt = entry.e;
+					span.appendChild(img);
+					continue;
+				}
+				_tgObserver.observe(span);
+				if ((entry?.av || 0) > 0) span.classList.add('tg-fx');
+				const msgId = span.closest('.message[data-msg-id]')?.dataset.msgId;
+				const isJumbo = !!span.closest('.bubble')?.classList.contains('jumbo-emoji');
+				if (msgId && isJumbo && (entry?.av || 0) > 0) {
+					// Auto-play if either: sent in the last 5 minutes, OR not yet seen
+					// by this user (createdAt > the lastRead value at page open).
+					const msg = messages.find((m) => m.id === msgId);
+					const FRESH_MS = 5 * 60 * 1000;
+					const isFresh = msg && (Date.now() - (msg.createdAt || 0)) < FRESH_MS;
+					const isUnseen = msg && (msg.createdAt || 0) > _lastReadAtMount;
+					const key = msgId + ':' + cp;
+					if ((isFresh || isUnseen) && !_tgPlayedFx.has(key)) {
+						_tgPlayedFx.add(key);
+						setTimeout(() => {
+							if (!span.isConnected) return;
+							const r = span.getBoundingClientRect();
+							if (r.top < window.innerHeight && r.bottom > 0) playTgInteraction(span);
+						}, 250);
+					}
+				}
+			}
+			// ── Custom-pack emoji (short_name + doc_id) ──────────────────────
+			else if (span.dataset.tgPack && span.dataset.tgId) {
+				_tgObserver.observe(span);
+				// no FX overlay / click-to-play for custom emoji (none have variants)
+			}
+		}
+	}
+	async function playTgInteraction(el) {
+		const cp = el.dataset.tgCp;
+		const entry = tgEntry(cp);
+		if (!entry || entry.flag) return;
+		const rect = el.getBoundingClientRect();
+		const url = entry.av > 0 ? tgAnimationUrl(cp, 1 + Math.floor(Math.random() * entry.av)) : tgAnimatedUrl(cp);
+		const data = await fetchLottie(url);
+		if (!data) return;
+		// Anchor to the CHAT container's edges, not the viewport's, so the directional
+		// emanation flows inside the chat area and never spills into the sidebar/gutter.
+		const chatRect = listEl?.getBoundingClientRect() ?? { left: 0, right: window.innerWidth };
+		const chatWidth = chatRect.right - chatRect.left;
+		const big = Math.min(320, chatWidth * 0.7);
+		const isMine = !!el.closest('.message')?.classList.contains('mine');
+		const left = isMine ? chatRect.right - big : chatRect.left;
+		const cy = rect.top + rect.height / 2;
+		const top = Math.max(0, Math.min(cy - big / 2, window.innerHeight - big));
+		const host = document.createElement('div');
+		host.className = isMine ? 'tg-interaction' : 'tg-interaction tg-flip-theirs';
+		host.style.cssText = `position:fixed;left:${Math.round(left)}px;top:${Math.round(top)}px;width:${big}px;height:${big}px;pointer-events:none;z-index:9998;`;
+		document.body.appendChild(host);
+		const anim = lottie.loadAnimation({
+			container: host, renderer: 'svg', loop: false, autoplay: true,
+			animationData: data, rendererSettings: { progressiveLoad: true }
+		});
+		try { anim.setSubframe(false); } catch {}
+		const cleanup = () => { try { anim.destroy(); } catch {} host.remove(); };
+		anim.addEventListener('complete', cleanup);
+		setTimeout(() => { if (host.isConnected) cleanup(); }, 6000);
+	}
+
+	$effect(() => { messages; tick().then(mountTgStickers); });
 
 	function onReactionInsert(reaction) {
 		pendingAttachment = { url: reaction.url, filename: reaction.name, mimetype: 'image/webp', size: 0, isReaction: true };
@@ -2407,6 +2318,8 @@
 		cancelAttachment();
 		if (heartsAnimId) cancelAnimationFrame(heartsAnimId);
 		document.removeEventListener('selectionchange', onCeSelect);
+		_tgObserver?.disconnect();
+		while (_tgHeldSlots > 0) { _tgYieldPlay(); _tgHeldSlots--; }
 	});
 
 	async function send() {
@@ -2423,12 +2336,14 @@
 		const wghtSnap = (messageFontWeight !== 400 && !hasInlineWght) ? messageFontWeight : undefined;
 		const wdthSnap = (messageFontStretch !== 100 && !hasInlineWdth) ? messageFontStretch : undefined;
 		const noSplit = !fxSplitWords;
+		const wigSnap = (fxSnap === 'wiggly' || fxSnap === 'cursed' || fxSnap === 'scalloped' || fxSnap === 'starburst') && wiggleSize !== 6 ? wiggleSize : undefined;
 		const optimistic = {
 			id: `opt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, userId: data.currentUser.id,
 			userName: data.currentUser.name, userRole: data.currentUser.role,
 			content: content || (attSnap ? attSnap.filename : ''), createdAt: Date.now(),
 			pending: true, replyTo: replySnap, attachment: attSnap, fx: fxSnap,
-			fontSize: szSnap ?? 1, fontWeight: wghtSnap ?? 400, fontStretch: wdthSnap ?? 100, noSplit
+			fontSize: szSnap ?? 1, fontWeight: wghtSnap ?? 400, fontStretch: wdthSnap ?? 100, noSplit,
+			wiggleSize: wigSnap
 		};
 		messages = [...messages, optimistic];
 		setTimeout(() => { if (messages.some(m => m.id === optimistic.id && m.pending)) slowPendingIds = new Set([...slowPendingIds, optimistic.id]); }, 400);
@@ -2442,12 +2357,13 @@
 		messageFontSize = 1.0;
 		messageFontWeight = 400;
 		messageFontStretch = 100;
+		wiggleSize = 6;
 		scrollToBottom();
 		if (fxSnap && SCREEN_FXS.some(f => f.name === fxSnap)) setTimeout(() => playScreenEffect(fxSnap), 50);
 		fetch('/api/chat', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ content, to: otherUser.id, reply_to: replySnap, attachment: attSnap, effect: fxSnap || undefined, fontSize: szSnap, fontWeight: wghtSnap, fontStretch: wdthSnap, noSplit: noSplit || undefined })
+			body: JSON.stringify({ content, to: otherUser.id, reply_to: replySnap, attachment: attSnap, effect: fxSnap || undefined, fontSize: szSnap, fontWeight: wghtSnap, fontStretch: wdthSnap, noSplit: noSplit || undefined, wiggleSize: wigSnap })
 		}).then(() => {
 			if (messages.some((m) => m.id === optimistic.id && m.pending)) {
 				messages = messages.filter((m) => m.id !== optimistic.id);
@@ -2545,7 +2461,7 @@
 	// If node is an FX span wrapping only an EK/CE, dives in and returns node itself.
 	function getEkOutermost(node) {
 		if (!node || node.nodeType !== Node.ELEMENT_NODE) return null;
-		if (node.tagName === 'IMG' && (node.dataset.ek || node.dataset.ce)) {
+		if (node.tagName === 'IMG' && (node.dataset.ek || node.dataset.ce || node.dataset.tg)) {
 			// Climb up through single-child FX spans that contain only this img
 			let outer = node;
 			while (outer.parentNode && outer.parentNode !== inputEl &&
@@ -2807,6 +2723,12 @@
 </script>
 
 <svelte:head><title>DM: {otherUser.name} — eating.computer</title></svelte:head>
+<svg width="0" height="0" style="position:absolute">
+	<filter id="wavy-border-filter">
+		<feTurbulence type="turbulence" baseFrequency="0.04" numOctaves="4" result="turb" seed="2" />
+		<feDisplacementMap in="SourceGraphic" in2="turb" scale={wiggleSize} xChannelSelector="R" yChannelSelector="G" />
+	</filter>
+</svg>
 <canvas bind:this={heartsCanvas} class="hearts-canvas"></canvas>
 
 {#if emojiTooltip}
@@ -2921,7 +2843,7 @@
 				{:else}
 					{#key replayCounts[msg.id]}
 					<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-					<p class="bubble"  class:fx-rainbow={msg.fx === 'rainbow'} class:fx-rainbow-fill={msg.fx === 'rainbow-fill'} class:fx-hearts={msg.fx === 'hearts'} class:fx-slam={msg.fx === 'slam'} class:fx-loud={msg.fx === 'loud'} class:fx-gentle={msg.fx === 'gentle'} class:fx-invisible={msg.fx === 'invisible'} class:fx-shake={msg.fx === 'shake'} class:fx-bounce={msg.fx === 'bounce'} class:fx-wave={msg.fx === 'wave'} class:fx-jitter={msg.fx === 'jitter'} class:fx-big={msg.fx === 'big'} class:fx-small={msg.fx === 'small'} class:revealed={revealedInvisible.has(msg.id)} class:jumbo-emoji={jumboEmojiCountM(msg.content) > 0 && !msg.replyTo} class:has-reply={!!msg.replyTo} style:font-size={bubbleFontSize(msg.content, msg.fontSize)} style:font-weight={msg.fontWeight && msg.fontWeight !== 400 ? msg.fontWeight : null} style:font-stretch={msg.fontStretch && msg.fontStretch !== 100 ? `${msg.fontStretch}%` : null} data-font-size={msg.fontSize && msg.fontSize !== 1 ? msg.fontSize : null} data-font-weight={msg.fontWeight && msg.fontWeight !== 400 ? msg.fontWeight : null} data-font-stretch={msg.fontStretch && msg.fontStretch !== 100 ? msg.fontStretch : null} onclick={msg.fx === 'invisible' && !revealedInvisible.has(msg.id) ? () => revealInvisible(msg.id) : undefined}>{#if msg.replyTo}{@const _rp = stripMarkup(msg.replyTo.content)}{@const _rj = jumboEmojiCountM(_rp)}<button class="reply-quote" onclick={(e) => { e.stopPropagation(); scrollToMessage(msg.replyTo.id); }}><span class="reply-author">{msg.replyTo.userName}</span><span class="reply-text" class:jumbo-reply={_rj > 0} style:font-size={_rj > 0 ? JUMBO_SIZES[_rj - 1] : null}>{@html contentHtmlM(msg.replyTo.content)}</span></button>{/if}{@html contentHtmlM(msg.content, !msg.noSplit)}{#if msg.edited}<span class="edited-tag"> (edited)</span>{/if}</p>
+					<p class="bubble" use:scallopedClip={{ active: msg.fx === 'scalloped', ws: msg.wiggleSize || 6 }} use:starburstClip={{ active: msg.fx === 'starburst', ws: msg.wiggleSize || 6 }} class:fx-rainbow={msg.fx === 'rainbow'} class:fx-rainbow-fill={msg.fx === 'rainbow-fill'} class:fx-hearts={msg.fx === 'hearts'} class:fx-slam={msg.fx === 'slam'} class:fx-loud={msg.fx === 'loud'} class:fx-gentle={msg.fx === 'gentle'} class:fx-invisible={msg.fx === 'invisible'} class:fx-shake={msg.fx === 'shake'} class:fx-bounce={msg.fx === 'bounce'} class:fx-wave={msg.fx === 'wave'} class:fx-jitter={msg.fx === 'jitter'} class:fx-big={msg.fx === 'big'} class:fx-small={msg.fx === 'small'} class:fx-wiggly={msg.fx === 'wiggly'} class:fx-cursed={msg.fx === 'cursed'} class:fx-scalloped={msg.fx === 'scalloped'} class:fx-starburst={msg.fx === 'starburst'} class:revealed={revealedInvisible.has(msg.id)} class:jumbo-emoji={jumboEmojiCountM(msg.content) > 0 && !msg.replyTo} class:has-reply={!!msg.replyTo} style:font-size={bubbleFontSize(msg.content, msg.fontSize)} style:font-weight={msg.fontWeight && msg.fontWeight !== 400 ? msg.fontWeight : null} style:font-stretch={msg.fontStretch && msg.fontStretch !== 100 ? `${msg.fontStretch}%` : null} style:--ws={msg.fx === 'wiggly' && msg.wiggleSize ? `${msg.wiggleSize}px` : msg.fx === 'cursed' && msg.wiggleSize ? msg.wiggleSize : null} data-font-size={msg.fontSize && msg.fontSize !== 1 ? msg.fontSize : null} data-font-weight={msg.fontWeight && msg.fontWeight !== 400 ? msg.fontWeight : null} data-font-stretch={msg.fontStretch && msg.fontStretch !== 100 ? msg.fontStretch : null} onclick={msg.fx === 'invisible' && !revealedInvisible.has(msg.id) ? () => revealInvisible(msg.id) : undefined}>{#if msg.replyTo}{@const _rp = stripMarkup(msg.replyTo.content)}{@const _rj = jumboEmojiCountM(_rp)}<button class="reply-quote" onclick={(e) => { e.stopPropagation(); scrollToMessage(msg.replyTo.id); }}><span class="reply-author">{msg.replyTo.userName}</span><span class="reply-text" class:jumbo-reply={_rj > 0} style:font-size={_rj > 0 ? JUMBO_SIZES[_rj - 1] : null}>{@html contentHtmlM(msg.replyTo.content)}</span></button>{/if}{@html contentHtmlM(msg.content, !msg.noSplit)}{#if msg.edited}<span class="edited-tag"> (edited)</span>{/if}</p>
 					{/key}
 				{/if}
 				{#if !msg.pending}
@@ -3081,7 +3003,7 @@
 			{#if SCREEN_FXS.some(f => f.name === messageEffect)}
 				<span class="preview-screen-label">{SCREEN_FXS.find(f => f.name === messageEffect).icon} {SCREEN_FXS.find(f => f.name === messageEffect).label} effect</span>
 			{:else}
-				<p class="bubble" class:fx-rainbow={messageEffect === 'rainbow'} class:fx-rainbow-fill={messageEffect === 'rainbow-fill'} class:fx-hearts={messageEffect === 'hearts'} class:fx-slam={messageEffect === 'slam'} class:fx-loud={messageEffect === 'loud'} class:fx-gentle={messageEffect === 'gentle'} class:fx-invisible={messageEffect === 'invisible'}>{@html contentHtml(input, fxSplitWords)}</p>
+				<p class="bubble" use:scallopedClip={{ active: messageEffect === 'scalloped', ws: wiggleSize }} use:starburstClip={{ active: messageEffect === 'starburst', ws: wiggleSize }} class:fx-rainbow={messageEffect === 'rainbow'} class:fx-rainbow-fill={messageEffect === 'rainbow-fill'} class:fx-hearts={messageEffect === 'hearts'} class:fx-slam={messageEffect === 'slam'} class:fx-loud={messageEffect === 'loud'} class:fx-gentle={messageEffect === 'gentle'} class:fx-invisible={messageEffect === 'invisible'} class:fx-wiggly={messageEffect === 'wiggly'} class:fx-cursed={messageEffect === 'cursed'} class:fx-scalloped={messageEffect === 'scalloped'} class:fx-starburst={messageEffect === 'starburst'} style:--ws={messageEffect === 'wiggly' ? `${wiggleSize}px` : messageEffect === 'cursed' ? wiggleSize : null}>{@html contentHtml(input, fxSplitWords)}</p>
 			{/if}
 		</div>
 	{/if}
@@ -3226,9 +3148,24 @@
 			</button>
 			{#if showCustomEmoji}
 				<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-				<div class="compose-picker-backdrop" onclick={() => { showCustomEmoji = false; _htmlCache.clear(); }}></div>
+				<div class="compose-picker-backdrop" onclick={() => { showCustomEmoji = false; _clearHtmlCache(); }}></div>
 				<div class="compose-kitchen-pop">
 					<CustomEmojiPanel onInsertEmoji={onCustomEmojiInsert} onInsertReaction={onReactionInsert} isInstructor={data.currentUser.role === 'instructor'} />
+				</div>
+			{/if}
+		</div>
+		<div class="compose-picker-wrap">
+			<button class="btn-kitchen btn-tg-emoji" class:active={showTgEmoji} title="Telegram animated emoji" onclick={() => showTgEmoji = !showTgEmoji}>
+				<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<path d="M21.5 4.5 2.5 12l6 2 2 6 3-4 5 4 3-15.5z" fill="currentColor" stroke="none"/>
+					<path d="M8.5 14 18 7l-7 9" stroke="var(--paper,#f7f2ea)" stroke-width="1.2"/>
+				</svg>
+			</button>
+			{#if showTgEmoji}
+				<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+				<div class="compose-picker-backdrop" onclick={() => { showTgEmoji = false; _clearHtmlCache(); }}></div>
+				<div class="compose-kitchen-pop">
+					<TelegramEmojiPanel onInsert={onTgEmojiInsert} />
 				</div>
 			{/if}
 		</div>
@@ -3323,12 +3260,31 @@
 					<div class="effect-grid">
 						{#each BUBBLE_FXS as fx}
 							<button class="effect-tile" class:active={messageEffect === fx.name}
-									onclick={() => { messageEffect = messageEffect === fx.name ? null : fx.name; showEffectPanel = false; _savedCeSel = null; _lastInlineTypo = {}; }}>
+									onclick={() => {
+										const wasActive = messageEffect === fx.name;
+										messageEffect = wasActive ? null : fx.name;
+										if (wasActive || (fx.name !== 'wiggly' && fx.name !== 'cursed' && fx.name !== 'scalloped' && fx.name !== 'starburst')) {
+											showEffectPanel = false;
+										}
+										if (wasActive) { wiggleSize = 6; }
+										_savedCeSel = null; _lastInlineTypo = {};
+									}}>
 								<span class="effect-tile-icon">{fx.icon}</span>
 								<span class="effect-tile-label">{fx.label}</span>
 							</button>
 						{/each}
 					</div>
+					{#if messageEffect === 'wiggly' || messageEffect === 'cursed' || messageEffect === 'scalloped' || messageEffect === 'starburst'}
+						<div class="wiggle-slider-row">
+							<span class="wiggle-slider-label">Rippliness</span>
+							<input class="wiggle-slider" type="range"
+								min={messageEffect === 'cursed' ? 2 : 3}
+								max={messageEffect === 'cursed' ? 25 : 18}
+								step="1"
+								bind:value={wiggleSize} />
+							<span class="wiggle-slider-val">{wiggleSize}</span>
+						</div>
+					{/if}
 					<div class="effect-pop-title">Screen</div>
 					<div class="effect-grid">
 						{#each SCREEN_FXS as fx}
@@ -3912,6 +3868,22 @@
 	:global(.ce-img) { height: 1.2em; width: 1.2em; vertical-align: -0.25em; object-fit: contain; }
 	:global(.ce-img-ce) { cursor: default; }
 	:global(.ce-img-ce.ek-selected) { outline: 2px solid #4a9eff; border-radius: 3px; box-shadow: 0 0 0 3px rgba(74,158,255,0.25); }
+	/* Telegram animated emoji */
+	:global(.tg-img) { height: 1.3em; width: 1.3em; vertical-align: -0.3em; object-fit: contain; }
+	:global(.tg-img-ce) { cursor: default; }
+	:global(.tg-emoji) { display: inline-block; width: 1.4em; height: 1.4em; vertical-align: -0.3em; cursor: default; line-height: 0; }
+	:global(.tg-emoji.tg-fx) { cursor: pointer; }
+	/* Let the parent span catch the click — SVG/canvas inside default to capturing
+	   pointer events only on painted pixels, so transparent corners would miss. */
+	:global(.tg-emoji svg), :global(.tg-emoji canvas) { pointer-events: none; }
+	:global(.tg-emoji svg), :global(.tg-emoji canvas) { width: 100%; height: 100%; display: block; }
+	:global(.tg-emoji-img) { width: 100%; height: 100%; object-fit: contain; display: block; }
+	:global(.tg-interaction) { animation: tgFadeOut 0.6s ease-out 5.0s both; }
+	/* Mirror directional click-animations on RECEIVED messages so the emanation
+	   flows correctly toward the recipient's bubble side (Telegram convention) */
+	:global(.tg-flip-theirs) { transform: scaleX(-1); }
+	:global(.tg-interaction.tg-flip-theirs) { transform: scaleX(-1); }
+	@keyframes tgFadeOut { to { opacity: 0; } }
 
 	.compose-kitchen-wrap { position: relative; flex-shrink: 0; }
 	.compose-custom-emoji-wrap { position: relative; flex-shrink: 0; }
@@ -4066,6 +4038,19 @@
 	.effect-tile.active { background: #fff8e6; border-color: #d4aa30; }
 	.effect-tile-icon { font-size: 1.25rem; line-height: 1; pointer-events: none; }
 	.effect-tile-label { font-size: 0.67rem; font-weight: 600; color: var(--ink); white-space: nowrap; pointer-events: none; }
+	.wiggle-slider-row {
+		display: flex; align-items: center; gap: 0.5rem;
+		padding: 0.15rem 0.85rem 0.45rem;
+	}
+	.wiggle-slider-label {
+		font-size: 0.68rem; font-weight: 600; color: #a09688; flex-shrink: 0;
+	}
+	.wiggle-slider {
+		flex: 1; height: 3px; cursor: pointer; accent-color: var(--ink);
+	}
+	.wiggle-slider-val {
+		font-size: 0.68rem; color: var(--ink); width: 1.5rem; text-align: right; flex-shrink: 0;
+	}
 
 	/* Effect preview strip above input-bar */
 	.effect-preview {
@@ -4246,42 +4231,7 @@
 	.bubble.fx-invisible { filter: blur(7px) !important; cursor: pointer; transition: filter 0.65s; user-select: none; }
 	.bubble.fx-invisible.revealed { filter: none !important; cursor: default; user-select: auto; }
 
-	/* Text span effects — :global so they apply to dynamically created spans in compose-ce */
-	:global(.tfx-shake) { display: inline-block; animation: tfx-shake 0.45s ease infinite; }
-	@keyframes tfx-shake { 0%,100% { transform: translateX(0) rotate(0deg); } 20% { transform: translateX(-3px) rotate(-3deg); } 40% { transform: translateX(3px) rotate(3deg); } 60% { transform: translateX(-2px) rotate(-2deg); } 80% { transform: translateX(2px) rotate(2deg); } }
 
-	:global(.tfx-bounce) { display: inline-block; animation: tfx-bounce 0.55s ease infinite; }
-	@keyframes tfx-bounce { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
-
-	:global(.tfx-wave) { display: inline-block; animation: tfx-wave 1.1s ease-in-out infinite; }
-	@keyframes tfx-wave { 0%,100% { transform: skewX(0deg) translateY(0); } 25% { transform: skewX(-6deg) translateY(-3px); } 75% { transform: skewX(6deg) translateY(3px); } }
-
-	:global(.tfx-nod) { display: inline-block; animation: tfx-nod 0.55s ease 2; }
-	@keyframes tfx-nod { 0%,100% { transform: translateY(0); } 25% { transform: translateY(-4px); } 75% { transform: translateY(4px); } }
-
-	:global(.tfx-jitter) { display: inline-block; animation: tfx-jitter 0.11s linear infinite; }
-	@keyframes tfx-jitter { 0% { transform: translate(0,0) rotate(0deg); } 25% { transform: translate(1px,-1px) rotate(1deg); } 50% { transform: translate(-1px,1px) rotate(-1deg); } 75% { transform: translate(1px,1px); } }
-
-	@keyframes tfx-big { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.5); } }
-	:global(.tfx-big) { display: inline-block; animation: tfx-big 0.75s ease-in-out infinite; vertical-align: middle; }
-	@keyframes tfx-small { 0%, 100% { transform: scale(1); } 50% { transform: scale(0.5); } }
-	:global(.tfx-small) { display: inline-block; animation: tfx-small 0.75s ease-in-out infinite; vertical-align: middle; }
-	@keyframes tfx-ripple { 0%, 100% { transform: translateY(0); } 25% { transform: translateY(-7px); } 60% { transform: translateY(2px); } }
-	:global(.tfx-ripple) { display: inline-block; animation: tfx-ripple 1s ease-in-out infinite; }
-	:global(.tfx-underline) { text-decoration: underline; text-underline-offset: 2px; }
-	:global(.tfx-strike) { text-decoration: line-through; }
-	:global(.tfx-bold) { font-weight: 700; }
-	:global(.tfx-italic) { font-style: italic; }
-	:global(.tfx-color-red)    { color: #e74c3c; }
-	:global(.tfx-color-orange) { color: #e67e22; }
-	:global(.tfx-color-yellow) { color: #d4ac0d; }
-	:global(.tfx-color-green)  { color: #27ae60; }
-	:global(.tfx-color-teal)   { color: #16a085; }
-	:global(.tfx-color-blue)   { color: #2980b9; }
-	:global(.tfx-color-purple) { color: #8e44ad; }
-	:global(.tfx-color-pink)   { color: #e91e8c; }
-	@keyframes tfx-rainbow-text { 0% { color: #e74c3c; } 14% { color: #e67e22; } 28% { color: #d4ac0d; } 42% { color: #27ae60; } 57% { color: #2980b9; } 71% { color: #8e44ad; } 85% { color: #e91e8c; } 100% { color: #e74c3c; } }
-	:global(.tfx-rainbow) { animation: tfx-rainbow-text 1.5s linear infinite; }
 
 	@media (max-width: 640px) {
 		.sidebar-toggle { display: flex; }
