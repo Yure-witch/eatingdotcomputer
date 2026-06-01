@@ -23,6 +23,13 @@ export default defineConfig({
 	optimizeDeps: {
 		exclude: ['@huggingface/transformers']
 	},
+	ssr: {
+		// `@material/material-color-utilities` ships extension-less
+		// internal imports (e.g. `./dynamiccolor/dynamic_scheme`)
+		// which Node's strict ESM resolver rejects during SSR. Letting
+		// Vite bundle it ourselves bypasses Node's resolver entirely.
+		noExternal: ['@material/material-color-utilities']
+	},
 	worker: {
 		format: 'es'
 	}

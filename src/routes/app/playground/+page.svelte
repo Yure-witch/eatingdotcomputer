@@ -53,7 +53,7 @@
 	}
 	.subtitle {
 		font-size: 0.85rem;
-		color: #a09688;
+		color: var(--muted-fg);
 		margin: 0;
 	}
 
@@ -63,11 +63,11 @@
 		align-items: center;
 		text-align: center;
 		padding: 4rem 1rem;
-		color: #a09688;
+		color: var(--muted-fg);
 		gap: 0.75rem;
 	}
 	.empty-icon {
-		color: #c8c1b4;
+		color: var(--border);
 		margin-bottom: 0.5rem;
 	}
 	.empty-state h2 {

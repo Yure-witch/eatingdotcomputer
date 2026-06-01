@@ -1115,10 +1115,10 @@ let loadingDoc = $state(false);
 	.syl-root {
 		display: flex;
 		min-height: 600px;
-		border: 1.5px solid #e8e2d9;
+		border: 1.5px solid var(--border);
 		border-radius: 12px;
 		overflow: hidden;
-		background: #fff;
+		background: var(--paper);
 		width: 100%;
 		margin-left: 0;
 		margin-right: 0;
@@ -1134,9 +1134,9 @@ let loadingDoc = $state(false);
 	/* ── Sidebar ── */
 	.syl-sidebar {
 		width: 200px; min-width: 200px;
-		border-right: 1.5px solid #e8e2d9;
+		border-right: 1.5px solid var(--border);
 		display: flex; flex-direction: column;
-		background: #faf7f2;
+		background: var(--surface-2);
 		transition: width 0.2s ease, min-width 0.2s ease;
 		overflow: hidden;
 	}
@@ -1146,27 +1146,27 @@ let loadingDoc = $state(false);
 	.syl-sidebar-header {
 		display: flex; align-items: center; justify-content: space-between;
 		padding: 0.75rem 0.85rem 0.5rem;
-		border-bottom: 1px solid #e8e2d9;
+		border-bottom: 1px solid var(--border);
 	}
-	.syl-sidebar-label { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #a09688; }
+	.syl-sidebar-label { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted-fg); }
 	.syl-sidebar-header-btns { display: flex; align-items: center; gap: 0.25rem; }
 	.syl-collapse-btn {
 		width: 22px; height: 22px; border: none; background: none; cursor: pointer;
-		border-radius: 5px; font-size: 1rem; line-height: 1; color: #a09688;
+		border-radius: 5px; font-size: 1rem; line-height: 1; color: var(--muted-fg);
 		display: flex; align-items: center; justify-content: center;
 		transition: background 0.1s, color 0.1s;
 	}
-	.syl-collapse-btn:hover { background: #ede8e0; color: var(--ink); }
-	.sidebar-collapsed .syl-sidebar-header { justify-content: center; padding: 0.75rem 0 0.5rem; border-bottom: 1px solid #e8e2d9; }
+	.syl-collapse-btn:hover { background: var(--surface-2); color: var(--ink); }
+	.sidebar-collapsed .syl-sidebar-header { justify-content: center; padding: 0.75rem 0 0.5rem; border-bottom: 1px solid var(--border); }
 	.syl-expand-btn { margin: 0 auto; }
 	.syl-new-btn {
-		width: 22px; height: 22px; border: 1.5px solid #c8c1b4; border-radius: 5px;
-		background: #fff; cursor: pointer; font-size: 1rem; line-height: 1;
+		width: 22px; height: 22px; border: 1.5px solid var(--border); border-radius: 5px;
+		background: var(--paper); cursor: pointer; font-size: 1rem; line-height: 1;
 		display: flex; align-items: center; justify-content: center;
-		color: #666; transition: border-color 0.1s, color 0.1s;
+		color: var(--muted-fg); transition: border-color 0.1s, color 0.1s;
 	}
 	.syl-new-btn:hover { border-color: var(--ink); color: var(--ink); }
-	.syl-sidebar-empty { padding: 1rem 0.85rem; font-size: 0.82rem; color: #a09688; }
+	.syl-sidebar-empty { padding: 1rem 0.85rem; font-size: 0.82rem; color: var(--muted-fg); }
 	.syl-list { list-style: none; margin: 0; padding: 0.35rem 0; flex: 1; overflow-y: auto; }
 	.syl-list-item { display: flex; align-items: center; padding: 0 0.4rem; position: relative; }
 	.syl-list-item .syl-list-actions { display: none; gap: 0.1rem; }
@@ -1176,53 +1176,53 @@ let loadingDoc = $state(false);
 		padding: 0.45rem 0.5rem; border: none; background: none; cursor: pointer;
 		border-radius: 7px; text-align: left; gap: 0.1rem; transition: background 0.1s;
 	}
-	.syl-list-btn:hover { background: #f0ebe3; }
-	.syl-list-item.active .syl-list-btn { background: #e8e2d9; }
+	.syl-list-btn:hover { background: var(--surface-2); }
+	.syl-list-item.active .syl-list-btn { background: var(--border); }
 	.syl-list-name { font-size: 0.82rem; font-weight: 500; color: var(--ink); line-height: 1.3; }
-	.syl-list-date { font-size: 0.68rem; color: #a09688; }
+	.syl-list-date { font-size: 0.68rem; color: var(--muted-fg); }
 	.syl-icon-btn {
 		width: 20px; height: 20px; border: none; background: none; cursor: pointer;
-		border-radius: 4px; font-size: 0.8rem; color: #aaa;
+		border-radius: 4px; font-size: 0.8rem; color: var(--muted-fg);
 		display: flex; align-items: center; justify-content: center;
 		transition: background 0.1s, color 0.1s;
 	}
-	.syl-icon-btn:hover { background: #e8e2d9; color: var(--ink); }
-	.syl-del-btn:hover { background: #fee2e2 !important; color: #c0392b !important; }
+	.syl-icon-btn:hover { background: var(--border); color: var(--ink); }
+	.syl-del-btn:hover { background: #fee2e2 !important; color: var(--danger) !important; }
 	.syl-rename-input {
 		flex: 1; font-family: inherit; font-size: 0.82rem; padding: 0.3rem 0.5rem;
 		border: 1.5px solid var(--ink); border-radius: 6px; outline: none;
-		background: #fff; margin: 0.25rem 0;
+		background: var(--paper); margin: 0.25rem 0;
 	}
 
 	/* ── Editor pane ── */
 	.syl-editor-wrap { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-	.syl-placeholder { display: flex; align-items: center; justify-content: center; flex: 1; color: #a09688; font-size: 0.9rem; }
+	.syl-placeholder { display: flex; align-items: center; justify-content: center; flex: 1; color: var(--muted-fg); font-size: 0.9rem; }
 	.syl-link-btn { background: none; border: none; cursor: pointer; color: var(--ink); text-decoration: underline; font: inherit; }
 
 	/* Toolbar */
 	.syl-toolbar {
 		display: flex; justify-content: space-between; align-items: center;
-		padding: 0.55rem 1rem; border-bottom: 1px solid #e8e2d9;
-		background: #faf7f2; gap: 0.75rem; flex-wrap: wrap;
+		padding: 0.55rem 1rem; border-bottom: 1px solid var(--border);
+		background: var(--surface-2); gap: 0.75rem; flex-wrap: wrap;
 	}
 	.syl-toolbar-right { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
-	.syl-save-status { font-size: 0.75rem; color: #a09688; }
-	.font-label { display: flex; align-items: center; gap: 0.4rem; font-size: 0.82rem; color: #666; }
+	.syl-save-status { font-size: 0.75rem; color: var(--muted-fg); }
+	.font-label { display: flex; align-items: center; gap: 0.4rem; font-size: 0.82rem; color: var(--muted-fg); }
 	.font-select {
 		font-family: inherit; font-size: 0.82rem; padding: 0.22rem 0.45rem;
-		border: 1.5px solid #ddd7cc; border-radius: 6px; background: #fff; cursor: pointer;
+		border: 1.5px solid var(--border); border-radius: 6px; background: var(--paper); cursor: pointer;
 	}
 	/* Sizes sub-bar */
 	.syl-sizes-bar {
 		display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
-		padding: 0.5rem 1rem; border-bottom: 1px solid #e8e2d9;
-		background: #f5f0e8;
+		padding: 0.5rem 1rem; border-bottom: 1px solid var(--border);
+		background: var(--surface-2);
 	}
-	.sizes-bar-label { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: #a09688; white-space: nowrap; }
-	.sizes-bar-divider { width: 1px; height: 1.5rem; background: #ddd7cc; flex-shrink: 0; }
+	.sizes-bar-label { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted-fg); white-space: nowrap; }
+	.sizes-bar-divider { width: 1px; height: 1.5rem; background: var(--border); flex-shrink: 0; }
 	.sizes-field-label {
 		display: flex; align-items: center; gap: 0.35rem;
-		font-size: 0.8rem; color: #555;
+		font-size: 0.8rem; color: var(--muted-fg);
 	}
 	.sizes-input-wrap { display: flex; align-items: center; }
 
@@ -1231,8 +1231,8 @@ let loadingDoc = $state(false);
 	.font-upload-btn {
 		display: flex; align-items: center; justify-content: center;
 		width: 24px; height: 24px; margin-left: 0.3rem;
-		border: 1.5px solid #c8c1b4; border-radius: 5px;
-		background: #fff; cursor: pointer; font-size: 1rem; font-weight: 500; color: #666;
+		border: 1.5px solid var(--border); border-radius: 5px;
+		background: var(--paper); cursor: pointer; font-size: 1rem; font-weight: 500; color: var(--muted-fg);
 		line-height: 1; flex-shrink: 0;
 		transition: border-color 0.1s, color 0.1s;
 	}
@@ -1243,23 +1243,23 @@ let loadingDoc = $state(false);
 	.custom-font-chip {
 		display: flex; align-items: center; gap: 0.2rem;
 		font-size: 0.72rem; padding: 0.15rem 0.45rem; border-radius: 99px;
-		background: #e8e2d9; color: var(--ink);
+		background: var(--border); color: var(--ink);
 	}
 	.custom-font-weights { display: flex; gap: 0.2rem; flex-wrap: wrap; }
 	.custom-font-weight-badge {
 		font-size: 0.62rem; padding: 0.05rem 0.35rem; border-radius: 99px;
-		background: #f0ece5; color: #a09688; border: 1px solid #d9d3c8;
+		background: #f0ece5; color: var(--muted-fg); border: 1px solid #d9d3c8;
 	}
 	.custom-font-add-weight {
 		border: 1px solid #c8c0b4; background: none; cursor: pointer; font-size: 0.65rem;
-		color: #a09688; border-radius: 99px; padding: 0.1rem 0.35rem; line-height: 1;
+		color: var(--muted-fg); border-radius: 99px; padding: 0.1rem 0.35rem; line-height: 1;
 	}
 	.custom-font-add-weight:hover { border-color: var(--ink); color: var(--ink); }
 	.custom-font-remove {
 		border: none; background: none; cursor: pointer; font-size: 0.85rem;
-		color: #a09688; line-height: 1; padding: 0;
+		color: var(--muted-fg); line-height: 1; padding: 0;
 	}
-	.custom-font-remove:hover { color: #c0392b; }
+	.custom-font-remove:hover { color: var(--danger); }
 	.custom-font-weight-upload {
 		display: flex; align-items: center; gap: 0.3rem; flex-wrap: wrap;
 		padding: 0.3rem 0.4rem; background: #f5f1eb; border-radius: 6px;
@@ -1267,26 +1267,26 @@ let loadingDoc = $state(false);
 	}
 	.font-weight-select {
 		font-size: 0.72rem; padding: 0.15rem 0.3rem; border: 1px solid #c8c0b4;
-		border-radius: 4px; background: #fff; color: var(--ink); cursor: pointer;
+		border-radius: 4px; background: var(--paper); color: var(--ink); cursor: pointer;
 	}
 
 	.margins-group { display: flex; align-items: center; gap: 0.4rem; }
-	.margins-group-label { font-size: 0.82rem; color: #666; white-space: nowrap; }
+	.margins-group-label { font-size: 0.82rem; color: var(--muted-fg); white-space: nowrap; }
 	.margins-fields { display: flex; align-items: center; gap: 0.25rem; }
 	.margins-field-label {
 		display: flex; flex-direction: column; align-items: center; gap: 0.1rem;
-		font-size: 0.62rem; font-weight: 700; color: #a09688; text-transform: uppercase; letter-spacing: 0.05em;
+		font-size: 0.62rem; font-weight: 700; color: var(--muted-fg); text-transform: uppercase; letter-spacing: 0.05em;
 	}
 	.margins-input {
 		width: 42px; font-family: inherit; font-size: 0.8rem; padding: 0.18rem 0.2rem;
-		border: 1.5px solid #ddd7cc; border-radius: 5px; background: #fff; text-align: center;
+		border: 1.5px solid var(--border); border-radius: 5px; background: var(--paper); text-align: center;
 	}
 	.margins-input.lh-input { width: 52px; }
 	.margins-input:focus { outline: none; border-color: var(--ink); }
-	.margins-unit { font-size: 0.72rem; color: #a09688; }
+	.margins-unit { font-size: 0.72rem; color: var(--muted-fg); }
 	.syl-btn {
 		padding: 0.3rem 0.8rem; font-family: inherit; font-size: 0.82rem; font-weight: 500;
-		border: 1.5px solid #c8c1b4; border-radius: 7px; background: #fff; cursor: pointer;
+		border: 1.5px solid var(--border); border-radius: 7px; background: var(--paper); cursor: pointer;
 		color: var(--ink); transition: border-color 0.12s, background 0.12s; white-space: nowrap;
 	}
 	.syl-btn:hover { border-color: var(--ink); }
@@ -1294,15 +1294,15 @@ let loadingDoc = $state(false);
 	.syl-btn-active:hover { opacity: 0.85; }
 	.syl-btn-print { background: var(--ink); color: #fff; border-color: var(--ink); }
 	.syl-btn-print:hover { opacity: 0.85; }
-	.syl-checkbox-label { display: flex; align-items: center; gap: 0.4rem; font-size: 0.82rem; color: #666; cursor: pointer; white-space: nowrap; }
+	.syl-checkbox-label { display: flex; align-items: center; gap: 0.4rem; font-size: 0.82rem; color: var(--muted-fg); cursor: pointer; white-space: nowrap; }
 	/* Blocks */
-	.syl-blocks { flex: 1; padding: 2rem 1.5rem 2rem 0.5rem; overflow-y: auto; display: flex; flex-direction: column; gap: 0; background: #fff; }
+	.syl-blocks { flex: 1; padding: 2rem 1.5rem 2rem 0.5rem; overflow-y: auto; display: flex; flex-direction: column; gap: 0; background: var(--paper); }
 	.syl-block {
 		display: flex; flex-direction: row; align-items: flex-start;
 		position: relative; border-radius: 6px;
 		transition: background 0.1s;
 	}
-	.syl-block:hover { background: #faf7f2; }
+	.syl-block:hover { background: var(--surface-2); }
 	.syl-block.drag-over { outline: 2px solid var(--ink); outline-offset: -2px; border-radius: 6px; }
 	.syl-block.dragging { opacity: 0.4; }
 	.syl-block.hidden-block { opacity: 0.35; }
@@ -1320,16 +1320,16 @@ let loadingDoc = $state(false);
 	.drag-handle:active { cursor: grabbing; }
 	.block-type-pill {
 		font-size: 0.6rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em;
-		color: #b0a898; white-space: nowrap;
+		color: var(--muted-fg); white-space: nowrap;
 	}
 	.block-actions { display: flex; gap: 0.15rem; }
 	.blk-btn {
 		width: 20px; height: 20px; border: none; background: none; cursor: pointer;
 		border-radius: 4px; font-size: 0.78rem; display: flex; align-items: center; justify-content: center;
-		color: #aaa; transition: background 0.1s;
+		color: var(--muted-fg); transition: background 0.1s;
 	}
-	.blk-btn:hover { background: #ede8e0; }
-	.blk-btn-del:hover { background: #fee2e2; color: #c0392b; }
+	.blk-btn:hover { background: var(--surface-2); }
+	.blk-btn-del:hover { background: #fee2e2; color: var(--danger); }
 	.block-section-opt { margin-top: 0.25rem; font-size: 0.7rem; }
 
 	/* Right content area */
@@ -1350,7 +1350,7 @@ let loadingDoc = $state(false);
 	.week-prefix { color: var(--ink); }
 	.week-title-input {
 		flex: 1; font-family: inherit; font-weight: 700;
-		border: none; border-bottom: 1px solid #ddd7cc; outline: none;
+		border: none; border-bottom: 1px solid var(--border); outline: none;
 		background: transparent; color: var(--ink);
 	}
 	.week-title-input:focus { border-bottom-color: var(--ink); }
@@ -1361,20 +1361,20 @@ let loadingDoc = $state(false);
 		flex: 1; font-family: inherit; border: none; outline: none;
 		border-bottom: 1px solid transparent; padding: 0; background: transparent; color: var(--ink);
 	}
-	.topic-input:focus { border-bottom-color: #ddd7cc; }
+	.topic-input:focus { border-bottom-color: var(--border); }
 	.topic-actions { display: flex; gap: 0.1rem; opacity: 0; transition: opacity 0.12s; }
 	.topic-row:hover .topic-actions { opacity: 1; }
 	.topic-btn {
 		width: 18px; height: 18px; border: none; background: none; cursor: pointer;
-		font-size: 0.72rem; border-radius: 3px; color: #aaa;
+		font-size: 0.72rem; border-radius: 3px; color: var(--muted-fg);
 		display: flex; align-items: center; justify-content: center;
 	}
-	.topic-btn:hover:not(:disabled) { background: #f0ebe3; color: var(--ink); }
+	.topic-btn:hover:not(:disabled) { background: var(--surface-2); color: var(--ink); }
 	.topic-btn:disabled { opacity: 0.28; cursor: default; }
-	.topic-btn-del:hover { background: #fee2e2 !important; color: #c0392b !important; }
+	.topic-btn-del:hover { background: #fee2e2 !important; color: var(--danger) !important; }
 	.add-topic-btn {
-		font-family: inherit; font-size: 0.75rem; color: #a09688; background: none;
-		border: 1px dashed #ddd7cc; border-radius: 5px; padding: 0.15rem 0.55rem;
+		font-family: inherit; font-size: 0.75rem; color: var(--muted-fg); background: none;
+		border: 1px dashed var(--border); border-radius: 5px; padding: 0.15rem 0.55rem;
 		cursor: pointer; margin: 0.3rem 0 0; transition: border-color 0.12s, color 0.12s;
 	}
 	.add-topic-btn:hover { border-color: var(--ink); color: var(--ink); }
@@ -1384,12 +1384,12 @@ let loadingDoc = $state(false);
 	}
 	.syl-block:hover .add-block-row { opacity: 1; }
 	.add-btn {
-		font-family: inherit; font-size: 0.68rem; color: #a09688; background: none;
-		border: 1px dashed #ddd7cc; border-radius: 4px; padding: 0.12rem 0.4rem;
+		font-family: inherit; font-size: 0.68rem; color: var(--muted-fg); background: none;
+		border: 1px dashed var(--border); border-radius: 4px; padding: 0.12rem 0.4rem;
 		cursor: pointer; transition: border-color 0.1s, color 0.1s;
 	}
 	.add-btn:hover { border-color: var(--ink); color: var(--ink); }
-	.syl-empty { text-align: center; padding: 3rem 1rem; color: #a09688; }
+	.syl-empty { text-align: center; padding: 3rem 1rem; color: var(--muted-fg); }
 
 	/* ── Floating preview window ── */
 	.float-panel {
@@ -1401,8 +1401,8 @@ let loadingDoc = $state(false);
 		min-height: 240px;
 		display: flex;
 		flex-direction: column;
-		background: #fff;
-		border: 1.5px solid #c8c1b4;
+		background: var(--paper);
+		border: 1.5px solid var(--border);
 		border-radius: 10px;
 		box-shadow: 0 8px 40px rgba(0,0,0,0.22);
 		resize: both;
@@ -1412,7 +1412,7 @@ let loadingDoc = $state(false);
 	.float-titlebar {
 		display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
 		padding: 0.45rem 0.6rem 0.45rem 0.85rem;
-		background: #faf7f2; border-bottom: 1px solid #e8e2d9;
+		background: var(--surface-2); border-bottom: 1px solid var(--border);
 		cursor: grab; user-select: none; flex-shrink: 0;
 	}
 	.float-titlebar:active { cursor: grabbing; }
@@ -1425,10 +1425,10 @@ let loadingDoc = $state(false);
 	.float-print-btn { padding: 0.2rem 0.6rem; font-size: 0.75rem; }
 	.float-close-btn {
 		width: 24px; height: 24px; border: none; background: none; cursor: pointer;
-		font-size: 1.1rem; border-radius: 5px; color: #888; line-height: 1;
+		font-size: 1.1rem; border-radius: 5px; color: var(--muted-fg); line-height: 1;
 		display: flex; align-items: center; justify-content: center;
 	}
-	.float-close-btn:hover { background: #fee2e2; color: #c0392b; }
+	.float-close-btn:hover { background: #fee2e2; color: var(--danger); }
 
 	/* Invisible off-screen div used only for content-height measurement */
 	.syl-measure {
@@ -1444,7 +1444,7 @@ let loadingDoc = $state(false);
 		flex: 1;
 		overflow-y: auto;
 		overflow-x: hidden;
-		background: #f0ebe3;
+		background: var(--surface-2);
 		padding: 20px;
 	}
 
@@ -1465,7 +1465,7 @@ let loadingDoc = $state(false);
 	/* Each page sheet is white, PAGE_W × PAGE_H (300dpi), zoomed down for screen. */
 	.float-page {
 		overflow: hidden;
-		background: #fff;
+		background: var(--paper);
 		box-shadow: 0 2px 16px rgba(0,0,0,0.1);
 		flex-shrink: 0;
 	}

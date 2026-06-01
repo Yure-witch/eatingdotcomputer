@@ -32,9 +32,37 @@
 }
 
 :root {
-	--ink: #0c0c0c;
-	--paper: #f7f2ea;
-	--accent: #ffb347;
+	/* App tokens read from the Material 3 sys palette set by
+	   src/lib/theme-store.js. The hex fallback after each var keeps
+	   the pre-JS / SSR paint identical to the original color set, so
+	   nothing flashes before the theme has had a chance to apply. */
+	--ink:        var(--md-sys-color-on-surface,            #0c0c0c);
+	--paper:      var(--md-sys-color-surface,               #f7f2ea);
+	--accent:     var(--md-sys-color-primary,               #ffb347);
+	/* Semantic helpers — components consume these instead of the raw
+	   M3 names so the mapping stays in one place. Hex fallbacks keep
+	   the page paintable before JS hydrates. */
+	--surface-2:  var(--md-sys-color-surface-variant,       #f0ebe3);
+	--border:     var(--md-sys-color-outline-variant,       #ddd7cc);
+	--muted-fg:   var(--md-sys-color-on-surface-variant,    #a09688);
+	--danger:     var(--md-sys-color-error,                 #c0392b);
+	--on-danger:  var(--md-sys-color-on-error,              #ffffff);
+	/* Inverse surface is the M3 token for tooltips/banners that
+	   intentionally contrast with the rest of the UI. */
+	--inverse-surface:    var(--md-sys-color-inverse-surface,    #1a1a1a);
+	--inverse-on-surface: var(--md-sys-color-inverse-on-surface, #f7f2ea);
+	/* Sidebar palette — the sidebar intentionally inverts from the
+	   body (dark panel on light theme, light panel on dark theme) so
+	   it always reads as a distinct chrome surface. Muted + hover
+	   colors are mixed against the bg so they adapt automatically:
+	   light-on-dark uses a soft white overlay, dark-on-light uses a
+	   soft black overlay, no per-theme branching needed. */
+	--sidebar-bg:        var(--inverse-surface);
+	--sidebar-fg:        var(--inverse-on-surface);
+	--sidebar-fg-muted:  color-mix(in srgb, var(--sidebar-fg) 65%, var(--sidebar-bg));
+	--sidebar-hover:     color-mix(in srgb, var(--sidebar-fg) 12%, transparent);
+	--sidebar-active:    color-mix(in srgb, var(--sidebar-fg) 18%, transparent);
+	--sidebar-border:    color-mix(in srgb, var(--sidebar-fg) 14%, transparent);
 	--sidebar-width: 220px;
 }
 

@@ -54,8 +54,8 @@
 
 <style>
 	.card {
-		background: #fff;
-		border: 1.5px solid #ddd7cc;
+		background: var(--paper);
+		border: 1.5px solid var(--border);
 		border-radius: 16px;
 		padding: 3rem 2rem;
 		width: 100%;
@@ -69,7 +69,7 @@
 
 	.icon {
 		font-size: 2.5rem;
-		color: #a09688;
+		color: var(--muted-fg);
 		line-height: 1;
 		margin-bottom: 0.25rem;
 	}
@@ -84,12 +84,12 @@
 		font-size: 1.75rem;
 		font-weight: 400;
 		margin: 0;
-		color: var(--ink, #1a1a1a);
+		color: var(--ink, var(--ink));
 	}
 
 	.sub {
 		font-size: 0.9rem;
-		color: #666;
+		color: var(--muted-fg);
 		line-height: 1.5;
 		margin: 0;
 		max-width: 320px;
@@ -97,7 +97,7 @@
 
 	.still-pending {
 		font-size: 0.82rem;
-		color: #a09688;
+		color: var(--muted-fg);
 		margin: 0;
 	}
 
@@ -105,14 +105,14 @@
 		margin-top: 0.5rem;
 		padding: 0.6rem 1.5rem;
 		background: none;
-		border: 1.5px solid #c8c1b4;
+		border: 1.5px solid var(--border);
 		border-radius: 10px;
 		font-family: inherit;
 		font-size: 0.9rem;
 		font-weight: 500;
 		cursor: pointer;
-		color: var(--ink, #1a1a1a);
+		color: var(--ink, var(--ink));
 		transition: border-color 0.15s;
 	}
-	.btn-check:hover { border-color: var(--ink, #1a1a1a); }
+	.btn-check:hover { border-color: var(--ink, var(--ink)); }
 </style>

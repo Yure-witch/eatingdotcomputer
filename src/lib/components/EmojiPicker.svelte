@@ -963,7 +963,7 @@
 	.picker {
 		width: 340px;
 		height: 380px;
-		background: #fff;
+		background: var(--paper);
 		border-radius: 12px;
 		border: 1px solid #e0dbd4;
 		box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
@@ -980,7 +980,7 @@
 		align-items: center;
 		gap: 0.4rem;
 		padding: 0.55rem 0.6rem 0.4rem;
-		border-bottom: 1px solid #ede8e2;
+		border-bottom: 1px solid var(--surface-2);
 		flex-shrink: 0;
 	}
 	.search-icon { font-size: 0.85rem; flex-shrink: 0; opacity: 0.4; }
@@ -993,18 +993,18 @@
 		font-size: 0.82rem;
 		font-family: inherit;
 	}
-	.search-input::placeholder { color: #aaa; }
+	.search-input::placeholder { color: var(--muted-fg); }
 	.clear-btn {
 		background: none;
 		border: none;
-		color: #aaa;
+		color: var(--muted-fg);
 		cursor: pointer;
 		font-size: 0.7rem;
 		padding: 0;
 		line-height: 1;
 		flex-shrink: 0;
 	}
-	.clear-btn:hover { color: #555; }
+	.clear-btn:hover { color: var(--muted-fg); }
 	.settings-btn {
 		background: none;
 		border: none;
@@ -1016,7 +1016,7 @@
 		flex-shrink: 0;
 		transition: color 0.1s, background 0.1s;
 	}
-	.settings-btn:hover, .settings-btn.active { color: #555; background: #f0ebe3; }
+	.settings-btn:hover, .settings-btn.active { color: var(--muted-fg); background: var(--surface-2); }
 
 	/* ── Settings panel ── */
 	.settings-panel {
@@ -1024,8 +1024,8 @@
 		align-items: center;
 		gap: 0.6rem;
 		padding: 0.45rem 0.75rem;
-		border-bottom: 1px solid #ede8e2;
-		background: #faf8f5;
+		border-bottom: 1px solid var(--surface-2);
+		background: var(--surface-2);
 		flex-shrink: 0;
 	}
 	.settings-label {
@@ -1043,13 +1043,13 @@
 		border-radius: 8px;
 		padding: 0.2rem 0.5rem;
 		font-size: 0.72rem;
-		color: #666;
+		color: var(--muted-fg);
 		cursor: pointer;
 		transition: border-color 0.1s, background 0.1s, color 0.1s;
 		white-space: nowrap;
 	}
-	.style-opt:hover { background: #f0ebe3; border-color: #ccc; }
-	.style-opt.active { border-color: #555; color: #222; background: #f0ebe3; }
+	.style-opt:hover { background: var(--surface-2); border-color: #ccc; }
+	.style-opt.active { border-color: var(--muted-fg); color: #222; background: var(--surface-2); }
 	.style-swatch { font-size: 1rem; line-height: 1; }
 
 	/* ── Tabs ── */
@@ -1057,7 +1057,7 @@
 		display: flex;
 		overflow-x: auto;
 		scrollbar-width: none;
-		border-bottom: 1px solid #ede8e2;
+		border-bottom: 1px solid var(--surface-2);
 		padding: 0 0.25rem;
 		flex-shrink: 0;
 	}
@@ -1078,8 +1078,8 @@
 		transition: opacity 0.12s, background 0.12s;
 		padding: 0;
 	}
-	.tab:hover { opacity: 0.7; background: #f5f2ee; }
-	.tab.active { opacity: 1; background: #ede8e2; }
+	.tab:hover { opacity: 0.7; background: var(--surface-2); }
+	.tab.active { opacity: 1; background: var(--surface-2); }
 	.tab-text { font-size: 0.78rem; font-weight: 700; letter-spacing: -0.02em; }
 
 	/* ── Grid ── */
@@ -1116,7 +1116,7 @@
 		padding: 0;
 		position: relative;
 	}
-	.cell:hover { background: #f0ebe3; }
+	.cell:hover { background: var(--surface-2); }
 	.cell:active { background: #e5dfd7; }
 
 	/* Small dot indicator on emoji with variants */
@@ -1132,7 +1132,7 @@
 	}
 
 	.state-msg {
-		color: #aaa;
+		color: var(--muted-fg);
 		font-size: 0.78rem;
 		text-align: center;
 		padding: 2rem 1rem;
@@ -1149,13 +1149,13 @@
 		align-items: center;
 		gap: 0.5rem;
 		padding: 0.3rem 0.65rem;
-		border-top: 1px solid #ede8e2;
+		border-top: 1px solid var(--surface-2);
 		min-height: 2rem;
 		flex-shrink: 0;
 	}
 	.preview-glyph { font-size: 1.25rem; line-height: 1; flex-shrink: 0; }
 	.preview-glyph.noto { font-family: 'Noto Color Emoji', sans-serif; }
-	.preview-name  { font-size: 0.75rem; color: #888; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
+	.preview-name  { font-size: 0.75rem; color: var(--muted-fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
 	.preview-sc    { font-size: 0.68rem; color: #bbb; font-family: monospace; white-space: nowrap; flex-shrink: 0; }
 	.preview-hint  { font-size: 0.72rem; color: #ccc; }
 
@@ -1170,7 +1170,7 @@
 	.lp-pop {
 		position: fixed;
 		transform: translate(-50%, calc(-100% - 10px));
-		background: #fff;
+		background: var(--paper);
 		border: 1px solid #e0dbd4;
 		border-radius: 12px;
 		box-shadow: 0 4px 24px rgba(0, 0, 0, 0.18);
@@ -1220,8 +1220,8 @@
 		transition: background 0.08s, border-color 0.08s;
 		flex-shrink: 0;
 	}
-	.dual-half-btn:hover  { background: #f0ebe3; }
-	.dual-half-btn.active { border-color: #666; background: #ede8e2; }
+	.dual-half-btn:hover  { background: var(--surface-2); }
+	.dual-half-btn.active { border-color: var(--muted-fg); background: var(--surface-2); }
 
 	.dual-half-img {
 		width: 44px;
@@ -1235,7 +1235,7 @@
 		display: flex;
 		gap: 4px;
 		padding-top: 5px;
-		border-top: 1px solid #ede8e2;
+		border-top: 1px solid var(--surface-2);
 		margin-top: 1px;
 	}
 	.dual-foot-btn {
@@ -1251,8 +1251,8 @@
 		padding: 0;
 		transition: background 0.08s;
 	}
-	.dual-foot-btn:hover { background: #f0ebe3; }
-	.dual-foot-btn.dual-result { border-color: #aaa; }
+	.dual-foot-btn:hover { background: var(--surface-2); }
+	.dual-foot-btn.dual-result { border-color: var(--muted-fg); }
 	.dual-silhouette {
 		flex: 1;
 		height: 44px;
@@ -1276,7 +1276,7 @@
 	.lp-row-sep {
 		grid-column: 1 / -1;
 		height: 1px;
-		background: #ede8e2;
+		background: var(--surface-2);
 		margin: 2px 0;
 	}
 
@@ -1290,7 +1290,7 @@
 		display: flex;
 		gap: 0.25rem;
 		padding-bottom: 4px;
-		border-bottom: 1px solid #ede8e2;
+		border-bottom: 1px solid var(--surface-2);
 		margin-bottom: 2px;
 	}
 
@@ -1302,12 +1302,12 @@
 		font-size: 0.9rem;
 		height: 26px;
 		cursor: pointer;
-		color: #888;
+		color: var(--muted-fg);
 		transition: background 0.1s, color 0.1s, border-color 0.1s;
 		display: flex;
 		align-items: center;
 		justify-content: center;
 	}
-	.lp-dir-tab:hover { background: #f0ebe3; color: #444; }
-	.lp-dir-tab.active { background: #ede8e2; border-color: #999; color: #222; font-weight: 700; }
+	.lp-dir-tab:hover { background: var(--surface-2); color: #444; }
+	.lp-dir-tab.active { background: var(--surface-2); border-color: #999; color: #222; font-weight: 700; }
 </style>

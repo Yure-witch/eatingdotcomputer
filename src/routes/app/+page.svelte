@@ -6,6 +6,10 @@
 	import { subscribeToPush, unsubscribeFromPush, isPushSubscribed } from '$lib/push.js';
 	import AppHeader from '$lib/components/AppHeader.svelte';
 	import FileTypeIcon from '$lib/components/FileTypeIcon.svelte';
+	import FormattedInput from '$lib/components/FormattedInput.svelte';
+	import { createContentRenderer } from '$lib/message-render.js';
+
+	const { contentHtml } = createContentRenderer();
 
 	let { data, form } = $props();
 	const user = data.session.user;
@@ -87,6 +91,7 @@
 	}
 
 	// ── Instructor: create form state ──
+	let headlineValue = $state('');
 	let items = $state([{ label: '', requiresSubmission: false, acceptedTypes: ['link'], resourceUrl: '', resourceLabel: '', resourceFile: null }]);
 
 	function addItem() {
@@ -108,6 +113,9 @@
 		items = [...items];
 	}
 
+	// ── Instructor: expanded item submissions ──
+	let expandedItemSubs = $state(null); // item id whose submissions are shown
+
 	// ── Student: UI state ──
 	let expandedItemId = $state(null);
 	let submitType = $state('');
@@ -119,6 +127,17 @@
 		if (!iso) return null;
 		const d = new Date(iso + 'T00:00:00');
 		return d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+	}
+
+	function timeAgo(isoStr) {
+		const ms = Date.now() - new Date(isoStr).getTime();
+		const mins = Math.floor(ms / 60000);
+		if (mins < 1) return 'just now';
+		if (mins < 60) return `${mins}m ago`;
+		const hrs = Math.floor(mins / 60);
+		if (hrs < 24) return `${hrs}h ago`;
+		const days = Math.floor(hrs / 24);
+		return `${days}d ago`;
 	}
 </script>
 
@@ -154,6 +173,7 @@
 			<form method="POST" action="?/createWeekPlan" enctype="multipart/form-data" class="create-form" use:enhance={() => {
 				return async ({ update }) => {
 					await update();
+					headlineValue = '';
 					items = [{ label: '', requiresSubmission: false, acceptedTypes: ['link'], resourceUrl: '', resourceLabel: '', resourceFile: null }];
 				};
 			}}>
@@ -163,8 +183,9 @@
 				<p class="week-number">Week {data.nextWeekNumber}</p>
 
 				<div class="field">
-					<label for="headline">Headline</label>
-					<input id="headline" name="headline" type="text" class="headline-input" placeholder="e.g. Read Chapter 3 and sketch 2 concepts" required />
+					<label>Headline</label>
+					<input type="hidden" name="headline" value={headlineValue} />
+					<FormattedInput bind:value={headlineValue} placeholder="e.g. Read Chapter 3 and sketch 2 concepts" singleLine />
 				</div>
 
 				<div class="field">
@@ -178,7 +199,8 @@
 						{#each items as item, i}
 							<div class="item-row">
 								<div class="item-main">
-									<input type="text" name="item_label" bind:value={item.label} placeholder="e.g. Read the assigned article" class="item-input" />
+									<input type="hidden" name="item_label" value={item.label} />
+									<FormattedInput bind:value={item.label} placeholder="e.g. Read the assigned article" singleLine />
 									<input type="hidden" name="item_requires_submission" value={item.requiresSubmission ? '1' : '0'} />
 									<label class="req-toggle">
 										<input type="checkbox" bind:checked={item.requiresSubmission} />
@@ -239,55 +261,81 @@
 				<button type="submit" class="btn-primary">Publish week</button>
 			</form>
 
-			<!-- Current week preview for instructor -->
-			{#if data.currentPlan}
+			<!-- All assignments with submissions grouped per item -->
+			{#if data.allPlans.length > 0}
 				<div class="divider"></div>
-				<div class="current-preview">
-					<div class="week-meta">
-						<span class="week-tag">Week {data.currentPlan.week}</span>
-						{#if data.currentPlan.dueDate}
-							<span class="due-date">Due {formatDate(data.currentPlan.dueDate)}</span>
-						{/if}
-					</div>
-					<h2 class="preview-headline">{data.currentPlan.headline}</h2>
-					{#if data.currentPlan.items.length > 0}
-						<div class="preview-items">
-							{#each data.currentPlan.items as item}
-								<div class="preview-item">
-									<span class="preview-check">☐</span>
-									<span class="preview-label">{item.label}</span>
-									{#if item.resourceUrl}
-										<a href={item.resourceUrl} target="_blank" rel="noopener noreferrer" class="preview-resource">
-											{item.resourceLabel || '🔗'}
-										</a>
-									{/if}
-									{#if item.requiresSubmission}
-										<span class="preview-badge">submission</span>
-									{/if}
-									{#if data.progress[item.id] > 0}
-										<span class="preview-progress">{data.progress[item.id]} completed</span>
-									{/if}
+				<p class="section-label">All Assignments</p>
+				<div class="assignments-overview">
+					{#each [...data.allPlans].reverse() as plan}
+						<div class="overview-plan" class:is-current={plan.id === data.currentPlan?.id}>
+							<div class="overview-header">
+								<span class="overview-week">Week {plan.week}</span>
+								<span class="overview-title">{@html contentHtml(plan.headline, false)}</span>
+								{#if plan.dueDate}
+									<span class="overview-due">{formatDate(plan.dueDate)}</span>
+								{/if}
+								<form method="POST" action="?/toggleWeekVisibility" use:enhance class="vis-toggle-form">
+									<input type="hidden" name="plan_id" value={plan.id} />
+									<input type="hidden" name="show" value={plan.showSubmissions ? '0' : '1'} />
+									<button type="submit" class="vis-toggle-btn" class:vis-on={plan.showSubmissions} title={plan.showSubmissions ? 'Submissions visible to students — click to hide' : 'Submissions hidden from students — click to show'}>
+										{#if plan.showSubmissions}
+											<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+										{:else}
+											<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+										{/if}
+									</button>
+								</form>
+							</div>
+							{#if plan.items.length > 0}
+								<div class="overview-items">
+									{#each plan.items as item}
+										{@const subs = data.submissionsByItem[item.id] ?? []}
+										{@const isOpen = expandedItemSubs === item.id}
+										<div class="overview-item-block">
+											<button class="overview-item" class:has-subs={subs.length > 0} onclick={() => expandedItemSubs = isOpen ? null : item.id}>
+												<span class="overview-item-label">{@html contentHtml(item.label, false)}</span>
+												{#if item.requiresSubmission}
+													<span class="preview-badge">submission</span>
+												{/if}
+												{#if subs.length > 0}
+													<span class="overview-item-count has-completions">{subs.length} done</span>
+													<span class="overview-chevron" class:open={isOpen}>›</span>
+												{:else}
+													<span class="overview-item-count">0 done</span>
+												{/if}
+											</button>
+											{#if isOpen && subs.length > 0}
+												<div class="item-subs-list">
+													{#each subs as sub}
+														<div class="item-sub-row">
+															<span class="sub-name">{sub.studentName}</span>
+															{#if sub.submissionType === 'link'}
+																<a href={sub.submissionUrl} target="_blank" rel="noopener noreferrer" class="sub-link-full">{sub.submissionValue}</a>
+															{:else if sub.submissionType === 'text'}
+																<p class="sub-text-content">{sub.submissionValue}</p>
+															{:else if sub.submissionType === 'image'}
+																<a href={sub.submissionUrl} target="_blank" rel="noopener noreferrer">
+																	<img src={sub.submissionUrl} alt="Submission by {sub.studentName}" class="sub-image" />
+																</a>
+															{:else if sub.submissionType === 'video'}
+																<!-- svelte-ignore a11y_media_has_caption -->
+																<video src={sub.submissionUrl} controls class="sub-video"></video>
+															{:else}
+																<span class="sub-type">checked off</span>
+															{/if}
+															<span class="sub-time">{timeAgo(sub.completedAt)}</span>
+														</div>
+													{/each}
+												</div>
+											{/if}
+										</div>
+									{/each}
 								</div>
-							{/each}
-						</div>
-					{/if}
-					<form method="POST" action="?/deleteWeekPlan" use:enhance style="margin-top: 0.75rem;">
-						<input type="hidden" name="id" value={data.currentPlan.id} />
-						<button type="submit" class="btn-delete-plan">Delete this week</button>
-					</form>
-				</div>
-			{/if}
-
-			<!-- Past weeks -->
-			{#if data.pastPlans.length > 0}
-				<div class="divider"></div>
-				<p class="section-label">Past weeks</p>
-				<div class="past-list">
-					{#each data.pastPlans as plan}
-						<div class="past-item">
-							<span class="past-week">Wk {plan.week}</span>
-							<span class="past-title">{plan.headline}</span>
-							{#if plan.dueDate}<span class="past-date">{formatDate(plan.dueDate)}</span>{/if}
+							{/if}
+							<form method="POST" action="?/deleteWeekPlan" use:enhance style="margin-top: 0.5rem;">
+								<input type="hidden" name="id" value={plan.id} />
+								<button type="submit" class="btn-delete-plan">Delete</button>
+							</form>
 						</div>
 					{/each}
 				</div>
@@ -304,12 +352,13 @@
 					{/if}
 				</div>
 
-				<h1 class="headline">{data.currentPlan.headline}</h1>
+				<h1 class="headline">{@html contentHtml(data.currentPlan.headline, false)}</h1>
 
 				{#if data.currentPlan.items.length > 0}
 					<div class="checklist">
 						{#each data.currentPlan.items as item (item.id)}
 							{@const done = !!completions[item.id]}
+							{@const peers = data.peerSubmissions?.[item.id] ?? []}
 							<div class="check-row" class:completed={done}>
 								{#if item.requiresSubmission}
 									<!-- Submission item -->
@@ -321,7 +370,7 @@
 										</div>
 									</div>
 									<div class="check-content">
-										<span class="check-label" class:done>{item.label}</span>
+										<span class="check-label" class:done>{@html contentHtml(item.label, false)}</span>
 										{#if item.resourceUrl}
 											<a href={item.resourceUrl} target="_blank" rel="noopener noreferrer" class="item-resource-chip">
 												{#if item.resourceFilename}
@@ -407,7 +456,7 @@
 										</form>
 									{/if}
 									<div class="check-content">
-										<span class="check-label" class:done>{item.label}</span>
+										<span class="check-label" class:done>{@html contentHtml(item.label, false)}</span>
 										{#if item.resourceUrl}
 											<a href={item.resourceUrl} target="_blank" rel="noopener noreferrer" class="item-resource-chip">
 												{#if item.resourceFilename}
@@ -422,6 +471,30 @@
 										{/if}
 									</div>
 								{/if}
+								{#if peers.length > 0}
+									<div class="peer-subs">
+										<span class="peer-subs-label">Classmates</span>
+										{#each peers.filter(p => p.studentId !== data.session.user.id) as sub}
+											<div class="peer-sub-row">
+												<span class="peer-name">{sub.studentName}</span>
+												{#if sub.submissionType === 'link'}
+													<a href={sub.submissionUrl} target="_blank" rel="noopener noreferrer" class="peer-link">{sub.submissionValue}</a>
+												{:else if sub.submissionType === 'text'}
+													<p class="peer-text">{sub.submissionValue}</p>
+												{:else if sub.submissionType === 'image'}
+													<a href={sub.submissionUrl} target="_blank" rel="noopener noreferrer">
+														<img src={sub.submissionUrl} alt="by {sub.studentName}" class="peer-img" />
+													</a>
+												{:else if sub.submissionType === 'video'}
+													<!-- svelte-ignore a11y_media_has_caption -->
+													<video src={sub.submissionUrl} controls class="peer-video"></video>
+												{:else}
+													<span class="peer-check">done</span>
+												{/if}
+											</div>
+										{/each}
+									</div>
+								{/if}
 							</div>
 						{/each}
 					</div>
@@ -431,7 +504,7 @@
 				{#if data.nextPlan}
 					<div class="next-preview">
 						<span class="next-label">Next week</span>
-						<span class="next-text">{data.nextPlan.topicPreview || data.nextPlan.headline}</span>
+						<span class="next-text">{@html contentHtml(data.nextPlan.topicPreview || data.nextPlan.headline, false)}</span>
 					</div>
 				{/if}
 
@@ -493,6 +566,7 @@
 </div>
 
 <style>
+
 	.shell { min-height: 100dvh; display: flex; flex-direction: column; background: var(--paper); }
 
 	/* Main */
@@ -505,7 +579,7 @@
 	.week-meta { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.75rem; }
 	.week-tag {
 		font-size: 0.78rem; font-weight: 700; text-transform: uppercase;
-		letter-spacing: 0.08em; color: #b0a898;
+		letter-spacing: 0.08em; color: var(--muted-fg);
 	}
 	.due-date { font-size: 0.88rem; color: #e07550; font-weight: 500; }
 
@@ -519,9 +593,9 @@
 	.checklist { display: flex; flex-direction: column; gap: 0; }
 	.check-row {
 		display: flex; align-items: flex-start; gap: 0.875rem;
-		padding: 1rem 0; border-bottom: 1px solid #f0ece4;
+		padding: 1rem 0; border-bottom: 1px solid var(--surface-2);
 	}
-	.check-row:first-child { border-top: 1px solid #f0ece4; }
+	.check-row:first-child { border-top: 1px solid var(--surface-2); }
 
 	.check-box-wrap {
 		flex-shrink: 0; display: flex; align-items: center; justify-content: center;
@@ -533,14 +607,14 @@
 		width: 28px; height: 28px;
 	}
 	.check-box {
-		width: 24px; height: 24px; border: 2px solid #c8c1b4; border-radius: 6px;
+		width: 24px; height: 24px; border: 2px solid var(--border); border-radius: 6px;
 		display: flex; align-items: center; justify-content: center;
-		transition: all 0.15s; background: #fff;
+		transition: all 0.15s; background: var(--paper);
 	}
 	.check-box.checked {
 		background: var(--ink); border-color: var(--ink); color: var(--paper);
 	}
-	.check-btn:hover .check-box:not(.checked) { border-color: #888; }
+	.check-btn:hover .check-box:not(.checked) { border-color: var(--muted-fg); }
 
 	.check-content {
 		flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.5rem;
@@ -548,7 +622,7 @@
 	.check-label {
 		font-size: 1.05rem; color: var(--ink); line-height: 1.4;
 	}
-	.check-label.done { color: #a09688; text-decoration: line-through; }
+	.check-label.done { color: var(--muted-fg); text-decoration: line-through; }
 
 	.submitted-tag {
 		display: inline-flex; align-items: center; gap: 0.3rem;
@@ -557,20 +631,20 @@
 
 	.item-resource-chip {
 		display: inline-flex; align-items: center; gap: 0.4rem;
-		padding: 0.3rem 0.6rem; background: #f5f0e8; border: 1.5px solid #e8e2d8;
+		padding: 0.3rem 0.6rem; background: var(--surface-2); border: 1.5px solid var(--border);
 		border-radius: 8px; text-decoration: none; color: var(--ink);
 		font-size: 0.82rem; transition: background 0.15s;
 	}
-	.item-resource-chip:hover { background: #ede8df; }
+	.item-resource-chip:hover { background: var(--surface-2); }
 	.resource-chip-name {
 		overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 240px;
 	}
-	.resource-chip-icon { flex-shrink: 0; color: #a09688; }
-	.resource-chip-ext { flex-shrink: 0; color: #c8c1b4; }
+	.resource-chip-icon { flex-shrink: 0; color: var(--muted-fg); }
+	.resource-chip-ext { flex-shrink: 0; color: var(--border); }
 
 	.resource-file-preview {
 		display: flex; align-items: center; gap: 0.4rem;
-		padding: 0.3rem 0.5rem; background: #f5f0e8; border-radius: 8px;
+		padding: 0.3rem 0.5rem; background: var(--surface-2); border-radius: 8px;
 		font-size: 0.82rem;
 	}
 	.resource-file-name {
@@ -579,8 +653,8 @@
 
 	.upload-btn {
 		display: flex; align-items: center; justify-content: center;
-		width: 34px; height: 34px; border: 1.5px solid #ddd7cc; border-radius: 8px;
-		cursor: pointer; color: #a09688; transition: all 0.15s; flex-shrink: 0;
+		width: 34px; height: 34px; border: 1.5px solid var(--border); border-radius: 8px;
+		cursor: pointer; color: var(--muted-fg); transition: all 0.15s; flex-shrink: 0;
 		text-transform: none; letter-spacing: 0; font-weight: 400;
 	}
 	.upload-btn:hover { border-color: var(--ink); color: var(--ink); }
@@ -605,13 +679,13 @@
 	.inline-submit { display: flex; flex-direction: column; gap: 0.6rem; }
 	.submit-type-tabs { display: flex; gap: 0.4rem; }
 	.type-tab {
-		padding: 0.3rem 0.75rem; border: 1.5px solid #ddd7cc; border-radius: 99px;
-		background: none; font-family: inherit; font-size: 0.8rem; color: #888; cursor: pointer;
+		padding: 0.3rem 0.75rem; border: 1.5px solid var(--border); border-radius: 99px;
+		background: none; font-family: inherit; font-size: 0.8rem; color: var(--muted-fg); cursor: pointer;
 	}
 	.type-tab.active { background: var(--ink); color: var(--paper); border-color: var(--ink); }
 	.submit-input {
 		width: 100%; box-sizing: border-box; padding: 0.55rem 0.75rem;
-		border: 1.5px solid #ddd7cc; border-radius: 8px; background: #fff;
+		border: 1.5px solid var(--border); border-radius: 8px; background: var(--paper);
 		font-family: inherit; font-size: 0.88rem; color: var(--ink); outline: none;
 	}
 	.submit-input:focus { border-color: var(--ink); }
@@ -621,34 +695,34 @@
 	.next-preview {
 		display: flex; align-items: baseline; gap: 0.6rem;
 		margin-top: 2rem; padding: 1rem 0;
-		border-top: 2px solid #ddd7cc;
+		border-top: 2px solid var(--border);
 	}
 	.next-label {
 		font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
-		letter-spacing: 0.07em; color: #b0a898; flex-shrink: 0;
+		letter-spacing: 0.07em; color: var(--muted-fg); flex-shrink: 0;
 	}
-	.next-text { font-size: 1rem; color: #888; font-style: italic; }
+	.next-text { font-size: 1rem; color: var(--muted-fg); font-style: italic; }
 
 	/* Bottom links */
 	.bottom-links { margin-top: 1.5rem; }
 	.atlas-link {
-		font-size: 0.88rem; color: #a09688; text-decoration: none; font-weight: 500;
+		font-size: 0.88rem; color: var(--muted-fg); text-decoration: none; font-weight: 500;
 	}
 	.atlas-link:hover { color: var(--ink); }
 
 	/* ── Instructor ── */
 	.week-number {
 		font-size: 0.78rem; font-weight: 700; text-transform: uppercase;
-		letter-spacing: 0.08em; color: #b0a898; margin: 0 0 1rem;
+		letter-spacing: 0.08em; color: var(--muted-fg); margin: 0 0 1rem;
 	}
 	.create-form { display: flex; flex-direction: column; gap: 1.25rem; }
 	.field { display: flex; flex-direction: column; gap: 0.4rem; }
-	label { font-size: 0.78rem; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.05em; }
-	.optional { font-weight: 400; text-transform: none; letter-spacing: 0; color: #b0a898; }
+	label { font-size: 0.78rem; font-weight: 600; color: var(--muted-fg); text-transform: uppercase; letter-spacing: 0.05em; }
+	.optional { font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--muted-fg); }
 
 	input[type="text"], input[type="url"], input[type="date"], textarea {
-		padding: 0.6rem 0.85rem; border: 1.5px solid #ddd7cc; border-radius: 10px;
-		background: #fff; font-family: inherit; font-size: 0.9rem; color: var(--ink);
+		padding: 0.6rem 0.85rem; border: 1.5px solid var(--border); border-radius: 10px;
+		background: var(--paper); font-family: inherit; font-size: 0.9rem; color: var(--ink);
 		outline: none; transition: border-color 0.15s; width: 100%; box-sizing: border-box;
 	}
 	input:focus, textarea:focus { border-color: var(--ink); }
@@ -658,7 +732,7 @@
 	/* Checklist item builder */
 	.items-list { display: flex; flex-direction: column; gap: 0.5rem; }
 	.item-row {
-		background: #faf8f5; border: 1.5px solid #e8e2d8; border-radius: 10px;
+		background: var(--surface-2); border: 1.5px solid var(--border); border-radius: 10px;
 		padding: 0.75rem; display: flex; flex-direction: column; gap: 0.5rem;
 	}
 	.item-main { display: flex; align-items: center; gap: 0.5rem; }
@@ -670,10 +744,10 @@
 		white-space: nowrap; flex-shrink: 0;
 	}
 	.remove-item {
-		background: none; border: none; font-size: 1.2rem; color: #c8c1b4;
+		background: none; border: none; font-size: 1.2rem; color: var(--border);
 		cursor: pointer; padding: 0 0.25rem; line-height: 1; flex-shrink: 0;
 	}
-	.remove-item:hover { color: #c0392b; }
+	.remove-item:hover { color: var(--danger); }
 
 	.item-resource { display: flex; gap: 0.5rem; }
 	.resource-input { flex: 2; min-width: 0; font-size: 0.82rem !important; padding: 0.4rem 0.7rem !important; }
@@ -682,7 +756,7 @@
 	.item-types {
 		display: flex; align-items: center; gap: 0.6rem; padding-left: 0.25rem;
 	}
-	.types-label { font-size: 0.72rem; color: #a09688; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+	.types-label { font-size: 0.72rem; color: var(--muted-fg); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
 	.type-check {
 		display: flex; align-items: center; gap: 0.3rem;
 		font-size: 0.82rem; color: var(--ink); font-weight: 400;
@@ -691,60 +765,83 @@
 
 	.btn-add-item {
 		align-self: flex-start; padding: 0.4rem 0.9rem;
-		background: none; border: 1.5px dashed #c8c1b4; border-radius: 8px;
-		font-family: inherit; font-size: 0.82rem; color: #a09688;
+		background: none; border: 1.5px dashed var(--border); border-radius: 8px;
+		font-family: inherit; font-size: 0.82rem; color: var(--muted-fg);
 		cursor: pointer; transition: all 0.15s;
 	}
 	.btn-add-item:hover { border-color: var(--ink); color: var(--ink); }
 
 	/* Divider */
-	.divider { border-top: 2px solid #ddd7cc; margin: 2rem 0; }
+	.divider { border-top: 2px solid var(--border); margin: 2rem 0; }
 
-	/* Current plan preview (instructor) */
-	.current-preview { }
-	.preview-headline {
-		font-family: 'Avara', serif; font-size: 1.5rem; font-weight: 400;
-		color: var(--ink); margin: 0 0 1rem; line-height: 1.25;
-	}
-	.preview-items { display: flex; flex-direction: column; gap: 0.35rem; }
-	.preview-item {
-		display: flex; align-items: center; gap: 0.5rem;
-		font-size: 0.9rem; color: var(--ink);
-	}
-	.preview-check { color: #c8c1b4; font-size: 1rem; }
-	.preview-label { flex: 1; }
-	.preview-resource {
-		font-size: 0.75rem; color: var(--ink); text-decoration: underline;
-		text-underline-offset: 2px; opacity: 0.6;
-	}
-	.preview-resource:hover { opacity: 1; }
 	.preview-badge {
 		font-size: 0.68rem; font-weight: 600; text-transform: uppercase;
-		letter-spacing: 0.05em; color: #a09688; background: #f0ece4;
+		letter-spacing: 0.05em; color: var(--muted-fg); background: var(--surface-2);
 		padding: 0.1rem 0.4rem; border-radius: 99px;
-	}
-	.preview-progress {
-		font-size: 0.75rem; color: #2e7d32; font-weight: 500;
 	}
 	.btn-delete-plan {
 		background: none; border: none; font-family: inherit; font-size: 0.78rem;
-		color: #c0392b; cursor: pointer; padding: 0; opacity: 0.6;
+		color: var(--danger); cursor: pointer; padding: 0; opacity: 0.6;
 	}
 	.btn-delete-plan:hover { opacity: 1; }
 
-	/* Past weeks */
 	.section-label {
 		font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
-		letter-spacing: 0.07em; color: #b0a898; margin: 0 0 0.6rem;
+		letter-spacing: 0.07em; color: var(--muted-fg); margin: 0 0 0.6rem;
 	}
-	.past-list { display: flex; flex-direction: column; gap: 0.2rem; }
-	.past-item {
-		display: flex; align-items: baseline; gap: 0.6rem;
-		padding: 0.4rem 0; font-size: 0.88rem; color: var(--ink);
+
+	/* Assignments overview */
+	.assignments-overview { display: flex; flex-direction: column; gap: 1rem; }
+	.overview-plan {
+		background: var(--surface-2); border: 1.5px solid var(--border); border-radius: 10px;
+		padding: 0.85rem 1rem;
 	}
-	.past-week { font-size: 0.72rem; font-weight: 700; color: #b0a898; flex-shrink: 0; }
-	.past-title { flex: 1; }
-	.past-date { font-size: 0.75rem; color: #a09688; white-space: nowrap; }
+	.overview-plan.is-current { border-color: var(--ink); }
+	.overview-header { display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
+	.overview-week { font-size: 0.72rem; font-weight: 700; color: var(--muted-fg); flex-shrink: 0; text-transform: uppercase; letter-spacing: 0.05em; }
+	.overview-title { font-size: 0.95rem; font-weight: 500; color: var(--ink); flex: 1; min-width: 0; }
+	.overview-due { font-size: 0.75rem; color: #e07550; white-space: nowrap; }
+	.overview-items { display: flex; flex-direction: column; gap: 0; }
+	.overview-item-block { border-bottom: 1px solid #eee8df; }
+	.overview-item-block:last-child { border-bottom: none; }
+	.overview-item {
+		display: flex; align-items: center; gap: 0.5rem; font-size: 0.82rem; color: var(--ink);
+		padding: 0.35rem 0; width: 100%; background: none; border: none;
+		font-family: inherit; text-align: left; cursor: default;
+	}
+	.overview-item.has-subs { cursor: pointer; }
+	.overview-item.has-subs:hover { background: var(--surface-2); margin: 0 -0.5rem; padding-left: 0.5rem; padding-right: 0.5rem; border-radius: 6px; width: calc(100% + 1rem); }
+	.overview-item-label { flex: 1; min-width: 0; }
+	.overview-item-count { font-size: 0.72rem; color: var(--muted-fg); white-space: nowrap; }
+	.overview-item-count.has-completions { color: #2e7d32; font-weight: 500; }
+	.overview-chevron {
+		font-size: 0.9rem; color: var(--muted-fg); transition: transform 0.15s; flex-shrink: 0;
+	}
+	.overview-chevron.open { transform: rotate(90deg); }
+
+	/* Grouped submissions under each item */
+	.item-subs-list {
+		display: flex; flex-direction: column; gap: 0;
+		padding: 0.25rem 0 0.5rem 1.5rem; border-left: 2px solid var(--border); margin-left: 0.25rem;
+	}
+	.item-sub-row {
+		display: flex; align-items: flex-start; gap: 0.5rem;
+		padding: 0.4rem 0; font-size: 0.82rem; border-bottom: 1px solid var(--surface-2);
+	}
+	.item-sub-row:last-child { border-bottom: none; }
+	.sub-name { font-weight: 600; color: var(--ink); flex-shrink: 0; }
+	.sub-type { font-size: 0.72rem; color: var(--muted-fg); flex-shrink: 0; }
+	.sub-time { font-size: 0.72rem; color: var(--muted-fg); flex-shrink: 0; white-space: nowrap; margin-left: auto; }
+	.sub-link-full {
+		font-size: 0.82rem; color: #2980b9; word-break: break-all;
+		text-decoration: underline; text-underline-offset: 2px; flex: 1; min-width: 0;
+	}
+	.sub-text-content {
+		font-size: 0.82rem; color: var(--ink); margin: 0; line-height: 1.5;
+		white-space: pre-wrap; flex: 1; min-width: 0;
+	}
+	.sub-image { max-width: 100%; max-height: 300px; border-radius: 6px; display: block; }
+	.sub-video { max-width: 100%; max-height: 300px; border-radius: 6px; display: block; }
 
 	/* Buttons */
 	.btn-primary {
@@ -755,29 +852,60 @@
 	.btn-primary:hover { opacity: 0.82; }
 	.btn-primary.sm { padding: 0.45rem 1rem; font-size: 0.82rem; }
 	.btn-ghost {
-		padding: 0.45rem 0.9rem; background: none; border: 1.5px solid #ddd7cc;
+		padding: 0.45rem 0.9rem; background: none; border: 1.5px solid var(--border);
 		border-radius: 8px; font-family: inherit; font-size: 0.82rem;
 		color: var(--ink); cursor: pointer;
 	}
 	.btn-ghost.sm { padding: 0.4rem 0.8rem; font-size: 0.8rem; }
 	.btn-ghost:hover { border-color: var(--ink); }
 
-	.form-error { font-size: 0.82rem; color: #c0392b; margin: 0; }
-	.muted { font-size: 0.85rem; color: #a09688; margin: 0.5rem 0; }
+	.form-error { font-size: 0.82rem; color: var(--danger); margin: 0; }
+	.muted { font-size: 0.85rem; color: var(--muted-fg); margin: 0.5rem 0; }
+
+	/* Visibility toggle */
+	.vis-toggle-form { display: inline-flex; margin-left: auto; flex-shrink: 0; }
+	.vis-toggle-btn {
+		display: flex; align-items: center; gap: 0.3rem; padding: 0.2rem 0.4rem;
+		background: none; border: 1.5px solid var(--border); border-radius: 6px;
+		cursor: pointer; color: var(--muted-fg); font-size: 0.72rem; font-family: inherit;
+		transition: all 0.15s;
+	}
+	.vis-toggle-btn:hover { border-color: var(--muted-fg); color: var(--ink); }
+	.vis-toggle-btn.vis-on { border-color: #27ae60; color: #27ae60; background: #e8f8f0; }
+
+	/* Peer submissions */
+	.peer-subs {
+		grid-column: 1 / -1; margin-top: 0.5rem; padding: 0.5rem 0 0 2.2rem;
+		border-top: 1px solid #ede9e3;
+	}
+	.peer-subs-label {
+		display: block; font-size: 0.7rem; font-weight: 600; text-transform: uppercase;
+		letter-spacing: 0.05em; color: var(--muted-fg); margin-bottom: 0.4rem;
+	}
+	.peer-sub-row {
+		display: flex; align-items: flex-start; gap: 0.5rem; padding: 0.3rem 0;
+		font-size: 0.82rem; color: var(--ink);
+	}
+	.peer-name { font-weight: 600; flex-shrink: 0; font-size: 0.78rem; color: var(--muted-fg); }
+	.peer-link { color: #2980b9; text-decoration: underline; word-break: break-all; font-size: 0.78rem; }
+	.peer-text { margin: 0; font-size: 0.78rem; color: var(--ink); white-space: pre-wrap; }
+	.peer-img { max-width: 120px; max-height: 80px; border-radius: 4px; display: block; }
+	.peer-video { max-width: 160px; max-height: 100px; border-radius: 4px; display: block; }
+	.peer-check { font-size: 0.72rem; color: #27ae60; }
 
 	/* Empty state */
 	.empty-state { text-align: center; padding: 3rem 1rem; }
 	.empty-state h1 { font-family: 'Avara', serif; font-size: 1.75rem; font-weight: 400; color: var(--ink); margin: 0 0 0.5rem; }
-	.empty-state p { color: #a09688; font-size: 0.9rem; margin: 0; }
+	.empty-state p { color: var(--muted-fg); font-size: 0.9rem; margin: 0; }
 
 	/* Utility */
 	.utility-row { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 2rem; }
 	.utility-chip {
-		padding: 0.4rem 0.9rem; background: #f5f0e8; border: 1.5px solid #e8e2d8;
+		padding: 0.4rem 0.9rem; background: var(--surface-2); border: 1.5px solid var(--border);
 		border-radius: 99px; font-family: inherit; font-size: 0.82rem;
 		color: var(--ink); cursor: pointer;
 	}
-	.utility-chip:hover { background: #ede8df; }
+	.utility-chip:hover { background: var(--surface-2); }
 	.utility-chip:disabled { opacity: 0.5; cursor: default; }
 
 	/* Gate overlay */
@@ -793,7 +921,7 @@
 	.gate-wordmark:hover { opacity: 0.7; }
 	.gate-icon { font-size: 2.5rem; line-height: 1; }
 	.gate-title { font-family: 'Avara', serif; font-size: 1.75rem; font-weight: 400; color: var(--ink); margin: 0; }
-	.gate-body { font-size: 0.9rem; color: #666; line-height: 1.6; margin: 0; }
+	.gate-body { font-size: 0.9rem; color: var(--muted-fg); line-height: 1.6; margin: 0; }
 	.gate-btn-primary {
 		width: 100%; padding: 0.8rem 1.4rem; background: var(--ink); color: var(--paper);
 		border: none; border-radius: 12px; font-family: inherit; font-size: 0.95rem;
@@ -801,19 +929,19 @@
 	}
 	.gate-btn-primary:hover { opacity: 0.82; }
 	.gate-btn-primary:disabled { opacity: 0.5; cursor: default; }
-	.gate-btn-skip { background: none; border: none; font-family: inherit; font-size: 0.85rem; color: #a09688; cursor: pointer; }
+	.gate-btn-skip { background: none; border: none; font-family: inherit; font-size: 0.85rem; color: var(--muted-fg); cursor: pointer; }
 	.gate-btn-skip:hover { color: var(--ink); }
-	.gate-denied { font-size: 0.8rem; color: #c0392b; margin: 0; }
+	.gate-denied { font-size: 0.8rem; color: var(--danger); margin: 0; }
 
 	/* Install banner */
 	.install-banner {
-		background: #f5f0e8; border: 1.5px solid #e8e2d8; border-radius: 14px;
+		background: var(--surface-2); border: 1.5px solid var(--border); border-radius: 14px;
 		padding: 1.25rem; margin-top: 2rem; display: flex; flex-direction: column; gap: 0.6rem;
 	}
 	.install-banner-title { font-size: 0.95rem; font-weight: 700; color: var(--ink); margin: 0; }
-	.install-banner-sub { font-size: 0.85rem; color: #666; margin: 0; }
+	.install-banner-sub { font-size: 0.85rem; color: var(--muted-fg); margin: 0; }
 	.install-steps { font-size: 0.85rem; color: var(--ink); margin: 0; padding-left: 1.25rem; display: flex; flex-direction: column; gap: 0.35rem; }
-	.ios-share { display: inline-block; font-weight: 700; background: #e8e2d8; border-radius: 4px; padding: 0 0.25rem; font-size: 0.8rem; }
+	.ios-share { display: inline-block; font-weight: 700; background: var(--border); border-radius: 4px; padding: 0 0.25rem; font-size: 0.8rem; }
 
 	/* Mobile */
 	@media (max-width: 640px) {

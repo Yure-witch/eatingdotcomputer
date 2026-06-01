@@ -1,7 +1,7 @@
 import { redirect, fail } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
 import { signOut } from '../../auth.js';
-import { getWeekPlans, getCompletionsForStudent, getCompletionsForWeek, createWeekPlan, createWeekItems, completeItem, uncompleteItem, deleteWeekPlan } from '$lib/server/week-plans.js';
+import { getWeekPlans, getCompletionsForStudent, getCompletionsForWeek, getAllProgressForClass, getSubmissionsByItem, createWeekPlan, createWeekItems, completeItem, uncompleteItem, deleteWeekPlan, toggleWeekSubmissions, toggleItemSubmissions, getVisibleSubmissionsForPlan } from '$lib/server/week-plans.js';
 import { uploadToR2 } from '$lib/server/r2.js';
 
 export async function load({ locals, parent }) {
@@ -26,12 +26,34 @@ export async function load({ locals, parent }) {
 
 	let completions = {};
 	let progress = {};
+	let allProgress = {};
+	let submissionsByItem = {};
+	let peerSubmissions = {};
 
-	if (currentPlan) {
-		if (isInstructor) {
-			progress = await getCompletionsForWeek(currentPlan.id);
-		} else {
-			completions = await getCompletionsForStudent(currentPlan.id, userId);
+	const r2Base = (env.R2_PUBLIC_BASE_URL ?? env.PUBLIC_R2_PUBLIC_BASE_URL ?? '').replace(/\/$/, '');
+
+	function resolveSubmissionUrl(s) {
+		return {
+			...s,
+			submissionUrl: s.submissionType === 'link' ? s.submissionValue
+				: (s.submissionType === 'image' || s.submissionType === 'video') && s.submissionValue
+					? (s.submissionValue.startsWith('http') ? s.submissionValue : `${r2Base}/${s.submissionValue}`)
+					: null
+		};
+	}
+
+	if (isInstructor) {
+		if (currentPlan) progress = await getCompletionsForWeek(currentPlan.id);
+		allProgress = await getAllProgressForClass(classId);
+		const rawSubs = await getSubmissionsByItem(classId);
+		for (const [itemId, subs] of Object.entries(rawSubs)) {
+			submissionsByItem[itemId] = subs.map(resolveSubmissionUrl);
+		}
+	} else if (currentPlan) {
+		completions = await getCompletionsForStudent(currentPlan.id, userId);
+		const rawPeer = await getVisibleSubmissionsForPlan(currentPlan.id);
+		for (const [itemId, subs] of Object.entries(rawPeer)) {
+			peerSubmissions[itemId] = subs.map(resolveSubmissionUrl);
 		}
 	}
 
@@ -45,6 +67,10 @@ export async function load({ locals, parent }) {
 		pastPlans,
 		completions,
 		progress,
+		allProgress,
+		allPlans: isInstructor ? plans : [],
+		submissionsByItem,
+		peerSubmissions,
 		nextWeekNumber: maxWeek + 1,
 		classId
 	};
@@ -104,7 +130,13 @@ export const actions = {
 			items.push({ label, requiresSubmission: req, acceptedTypes, resourceUrl, resourceLabel, resourceFilename, resourceMimetype });
 		}
 
-		const planId = await createWeekPlan({ week, headline, topicPreview: topicPreview || null, dueDate: dueDate || null, classId, createdBy: session.user.id });
+		let planId;
+		try {
+			planId = await createWeekPlan({ week, headline, topicPreview: topicPreview || null, dueDate: dueDate || null, classId, createdBy: session.user.id });
+		} catch (e) {
+			if (e.message?.includes('UNIQUE constraint')) return fail(400, { error: `Week ${week} already exists`, action: 'createWeekPlan' });
+			throw e;
+		}
 		if (items.length) await createWeekItems(planId, items);
 	},
 
@@ -176,5 +208,29 @@ export const actions = {
 		if (!id) return fail(400, { error: 'Missing id' });
 
 		await deleteWeekPlan(id);
+	},
+
+	toggleWeekVisibility: async ({ request, locals }) => {
+		const session = await locals.auth();
+		if (!session || session.user.role !== 'instructor') return fail(403, { error: 'Forbidden' });
+
+		const data = await request.formData();
+		const planId = String(data.get('plan_id') ?? '');
+		const show = data.get('show') === '1';
+		if (!planId) return fail(400, { error: 'Missing plan_id' });
+
+		await toggleWeekSubmissions(planId, show);
+	},
+
+	toggleItemVisibility: async ({ request, locals }) => {
+		const session = await locals.auth();
+		if (!session || session.user.role !== 'instructor') return fail(403, { error: 'Forbidden' });
+
+		const data = await request.formData();
+		const itemId = String(data.get('item_id') ?? '');
+		const show = String(data.get('show') ?? '');
+		if (!itemId) return fail(400, { error: 'Missing item_id' });
+
+		await toggleItemSubmissions(itemId, show === '' ? null : show === '1');
 	}
 };

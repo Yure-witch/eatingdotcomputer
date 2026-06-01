@@ -105,7 +105,7 @@
 			bottom: 0; left: 0; right: 0;
 			height: calc(56px + env(safe-area-inset-bottom, 0px));
 			padding-bottom: env(safe-area-inset-bottom, 0px);
-			background: #1a1a1a;
+			background: var(--ink);
 			border-top: 1px solid #2a2a2a;
 			z-index: 1000;
 		}
@@ -117,7 +117,7 @@
 			align-items: center;
 			justify-content: center;
 			gap: 0.2rem;
-			color: #555;
+			color: var(--muted-fg);
 			text-decoration: none;
 			transition: color 0.15s;
 			-webkit-tap-highlight-color: transparent;
@@ -128,8 +128,8 @@
 			font-family: inherit;
 			cursor: pointer;
 		}
-		.nav-item.active { color: #f7f2ea; }
-		.nav-item:not(.active):active { color: #888; }
+		.nav-item.active { color: var(--paper); }
+		.nav-item:not(.active):active { color: var(--muted-fg); }
 
 		.label {
 			font-size: 0.58rem;

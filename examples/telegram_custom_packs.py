@@ -105,6 +105,10 @@ async def download_set(client, title, short_name, set_id, access_hash, kind, unp
         f"getStickerSet({short_name})",
     )
     docs = list(res.documents or [])
+    # Telegram's "adaptive" packs are marked with text_color=True on the
+    # StickerSet itself. Carry the flag through so the renderer can swap
+    # the white-sentinel fills for the current text color at draw time.
+    text_color = bool(getattr(res.set, "text_color", False))
     manifest = []
     for i, d in enumerate(docs, 1):
         ext = ext_for(d.mime_type)
@@ -123,9 +127,10 @@ async def download_set(client, title, short_name, set_id, access_hash, kind, unp
             except Exception as e:
                 print(f"  ! could not unpack {fn}: {e}")
         if i % 25 == 0: print(f"    {i}/{len(docs)}")
-    info = {"title": title, "short_name": short_name, "kind": kind, "count": len(manifest), "emoji": manifest}
+    info = {"title": title, "short_name": short_name, "kind": kind, "text_color": text_color, "count": len(manifest), "emoji": manifest}
     (out / "manifest.json").write_text(json.dumps(info, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"  ✓ {title}  ({short_name})  {kind}  {len(manifest)} items")
+    tag = "  ADAPTIVE" if text_color else ""
+    print(f"  ✓ {title}  ({short_name})  {kind}{tag}  {len(manifest)} items")
 
 
 async def main():

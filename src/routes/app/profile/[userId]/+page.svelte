@@ -102,7 +102,7 @@
 		align-items: center;
 		gap: 2rem;
 		padding: 1rem 2rem;
-		border-bottom: 1.5px solid #ddd7cc;
+		border-bottom: 1.5px solid var(--border);
 	}
 
 	.wordmark {
@@ -115,7 +115,7 @@
 	.wordmark:hover { opacity: 0.7; }
 
 	nav { display: flex; gap: 1.25rem; font-size: 0.875rem; }
-	nav a { color: #a09688; text-decoration: none; font-weight: 500; }
+	nav a { color: var(--muted-fg); text-decoration: none; font-weight: 500; }
 	nav a:hover { color: var(--ink); }
 
 	main {
@@ -128,15 +128,15 @@
 	.back {
 		display: inline-block;
 		font-size: 0.85rem;
-		color: #a09688;
+		color: var(--muted-fg);
 		text-decoration: none;
 		margin-bottom: 1.5rem;
 	}
 	.back:hover { color: var(--ink); }
 
 	.profile-card {
-		background: #fff;
-		border: 1.5px solid #ddd7cc;
+		background: var(--paper);
+		border: 1.5px solid var(--border);
 		border-radius: 16px;
 		padding: 2rem;
 		display: flex;
@@ -190,7 +190,7 @@
 
 	.pronouns {
 		font-size: 0.85rem;
-		color: #a09688;
+		color: var(--muted-fg);
 	}
 
 	.role-pill {
@@ -198,8 +198,8 @@
 		font-weight: 700;
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
-		background: #f0ebe3;
-		color: #a09688;
+		background: var(--surface-2);
+		color: var(--muted-fg);
 		padding: 0.15rem 0.5rem;
 		border-radius: 99px;
 	}
@@ -215,7 +215,7 @@
 
 	.status-online { color: #2e7d32; font-weight: 600; }
 	.status-offline { color: #bbb; }
-	.joined { color: #a09688; }
+	.joined { color: var(--muted-fg); }
 
 	.profile-actions {
 		display: flex;
@@ -243,7 +243,7 @@
 		padding: 0.5rem 1.1rem;
 		background: none;
 		color: var(--ink);
-		border: 1.5px solid #c8c1b4;
+		border: 1.5px solid var(--border);
 		border-radius: 8px;
 		font-family: inherit;
 		font-size: 0.875rem;
@@ -260,7 +260,7 @@
 		font-weight: 700;
 		text-transform: uppercase;
 		letter-spacing: 0.08em;
-		color: #a09688;
+		color: var(--muted-fg);
 		margin: 0 0 0.5rem;
 	}
 
@@ -281,17 +281,17 @@
 
 	.empty {
 		font-size: 0.9rem;
-		color: #a09688;
+		color: var(--muted-fg);
 		margin: 0;
 	}
 
 	.empty-own {
-		background: #faf7f2;
-		border: 1.5px dashed #ddd7cc;
+		background: var(--surface-2);
+		border: 1.5px dashed var(--border);
 		border-radius: 10px;
 		padding: 1rem 1.25rem;
 		font-size: 0.9rem;
-		color: #a09688;
+		color: var(--muted-fg);
 	}
 	.empty-own p { margin: 0; }
 	.empty-own a { color: var(--ink); }

@@ -9,6 +9,16 @@
 		<meta name="apple-mobile-web-app-title" content="eating.computer" />
 		<link rel="manifest" href="/manifest.json" />
 		<link rel="apple-touch-icon" href="/favicon.svg" />
+		<!-- Telegram emoji sprite sheet + its manifest. Browser starts
+		     downloading these the instant the HTML is parsed, before any
+		     JS runs, so by the time the user opens the picker (or sees
+		     [tg:…] tokens in chat) the bytes are already cached. -->
+		<link rel="preload" as="image" type="image/webp"
+			href="https://pub-62e59b4ebf1d45d2ad5f669369e907fe.r2.dev/telegram-emoji/sprite.webp"
+			crossorigin="anonymous" />
+		<link rel="preload" as="fetch" type="application/json"
+			href="https://pub-62e59b4ebf1d45d2ad5f669369e907fe.r2.dev/telegram-emoji/sprite-manifest.json"
+			crossorigin="anonymous" />
 		%sveltekit.head%
 	</head>
 	<body data-sveltekit-preload-data="hover">

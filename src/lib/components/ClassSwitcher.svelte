@@ -28,7 +28,7 @@
 <style>
 	.class-label {
 		font-size: 0.72rem;
-		color: #888;
+		color: var(--muted-fg);
 		font-weight: 500;
 		letter-spacing: 0.01em;
 	}
@@ -36,7 +36,7 @@
 	.class-select {
 		font-family: inherit;
 		font-size: 0.72rem;
-		color: #666;
+		color: var(--muted-fg);
 		background: none;
 		border: none;
 		cursor: pointer;
@@ -44,5 +44,5 @@
 		outline: none;
 		max-width: 280px;
 	}
-	.class-select:hover { color: #0c0c0c; }
+	.class-select:hover { color: var(--ink); }
 </style>

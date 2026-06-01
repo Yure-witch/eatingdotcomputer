@@ -120,8 +120,8 @@
 		display: none;
 		position: fixed;
 		z-index: 1000;
-		background: #1a1a1a;
-		color: #c8c1b4;
+		background: var(--ink);
+		color: var(--border);
 		border-radius: 12px;
 		padding: 1rem;
 		width: 220px;
@@ -138,13 +138,13 @@
 		display: flex;
 	}
 
-	.hc-loading { color: #666; font-size: 0.8rem; }
+	.hc-loading { color: var(--muted-fg); font-size: 0.8rem; }
 
 	.hc-top { display: flex; gap: 0.6rem; align-items: flex-start; }
 
 	.hc-avatar {
 		width: 36px; height: 36px; border-radius: 8px;
-		background: #333; color: #f7f2ea;
+		background: #333; color: var(--paper);
 		display: flex; align-items: center; justify-content: center;
 		font-family: 'Avara', serif; font-size: 1.1rem; flex-shrink: 0;
 	}
@@ -152,31 +152,31 @@
 	.hc-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.25rem; }
 
 	.hc-name-row { display: flex; align-items: baseline; gap: 0.4rem; flex-wrap: wrap; }
-	.hc-name { font-weight: 600; color: #f7f2ea; font-size: 0.88rem; }
-	.hc-pronouns { font-size: 0.72rem; color: #666; }
+	.hc-name { font-weight: 600; color: var(--paper); font-size: 0.88rem; }
+	.hc-pronouns { font-size: 0.72rem; color: var(--muted-fg); }
 
 	.hc-sub-row { display: flex; align-items: center; gap: 0.5rem; }
 	.hc-role {
 		font-size: 0.6rem; font-weight: 700; text-transform: uppercase;
-		background: #333; color: #888; padding: 0.1rem 0.35rem; border-radius: 99px;
+		background: #333; color: var(--muted-fg); padding: 0.1rem 0.35rem; border-radius: 99px;
 	}
-	.hc-role.instructor { background: #f7f2ea; color: #1a1a1a; }
+	.hc-role.instructor { background: var(--paper); color: var(--ink); }
 
 	.hc-details { display: flex; flex-wrap: wrap; gap: 0.3rem; }
 	.hc-tag {
-		font-size: 0.7rem; background: #2a2a2a; color: #a09688;
+		font-size: 0.7rem; background: #2a2a2a; color: var(--muted-fg);
 		padding: 0.15rem 0.5rem; border-radius: 99px;
 	}
 
-	.hc-bio { font-size: 0.78rem; color: #a09688; margin: 0; line-height: 1.5; }
+	.hc-bio { font-size: 0.78rem; color: var(--muted-fg); margin: 0; line-height: 1.5; }
 
 	.hc-website {
-		font-size: 0.72rem; color: #888; text-decoration: underline;
+		font-size: 0.72rem; color: var(--muted-fg); text-decoration: underline;
 		text-underline-offset: 2px;
 	}
 
 	.hc-link {
-		font-size: 0.72rem; color: #888; text-decoration: none; margin-top: 0.1rem;
+		font-size: 0.72rem; color: var(--muted-fg); text-decoration: none; margin-top: 0.1rem;
 	}
-	.hc-link:hover { color: #f7f2ea; }
+	.hc-link:hover { color: var(--paper); }
 </style>

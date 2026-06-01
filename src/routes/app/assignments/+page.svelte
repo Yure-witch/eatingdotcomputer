@@ -232,7 +232,7 @@
 		align-items: center;
 		gap: 2rem;
 		padding: 1rem 2rem;
-		border-bottom: 1.5px solid #ddd7cc;
+		border-bottom: 1.5px solid var(--border);
 	}
 
 	.wordmark-wrap {
@@ -252,7 +252,7 @@
 
 
 	nav { display: flex; gap: 1.25rem; font-size: 0.875rem; }
-	nav a { color: #a09688; text-decoration: none; font-weight: 500; }
+	nav a { color: var(--muted-fg); text-decoration: none; font-weight: 500; }
 	nav a:hover, nav a.active { color: var(--ink); }
 
 	main {
@@ -281,8 +281,8 @@
 
 	/* ── Create form ── */
 	.create-card {
-		background: #fff;
-		border: 1.5px solid #ddd7cc;
+		background: var(--paper);
+		border: 1.5px solid var(--border);
 		border-radius: 12px;
 		padding: 1.25rem 1.5rem;
 		margin-bottom: 2rem;
@@ -307,7 +307,7 @@
 	}
 
 	fieldset {
-		border: 1.5px solid #c8c1b4;
+		border: 1.5px solid var(--border);
 		border-radius: 8px;
 		padding: 0.6rem 0.75rem;
 		margin: 0;
@@ -334,9 +334,9 @@
 	input[type="date"],
 	textarea {
 		padding: 0.55rem 0.75rem;
-		border: 1.5px solid #c8c1b4;
+		border: 1.5px solid var(--border);
 		border-radius: 8px;
-		background: #fff;
+		background: var(--paper);
 		font-family: inherit;
 		font-size: 0.9rem;
 		color: var(--ink);
@@ -369,7 +369,7 @@
 	.btn-secondary {
 		padding: 0.4rem 0.9rem;
 		background: none;
-		border: 1.5px solid #c8c1b4;
+		border: 1.5px solid var(--border);
 		border-radius: 8px;
 		font-family: inherit;
 		font-size: 0.85rem;
@@ -386,7 +386,7 @@
 		border: none;
 		font-family: inherit;
 		font-size: 0.85rem;
-		color: #a09688;
+		color: var(--muted-fg);
 		cursor: pointer;
 	}
 	.btn-ghost:hover { color: var(--ink); }
@@ -395,7 +395,7 @@
 		align-self: flex-start;
 		padding: 0.4rem 0.9rem;
 		background: none;
-		border: 1.5px solid #c8c1b4;
+		border: 1.5px solid var(--border);
 		border-radius: 8px;
 		font-family: inherit;
 		font-size: 0.8rem;
@@ -411,23 +411,23 @@
 		background: none;
 		border: none;
 		font-size: 1.2rem;
-		color: #c8c1b4;
+		color: var(--border);
 		cursor: pointer;
 		padding: 0 0.25rem;
 		line-height: 1;
 		flex-shrink: 0;
 		transition: color 0.15s;
 	}
-	.btn-delete:hover { color: #c0392b; }
+	.btn-delete:hover { color: var(--danger); }
 
-	.required { color: #c0392b; }
+	.required { color: var(--danger); }
 
 	.error {
 		padding: 0.5rem 0.75rem;
 		background: #fff0f0;
 		border: 1.5px solid #f5c6cb;
 		border-radius: 8px;
-		color: #c0392b;
+		color: var(--danger);
 		font-size: 0.85rem;
 		margin: 0;
 	}
@@ -441,7 +441,7 @@
 		font-weight: 600;
 		text-transform: uppercase;
 		letter-spacing: 0.08em;
-		color: #a09688;
+		color: var(--muted-fg);
 		margin: 0 0 0.75rem;
 	}
 
@@ -451,8 +451,8 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.5rem;
-		background: #fff;
-		border: 1.5px solid #ddd7cc;
+		background: var(--paper);
+		border: 1.5px solid var(--border);
 		border-radius: 10px;
 		padding: 1rem 1.1rem;
 	}
@@ -466,15 +466,15 @@
 
 	.assignment-body { display: flex; flex-direction: column; gap: 0.3rem; flex: 1; }
 	.assignment-title { font-weight: 600; font-size: 0.95rem; margin: 0; }
-	.assignment-desc { font-size: 0.875rem; color: #555; margin: 0; white-space: pre-wrap; }
-	.due { font-size: 0.8rem; color: #a09688; margin: 0; }
+	.assignment-desc { font-size: 0.875rem; color: var(--muted-fg); margin: 0; white-space: pre-wrap; }
+	.due { font-size: 0.8rem; color: var(--muted-fg); margin: 0; }
 
 	/* ── Accepted types note ── */
 	.accepted-note {
 		font-size: 0.78rem;
-		color: #a09688;
+		color: var(--muted-fg);
 		margin: 0;
-		border-top: 1px solid #f0ece4;
+		border-top: 1px solid var(--surface-2);
 		padding-top: 0.5rem;
 	}
 
@@ -503,13 +503,13 @@
 	.type-tabs { display: flex; gap: 0.4rem; }
 	.type-tab {
 		padding: 0.3rem 0.7rem;
-		border: 1.5px solid #c8c1b4;
+		border: 1.5px solid var(--border);
 		border-radius: 6px;
 		background: none;
 		font-family: inherit;
 		font-size: 0.8rem;
 		font-weight: 500;
-		color: #a09688;
+		color: var(--muted-fg);
 		cursor: pointer;
 		transition: all 0.15s;
 	}
@@ -520,12 +520,12 @@
 
 	/* ── Instructor submissions ── */
 	.submissions-section {
-		border-top: 1px solid #f0ece4;
+		border-top: 1px solid var(--surface-2);
 		padding-top: 0.6rem;
 	}
 	.submissions-header {
 		font-size: 0.78rem;
-		color: #a09688;
+		color: var(--muted-fg);
 		font-weight: 600;
 		margin: 0 0 0.4rem;
 		text-transform: uppercase;
@@ -548,14 +548,14 @@
 	.sub-student { font-weight: 500; flex: 1; }
 	.sub-type {
 		font-size: 0.75rem;
-		color: #a09688;
-		background: #f5f0e8;
+		color: var(--muted-fg);
+		background: var(--surface-2);
 		padding: 0.1rem 0.45rem;
 		border-radius: 99px;
 	}
 	.sub-link { color: var(--ink); font-size: 0.82rem; }
 
-	.empty { color: #a09688; font-size: 0.9rem; }
+	.empty { color: var(--muted-fg); font-size: 0.9rem; }
 
 	@media (max-width: 640px) {
 		header {

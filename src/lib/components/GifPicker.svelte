@@ -88,23 +88,23 @@
 <style>
 	.gif-picker {
 		width: 340px; height: 420px;
-		background: var(--paper, #f7f2ea); color: var(--ink, #1a1a1a);
+		background: var(--paper, var(--paper)); color: var(--ink, var(--ink));
 		border-radius: 12px;
 		box-shadow: 0 4px 24px rgba(0,0,0,0.13), 0 1.5px 4px rgba(0,0,0,0.07);
 		display: flex; flex-direction: column; overflow: hidden;
 		font-family: 'Google Sans Flex', 'Space Grotesk', sans-serif; font-size: 0.85rem;
 	}
 	.gif-search-bar {
-		padding: 0.5rem 0.65rem; border-bottom: 1.5px solid #e8e0d2; flex-shrink: 0;
+		padding: 0.5rem 0.65rem; border-bottom: 1.5px solid var(--border); flex-shrink: 0;
 	}
 	.gif-search-input {
 		width: 100%; box-sizing: border-box; padding: 0.35rem 0.6rem;
-		border: 1.5px solid #d5cdc0; border-radius: 8px; background: #fff;
+		border: 1.5px solid var(--border); border-radius: 8px; background: var(--paper);
 		font-family: inherit; font-size: 0.82rem; color: var(--ink); outline: none;
 		transition: border-color 0.13s;
 	}
 	.gif-search-input:focus { border-color: var(--ink); }
-	.gif-search-input::placeholder { color: #b0a898; }
+	.gif-search-input::placeholder { color: var(--muted-fg); }
 
 	.gif-grid-wrap {
 		flex: 1; overflow-y: auto; padding: 0.4rem; min-height: 0;
@@ -115,7 +115,7 @@
 	}
 	.gif-item {
 		border-radius: 8px; overflow: hidden; cursor: pointer;
-		background: #eae5dc; transition: transform 0.1s;
+		background: var(--surface-2); transition: transform 0.1s;
 	}
 	.gif-item:hover { transform: scale(1.03); }
 	.gif-item img {
@@ -123,14 +123,14 @@
 	}
 
 	.gif-empty {
-		text-align: center; color: #a09688; font-size: 0.82rem; padding: 2rem 0;
+		text-align: center; color: var(--muted-fg); font-size: 0.82rem; padding: 2rem 0;
 	}
-	.gif-error { color: #c0392b; font-size: 0.75rem; }
+	.gif-error { color: var(--danger); font-size: 0.75rem; }
 	.gif-loading {
 		display: flex; justify-content: center; padding: 0.75rem 0;
 	}
 	.gif-spinner {
-		width: 16px; height: 16px; border: 2px solid #d5cdc0;
+		width: 16px; height: 16px; border: 2px solid var(--border);
 		border-top-color: var(--ink); border-radius: 50%;
 		animation: gifspin 0.7s linear infinite;
 	}
@@ -138,6 +138,6 @@
 
 	.gif-powered {
 		padding: 0.25rem 0.65rem; text-align: right;
-		font-size: 0.6rem; color: #b0a898; border-top: 1px solid #e8e0d2;
+		font-size: 0.6rem; color: var(--muted-fg); border-top: 1px solid var(--border);
 	}
 </style>

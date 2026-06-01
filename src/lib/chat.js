@@ -60,7 +60,8 @@ export function normaliseMessage(id, raw, userMap) {
 		fontSize: raw.fs ?? 1,
 		fontWeight: raw.fw ?? 400,
 		fontStretch: raw.wdth ?? 100,
-		noSplit: !!(raw.nsp)
+		noSplit: !!(raw.nsp),
+		wiggleSize: raw.ws ?? undefined
 	};
 }
 

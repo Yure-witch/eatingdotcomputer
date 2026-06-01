@@ -77,17 +77,17 @@
 <style>
 	.shell { min-height: 100vh; display: flex; flex-direction: column; background: var(--paper); }
 
-	header { display: flex; align-items: center; padding: 1rem 2rem; border-bottom: 1.5px solid #ddd7cc; }
+	header { display: flex; align-items: center; padding: 1rem 2rem; border-bottom: 1.5px solid var(--border); }
 	.wordmark { font-family: 'Avara', serif; font-size: 1.25rem; color: var(--ink); text-decoration: none; }
 	.wordmark:hover { opacity: 0.7; }
 
 	main { padding: 2rem; max-width: 480px; width: 100%; margin: 0 auto; }
 
-	.back { display: inline-block; font-size: 0.85rem; color: #a09688; text-decoration: none; margin-bottom: 1.5rem; }
+	.back { display: inline-block; font-size: 0.85rem; color: var(--muted-fg); text-decoration: none; margin-bottom: 1.5rem; }
 	.back:hover { color: var(--ink); }
 
 	.card {
-		background: #fff; border: 1.5px solid #ddd7cc; border-radius: 16px;
+		background: var(--paper); border: 1.5px solid var(--border); border-radius: 16px;
 		padding: 2rem; display: flex; flex-direction: column; gap: 1rem;
 	}
 
@@ -105,8 +105,8 @@
 	.grow { flex: 2 !important; }
 
 	input, textarea, select {
-		padding: 0.6rem 0.85rem; border: 1.5px solid #c8c1b4; border-radius: 8px;
-		font-family: inherit; font-size: 0.9rem; color: var(--ink); background: #fff;
+		padding: 0.6rem 0.85rem; border: 1.5px solid var(--border); border-radius: 8px;
+		font-family: inherit; font-size: 0.9rem; color: var(--ink); background: var(--paper);
 		outline: none; transition: border-color 0.15s; width: 100%; box-sizing: border-box;
 	}
 	input:focus, textarea:focus, select:focus { border-color: var(--ink); }
@@ -121,6 +121,6 @@
 	}
 	.btn-primary:hover { opacity: 0.8; }
 
-	.btn-ghost { padding: 0.6rem 0.75rem; background: none; border: none; font-family: inherit; font-size: 0.9rem; color: #a09688; cursor: pointer; text-decoration: none; }
+	.btn-ghost { padding: 0.6rem 0.75rem; background: none; border: none; font-family: inherit; font-size: 0.9rem; color: var(--muted-fg); cursor: pointer; text-decoration: none; }
 	.btn-ghost:hover { color: var(--ink); }
 </style>

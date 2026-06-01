@@ -41,8 +41,8 @@
 
 <style>
 	.card {
-		background: #fff;
-		border: 1.5px solid #ddd7cc;
+		background: var(--paper);
+		border: 1.5px solid var(--border);
 		border-radius: 16px;
 		padding: 2.5rem 2rem;
 		width: 100%;
@@ -52,23 +52,23 @@
 	.back {
 		display: inline-block;
 		font-size: 0.82rem;
-		color: #a09688;
+		color: var(--muted-fg);
 		text-decoration: none;
 		margin-bottom: 1rem;
 	}
-	.back:hover { color: var(--ink, #1a1a1a); }
+	.back:hover { color: var(--ink, var(--ink)); }
 
 	h1 {
 		font-family: 'Avara', serif;
 		font-size: 1.75rem;
 		font-weight: 400;
 		margin: 0 0 0.4rem;
-		color: var(--ink, #1a1a1a);
+		color: var(--ink, var(--ink));
 	}
 
 	.sub {
 		font-size: 0.9rem;
-		color: #a09688;
+		color: var(--muted-fg);
 		margin: 0 0 1.75rem;
 	}
 
@@ -91,28 +91,28 @@
 		align-items: flex-start;
 		gap: 1rem;
 		padding: 1rem 1.25rem;
-		border: 1.5px solid #ddd7cc;
+		border: 1.5px solid var(--border);
 		border-radius: 12px;
 		cursor: pointer;
 		transition: border-color 0.15s, background 0.15s;
 	}
-	.class-card:hover { border-color: #a09688; }
-	.class-card.selected { border-color: var(--ink, #1a1a1a); background: #faf7f2; }
+	.class-card:hover { border-color: var(--muted-fg); }
+	.class-card.selected { border-color: var(--ink, var(--ink)); background: var(--surface-2); }
 	.class-card input[type="radio"] { display: none; }
 
 	.class-info { flex: 1; display: flex; flex-direction: column; gap: 0.2rem; }
-	.class-name { font-size: 1rem; font-weight: 600; color: var(--ink, #1a1a1a); }
-	.class-term { font-size: 0.78rem; color: #a09688; font-weight: 500; }
-	.class-desc { font-size: 0.82rem; color: #666; margin: 0.3rem 0 0; line-height: 1.4; }
+	.class-name { font-size: 1rem; font-weight: 600; color: var(--ink, var(--ink)); }
+	.class-term { font-size: 0.78rem; color: var(--muted-fg); font-weight: 500; }
+	.class-desc { font-size: 0.82rem; color: var(--muted-fg); margin: 0.3rem 0 0; line-height: 1.4; }
 
-	.check { font-size: 1rem; color: var(--ink, #1a1a1a); flex-shrink: 0; margin-top: 0.1rem; }
+	.check { font-size: 1rem; color: var(--ink, var(--ink)); flex-shrink: 0; margin-top: 0.1rem; }
 
-	.empty { font-size: 0.9rem; color: #a09688; }
+	.empty { font-size: 0.9rem; color: var(--muted-fg); }
 
 	.btn-primary {
 		padding: 0.7rem 1.5rem;
-		background: var(--ink, #1a1a1a);
-		color: var(--paper, #f7f2ea);
+		background: var(--ink, var(--ink));
+		color: var(--paper, var(--paper));
 		border: none;
 		border-radius: 10px;
 		font-family: inherit;

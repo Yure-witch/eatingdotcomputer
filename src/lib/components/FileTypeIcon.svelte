@@ -61,7 +61,7 @@
 		if (SLIDE_EXTS.has(ext))  return { label: 'PPT',  bg: '#d24726', fg: '#fff' };
 		if (TEXT_EXTS.has(ext))   return { label: 'TXT',  bg: '#888',    fg: '#fff' };
 
-		return { label: ext ? ext.slice(0, 4).toUpperCase() : 'FILE', bg: '#a09688', fg: '#fff' };
+		return { label: ext ? ext.slice(0, 4).toUpperCase() : 'FILE', bg: 'var(--muted-fg)', fg: '#fff' };
 	}
 
 	const info = classify();

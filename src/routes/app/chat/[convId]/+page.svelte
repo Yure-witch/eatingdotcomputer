@@ -110,7 +110,7 @@
 <style>
 	.chat-header {
 		display: flex; align-items: center; gap: 0.75rem;
-		padding: 1rem 1.5rem 0.75rem; border-bottom: 1.5px solid #ddd7cc; flex-shrink: 0;
+		padding: 1rem 1.5rem 0.75rem; border-bottom: 1.5px solid var(--border); flex-shrink: 0;
 	}
 	.chat-header h1 { font-family: 'Avara', serif; font-size: 1.25rem; font-weight: 400; margin: 0; }
 	.avatar {
@@ -121,28 +121,28 @@
 		flex: 1; overflow-y: auto; padding: 1rem 1.5rem;
 		display: flex; flex-direction: column; gap: 0.15rem;
 	}
-	.empty { color: #a09688; font-size: 0.9rem; text-align: center; margin: auto; }
+	.empty { color: var(--muted-fg); font-size: 0.9rem; text-align: center; margin: auto; }
 	.message { display: flex; flex-direction: column; max-width: 75%; gap: 0.15rem; }
 	.message.mine { align-self: flex-end; align-items: flex-end; }
 	.message:not(.mine) { align-self: flex-start; align-items: flex-start; }
 	.message.first { margin-top: 0.75rem; }
 	.meta { display: flex; align-items: center; gap: 0.4rem; padding: 0 0.5rem; }
 	.name { font-size: 0.78rem; font-weight: 600; color: var(--ink); }
-	.time { font-size: 0.72rem; color: #a09688; }
+	.time { font-size: 0.72rem; color: var(--muted-fg); }
 	.bubble {
 		margin: 0; padding: 0.55rem 0.85rem; border-radius: 14px;
 		font-size: 0.9rem; line-height: 1.45; white-space: pre-wrap; word-break: break-word;
-		background: #fff; border: 1.5px solid #ddd7cc;
+		background: var(--paper); border: 1.5px solid var(--border);
 	}
 	.message.mine .bubble { background: var(--ink); color: var(--paper); border-color: var(--ink); }
 	.bubble.pending { opacity: 0.6; }
 	.input-bar {
 		display: flex; align-items: flex-end; gap: 0.5rem;
-		padding: 1rem 1.5rem; border-top: 1.5px solid #ddd7cc; flex-shrink: 0;
+		padding: 1rem 1.5rem; border-top: 1.5px solid var(--border); flex-shrink: 0;
 	}
 	textarea {
-		flex: 1; padding: 0.6rem 0.85rem; border: 1.5px solid #c8c1b4; border-radius: 10px;
-		background: #fff; font-family: inherit; font-size: 0.9rem; color: var(--ink);
+		flex: 1; padding: 0.6rem 0.85rem; border: 1.5px solid var(--border); border-radius: 10px;
+		background: var(--paper); font-family: inherit; font-size: 0.9rem; color: var(--ink);
 		outline: none; resize: none; field-sizing: content; max-height: 140px; transition: border-color 0.15s;
 	}
 	textarea:focus { border-color: var(--ink); }

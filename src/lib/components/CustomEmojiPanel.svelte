@@ -325,73 +325,73 @@
 <style>
 	.ce-panel {
 		width: 340px; height: 420px;
-		background: var(--paper, #f7f2ea); color: var(--ink, #1a1a1a);
+		background: var(--paper, var(--paper)); color: var(--ink, var(--ink));
 		border-radius: 12px;
 		box-shadow: 0 4px 24px rgba(0,0,0,0.13), 0 1.5px 4px rgba(0,0,0,0.07);
 		display: flex; flex-direction: column; overflow: hidden;
 		font-family: 'Google Sans Flex', 'Space Grotesk', sans-serif; font-size: 0.85rem;
 	}
-	.ce-tabs { display: flex; border-bottom: 1.5px solid #e8e0d2; background: #f0ebe0; flex-shrink: 0; }
-	.ce-tab { flex: 1; padding: 0.55rem 0; border: none; background: none; color: #a09688; font-family: inherit; font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: color 0.15s, background 0.15s; letter-spacing: 0.02em; }
-	.ce-tab:hover { color: var(--ink, #1a1a1a); background: #ece5d8; }
-	.ce-tab.active { color: var(--ink, #1a1a1a); background: var(--paper, #f7f2ea); border-bottom: 2px solid var(--ink, #1a1a1a); margin-bottom: -1.5px; }
+	.ce-tabs { display: flex; border-bottom: 1.5px solid var(--border); background: var(--surface-2); flex-shrink: 0; }
+	.ce-tab { flex: 1; padding: 0.55rem 0; border: none; background: none; color: var(--muted-fg); font-family: inherit; font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: color 0.15s, background 0.15s; letter-spacing: 0.02em; }
+	.ce-tab:hover { color: var(--ink, var(--ink)); background: var(--surface-2); }
+	.ce-tab.active { color: var(--ink, var(--ink)); background: var(--paper, var(--paper)); border-bottom: 2px solid var(--ink, var(--ink)); margin-bottom: -1.5px; }
 
-	.ce-upload-section { padding: 0.5rem 0.65rem 0.4rem; border-bottom: 1px solid #e8e0d2; display: flex; flex-direction: column; gap: 0.3rem; flex-shrink: 0; max-height: 55%; overflow-y: auto; }
+	.ce-upload-section { padding: 0.5rem 0.65rem 0.4rem; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 0.3rem; flex-shrink: 0; max-height: 55%; overflow-y: auto; }
 
 	.ce-mode-toggle { display: flex; gap: 0.3rem; }
-	.ce-mode-btn { flex: 1; padding: 0.22rem 0; border: 1.5px solid #d5cdc0; border-radius: 6px; background: #fff; color: #8a8078; font-family: inherit; font-size: 0.75rem; cursor: pointer; transition: all 0.13s; }
-	.ce-mode-btn.active { background: var(--ink, #1a1a1a); color: #fff; border-color: var(--ink, #1a1a1a); }
+	.ce-mode-btn { flex: 1; padding: 0.22rem 0; border: 1.5px solid var(--border); border-radius: 6px; background: var(--paper); color: #8a8078; font-family: inherit; font-size: 0.75rem; cursor: pointer; transition: all 0.13s; }
+	.ce-mode-btn.active { background: var(--ink, var(--ink)); color: #fff; border-color: var(--ink, var(--ink)); }
 
 	.ce-url-row { display: flex; align-items: center; gap: 0.35rem; }
 	.ce-url-input { flex: 1; min-width: 0; }
 	.cors-badge { font-size: 0.7rem; font-weight: 600; white-space: nowrap; padding: 0.15rem 0.4rem; border-radius: 5px; display: flex; align-items: center; gap: 0.2rem; }
-	.cors-checking { background: #f0ebe0; color: #a09688; }
+	.cors-checking { background: var(--surface-2); color: var(--muted-fg); }
 	.cors-ok { background: #e6f4ec; color: #2a7a4b; }
-	.cors-fail { background: #fdecea; color: #c0392b; }
+	.cors-fail { background: #fdecea; color: var(--danger); }
 
 	.ce-file-label { cursor: pointer; }
-	.ce-file-btn { display: inline-block; padding: 0.28rem 0.6rem; border: 1.5px solid #d5cdc0; border-radius: 7px; background: #fff; color: #5a5248; font-size: 0.78rem; cursor: pointer; transition: border-color 0.13s; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
-	.ce-file-btn:hover { border-color: var(--ink, #1a1a1a); }
+	.ce-file-btn { display: inline-block; padding: 0.28rem 0.6rem; border: 1.5px solid var(--border); border-radius: 7px; background: var(--paper); color: #5a5248; font-size: 0.78rem; cursor: pointer; transition: border-color 0.13s; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+	.ce-file-btn:hover { border-color: var(--ink, var(--ink)); }
 
-	.ce-text-input { width: 100%; box-sizing: border-box; padding: 0.28rem 0.6rem; border: 1.5px solid #d5cdc0; border-radius: 7px; background: #fff; font-family: inherit; font-size: 0.78rem; color: var(--ink, #1a1a1a); outline: none; transition: border-color 0.13s; }
-	.ce-text-input:focus { border-color: var(--ink, #1a1a1a); }
-	.ce-text-input::placeholder { color: #b0a898; }
+	.ce-text-input { width: 100%; box-sizing: border-box; padding: 0.28rem 0.6rem; border: 1.5px solid var(--border); border-radius: 7px; background: var(--paper); font-family: inherit; font-size: 0.78rem; color: var(--ink, var(--ink)); outline: none; transition: border-color 0.13s; }
+	.ce-text-input:focus { border-color: var(--ink, var(--ink)); }
+	.ce-text-input::placeholder { color: var(--muted-fg); }
 
-	.ce-upload-btn { align-self: flex-end; padding: 0.28rem 0.85rem; border: none; border-radius: 7px; background: var(--ink, #1a1a1a); color: #fff; font-family: inherit; font-size: 0.78rem; font-weight: 600; cursor: pointer; transition: opacity 0.13s; }
+	.ce-upload-btn { align-self: flex-end; padding: 0.28rem 0.85rem; border: none; border-radius: 7px; background: var(--ink, var(--ink)); color: #fff; font-family: inherit; font-size: 0.78rem; font-weight: 600; cursor: pointer; transition: opacity 0.13s; }
 	.ce-upload-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 	.ce-upload-btn:not(:disabled):hover { opacity: 0.82; }
 
-	.ce-checkbox-label { display: flex; align-items: center; gap: 0.35rem; font-size: 0.75rem; color: #6b5f54; cursor: pointer; user-select: none; }
-	.ce-checkbox-label input[type="checkbox"] { margin: 0; accent-color: var(--ink, #1a1a1a); cursor: pointer; }
+	.ce-checkbox-label { display: flex; align-items: center; gap: 0.35rem; font-size: 0.75rem; color: var(--muted-fg); cursor: pointer; user-select: none; }
+	.ce-checkbox-label input[type="checkbox"] { margin: 0; accent-color: var(--ink, var(--ink)); cursor: pointer; }
 
 	.ce-bg-picker { display: flex; flex-direction: column; gap: 0.3rem; }
-	.ce-bg-hint { font-size: 0.7rem; color: #a09688; }
-	.ce-bg-canvas { border: 1.5px solid #d5cdc0; border-radius: 6px; cursor: crosshair; max-width: 100%; align-self: flex-start; }
+	.ce-bg-hint { font-size: 0.7rem; color: var(--muted-fg); }
+	.ce-bg-canvas { border: 1.5px solid var(--border); border-radius: 6px; cursor: crosshair; max-width: 100%; align-self: flex-start; }
 	.ce-bg-swatch-row { display: flex; align-items: center; gap: 0.35rem; }
 	.ce-bg-swatch { width: 16px; height: 16px; border-radius: 3px; border: 1px solid #ccc; flex-shrink: 0; }
-	.ce-bg-swatch-label { font-size: 0.7rem; color: #6b5f54; font-family: monospace; }
-	.ce-error { font-size: 0.72rem; color: #c0392b; }
+	.ce-bg-swatch-label { font-size: 0.7rem; color: var(--muted-fg); font-family: monospace; }
+	.ce-error { font-size: 0.72rem; color: var(--danger); }
 
 	.ce-grid-wrap { flex: 1; overflow-y: auto; padding: 0.5rem 0.65rem; min-height: 0; }
 	.ce-grid-wrap::-webkit-scrollbar { width: 4px; }
-	.ce-grid-wrap::-webkit-scrollbar-thumb { background: #d5cdc0; border-radius: 2px; }
+	.ce-grid-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 
-	.ce-loading { display: flex; align-items: center; gap: 0.5rem; color: #a09688; font-size: 0.82rem; justify-content: center; padding: 1.5rem 0; }
-	.ce-spinner { width: 14px; height: 14px; border: 2px solid #d5cdc0; border-top-color: var(--ink, #1a1a1a); border-radius: 50%; animation: cespin 0.8s linear infinite; flex-shrink: 0; }
+	.ce-loading { display: flex; align-items: center; gap: 0.5rem; color: var(--muted-fg); font-size: 0.82rem; justify-content: center; padding: 1.5rem 0; }
+	.ce-spinner { width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--ink, var(--ink)); border-radius: 50%; animation: cespin 0.8s linear infinite; flex-shrink: 0; }
 	.ce-spinner-sm { width: 10px; height: 10px; border-width: 1.5px; }
 	@keyframes cespin { to { transform: rotate(360deg); } }
 
-	.ce-error-msg { color: #c0392b; font-size: 0.8rem; text-align: center; padding: 1rem 0; }
-	.ce-empty { color: #a09688; font-size: 0.8rem; text-align: center; padding: 1.5rem 0; }
+	.ce-error-msg { color: var(--danger); font-size: 0.8rem; text-align: center; padding: 1rem 0; }
+	.ce-empty { color: var(--muted-fg); font-size: 0.8rem; text-align: center; padding: 1.5rem 0; }
 
 	.ce-emoji-grid { display: flex; flex-wrap: wrap; gap: 0.35rem; }
-	.ce-emoji-item { position: relative; width: 64px; height: 64px; border-radius: 10px; border: 1.5px solid #e0d9cc; background: #fff; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: border-color 0.13s, transform 0.1s; overflow: hidden; }
-	.ce-emoji-item:hover { border-color: var(--ink, #1a1a1a); transform: scale(1.06); }
+	.ce-emoji-item { position: relative; width: 64px; height: 64px; border-radius: 10px; border: 1.5px solid #e0d9cc; background: var(--paper); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: border-color 0.13s, transform 0.1s; overflow: hidden; }
+	.ce-emoji-item:hover { border-color: var(--ink, var(--ink)); transform: scale(1.06); }
 	.ce-emoji-item img { width: 56px; height: 56px; object-fit: contain; display: block; }
 
 	.ce-reaction-grid { display: flex; flex-wrap: wrap; gap: 0.35rem; }
-	.ce-reaction-item { position: relative; border-radius: 8px; border: 1.5px solid #e0d9cc; background: #fff; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: border-color 0.13s, transform 0.1s; overflow: hidden; height: 80px; }
-	.ce-reaction-item:hover { border-color: var(--ink, #1a1a1a); transform: scale(1.04); }
+	.ce-reaction-item { position: relative; border-radius: 8px; border: 1.5px solid #e0d9cc; background: var(--paper); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: border-color 0.13s, transform 0.1s; overflow: hidden; height: 80px; }
+	.ce-reaction-item:hover { border-color: var(--ink, var(--ink)); transform: scale(1.04); }
 	.ce-reaction-item img { height: 80px; width: auto; max-width: 140px; object-fit: contain; display: block; }
 
 	.ce-delete-btn {

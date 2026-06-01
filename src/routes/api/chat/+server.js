@@ -10,7 +10,7 @@ export async function POST({ request, locals }) {
 	const session = await locals.auth();
 	await requireClassAccess(session);
 
-	const { content, channelId, to, reply_to, attachment, effect, fontSize, fontWeight, fontStretch, noSplit } = await request.json();
+	const { content, channelId, to, reply_to, attachment, effect, fontSize, fontWeight, fontStretch, noSplit, wiggleSize } = await request.json();
 	if (!content?.trim() && !attachment?.url) error(400, 'Empty message');
 	if (content && content.length > 20000) error(400, 'Message too long (max 20,000 characters)');
 
@@ -27,6 +27,7 @@ export async function POST({ request, locals }) {
 	if (fontWeight && Math.abs(fontWeight - 400) > 1) msg.fw = parseInt(fontWeight);
 	if (fontStretch && Math.abs(fontStretch - 100) > 0.5) msg.wdth = parseInt(fontStretch);
 	if (noSplit) msg.nsp = 1;
+	if (wiggleSize && Math.abs(wiggleSize - 6) > 0.5) msg.ws = parseInt(wiggleSize);
 	if (reply_to?.id) {
 		msg.rt = { id: reply_to.id, u: reply_to.userId, c: String(reply_to.content ?? '').slice(0, 100) };
 	}

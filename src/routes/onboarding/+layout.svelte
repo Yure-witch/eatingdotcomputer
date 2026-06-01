@@ -51,18 +51,18 @@
 		min-height: 100vh;
 		display: flex;
 		flex-direction: column;
-		background: var(--paper, #f7f2ea);
+		background: var(--paper, var(--paper));
 	}
 
 	header {
 		padding: 1.25rem 2rem;
-		border-bottom: 1.5px solid #ddd7cc;
+		border-bottom: 1.5px solid var(--border);
 	}
 
 	.wordmark {
 		font-family: 'Avara', serif;
 		font-size: 1.2rem;
-		color: var(--ink, #1a1a1a);
+		color: var(--ink, var(--ink));
 	}
 
 	/* ── Stepper ── */
@@ -86,27 +86,27 @@
 		width: 28px;
 		height: 28px;
 		border-radius: 50%;
-		border: 2px solid #ddd7cc;
-		background: #fff;
+		border: 2px solid var(--border);
+		background: var(--paper);
 		display: flex;
 		align-items: center;
 		justify-content: center;
 		font-size: 0.72rem;
 		font-weight: 700;
-		color: #a09688;
+		color: var(--muted-fg);
 		transition: background 0.2s, border-color 0.2s, color 0.2s;
 		flex-shrink: 0;
 	}
 
 	.step.done .step-dot {
-		background: var(--ink, #1a1a1a);
-		border-color: var(--ink, #1a1a1a);
-		color: var(--paper, #f7f2ea);
+		background: var(--ink, var(--ink));
+		border-color: var(--ink, var(--ink));
+		color: var(--paper, var(--paper));
 	}
 
 	.step.active .step-dot {
-		border-color: var(--ink, #1a1a1a);
-		color: var(--ink, #1a1a1a);
+		border-color: var(--ink, var(--ink));
+		color: var(--ink, var(--ink));
 		font-weight: 700;
 	}
 
@@ -115,23 +115,23 @@
 	.step-label {
 		font-size: 0.72rem;
 		font-weight: 500;
-		color: #a09688;
+		color: var(--muted-fg);
 		white-space: nowrap;
 		transition: color 0.2s;
 	}
 
-	.step.active .step-label { color: var(--ink, #1a1a1a); font-weight: 600; }
-	.step.done .step-label { color: #a09688; }
+	.step.active .step-label { color: var(--ink, var(--ink)); font-weight: 600; }
+	.step.done .step-label { color: var(--muted-fg); }
 
 	.step-line {
 		flex: 1;
 		max-width: 80px;
 		height: 2px;
-		background: #ddd7cc;
+		background: var(--border);
 		margin-bottom: 1.4rem; /* align with dots, not labels */
 		transition: background 0.2s;
 	}
-	.step-line.filled { background: var(--ink, #1a1a1a); }
+	.step-line.filled { background: var(--ink, var(--ink)); }
 
 	main {
 		flex: 1;

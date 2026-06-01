@@ -382,7 +382,65 @@ export async function load({ locals, parent }) {
 	// Non-blocking: send reminders to inactive students for assignments posted 3+ days ago
 	notifyInactiveStudents().catch(() => {});
 
-	return { weeks, maxWeek, members, activityByUser, userDeviceActivity, deviceNotifData, pendingRequests, classId };
+	// ── DM conversations for moderation ──
+	// Read all userChats from Firebase RTDB to discover DM conversations
+	const userChatsSnap = await getAdminDb().ref('userChats').get();
+	const dmConvMap = {}; // convId → { convId, participantIds, lastMessage, lastAt }
+
+	if (userChatsSnap.exists()) {
+		for (const [uid, convs] of Object.entries(userChatsSnap.val())) {
+			if (!convs || typeof convs !== 'object') continue;
+			for (const [convId, meta] of Object.entries(convs)) {
+				if (!meta || typeof meta !== 'object') continue;
+				if (!dmConvMap[convId]) {
+					dmConvMap[convId] = {
+						convId,
+						participantIds: new Set(),
+						lastMessage: meta.lastMessage ?? '',
+						lastAt: meta.lastAt ?? 0
+					};
+				}
+				dmConvMap[convId].participantIds.add(uid);
+				if (meta.otherUserId) dmConvMap[convId].participantIds.add(meta.otherUserId);
+				// Keep the most recent lastAt / lastMessage
+				if ((meta.lastAt ?? 0) > dmConvMap[convId].lastAt) {
+					dmConvMap[convId].lastAt = meta.lastAt;
+					dmConvMap[convId].lastMessage = meta.lastMessage ?? '';
+				}
+			}
+		}
+	}
+
+	// Build a name lookup from members
+	const memberNameMap = {};
+	for (const m of members) memberNameMap[m.id] = m.name;
+
+	// Get archived message counts per DM conversation from Turso
+	const dmMsgCountRows = db ? await db.execute({
+		sql: `SELECT conversation_id, COUNT(*) as msg_count FROM chat_messages
+		      WHERE conversation_id NOT IN (SELECT id FROM conversations WHERE type = 'channel')
+		      GROUP BY conversation_id`
+	}) : { rows: [] };
+	const dmMsgCounts = {};
+	for (const r of dmMsgCountRows.rows) {
+		dmMsgCounts[String(r.conversation_id)] = Number(r.msg_count);
+	}
+
+	// Assemble and sort
+	const dmConversations = Object.values(dmConvMap)
+		.map((d) => {
+			const ids = [...d.participantIds];
+			return {
+				convId: d.convId,
+				participants: ids.map((id) => ({ id, name: memberNameMap[id] || id })),
+				lastMessage: d.lastMessage,
+				lastAt: d.lastAt,
+				msgCount: dmMsgCounts[d.convId] ?? 0
+			};
+		})
+		.sort((a, b) => (b.lastAt || 0) - (a.lastAt || 0));
+
+	return { weeks, maxWeek, members, activityByUser, userDeviceActivity, deviceNotifData, pendingRequests, classId, dmConversations };
 }
 
 const ALL_TYPES = ['link', 'image', 'video'];

@@ -9,10 +9,11 @@ Items roughly ordered by priority. See `NORTH_STAR.md` for the big picture.
 - [ ] **Giphy GIF search** — GIF picker with Giphy API (built — needs testing)
 - [ ] **Animated Word Art** — decorative animated text styling formatted as text with CSS animations
 - [ ] **Gamification & Achievements** — achievement system with unlockable badges, animated celebrations, progress tracking
-- [ ] **Homepage assignments redesign** — better visual design, status indicators, submission flow
+- [ ] **Homepage week checklist** — finish the week plan checklist system (branch: gome-page-week-checklist); migration, CRUD, student/instructor views
 - [x] **Lab tab** — new top-level nav (was "Playground"), route at `/app/playground`, flask icon, placeholder page built
 - [ ] **Lab: GitHub-backed projects** — paste a public GitHub repo URL, app fetches files via GitHub API, caches in R2, serves `index.html` at `/lab/[projectId]`; manual "Sync" button + periodic polling for new commits (check latest SHA via Commits API); webhook support as upgrade; class gallery of all published projects; fork/remix
 - [ ] **Chat box skins & color schemes** — customizable chat bubble themes per user
+- [ ] **Emoji reactions to assignments** — let students react to assignment items with emoji
 
 ---
 
@@ -33,9 +34,13 @@ Items roughly ordered by priority. See `NORTH_STAR.md` for the big picture.
 ---
 
 ## Expression & Styling
+- [ ] **Fix shake animation** — shake effect should go side to side (currently wrong axis/direction)
+- [ ] **Lockable font variation defaults** — allow setting font weight and width as defaults for all future messages (persisted per user); size is excluded (always resets to 1.0 between messages); include a reset-to-default option
 - [ ] **Expression picker** — whimsical moments (emoji/EK/custom emotes/GIFs partially done)
 - [ ] **Word Art** — arched, shadowed, outlined, gradient text effects
 - [ ] **Emoji Kitchen popularity** — scrape emoji.mx/funbox, surface popular mixes first
+- [ ] **Fix scalloped edge corners** — corner peaks have two bezier points where there should be one; needs a single properly-tuned control point connecting to the edges
+- [ ] **Fancy text / Unicode fonts** — integrate Unicode math-symbol serif/script/bold/etc. character mappings into text formatting (the decorative fonts made from mathematical alphanumeric symbols)
 
 ---
 

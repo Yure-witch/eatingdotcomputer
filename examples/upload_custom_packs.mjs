@@ -36,6 +36,7 @@ async function pool(items, n, fn) {
 }
 
 const ROOT = 'telegram_custom_packs';
+const MANIFEST_ONLY = process.argv.includes('--manifest-only');
 const packs = readdirSync(ROOT).filter((d) => existsSync(`${ROOT}/${d}/manifest.json`));
 
 const manifestPacks = [];
@@ -44,19 +45,26 @@ let totalUploaded = 0;
 for (const dir of packs) {
 	const pm = JSON.parse(readFileSync(`${ROOT}/${dir}/manifest.json`, 'utf8'));
 	const items = pm.emoji;
-	console.log(`▶ ${pm.title}  (${pm.short_name})  ${items.length} items`);
-	await pool(items, 16, async (it) => {
-		// We need the unpacked .json (Lottie) — present for x-tgsticker docs.
-		const jsonPath = `${ROOT}/${dir}/${it.doc_id}.json`;
-		if (!existsSync(jsonPath)) return;
-		const buf = gzipSync(readFileSync(jsonPath));
-		await put(`${PREFIX}/${pm.short_name}/${it.doc_id}.json`, buf, 'application/json', true);
-		totalUploaded++;
-	});
+	console.log(`▶ ${pm.title}  (${pm.short_name})  ${items.length} items${MANIFEST_ONLY ? ' (manifest-only)' : ''}`);
+	if (!MANIFEST_ONLY) {
+		await pool(items, 16, async (it) => {
+			// We need the unpacked .json (Lottie) — present for x-tgsticker docs.
+			const jsonPath = `${ROOT}/${dir}/${it.doc_id}.json`;
+			if (!existsSync(jsonPath)) return;
+			const buf = gzipSync(readFileSync(jsonPath));
+			await put(`${PREFIX}/${pm.short_name}/${it.doc_id}.json`, buf, 'application/json', true);
+			totalUploaded++;
+		});
+	}
 	manifestPacks.push({
 		title: pm.title,
 		short_name: pm.short_name,
 		count: items.length,
+		// `text_color: true` marks a Telegram "adaptive" pack — emoji
+		// are shipped as white silhouettes and meant to inherit the
+		// surrounding text color. Runtime loaders swap the white fill
+		// for the current --ink before handing the JSON to the renderer.
+		text_color: !!pm.text_color,
 		// Slim emoji entries: doc_id + the Unicode emoji this custom one stands in for
 		emoji: items.map((it) => ({ id: it.doc_id, alt: it.alt }))
 	});

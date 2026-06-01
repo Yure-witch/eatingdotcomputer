@@ -72,12 +72,12 @@
 		justify-content: center;
 		flex-direction: column;
 		gap: 1rem;
-		color: #a09688;
+		color: var(--muted-fg);
 		font-size: 0.9rem;
 		text-align: center;
 		padding: 2rem;
 	}
-	.chat-loading.error { color: #c0392b; }
+	.chat-loading.error { color: var(--danger); }
 
 	.error-actions { display: flex; gap: 0.6rem; align-items: center; }
 	.error-actions button, .error-actions a {
@@ -85,6 +85,6 @@
 		font-family: inherit; font-size: 0.85rem; cursor: pointer; text-decoration: none;
 	}
 	.error-actions button { background: #c0392b; color: #fff; border: none; }
-	.error-actions a { background: transparent; color: #c0392b; border: 1.5px solid #c0392b; }
+	.error-actions a { background: transparent; color: var(--danger); border: 1.5px solid #c0392b; }
 	.error-actions button:hover, .error-actions a:hover { opacity: 0.8; }
 </style>

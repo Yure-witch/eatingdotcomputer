@@ -2,6 +2,7 @@
 	import { enhance } from '$app/forms';
 	import AppHeader from '$lib/components/AppHeader.svelte';
 	import SyllabusBuilder from '$lib/components/SyllabusBuilder.svelte';
+	import { createContentRenderer, bubbleFontSize, jumboEmojiCountM, stripMarkup } from '$lib/message-render.js';
 	import { onMount, onDestroy, getContext } from 'svelte';
 	import { invalidateAll } from '$app/navigation';
 	import { auth, db as rtdb } from '$lib/firebase.js';
@@ -222,6 +223,94 @@
 		setTimeout(() => (testNotifStatus = null), 4000);
 	}
 
+	// ── Moderation state ──
+	let viewingDmConvId = $state(null);
+	let dmMessages = $state([]);
+	let dmLoading = $state(false);
+	let dmHasMore = $state(false);
+	let dmLoadingMore = $state(false);
+	let dmListEl = $state(null);
+
+	async function viewDmConversation(convId) {
+		if (viewingDmConvId === convId) { closeDmView(); return; }
+		viewingDmConvId = convId;
+		dmLoading = true;
+		dmMessages = [];
+		dmHasMore = false;
+		try {
+			const res = await fetch(`/api/moderation/dm?convId=${encodeURIComponent(convId)}`);
+			if (res.ok) {
+				const d = await res.json();
+				dmMessages = d.messages;
+				dmHasMore = d.hasMore;
+				requestAnimationFrame(() => {
+					if (dmListEl) dmListEl.scrollTop = dmListEl.scrollHeight;
+				});
+			}
+		} catch { /* ignore */ }
+		dmLoading = false;
+	}
+
+	async function loadMoreDm() {
+		if (dmLoadingMore || !dmHasMore || !dmMessages.length || !viewingDmConvId) return;
+		dmLoadingMore = true;
+		const oldest = dmMessages[0];
+		const before = new Date(oldest.createdAt).toISOString();
+		try {
+			const res = await fetch(`/api/moderation/dm?convId=${encodeURIComponent(viewingDmConvId)}&before=${encodeURIComponent(before)}&limit=50`);
+			if (res.ok) {
+				const d = await res.json();
+				dmHasMore = d.hasMore;
+				if (d.messages.length) {
+					const prevHeight = dmListEl?.scrollHeight ?? 0;
+					const existingIds = new Set(dmMessages.map(m => m.id));
+					const newMsgs = d.messages.filter(m => !existingIds.has(m.id));
+					dmMessages = [...newMsgs, ...dmMessages];
+					requestAnimationFrame(() => {
+						if (dmListEl) dmListEl.scrollTop += dmListEl.scrollHeight - prevHeight;
+					});
+				}
+			}
+		} catch { /* ignore */ }
+		dmLoadingMore = false;
+	}
+
+	function onDmScroll() {
+		if (dmListEl && dmListEl.scrollTop < 80 && dmHasMore && !dmLoadingMore) loadMoreDm();
+	}
+
+	function closeDmView() {
+		viewingDmConvId = null;
+		dmMessages = [];
+		dmHasMore = false;
+	}
+
+	function formatRelativeTime(ts) {
+		if (!ts) return 'never';
+		const diff = Date.now() - ts;
+		if (diff < 60_000) return 'just now';
+		if (diff < 3600_000) return `${Math.floor(diff / 60_000)}m ago`;
+		if (diff < 86400_000) return `${Math.floor(diff / 3600_000)}h ago`;
+		const days = Math.floor(diff / 86400_000);
+		if (days < 30) return `${days}d ago`;
+		return new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+	}
+
+	function formatMessageTime(ts) {
+		if (!ts) return '';
+		const d = new Date(typeof ts === 'number' ? ts : ts);
+		return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
+	}
+
+	const { contentHtml: renderModContent } = createContentRenderer();
+
+	function formatSize(bytes) {
+		if (!bytes) return '0B';
+		if (bytes < 1024) return `${bytes}B`;
+		if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)}KB`;
+		return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+	}
+
 	const TYPE_LABELS = { link: 'Link', image: 'Image', video: 'Video' };
 	const ALL_TYPES = ['link', 'image', 'video'];
 
@@ -337,6 +426,7 @@
 				{#if data.pendingRequests.length > 0}<span class="tab-badge">{data.pendingRequests.length}</span>{/if}
 			</button>
 			<button class="manage-tab" class:active={activeTab === 'activity'} onclick={() => activeTab = 'activity'}>Activity</button>
+			<button class="manage-tab" class:active={activeTab === 'moderation'} onclick={() => activeTab = 'moderation'}>Moderation</button>
 		</nav>
 
 		{#if activeTab === 'syllabus'}
@@ -577,14 +667,14 @@
 					onmouseleave={handleChartMouseLeave}>
 					<!-- Swim lane backgrounds and name labels -->
 					{#each activityChart.rows as row, i}
-						<rect x={0} y={row.rowY} width={W} height={ROW_H} fill={i % 2 === 0 ? '#faf7f2' : '#f5f1eb'} />
+						<rect x={0} y={row.rowY} width={W} height={ROW_H} fill={i % 2 === 0 ? 'var(--surface-2)' : '#f5f1eb'} />
 						{#if i > 0}
-							<line x1={0} y1={row.rowY} x2={W} y2={row.rowY} stroke="#e8e2d9" stroke-width="0.5" />
+							<line x1={0} y1={row.rowY} x2={W} y2={row.rowY} stroke="var(--border)" stroke-width="0.5" />
 						{/if}
-						<text x={LABEL_W - 6} y={row.labelY} text-anchor="end" font-size="8" fill="#a09688">{row.name.split(' ')[0]}</text>
+						<text x={LABEL_W - 6} y={row.labelY} text-anchor="end" font-size="8" fill="var(--muted-fg)">{row.name.split(' ')[0]}</text>
 					{/each}
 					<!-- Label column separator -->
-					<line x1={LABEL_W} y1={0} x2={LABEL_W} y2={activityChart.svgH} stroke="#ddd7cc" stroke-width="0.75" />
+					<line x1={LABEL_W} y1={0} x2={LABEL_W} y2={activityChart.svgH} stroke="var(--border)" stroke-width="0.75" />
 					<!-- Data lines (each user in their own lane) -->
 					{#each activityChart.rows as row}
 						{#if row.points}
@@ -652,7 +742,7 @@
 				onmouseleave={() => barHoverIdx = null}>
 				<svg viewBox="0 0 {SVG_W} {SVG_H}" class="device-chart-svg" style="min-width: {Math.max(260, SVG_W)}px">
 					<!-- baseline -->
-					<line x1="0" y1={CHART_H} x2={SVG_W} y2={CHART_H} stroke="#ddd7cc" stroke-width="1"/>
+					<line x1="0" y1={CHART_H} x2={SVG_W} y2={CHART_H} stroke="var(--border)" stroke-width="1"/>
 					{#each userBars.users as u, i}
 						{@const gx = 12 + i * (groupW + GROUP_GAP)}
 						{@const bars = [
@@ -836,6 +926,105 @@
 		</div>
 	</section>
 		{/if}
+
+		{#if activeTab === 'moderation'}
+	<section class="members-section">
+		<h2>DM Conversations <span class="member-count">({data.dmConversations.length})</span></h2>
+		{#if data.dmConversations.length === 0}
+			<p class="chart-empty">No DM conversations found.</p>
+		{:else}
+			<div class="dm-list">
+				{#each data.dmConversations as conv}
+					<div class="dm-card" class:dm-card-active={viewingDmConvId === conv.convId}>
+						<div class="dm-card-info">
+							<div class="dm-participants">
+								{conv.participants.map(p => p.name).join(' ↔ ')}
+							</div>
+							<div class="dm-preview">{conv.lastMessage ? (conv.lastMessage.length > 80 ? conv.lastMessage.slice(0, 80) + '…' : conv.lastMessage) : 'No messages'}</div>
+							<div class="dm-meta">
+								<span class="dm-time">{formatRelativeTime(conv.lastAt)}</span>
+								<span class="dm-count">{conv.msgCount} archived msg{conv.msgCount === 1 ? '' : 's'}</span>
+							</div>
+						</div>
+						<button class="btn-edit" onclick={() => viewDmConversation(conv.convId)}>
+							{viewingDmConvId === conv.convId ? 'Close' : 'View'}
+						</button>
+					</div>
+
+					{#if viewingDmConvId === conv.convId}
+						<div class="dm-chat-panel">
+							{#if dmLoading}
+								<div class="dm-chat-loading"><span class="sending-spinner"></span></div>
+							{:else if dmMessages.length === 0}
+								<p class="dm-chat-empty">No archived messages for this conversation.</p>
+							{:else}
+								<!-- svelte-ignore a11y_no_static_element_interactions -->
+								<div class="dm-chat-scroll" bind:this={dmListEl} onscroll={onDmScroll}>
+									{#if dmLoadingMore}
+										<div class="dm-load-more"><span class="sending-spinner"></span></div>
+									{/if}
+									{#if dmHasMore && !dmLoadingMore}
+										<button class="dm-load-more-btn" onclick={loadMoreDm}>Load older messages</button>
+									{/if}
+									{#each dmMessages as msg, i (msg.id)}
+										{@const prev = dmMessages[i - 1]}
+										{@const isFirst = !prev || prev.userId !== msg.userId || msg.createdAt - prev.createdAt > 300000}
+										{@const participantA = conv.participants[0]?.id}
+										{@const isRight = msg.userId === participantA}
+										<div class="dm-msg-row" class:dm-right={isRight} class:dm-first={isFirst}>
+											{#if isFirst}
+												<div class="dm-msg-meta">
+													<span class="dm-msg-name">{msg.userName}</span>
+													<span class="dm-msg-time">{formatMessageTime(msg.createdAt)}</span>
+												</div>
+											{/if}
+											<div class="dm-bubble-row">
+												{#if msg.attachment}
+													{#if msg.attachment.mimetype?.startsWith('image/')}
+														<a href={msg.attachment.url} target="_blank" rel="noopener noreferrer" class="dm-bubble dm-bubble-img">
+															<img src={msg.attachment.url} alt={msg.attachment.filename} />
+														</a>
+													{:else if msg.attachment.mimetype?.startsWith('video/')}
+														<div class="dm-bubble dm-bubble-video">
+															<!-- svelte-ignore a11y_media_has_caption -->
+															<video src={msg.attachment.url} controls preload="metadata"></video>
+														</div>
+													{:else}
+														<div class="dm-bubble dm-bubble-file" class:dm-right-bubble={isRight}>
+															<a href={msg.attachment.url} target="_blank" rel="noopener noreferrer" class="dm-file-link">
+																{msg.attachment.filename || 'File'} <span class="dm-file-size">({formatSize(msg.attachment.size)})</span>
+															</a>
+														</div>
+													{/if}
+												{/if}
+												{#if msg.content?.trim()}
+													<p class="dm-bubble"
+														class:dm-right-bubble={isRight}
+														class:fx-shake={msg.fx === 'shake'}
+														class:fx-bounce={msg.fx === 'bounce'}
+														class:fx-wave={msg.fx === 'wave'}
+														class:fx-jitter={msg.fx === 'jitter'}
+														class:fx-big={msg.fx === 'big'}
+														class:fx-small={msg.fx === 'small'}
+														class:fx-rainbow={msg.fx === 'rainbow'}
+														class:fx-hearts={msg.fx === 'hearts'}
+														style:font-size={bubbleFontSize(msg.content, msg.fontSize)}
+														style:font-weight={msg.fontWeight && msg.fontWeight !== 400 ? msg.fontWeight : null}
+														style:font-stretch={msg.fontStretch && msg.fontStretch !== 100 ? `${msg.fontStretch}%` : null}
+													>{@html renderModContent(msg.content)}{#if msg.edited}<span class="dm-edited-tag"> (edited)</span>{/if}</p>
+												{/if}
+											</div>
+										</div>
+									{/each}
+								</div>
+							{/if}
+						</div>
+					{/if}
+				{/each}
+			</div>
+		{/if}
+	</section>
+		{/if}
 	</main>
 </div>
 
@@ -861,12 +1050,12 @@
 	/* ── Tabs ── */
 	.manage-tabs {
 		display: flex; gap: 0; margin-bottom: 1.5rem;
-		border-bottom: 1.5px solid #e8e2d9;
+		border-bottom: 1.5px solid var(--border);
 	}
 	.manage-tab {
 		font-family: inherit; font-size: 0.88rem; font-weight: 500;
 		padding: 0.5rem 1.1rem; border: none; background: none; cursor: pointer;
-		color: #a09688; border-bottom: 2px solid transparent; margin-bottom: -1.5px;
+		color: var(--muted-fg); border-bottom: 2px solid transparent; margin-bottom: -1.5px;
 		transition: color 0.15s, border-color 0.15s;
 		display: flex; align-items: center; gap: 0.4rem;
 	}
@@ -904,15 +1093,15 @@
 
 	.subtitle {
 		font-size: 0.82rem;
-		color: #a09688;
+		color: var(--muted-fg);
 		margin: 0;
 	}
 	.subtitle a { color: inherit; }
 
 	/* ── Forms ── */
 	.create-card, .inline-form-card {
-		background: #fff;
-		border: 1.5px solid #ddd7cc;
+		background: var(--paper);
+		border: 1.5px solid var(--border);
 		border-radius: 12px;
 		padding: 1.25rem 1.5rem;
 		margin-bottom: 2rem;
@@ -924,7 +1113,7 @@
 	}
 	.inline-form-card {
 		margin-bottom: 0.5rem;
-		border-color: #c8c1b4;
+		border-color: var(--border);
 	}
 
 	form { display: flex; flex-direction: column; gap: 0.6rem; }
@@ -941,7 +1130,7 @@
 	}
 
 	fieldset {
-		border: 1.5px solid #c8c1b4;
+		border: 1.5px solid var(--border);
 		border-radius: 8px;
 		padding: 0.5rem 0.75rem;
 		margin: 0;
@@ -963,9 +1152,9 @@
 	input[type="date"],
 	textarea {
 		padding: 0.5rem 0.7rem;
-		border: 1.5px solid #c8c1b4;
+		border: 1.5px solid var(--border);
 		border-radius: 8px;
-		background: #fff;
+		background: var(--paper);
 		font-family: inherit;
 		font-size: 0.875rem;
 		color: var(--ink);
@@ -1005,7 +1194,7 @@
 		border: none;
 		font-family: inherit;
 		font-size: 0.82rem;
-		color: #a09688;
+		color: var(--muted-fg);
 		cursor: pointer;
 	}
 	.btn-ghost:hover { color: var(--ink); }
@@ -1013,12 +1202,12 @@
 	.btn-add-inline {
 		padding: 0.25rem 0.65rem;
 		background: none;
-		border: 1.5px solid #c8c1b4;
+		border: 1.5px solid var(--border);
 		border-radius: 6px;
 		font-family: inherit;
 		font-size: 0.78rem;
 		font-weight: 500;
-		color: #a09688;
+		color: var(--muted-fg);
 		cursor: pointer;
 		transition: all 0.15s;
 	}
@@ -1030,7 +1219,7 @@
 		font-weight: 500;
 		color: var(--ink);
 		background: none;
-		border: 1.5px solid #c8c1b4;
+		border: 1.5px solid var(--border);
 		border-radius: 6px;
 		padding: 0.2rem 0.55rem;
 		cursor: pointer;
@@ -1042,7 +1231,7 @@
 		font-family: inherit;
 		font-size: 0.8rem;
 		font-weight: 500;
-		color: #c0392b;
+		color: var(--danger);
 		background: none;
 		border: 1.5px solid transparent;
 		border-radius: 6px;
@@ -1050,16 +1239,16 @@
 		cursor: pointer;
 		transition: border-color 0.15s;
 	}
-	.btn-delete:hover { border-color: #c0392b; }
+	.btn-delete:hover { border-color: var(--danger); }
 
-	.req { color: #c0392b; }
+	.req { color: var(--danger); }
 
 	.error {
 		padding: 0.5rem 0.75rem;
 		background: #fff0f0;
 		border: 1.5px solid #f5c6cb;
 		border-radius: 8px;
-		color: #c0392b;
+		color: var(--danger);
 		font-size: 0.85rem;
 		margin: 0;
 	}
@@ -1080,19 +1269,19 @@
 		font-weight: 700;
 		text-transform: uppercase;
 		letter-spacing: 0.09em;
-		color: #a09688;
+		color: var(--muted-fg);
 		margin: 0;
 	}
 
 	.assignment-table {
-		border: 1.5px solid #ddd7cc;
+		border: 1.5px solid var(--border);
 		border-radius: 10px;
 		overflow: hidden;
-		background: #fff;
+		background: var(--paper);
 	}
 
 	.row {
-		border-bottom: 1px solid #f0ece4;
+		border-bottom: 1px solid var(--surface-2);
 	}
 	.row:last-child { border-bottom: none; }
 
@@ -1123,19 +1312,19 @@
 
 	.row-due {
 		font-size: 0.8rem;
-		color: #555;
+		color: var(--muted-fg);
 		white-space: nowrap;
 	}
 
 	.row-types {
 		font-size: 0.75rem;
-		color: #a09688;
+		color: var(--muted-fg);
 		white-space: nowrap;
 	}
 
 	.row-subs {
 		font-size: 0.75rem;
-		color: #a09688;
+		color: var(--muted-fg);
 		white-space: nowrap;
 		min-width: 50px;
 		text-align: right;
@@ -1153,7 +1342,7 @@
 
 	.edit-form { padding: 1rem; }
 
-	.empty { color: #a09688; font-size: 0.9rem; }
+	.empty { color: var(--muted-fg); font-size: 0.9rem; }
 
 	.activity-chart { margin-top: 0.75rem; position: relative; }
 	.chart-svg { width: 100%; display: block; border-radius: 6px; cursor: crosshair; }
@@ -1161,26 +1350,26 @@
 	.chart-tooltip {
 		position: absolute;
 		top: 0; transform: translateX(-50%);
-		background: #1a1a1a; color: #f7f2ea;
+		background: var(--ink); color: var(--paper);
 		border-radius: 7px; padding: 0.45rem 0.65rem;
 		font-size: 0.72rem; pointer-events: none;
 		white-space: nowrap; z-index: 10;
 		box-shadow: 0 2px 12px rgba(0,0,0,0.25);
 	}
-	.tooltip-date { font-weight: 600; margin-bottom: 0.25rem; color: #c8c1b4; }
+	.tooltip-date { font-weight: 600; margin-bottom: 0.25rem; color: var(--border); }
 	.tooltip-row { display: flex; align-items: center; gap: 0.35rem; }
 	.tooltip-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
 	.tooltip-count { margin-left: auto; padding-left: 0.75rem; opacity: 0.7; }
 	.chart-legend {
 		display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; margin-top: 0.6rem;
 	}
-	.legend-item { display: flex; align-items: center; gap: 0.35rem; font-size: 0.75rem; color: #a09688; }
+	.legend-item { display: flex; align-items: center; gap: 0.35rem; font-size: 0.75rem; color: var(--muted-fg); }
 	.legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-	.legend-count { font-size: 0.68rem; color: #c8c1b4; }
-	.chart-empty { font-size: 0.85rem; color: #a09688; margin: 0.5rem 0 0; }
+	.legend-count { font-size: 0.68rem; color: var(--border); }
+	.chart-empty { font-size: 0.85rem; color: var(--muted-fg); margin: 0.5rem 0 0; }
 	.chart-labels {
 		position: absolute; bottom: 0; left: 0; right: 0;
-		font-size: 0.65rem; color: #a09688;
+		font-size: 0.65rem; color: var(--muted-fg);
 	}
 	.chart-labels span { position: absolute; transform: translateX(-50%); }
 
@@ -1188,7 +1377,7 @@
 	.bar-tooltip {
 		position: absolute;
 		top: 0; transform: translateX(-50%);
-		background: #1a1a1a; color: #f7f2ea;
+		background: var(--ink); color: var(--paper);
 		border-radius: 7px; padding: 0.45rem 0.65rem;
 		font-size: 0.72rem; pointer-events: none;
 		white-space: nowrap; z-index: 10;
@@ -1197,7 +1386,7 @@
 	.device-chart-svg { display: block; height: 152px; }
 	.ud-legend {
 		display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 1rem;
-		margin-top: 0.6rem; font-size: 0.72rem; color: #a09688;
+		margin-top: 0.6rem; font-size: 0.72rem; color: var(--muted-fg);
 	}
 	.ud-swatch {
 		display: inline-block; width: 10px; height: 10px;
@@ -1212,7 +1401,7 @@
 	.last-online-dot { width: 8px; height: 8px; border-radius: 50%; background: #ccc; flex-shrink: 0; }
 	.last-online-dot.online { background: #27ae60; }
 	.last-online-name { font-weight: 500; color: var(--ink); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-	.last-online-time { margin-left: auto; color: #a09688; font-size: 0.78rem; white-space: nowrap; }
+	.last-online-time { margin-left: auto; color: var(--muted-fg); font-size: 0.78rem; white-space: nowrap; }
 
 	.chart-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 0.75rem; flex-wrap: wrap; }
 
@@ -1220,33 +1409,33 @@
 	.range-tab {
 		padding: 0.2rem 0.6rem;
 		background: none;
-		border: 1.5px solid #ddd7cc;
+		border: 1.5px solid var(--border);
 		border-radius: 6px;
 		font-family: inherit;
 		font-size: 0.75rem;
 		font-weight: 500;
-		color: #a09688;
+		color: var(--muted-fg);
 		cursor: pointer;
 		transition: all 0.12s;
 	}
-	.range-tab:hover { border-color: #a09688; color: var(--ink); }
-	.range-tab.active { border-color: var(--ink); color: var(--ink); background: #fff; }
-	.member-count { font-family: inherit; font-size: 0.9rem; color: #a09688; }
+	.range-tab:hover { border-color: var(--muted-fg); color: var(--ink); }
+	.range-tab.active { border-color: var(--ink); color: var(--ink); background: var(--paper); }
+	.member-count { font-family: inherit; font-size: 0.9rem; color: var(--muted-fg); }
 
 	.members-table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
 	.members-table th {
 		text-align: left; font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
-		letter-spacing: 0.06em; color: #a09688; padding: 0.4rem 0.75rem; border-bottom: 1.5px solid #ddd7cc;
+		letter-spacing: 0.06em; color: var(--muted-fg); padding: 0.4rem 0.75rem; border-bottom: 1.5px solid var(--border);
 	}
-	.members-table td { padding: 0.6rem 0.75rem; border-bottom: 1px solid #f0ebe3; vertical-align: middle; }
+	.members-table td { padding: 0.6rem 0.75rem; border-bottom: 1px solid var(--surface-2); vertical-align: middle; }
 	.members-table tr:last-child td { border-bottom: none; }
 
-	.email { font-family: monospace; font-size: 0.82rem; color: #555; }
-	.muted { color: #a09688; font-size: 0.8rem; }
+	.email { font-family: monospace; font-size: 0.82rem; color: var(--muted-fg); }
+	.muted { color: var(--muted-fg); font-size: 0.8rem; }
 
 	.role-pill {
 		font-size: 0.65rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
-		background: #f0ebe3; color: #a09688; padding: 0.15rem 0.5rem; border-radius: 99px;
+		background: var(--surface-2); color: var(--muted-fg); padding: 0.15rem 0.5rem; border-radius: 99px;
 	}
 	.role-pill.instructor { background: var(--ink); color: var(--paper); }
 
@@ -1259,10 +1448,10 @@
 	.member-link:hover { text-decoration: underline; text-underline-offset: 2px; }
 	.btn-reset {
 		font-family: inherit; font-size: 0.75rem; font-weight: 500;
-		color: #a09688; background: none; border: 1px solid #ddd7cc;
+		color: var(--muted-fg); background: none; border: 1px solid var(--border);
 		border-radius: 5px; padding: 0.15rem 0.5rem; cursor: pointer; transition: all 0.12s;
 	}
-	.btn-reset:hover { border-color: #c0392b; color: #c0392b; }
+	.btn-reset:hover { border-color: var(--danger); color: var(--danger); }
 
 	/* ── Pending requests ── */
 	.pending-section { border: 1.5px solid #f5c6cb; border-radius: 12px; padding: 1.25rem 1.5rem; background: #fff8f8; margin-top: 2.5rem; }
@@ -1274,8 +1463,8 @@
 		display: flex;
 		align-items: flex-start;
 		gap: 1rem;
-		background: #fff;
-		border: 1.5px solid #f0ebe3;
+		background: var(--paper);
+		border: 1.5px solid var(--surface-2);
 		border-radius: 10px;
 		padding: 1rem 1.25rem;
 	}
@@ -1299,10 +1488,10 @@
 	.pending-name-row { display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; }
 	.pending-name { font-weight: 600; font-size: 0.95rem; color: var(--ink); text-decoration: none; }
 	.pending-name:hover { text-decoration: underline; }
-	.pending-pronouns { font-size: 0.78rem; color: #a09688; }
-	.pending-email { font-size: 0.78rem; color: #a09688; font-family: monospace; }
-	.pending-class { font-size: 0.78rem; color: #a09688; font-weight: 500; }
-	.pending-bio { font-size: 0.82rem; color: #555; margin: 0.35rem 0 0; line-height: 1.4; }
+	.pending-pronouns { font-size: 0.78rem; color: var(--muted-fg); }
+	.pending-email { font-size: 0.78rem; color: var(--muted-fg); font-family: monospace; }
+	.pending-class { font-size: 0.78rem; color: var(--muted-fg); font-weight: 500; }
+	.pending-bio { font-size: 0.82rem; color: var(--muted-fg); margin: 0.35rem 0 0; line-height: 1.4; }
 	.pending-website { font-size: 0.78rem; color: var(--ink); text-decoration: underline; text-underline-offset: 2px; display: block; margin-top: 0.2rem; }
 
 	.pending-actions { display: flex; flex-direction: column; gap: 0.35rem; flex-shrink: 0; }
@@ -1326,7 +1515,7 @@
 	.btn-deny {
 		padding: 0.35rem 0.85rem;
 		background: none;
-		color: #c0392b;
+		color: var(--danger);
 		border: 1.5px solid #c0392b;
 		border-radius: 6px;
 		font-family: inherit;
@@ -1364,5 +1553,148 @@
 
 		.members-section { padding: 1.25rem 1rem; }
 		.week-section { padding: 0; }
+		.dm-card { flex-direction: column; gap: 0.75rem; }
+		.dm-card-info { gap: 0.25rem; }
+	}
+
+	/* ── Moderation: DM list ── */
+	.dm-list { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.75rem; }
+
+	.dm-card {
+		display: flex;
+		align-items: center;
+		gap: 1rem;
+		background: var(--paper);
+		border: 1.5px solid var(--border);
+		border-radius: 10px;
+		padding: 0.85rem 1.1rem;
+		transition: border-color 0.15s;
+	}
+	.dm-card:hover { border-color: var(--border); }
+	.dm-card-active { border-color: var(--ink); }
+
+	.dm-card-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.15rem; }
+
+	.dm-participants {
+		font-weight: 600;
+		font-size: 0.9rem;
+		color: var(--ink);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.dm-preview {
+		font-size: 0.82rem;
+		color: var(--muted-fg);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.dm-meta {
+		display: flex;
+		gap: 0.75rem;
+		font-size: 0.75rem;
+		color: var(--muted-fg);
+	}
+
+	/* ── Moderation: chat panel ── */
+	.dm-chat-panel {
+		background: #f7f3ed;
+		border: 1.5px solid var(--border);
+		border-radius: 10px;
+		margin-top: -0.25rem;
+		margin-bottom: 0.25rem;
+		overflow: hidden;
+	}
+	.dm-chat-loading, .dm-chat-empty {
+		display: flex; justify-content: center; align-items: center;
+		padding: 2rem; color: var(--muted-fg); font-size: 0.85rem;
+	}
+	.dm-chat-scroll {
+		display: flex; flex-direction: column; gap: 0.15rem;
+		max-height: 600px; overflow-y: auto; padding: 1rem 1.25rem;
+		overscroll-behavior: contain;
+	}
+	.dm-chat-scroll::-webkit-scrollbar { width: 4px; }
+	.dm-chat-scroll::-webkit-scrollbar-thumb { background: #ccc; border-radius: 2px; }
+	.sending-spinner { display: block; width: 10px; height: 10px; border: 1.5px solid currentColor; border-top-color: transparent; border-radius: 50%; animation: mod-spin 0.7s linear infinite; opacity: 0.35; }
+	@keyframes mod-spin { to { transform: rotate(360deg); } }
+	.dm-load-more { display: flex; justify-content: center; padding: 0.5rem 0; }
+	.dm-load-more-btn {
+		font-family: inherit; font-size: 0.75rem; font-weight: 500;
+		color: var(--muted-fg); background: none; border: 1px solid var(--border);
+		border-radius: 6px; padding: 0.3rem 0.75rem; cursor: pointer;
+		margin: 0 auto 0.75rem; display: block;
+	}
+	.dm-load-more-btn:hover { border-color: var(--ink); color: var(--ink); }
+
+	/* Message rows */
+	.dm-msg-row {
+		display: flex; flex-direction: column;
+		max-width: 75%; gap: 0.1rem;
+		align-self: flex-start; align-items: flex-start;
+	}
+	.dm-msg-row.dm-right {
+		align-self: flex-end; align-items: flex-end;
+	}
+	.dm-msg-row.dm-first { margin-top: 0.6rem; }
+	.dm-msg-meta {
+		display: flex; align-items: center; gap: 0.4rem; padding: 0 0.5rem;
+	}
+	.dm-msg-name { font-size: 0.78rem; font-weight: 600; color: var(--ink); }
+	.dm-msg-time { font-size: 0.72rem; color: var(--muted-fg); }
+
+	/* Bubbles */
+	.dm-bubble-row { position: relative; display: flex; align-items: flex-end; gap: 0.3rem; max-width: 100%; min-width: 0; }
+	.dm-msg-row.dm-right .dm-bubble-row { flex-direction: row-reverse; }
+
+	.dm-bubble {
+		margin: 0; padding: 0.55rem 0.85rem; border-radius: 14px;
+		font-family: 'Google Sans Flex', 'Space Grotesk', sans-serif; font-optical-sizing: auto;
+		font-size: 0.9rem; line-height: 1.45; white-space: pre-wrap; word-break: break-word;
+		background: var(--paper); border: 1.5px solid var(--border);
+	}
+	.dm-bubble.dm-right-bubble { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+	.dm-edited-tag { font-size: 0.68rem; color: var(--muted-fg); font-style: italic; }
+	.dm-right-bubble .dm-edited-tag { color: rgba(255,255,255,0.5); }
+
+	/* Bubble-level effects */
+	.dm-bubble.fx-shake { animation: tfx-shake 0.45s ease infinite; }
+	.dm-bubble.fx-bounce { animation: tfx-bounce 0.55s ease infinite; }
+	.dm-bubble.fx-wave { animation: tfx-wave 1.1s ease-in-out infinite; }
+	.dm-bubble.fx-jitter { animation: tfx-jitter 0.11s linear infinite; }
+	.dm-bubble.fx-big { animation: tfx-big 0.75s ease-in-out infinite; }
+	.dm-bubble.fx-small { animation: tfx-small 0.75s ease-in-out infinite; }
+	.dm-bubble.fx-rainbow {
+		background: linear-gradient(135deg, #e74c3c, #e67e22, #d4ac0d, #27ae60, #2980b9, #8e44ad) !important;
+		color: #fff !important; border-color: transparent !important;
+	}
+	.dm-bubble.fx-hearts { background: #ffe0ec !important; border-color: #f5a0c0 !important; }
+
+
+	:global(.dm-bubble .tfx) { display: inline-block; }
+
+	/* Attachments */
+	.dm-bubble-img { display: block; border-radius: 14px; overflow: hidden; border: 1.5px solid var(--border); }
+	.dm-bubble-img img { display: block; max-width: 280px; max-height: 240px; object-fit: cover; border-radius: 12px; }
+	.dm-bubble-video { border-radius: 14px; overflow: hidden; border: 1.5px solid var(--border); }
+	.dm-bubble-video video { display: block; max-width: 320px; max-height: 240px; border-radius: 12px; }
+	.dm-bubble-file {
+		padding: 0.5rem 0.85rem; border-radius: 14px;
+		background: var(--paper); border: 1.5px solid var(--border);
+	}
+	.dm-bubble-file.dm-right-bubble { background: var(--ink); border-color: var(--ink); }
+	.dm-file-link {
+		font-size: 0.85rem; font-weight: 500;
+		color: var(--ink); text-decoration: underline; text-underline-offset: 2px;
+	}
+	.dm-right-bubble .dm-file-link { color: var(--paper); }
+	.dm-file-size { font-size: 0.75rem; color: var(--muted-fg); }
+
+	@media (max-width: 640px) {
+		.dm-msg-row { max-width: 88%; }
+		.dm-chat-scroll { padding: 0.75rem 0.875rem; }
 	}
 </style>

@@ -64,8 +64,8 @@
 
 <style>
 	.card {
-		background: #fff;
-		border: 1.5px solid #ddd7cc;
+		background: var(--paper);
+		border: 1.5px solid var(--border);
 		border-radius: 16px;
 		padding: 2.5rem 2rem;
 		width: 100%;
@@ -80,12 +80,12 @@
 		font-size: 1.75rem;
 		font-weight: 400;
 		margin: 0 0 0.1rem;
-		color: var(--ink, #1a1a1a);
+		color: var(--ink, var(--ink));
 	}
 
 	.sub {
 		font-size: 0.9rem;
-		color: #a09688;
+		color: var(--muted-fg);
 		margin: 0 0 0.5rem;
 	}
 
@@ -101,7 +101,7 @@
 
 	form { display: flex; flex-direction: column; gap: 0.9rem; }
 	label { display: flex; flex-direction: column; gap: 0.35rem; }
-	label span { font-size: 0.82rem; font-weight: 600; color: var(--ink, #1a1a1a); }
+	label span { font-size: 0.82rem; font-weight: 600; color: var(--ink, var(--ink)); }
 	.req { color: #e53935; }
 
 	.row-2 { display: flex; gap: 0.75rem; }
@@ -110,25 +110,25 @@
 
 	input, textarea, select {
 		padding: 0.6rem 0.85rem;
-		border: 1.5px solid #c8c1b4;
+		border: 1.5px solid var(--border);
 		border-radius: 8px;
 		font-family: inherit;
 		font-size: 0.9rem;
-		color: var(--ink, #1a1a1a);
-		background: #fff;
+		color: var(--ink, var(--ink));
+		background: var(--paper);
 		outline: none;
 		transition: border-color 0.15s;
 		width: 100%;
 		box-sizing: border-box;
 	}
-	input:focus, textarea:focus, select:focus { border-color: var(--ink, #1a1a1a); }
+	input:focus, textarea:focus, select:focus { border-color: var(--ink, var(--ink)); }
 	textarea { resize: vertical; }
 
 	.btn-primary {
 		margin-top: 0.25rem;
 		padding: 0.7rem 1.5rem;
-		background: var(--ink, #1a1a1a);
-		color: var(--paper, #f7f2ea);
+		background: var(--ink, var(--ink));
+		color: var(--paper, var(--paper));
 		border: none;
 		border-radius: 10px;
 		font-family: inherit;

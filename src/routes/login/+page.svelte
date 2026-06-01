@@ -107,9 +107,9 @@
 
 	input {
 		padding: 0.6rem 0.75rem;
-		border: 1.5px solid #c8c1b4;
+		border: 1.5px solid var(--border);
 		border-radius: 8px;
-		background: #fff;
+		background: var(--paper);
 		font-family: inherit;
 		font-size: 0.95rem;
 		color: var(--ink);
@@ -128,8 +128,8 @@
 		gap: 0.6rem;
 		width: 100%;
 		padding: 0.65rem 1rem;
-		background: #fff;
-		border: 1.5px solid #c8c1b4;
+		background: var(--paper);
+		border: 1.5px solid var(--border);
 		border-radius: 8px;
 		font-family: inherit;
 		font-size: 0.95rem;
@@ -172,7 +172,7 @@
 		display: flex;
 		align-items: center;
 		gap: 0.75rem;
-		color: #a09688;
+		color: var(--muted-fg);
 		font-size: 0.8rem;
 	}
 
@@ -181,7 +181,7 @@
 		content: '';
 		flex: 1;
 		height: 1px;
-		background: #c8c1b4;
+		background: var(--border);
 	}
 
 	.error {
@@ -189,7 +189,7 @@
 		background: #fff0f0;
 		border: 1.5px solid #f5c6cb;
 		border-radius: 8px;
-		color: #c0392b;
+		color: var(--danger);
 		font-size: 0.85rem;
 		margin: 0;
 	}

@@ -100,7 +100,7 @@
 		font-family: 'Space Grotesk', sans-serif;
 		font-size: clamp(0.75rem, 2vw, 1rem);
 		font-weight: 500;
-		color: #a09688;
+		color: var(--muted-fg);
 		text-decoration: none;
 		letter-spacing: 0.02em;
 		transition: color 0.2s;
