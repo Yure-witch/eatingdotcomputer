@@ -3910,7 +3910,7 @@
 	}
 	.att-img-close:hover { background: rgba(0,0,0,0.7); }
 
-	.input-area { flex-shrink: 0; }
+	.input-area { flex-shrink: 0; position: relative; }
 	.typing-indicator {
 		font-size: 0.75rem; color: var(--muted-fg); padding: 0 1.5rem 0.25rem;
 		margin: 0; min-height: 1.2rem;
@@ -3984,13 +3984,16 @@
 	@media (max-width: 640px) {
 		/* Mobile: every expression picker (emoji / kitchen / custom /
 		   tg / gif / formatting) docks as a full-width sheet right
-		   above the input bar, centered horizontally. Bottom offset is
-		   the input bar's ~56 px plus iOS safe-area so the sheet
-		   always sits flush above the compose row. */
+		   above the input-area, anchored to its top via the
+		   `position: relative` on `.input-area`. This auto-tracks
+		   the input-area's actual height — including reply bars,
+		   attachment previews, and format toolbars — so the picker
+		   never overlaps the compose row no matter what state it's
+		   in. */
 		.compose-picker-pop {
-			position: fixed;
+			position: absolute;
+			bottom: 100%;
 			left: 0; right: 0;
-			bottom: calc(56px + env(safe-area-inset-bottom, 0px));
 			width: 100%;
 			z-index: 60;
 		}
@@ -4051,9 +4054,9 @@
 	.compose-kitchen-pop { position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 50; }
 	@media (max-width: 640px) {
 		.compose-kitchen-pop {
-			position: fixed;
+			position: absolute;
+			bottom: 100%;
 			left: 0; right: 0;
-			bottom: calc(56px + env(safe-area-inset-bottom, 0px));
 			width: 100%;
 			z-index: 60;
 		}

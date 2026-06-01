@@ -397,17 +397,16 @@
 		display: flex; flex-direction: column; overflow: hidden;
 		font-family: 'Google Sans Flex', 'Space Grotesk', sans-serif; font-size: 0.85rem;
 	}
-	/* Mobile: shrink the picker so the visible grid is exactly 3 rows
-	   of 44 px cells = 132 px of grid + ~70 px of chrome (tabs +
-	   search + mode toggle + footer) = ~205 px total. At ~360 px
-	   phone-content width that's a clean 8 cells per row → 24 active
-	   animations in the viewport with zero buffer. Well within iOS
-	   WebGPU's per-page GPU budget; matches what native Telegram
-	   shows in its compact picker mode. */
+	/* Mobile: full-width docked sheet above the input bar. Height
+	   accommodates the full chrome stack (tabs + mode-row + search
+	   on custom packs) so the grid always shows ≥3 rows × 8 cells
+	   = 24 emoji. The footer (engine toggle / status) is hidden —
+	   touch devices force rlottie anyway, so the toggle is moot, and
+	   the status string doesn't fit at this width. */
 	@media (max-width: 640px) {
 		.tg-panel {
 			width: 100%;
-			height: 205px;
+			height: 268px;
 			border-radius: 14px 14px 0 0;
 			box-shadow: 0 -4px 24px rgba(0,0,0,0.18);
 		}
@@ -417,6 +416,12 @@
 			width: 44px !important;
 			height: 44px !important;
 		}
+		.tg-foot { display: none; }
+		/* Compact the tab strip + mode row a touch so the grid gets
+		   more of the panel. */
+		.tg-tab, .tg-tab-pack { padding: 0.3rem 0.5rem !important; }
+		.tg-mode-row { padding: 0.2rem 0.5rem !important; }
+		.tg-search-row { padding: 0.2rem 0.5rem 0.25rem !important; }
 	}
 	.tg-tabs { display: flex; gap: 1px; border-bottom: 1.5px solid var(--border); background: var(--surface-2); flex-shrink: 0; overflow-x: auto; }
 	.tg-tabs::-webkit-scrollbar { height: 0; }
