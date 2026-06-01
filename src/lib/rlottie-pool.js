@@ -8,15 +8,25 @@
 // (waiting client-side) and removes any pending Promise resolvers, so the
 // worker may still finish in-flight renders but the results are dropped.
 
+// Mobile detection (coarse pointer = touch device). Mobile gets
+// tighter caps everywhere: fewer workers (each WASM instance is
+// ~310 KB resident), smaller per-worker inflight queue, and a smaller
+// frame cache so we don't blow through phone-scale RAM with
+// long-running animations.
+const _isMobile = typeof window !== 'undefined'
+	&& window.matchMedia?.('(pointer: coarse)').matches;
+
 // Worker count is detected from `navigator.hardwareConcurrency` at spawn
 // time (we can't read `navigator` at module-eval time because of SSR).
-// Capped at 12 — past that, each additional WASM worker costs ~310 KB
-// for sub-linear throughput gains since rlottie frames are small and
-// individual rasters finish in single-digit ms anyway.
-const MAX_WORKERS = 12;
+// Desktop cap is 12; mobile cap is 4 — phones have plenty of cores but
+// thermal throttling + memory pressure make 12 workers actively worse
+// once a few minutes pass.
+const MAX_WORKERS = _isMobile ? 4 : 12;
 const MIN_WORKERS = 2;
-const MAX_INFLIGHT_PER_WORKER = 4;
-const CACHE_LIMIT = 8000;
+const MAX_INFLIGHT_PER_WORKER = _isMobile ? 2 : 4;
+// Frame cache holds ImageBitmaps — at 96² × RGBA8 that's ~37 KB each;
+// 8000 = ~290 MB worst case. Phones run out of RAM long before then.
+const CACHE_LIMIT = _isMobile ? 2000 : 8000;
 const MOUNT_TIMEOUT_MS = 20000;
 
 let WORKER_COUNT = 4; // overwritten in spawnWorkers

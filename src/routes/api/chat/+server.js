@@ -5,12 +5,13 @@ import { getDb } from '$lib/server/turso.js';
 import { getConvId } from '$lib/convId.js';
 import { notifyUsers } from '$lib/server/push.js';
 import { requireClassAccess } from '$lib/server/access.js';
+import { mentionedUids } from '$lib/mentions.js';
 
 export async function POST({ request, locals }) {
 	const session = await locals.auth();
 	await requireClassAccess(session);
 
-	const { content, channelId, to, reply_to, attachment, effect, fontSize, fontWeight, fontStretch, noSplit, wiggleSize } = await request.json();
+	const { content, channelId, to, reply_to, attachment, effect, fontSize, fontWeight, fontStretch, noSplit, wiggleSize, mentions } = await request.json();
 	if (!content?.trim() && !attachment?.url) error(400, 'Empty message');
 	if (content && content.length > 20000) error(400, 'Message too long (max 20,000 characters)');
 
@@ -34,6 +35,15 @@ export async function POST({ request, locals }) {
 	if (attachment?.url) {
 		msg.att = { url: attachment.url, name: attachment.filename, type: attachment.mimetype, size: attachment.size };
 	}
+	// Mentions: compact list of `{ u, o, l }` (uid/offset/len) so the
+	// bubble renderer can wrap the right slices of `c` as pills + the
+	// notification fan-out below knows who to ping.
+	const mentionList = Array.isArray(mentions)
+		? mentions
+			.filter((m) => m && typeof m.uid === 'string' && typeof m.offset === 'number' && typeof m.len === 'number')
+			.map((m) => ({ u: m.uid, o: m.offset, l: m.len }))
+		: [];
+	if (mentionList.length) msg.mn = mentionList;
 
 	// Confirm the uploaded file so it isn't swept by the stale-upload cleanup
 	if (attachment?.id) {
@@ -46,10 +56,43 @@ export async function POST({ request, locals }) {
 		}
 	}
 
+	// Notification fan-out. Mentions and replies both write a Firebase
+	// `notifications/{uid}/{notifId}` entry (archived to Turso later by
+	// /api/chat/sync, same pattern as messages + reactions). We dedupe
+	// recipients so a reply that also @mentions the original author
+	// doesn't double-notify.
+	async function fanOutNotifs(convType, convId, msgId) {
+		const recipients = new Map(); // uid -> type ('mention' wins over 'reply')
+		for (const uid of mentionedUids(mentionList.map((m) => ({ uid: m.u })))) {
+			if (uid && uid !== session.user.id) recipients.set(uid, 'mention');
+		}
+		if (reply_to?.userId && reply_to.userId !== session.user.id && !recipients.has(reply_to.userId)) {
+			recipients.set(reply_to.userId, 'reply');
+		}
+		if (!recipients.size) return;
+		const snippet = preview;
+		const updates = {};
+		for (const [uid, type] of recipients) {
+			const notifId = db.ref(`notifications/${uid}`).push().key;
+			updates[`notifications/${uid}/${notifId}`] = {
+				type,
+				fromUid: session.user.id,
+				fromName: senderName,
+				convType,
+				convId,
+				msgId,
+				snippet,
+				createdAt: now
+			};
+		}
+		await db.ref().update(updates);
+	}
+
 	if (to) {
 		// DM
 		const convId = getConvId(session.user.id, to);
-		await db.ref(`dms/${convId}/messages`).push(msg);
+		const msgRef = await db.ref(`dms/${convId}/messages`).push(msg);
+		await fanOutNotifs('dm', convId, msgRef.key);
 		await Promise.all([
 			db.ref(`userChats/${session.user.id}/${convId}`).update({ otherUserId: to, lastMessage: preview, lastAt: now }),
 			db.ref(`userChats/${to}/${convId}`).update({ otherUserId: session.user.id, otherUserName: senderName, lastMessage: preview, lastAt: now }),
@@ -65,7 +108,8 @@ export async function POST({ request, locals }) {
 	} else {
 		// Channel
 		const channel = channelId ?? 'class';
-		await db.ref(`channels/${channel}/messages`).push(msg);
+		const msgRef = await db.ref(`channels/${channel}/messages`).push(msg);
+		await fanOutNotifs('channel', channel, msgRef.key);
 		const meta = { lastAt: now, lastMessage: preview, lastUser: senderName };
 		await db.ref(`channels/${channel}`).update(meta);
 		// Lightweight metadata node (used by layout for unread dots — no messages payload)

@@ -6,38 +6,65 @@
 
 	let { isInstructor = false, totalUnread = 0 } = $props();
 
-	// Hide the nav only when a real on-screen keyboard appears (mobile).
-	// On desktop, focusing an input doesn't shrink the visual viewport so the nav stays.
+	// Hide the nav when a text-input control is focused on a TOUCH
+	// device — that's when focus is a reliable signal the on-screen
+	// keyboard has opened. On a MacBook (or anything with a fine
+	// pointer / trackpad / mouse) focusing a textbox doesn't summon
+	// a keyboard, so we keep the nav visible even if the window
+	// happens to be narrower than 640px (devtools, narrow split, etc.).
+	//
+	// `(pointer: coarse)` is the right test: phones + tablets are
+	// coarse, MacBooks + desktops are fine — even iPad Safari without
+	// a keyboard reports coarse. `matchMedia` lets us re-evaluate if
+	// the user plugs in or unplugs a pointing device mid-session.
 	let keyboardOpen = $state(false);
+	let isTouchDevice = $state(false);
+
+	function isTextInput(el) {
+		if (!el || el.nodeType !== 1) return false;
+		if (el.isContentEditable) return true;
+		if (el.tagName === 'TEXTAREA') return true;
+		if (el.tagName === 'INPUT') {
+			const t = (el.type || 'text').toLowerCase();
+			// File pickers, buttons, etc. don't summon a keyboard.
+			return ['text', 'search', 'email', 'url', 'tel', 'password', 'number'].includes(t);
+		}
+		return false;
+	}
 
 	onMount(() => {
-		let anyInputFocused = false;
+		const mq = window.matchMedia('(pointer: coarse)');
+		const updateTouch = () => { isTouchDevice = mq.matches; };
+		updateTouch();
+		mq.addEventListener?.('change', updateTouch);
 
 		const onFocusIn = (e) => {
-			if (e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement) {
-				anyInputFocused = true;
-			}
+			if (!isTouchDevice) return;
+			if (isTextInput(e.target)) keyboardOpen = true;
 		};
 		const onFocusOut = (e) => {
-			if (e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement) {
-				anyInputFocused = false;
-				keyboardOpen = false;
-			}
+			if (isTextInput(e.target)) keyboardOpen = false;
 		};
-		const checkKeyboard = () => {
-			if (!anyInputFocused) { keyboardOpen = false; return; }
-			const vvh = window.visualViewport?.height ?? window.innerHeight;
-			keyboardOpen = vvh < window.innerHeight * 0.75;
-		};
-
 		document.addEventListener('focusin', onFocusIn);
 		document.addEventListener('focusout', onFocusOut);
-		window.visualViewport?.addEventListener('resize', checkKeyboard);
 		return () => {
+			mq.removeEventListener?.('change', updateTouch);
 			document.removeEventListener('focusin', onFocusIn);
 			document.removeEventListener('focusout', onFocusOut);
-			window.visualViewport?.removeEventListener('resize', checkKeyboard);
+			document.documentElement.classList.remove('kb-open');
 		};
+	});
+
+	// Mirror the keyboard state to a class on <html> so any page CSS
+	// (the chat layout that subtracts 56px for the nav, etc.) can
+	// reclaim the bottom strip when the nav is hidden. CSS-only
+	// solution would be cleaner, but the nav-shows-or-not decision
+	// lives in JS (touch + focus), so we propagate via a class.
+	$effect(() => {
+		if (typeof document === 'undefined') return;
+		const root = document.documentElement;
+		if (keyboardOpen) root.classList.add('kb-open');
+		else root.classList.remove('kb-open');
 	});
 
 	const chatIcon = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`;

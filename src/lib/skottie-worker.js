@@ -35,6 +35,13 @@ let _kit = null;
 let _canvas = null; // OffscreenCanvas
 let _surface = null;
 
+// Set by the proxy's `init` message. When `true` we try to create a
+// WebGPU surface first; on any failure we transparently fall back to
+// the WebGL path so the same worker code handles both engines.
+let _preferWebGPU = false;
+let _gpuDevCtx = null;     // CanvasKit WebGPUDeviceContext
+let _gpuCanvasCtx = null;  // CanvasKit WebGPUCanvasContext
+
 // WebGL surface options. `preserveDrawingBuffer: 1` keeps the backbuffer
 // alive between compositor frames — without it, WebGL clears after
 // every composite, leaving the canvas momentarily blank between worker
@@ -82,6 +89,54 @@ async function loadKit() {
 		locateFile: (file) => `/canvaskit/${file}`
 	});
 	return _kit;
+}
+
+// Stage 1 (async, one-shot): grab the WebGPU device + canvas context.
+// Done lazily so the WebGL path pays no cost. If anything fails or
+// WebGPU isn't supported, we permanently flip _preferWebGPU = false
+// and subsequent surface creates use the WebGL path.
+async function ensureGpuContext() {
+	if (!_preferWebGPU) return false;
+	if (_gpuDevCtx && _gpuCanvasCtx) return true;
+	if (!self.navigator?.gpu) {
+		diag('warn', '[skottie-worker] navigator.gpu missing — falling back to WebGL');
+		_preferWebGPU = false;
+		return false;
+	}
+	try {
+		if (!_gpuDevCtx) {
+			const adapter = await self.navigator.gpu.requestAdapter();
+			if (!adapter) throw new Error('no GPU adapter');
+			const device = await adapter.requestDevice();
+			_gpuDevCtx = _kit.MakeGPUDeviceContext(device);
+			if (!_gpuDevCtx) throw new Error('MakeGPUDeviceContext returned null');
+		}
+		if (!_gpuCanvasCtx) {
+			_gpuCanvasCtx = _kit.MakeGPUCanvasContext(_gpuDevCtx, _canvas);
+			if (!_gpuCanvasCtx) throw new Error('MakeGPUCanvasContext returned null');
+		}
+		diag('log', '[skottie-worker] WebGPU context ready');
+		return true;
+	} catch (e) {
+		diag('warn', '[skottie-worker] WebGPU init failed —', String(e?.message || e), '— falling back to WebGL');
+		_gpuCanvasCtx = null;
+		_gpuDevCtx = null;
+		_preferWebGPU = false;
+		return false;
+	}
+}
+
+// Stage 2 (sync): create a surface using whichever backend is set up.
+// `MakeGPUCanvasSurface` is sync after the device/context are cached,
+// so we can call this from the render self-heal as well.
+function createSurfaceSync() {
+	if (!_kit || !_canvas) return null;
+	if (_preferWebGPU && _gpuCanvasCtx) {
+		const surface = _kit.MakeGPUCanvasSurface(_gpuCanvasCtx, null);
+		if (surface) return surface;
+		diag('warn', '[skottie-worker] MakeGPUCanvasSurface returned null — falling back to WebGL');
+	}
+	return _kit.MakeWebGLCanvasSurface(_canvas, undefined, _surfaceOpts);
 }
 
 // Worker-local Lottie JSON cache. Independent from the main thread's
@@ -245,7 +300,7 @@ function renderFrame(msg) {
 	// "transparent for 30 seconds" pattern: the surface dies once, no
 	// later resize fires, and we never recover.
 	if (!_surface && _canvas && _canvas.width >= 2 && _canvas.height >= 2) {
-		_surface = _kit.MakeWebGLCanvasSurface(_canvas, undefined, _surfaceOpts);
+		_surface = createSurfaceSync();
 		if (_surface) {
 			diag('log', '[skottie-worker] surface self-heal succeeded at', _canvas.width, 'x', _canvas.height);
 			for (const c of _cells.values()) { c.firstPainted = false; c.paintCount = 0; }
@@ -377,17 +432,16 @@ self.onmessage = async (e) => {
 	switch (msg.type) {
 		case 'init': {
 			_canvas = msg.canvas;
-			diag('log', '[skottie-worker] init: canvas size', _canvas.width, 'x', _canvas.height);
+			_preferWebGPU = !!msg.preferWebGPU;
+			diag('log', '[skottie-worker] init: canvas size', _canvas.width, 'x', _canvas.height, 'preferWebGPU:', _preferWebGPU);
 			try {
 				await loadKit();
+				// Bring up the WebGPU device + canvas context now (if
+				// requested) so the first `resize` can synchronously
+				// allocate a surface without the user perceiving the
+				// init latency. Falls back to WebGL on failure.
+				if (_preferWebGPU) await ensureGpuContext();
 				diag('log', '[skottie-worker] CanvasKit loaded — surface deferred until first resize');
-				// Surface intentionally NOT created here. We get
-				// `init` during prewarm BEFORE the picker has a host
-				// element, so the canvas is still at the default
-				// 300×150 buffer and there's no point allocating GPU
-				// resources at that size — they'd just get nuked
-				// when the real resize lands. First 'resize' creates
-				// it at the right size.
 				self.postMessage({ type: 'ready' });
 			} catch (err) {
 				diag('error', '[skottie-worker] init exception:', String(err?.message || err));
@@ -404,9 +458,9 @@ self.onmessage = async (e) => {
 			_canvas.height = height;
 			const hadSurface = !!_surface;
 			try { _surface?.delete(); } catch {}
-			_surface = _kit.MakeWebGLCanvasSurface(_canvas, undefined, _surfaceOpts);
+			_surface = createSurfaceSync();
 			if (!_surface) {
-				diag('warn', '[skottie-worker] resize: MakeWebGLCanvasSurface returned null (', width, 'x', height, ') — will self-heal on next render');
+				diag('warn', '[skottie-worker] resize: surface creation returned null (', width, 'x', height, ') — will self-heal on next render');
 			} else {
 				diag('log', hadSurface ? '[skottie-worker] resize OK ->' : '[skottie-worker] first surface OK ->', width, 'x', height);
 			}

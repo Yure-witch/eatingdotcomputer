@@ -15,7 +15,7 @@ export async function load({ params, parent }) {
 		sql: `SELECT * FROM (
 		        SELECT id, user_id, user_name, user_role, content, created_at,
 		               attachment_url, attachment_filename, attachment_mimetype, attachment_size,
-		               fx, font_size, font_weight, font_stretch, no_split, is_edited
+		               fx, font_size, font_weight, font_stretch, no_split, is_edited, mentions
 		        FROM chat_messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT ?
 		      ) sub ORDER BY created_at ASC`,
 		args: [convId, PAGE_SIZE]
@@ -66,7 +66,8 @@ export async function load({ params, parent }) {
 				filename: String(r.attachment_filename ?? ''),
 				mimetype: String(r.attachment_mimetype ?? ''),
 				size: Number(r.attachment_size ?? 0)
-			} : null
+			} : null,
+			mentions: r.mentions ? (() => { try { return JSON.parse(String(r.mentions)); } catch { return []; } })() : []
 		}))
 	};
 }

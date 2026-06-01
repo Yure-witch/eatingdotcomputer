@@ -64,6 +64,9 @@
 	// scrollbar stays accurate without measuring every emoji.
 	const CELL_PX = 36;            // matches the regular EmojiPicker's 36×36 cell pitch (gap: 0)
 	const GRID_PAD_X = 4;          // 0.25rem padding on .tg-grid-wrap each side (matches regular picker)
+	// Coarse-pointer / touch device test for mobile perf tuning.
+	const _IS_COARSE = typeof window !== 'undefined'
+		&& window.matchMedia?.('(pointer: coarse)').matches;
 	// Buffer ≈ 3 rows each side. Smaller cells mean more cells/row, so a
 	// large buffer can balloon active spritesheet memory. 3 is enough to
 	// hide rapid scroll given the new tiny per-frame raster (9 KB/frame).
@@ -77,7 +80,11 @@
 	// Skottie stage too, so the buffer cells also have their last
 	// animation frame held on the canvas (see PAINT_BUFFER_PX in
 	// skottie-stage.js — note that's about painting, not mounting).
-	const BUFFER_ROWS = 20;
+	// Desktop with WebGPU absorbs the cost of pre-mounting 20 rows
+	// above + below for jank-free flings. Mobile pays the cost in
+	// memory + per-frame draws so we mount a much tighter halo there
+	// (6 rows → roughly one screenful of pre-rendered buffer).
+	const BUFFER_ROWS = _IS_COARSE ? 6 : 20;
 	let scrollTop = $state(0);
 	let gridH = $state(420);
 	let gridW = $state(340);
@@ -351,14 +358,16 @@
 	</div>
 	<div class="tg-foot">
 		<button class="tg-engine-toggle"
-			title="Toggle render engine. CPU = rlottie WASM (pixel-perfect). GPU = Skia/Skottie on main thread (fast). WorkerGPU = Skia/Skottie in a Web Worker (fastest, frees the main thread)."
+			title="Toggle render engine. CPU = rlottie WASM (pixel-perfect). GPU = Skia/Skottie main thread. WorkerGPU = Skia/Skottie in a worker (default on desktop). WebGPU = experimental, requires WebGPU-capable browser."
 			onclick={() => engineMode.update(e =>
 				e === 'rlottie' ? 'skottie'
 				: e === 'skottie' ? 'skottie-worker'
+				: e === 'skottie-worker' ? 'skottie-webgpu'
 				: 'rlottie'
 			)}>
 			Engine: <strong>{
-				$engineMode === 'skottie-worker' ? 'WorkerGPU'
+				$engineMode === 'skottie-webgpu' ? 'WebGPU'
+				: $engineMode === 'skottie-worker' ? 'WorkerGPU'
 				: $engineMode === 'skottie' ? 'GPU'
 				: 'CPU'
 			}</strong>

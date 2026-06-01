@@ -64,15 +64,22 @@ export async function GET({ request }) {
 			const fontWeight  = msg.fw != null && Math.abs(msg.fw - 400) > 1 ? parseInt(msg.fw) : null;
 			const fontStretch = msg.wdth != null && Math.abs(msg.wdth - 100) > 0.5 ? parseFloat(msg.wdth) : null;
 			const noSplit     = msg.nsp ? 1 : 0;
+			// Mentions: archive the compact `mn` array as JSON. Stored
+			// in the new chat_messages.mentions column. Page-load
+			// queries can JSON.parse it back to render pills on
+			// historical messages.
+			const mentionsJson = Array.isArray(msg.mn) && msg.mn.length
+				? JSON.stringify(msg.mn.map((m) => ({ uid: m.u, offset: m.o, len: m.l })))
+				: null;
 			await turso.execute({
 				sql: `INSERT OR IGNORE INTO chat_messages
 				      (id, conversation_id, user_id, user_name, user_role, content, created_at, reply_to_id,
 				       attachment_url, attachment_filename, attachment_mimetype, attachment_size,
-				       fx, font_size, font_weight, font_stretch, no_split)
-				      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				       fx, font_size, font_weight, font_stretch, no_split, mentions)
+				      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				args: [msg.key, conversationId, userId, userName, userRole, content, new Date(msg.ts).toISOString(), replyToId,
 				       attUrl, attFilename, attMimetype, attSize,
-				       fx, fontSize, fontWeight, fontStretch, noSplit]
+				       fx, fontSize, fontWeight, fontStretch, noSplit, mentionsJson]
 			});
 
 			// Archive reactions for this message → message_reactions table
@@ -150,5 +157,40 @@ export async function GET({ request }) {
 		}
 	}
 
-	return json({ archived });
+	// Archive notifications. Walk every `notifications/{uid}` node and
+	// move entries older than the cutoff into the Turso `notifications`
+	// table, then delete them from Firebase. Same TTL semantics as
+	// messages — recent stuff stays live in RTDB for the bell, anything
+	// older becomes durable history.
+	let archivedNotifs = 0;
+	const notifsRootSnap = await adminDb.ref('notifications').get();
+	if (notifsRootSnap.exists()) {
+		for (const uid of Object.keys(notifsRootSnap.val())) {
+			const userNotifsSnap = await adminDb.ref(`notifications/${uid}`).get();
+			if (!userNotifsSnap.exists()) continue;
+			const toArchive = [];
+			userNotifsSnap.forEach((child) => {
+				const v = child.val();
+				const ts = Number(v?.createdAt) || pushIdToTimestamp(child.key);
+				if (ts <= cutoff) toArchive.push({ key: child.key, ts, ...v });
+			});
+			if (!toArchive.length) continue;
+			for (const n of toArchive) {
+				await turso.execute({
+					sql: `INSERT OR IGNORE INTO notifications
+					      (id, recipient_id, type, from_uid, from_name, conv_type, conv_id, msg_id, snippet, created_at)
+					      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					args: [n.key, uid, String(n.type || 'mention'), String(n.fromUid || ''), String(n.fromName || ''),
+					       String(n.convType || 'channel'), String(n.convId || ''), String(n.msgId || ''),
+					       String(n.snippet || ''), n.ts]
+				});
+			}
+			const cleanup = {};
+			for (const n of toArchive) cleanup[n.key] = null;
+			await adminDb.ref(`notifications/${uid}`).update(cleanup);
+			archivedNotifs += toArchive.length;
+		}
+	}
+
+	return json({ archived, archivedNotifs });
 }

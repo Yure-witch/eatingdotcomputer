@@ -57,6 +57,13 @@
 		.chat-wrap {
 			height: calc(100dvh - 56px - env(safe-area-inset-bottom, 0px));
 		}
+		/* When the bottom nav hides for the on-screen keyboard
+		   (BottomNav.svelte adds `html.kb-open`), reclaim the strip
+		   it was occupying so the compose docks right above the
+		   keyboard instead of leaving 56 px of empty space. */
+		:global(html.kb-open) .chat-wrap {
+			height: 100dvh;
+		}
 	}
 
 	@media (min-width: 641px) {

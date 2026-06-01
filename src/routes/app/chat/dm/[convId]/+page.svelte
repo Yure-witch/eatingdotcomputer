@@ -1,14 +1,17 @@
 <script>
 	import { onMount, onDestroy, tick, getContext } from 'svelte';
+	import { afterNavigate } from '$app/navigation';
 	import { db } from '$lib/firebase.js';
 	import { ref, onChildAdded, onValue, off, query, limitToLast, set, remove, get } from 'firebase/database';
 	import { normaliseMessage, buildUserMap, formatTime } from '$lib/chat.js';
+	import { resolveMentionsFromText, segmentMentions } from '$lib/mentions.js';
 	import { scallopedClip, starburstClip } from '$lib/scalloped.js';
 	import EmojiPicker from '$lib/components/EmojiPicker.svelte';
 	import EmojiKitchen from '$lib/components/EmojiKitchen.svelte';
 	import CustomEmojiPanel from '$lib/components/CustomEmojiPanel.svelte';
 	import TelegramEmojiPanel from '$lib/components/TelegramEmojiPanel.svelte';
 	import GifPicker from '$lib/components/GifPicker.svelte';
+	import MentionAutocomplete from '$lib/components/MentionAutocomplete.svelte';
 	import lottie from 'lottie-web';
 	import { loadTelegramEmoji, getCachedTgEmoji, tgEntry, tgAnimatedUrl, tgFlagUrl, tgAnimationUrl, fetchLottie, cpToToken,
 		loadCustomPacks, getCachedCustomPacks, tgcUrl, tgcToToken, tgcEntry, isStaticPack, STATIC_FRAME_INDEX } from '$lib/telegram-emoji-store.js';
@@ -320,6 +323,24 @@
 		plain: _codeIcon(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><rect x="2" y="1" width="12" height="14" rx="1.5" fill="none" stroke="#9399b2" stroke-width="1.3"/><line x1="5" y1="5" x2="11" y2="5" stroke="#9399b2" stroke-width="1"/><line x1="5" y1="8" x2="11" y2="8" stroke="#9399b2" stroke-width="1"/><line x1="5" y1="11" x2="9" y2="11" stroke="#9399b2" stroke-width="1"/></svg>`),
 	};
 	const { contentHtml, contentHtmlM, clearCache: _clearHtmlCache } = createContentRenderer({ hljs, codeIcons: _ci, getCeMap: getCachedCustomEmojiMap, wrapEmoji: wrapEmojiInText });
+
+	// Wrap contentHtmlM with mention-pill rendering — splits content at
+	// each mention's offset, runs surrounding text through the rich
+	// renderer, inlines a `.mention-pill` link at each mention slice.
+	const _escHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+	function bubbleHtmlM(content, mentions, splitWords) {
+		if (!Array.isArray(mentions) || !mentions.length) return contentHtmlM(content, splitWords);
+		const segs = segmentMentions(content, mentions);
+		let html = '';
+		for (const s of segs) {
+			if (s.type === 'mention') {
+				html += `<a class="mention-pill" href="/app/profile/${encodeURIComponent(s.uid)}">@${_escHtml(s.name)}</a>`;
+			} else if (s.text) {
+				html += contentHtmlM(s.text, splitWords);
+			}
+		}
+		return html;
+	}
 	const CODE_LANGUAGES = [
 		{ id: 'javascript', label: 'JavaScript', icon: _ci.js },
 		{ id: 'typescript', label: 'TypeScript', icon: _ci.ts },
@@ -984,7 +1005,14 @@
 	let _savedCeSel = null;
 	function onCeSelect() {
 		const sel = window.getSelection();
-		showTextFxBar = !!(sel && !sel.isCollapsed && inputEl?.contains(sel.anchorNode));
+		// Show the bar on non-collapsed selection in the compose. Don't
+		// auto-HIDE when the selection collapses — users want the menu
+		// to persist until ✕ is pressed (tapping a slider/button can
+		// briefly clear the selection, which used to dismiss the bar
+		// mid-edit).
+		if (sel && !sel.isCollapsed && inputEl?.contains(sel.anchorNode)) {
+			showTextFxBar = true;
+		}
 		if (sel && !sel.isCollapsed && inputEl?.contains(sel.anchorNode)) {
 			const range = sel.getRangeAt(0);
 			_savedCeSel = {
@@ -1773,8 +1801,18 @@
 
 	function scrollToMessage(id) {
 		const el = listEl?.querySelector(`[data-msg-id="${id}"]`);
-		el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+		if (!el) return;
+		el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+		el.classList.add('flash');
+		setTimeout(() => el.classList.remove('flash'), 1600);
 	}
+
+	// `?msg=ID` deep-links scroll to + highlight the targeted bubble.
+	function focusFromUrl() {
+		const id = new URL(window.location.href).searchParams.get('msg');
+		if (id) tick().then(() => scrollToMessage(id));
+	}
+	afterNavigate(focusFromUrl);
 
 	function markRead() {
 		const uid = data.currentUser.id;
@@ -2337,13 +2375,20 @@
 		const wdthSnap = (messageFontStretch !== 100 && !hasInlineWdth) ? messageFontStretch : undefined;
 		const noSplit = !fxSplitWords;
 		const wigSnap = (fxSnap === 'wiggly' || fxSnap === 'cursed' || fxSnap === 'scalloped' || fxSnap === 'starburst') && wiggleSize !== 6 ? wiggleSize : undefined;
+		const _sendContent = content || (attSnap ? attSnap.filename : '');
+		const _mentionRoster = [
+			...(data.users ?? []),
+			{ id: data.currentUser.id, name: data.currentUser.name }
+		];
+		const _sendMentions = resolveMentionsFromText(_sendContent, _mentionRoster);
 		const optimistic = {
 			id: `opt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, userId: data.currentUser.id,
 			userName: data.currentUser.name, userRole: data.currentUser.role,
-			content: content || (attSnap ? attSnap.filename : ''), createdAt: Date.now(),
+			content: _sendContent, createdAt: Date.now(),
 			pending: true, replyTo: replySnap, attachment: attSnap, fx: fxSnap,
 			fontSize: szSnap ?? 1, fontWeight: wghtSnap ?? 400, fontStretch: wdthSnap ?? 100, noSplit,
-			wiggleSize: wigSnap
+			wiggleSize: wigSnap,
+			mentions: _sendMentions
 		};
 		messages = [...messages, optimistic];
 		setTimeout(() => { if (messages.some(m => m.id === optimistic.id && m.pending)) slowPendingIds = new Set([...slowPendingIds, optimistic.id]); }, 400);
@@ -2363,7 +2408,7 @@
 		fetch('/api/chat', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ content, to: otherUser.id, reply_to: replySnap, attachment: attSnap, effect: fxSnap || undefined, fontSize: szSnap, fontWeight: wghtSnap, fontStretch: wdthSnap, noSplit: noSplit || undefined, wiggleSize: wigSnap })
+			body: JSON.stringify({ content: _sendContent, to: otherUser.id, reply_to: replySnap, attachment: attSnap, effect: fxSnap || undefined, fontSize: szSnap, fontWeight: wghtSnap, fontStretch: wdthSnap, noSplit: noSplit || undefined, wiggleSize: wigSnap, mentions: _sendMentions.length ? _sendMentions : undefined })
 		}).then(() => {
 			if (messages.some((m) => m.id === optimistic.id && m.pending)) {
 				messages = messages.filter((m) => m.id !== optimistic.id);
@@ -2516,6 +2561,9 @@
 	}
 
 	function onKeydown(e) {
+		// MentionAutocomplete's capture-phase keydown listener
+		// preempts navigation keys when its popover is open, so this
+		// handler doesn't need to coordinate with it explicitly.
 		if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey) { e.preventDefault(); inputEl?.focus(); send(); return; }
 
 		// Colon autocomplete: typing ':' closes the shortcode query
@@ -2843,7 +2891,7 @@
 				{:else}
 					{#key replayCounts[msg.id]}
 					<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-					<p class="bubble" use:scallopedClip={{ active: msg.fx === 'scalloped', ws: msg.wiggleSize || 6 }} use:starburstClip={{ active: msg.fx === 'starburst', ws: msg.wiggleSize || 6 }} class:fx-rainbow={msg.fx === 'rainbow'} class:fx-rainbow-fill={msg.fx === 'rainbow-fill'} class:fx-hearts={msg.fx === 'hearts'} class:fx-slam={msg.fx === 'slam'} class:fx-loud={msg.fx === 'loud'} class:fx-gentle={msg.fx === 'gentle'} class:fx-invisible={msg.fx === 'invisible'} class:fx-shake={msg.fx === 'shake'} class:fx-bounce={msg.fx === 'bounce'} class:fx-wave={msg.fx === 'wave'} class:fx-jitter={msg.fx === 'jitter'} class:fx-big={msg.fx === 'big'} class:fx-small={msg.fx === 'small'} class:fx-wiggly={msg.fx === 'wiggly'} class:fx-cursed={msg.fx === 'cursed'} class:fx-scalloped={msg.fx === 'scalloped'} class:fx-starburst={msg.fx === 'starburst'} class:revealed={revealedInvisible.has(msg.id)} class:jumbo-emoji={jumboEmojiCountM(msg.content) > 0 && !msg.replyTo} class:has-reply={!!msg.replyTo} style:font-size={bubbleFontSize(msg.content, msg.fontSize)} style:font-weight={msg.fontWeight && msg.fontWeight !== 400 ? msg.fontWeight : null} style:font-stretch={msg.fontStretch && msg.fontStretch !== 100 ? `${msg.fontStretch}%` : null} style:--ws={msg.fx === 'wiggly' && msg.wiggleSize ? `${msg.wiggleSize}px` : msg.fx === 'cursed' && msg.wiggleSize ? msg.wiggleSize : null} data-font-size={msg.fontSize && msg.fontSize !== 1 ? msg.fontSize : null} data-font-weight={msg.fontWeight && msg.fontWeight !== 400 ? msg.fontWeight : null} data-font-stretch={msg.fontStretch && msg.fontStretch !== 100 ? msg.fontStretch : null} onclick={msg.fx === 'invisible' && !revealedInvisible.has(msg.id) ? () => revealInvisible(msg.id) : undefined}>{#if msg.replyTo}{@const _rp = stripMarkup(msg.replyTo.content)}{@const _rj = jumboEmojiCountM(_rp)}<button class="reply-quote" onclick={(e) => { e.stopPropagation(); scrollToMessage(msg.replyTo.id); }}><span class="reply-author">{msg.replyTo.userName}</span><span class="reply-text" class:jumbo-reply={_rj > 0} style:font-size={_rj > 0 ? JUMBO_SIZES[_rj - 1] : null}>{@html contentHtmlM(msg.replyTo.content)}</span></button>{/if}{@html contentHtmlM(msg.content, !msg.noSplit)}{#if msg.edited}<span class="edited-tag"> (edited)</span>{/if}</p>
+					<p class="bubble" use:scallopedClip={{ active: msg.fx === 'scalloped', ws: msg.wiggleSize || 6 }} use:starburstClip={{ active: msg.fx === 'starburst', ws: msg.wiggleSize || 6 }} class:fx-rainbow={msg.fx === 'rainbow'} class:fx-rainbow-fill={msg.fx === 'rainbow-fill'} class:fx-hearts={msg.fx === 'hearts'} class:fx-slam={msg.fx === 'slam'} class:fx-loud={msg.fx === 'loud'} class:fx-gentle={msg.fx === 'gentle'} class:fx-invisible={msg.fx === 'invisible'} class:fx-shake={msg.fx === 'shake'} class:fx-bounce={msg.fx === 'bounce'} class:fx-wave={msg.fx === 'wave'} class:fx-jitter={msg.fx === 'jitter'} class:fx-big={msg.fx === 'big'} class:fx-small={msg.fx === 'small'} class:fx-wiggly={msg.fx === 'wiggly'} class:fx-cursed={msg.fx === 'cursed'} class:fx-scalloped={msg.fx === 'scalloped'} class:fx-starburst={msg.fx === 'starburst'} class:revealed={revealedInvisible.has(msg.id)} class:jumbo-emoji={jumboEmojiCountM(msg.content) > 0 && !msg.replyTo} class:has-reply={!!msg.replyTo} style:font-size={bubbleFontSize(msg.content, msg.fontSize)} style:font-weight={msg.fontWeight && msg.fontWeight !== 400 ? msg.fontWeight : null} style:font-stretch={msg.fontStretch && msg.fontStretch !== 100 ? `${msg.fontStretch}%` : null} style:--ws={msg.fx === 'wiggly' && msg.wiggleSize ? `${msg.wiggleSize}px` : msg.fx === 'cursed' && msg.wiggleSize ? msg.wiggleSize : null} data-font-size={msg.fontSize && msg.fontSize !== 1 ? msg.fontSize : null} data-font-weight={msg.fontWeight && msg.fontWeight !== 400 ? msg.fontWeight : null} data-font-stretch={msg.fontStretch && msg.fontStretch !== 100 ? msg.fontStretch : null} onclick={msg.fx === 'invisible' && !revealedInvisible.has(msg.id) ? () => revealInvisible(msg.id) : undefined}>{#if msg.replyTo}{@const _rp = stripMarkup(msg.replyTo.content)}{@const _rj = jumboEmojiCountM(_rp)}<button class="reply-quote" onclick={(e) => { e.stopPropagation(); scrollToMessage(msg.replyTo.id); }}><span class="reply-author">{msg.replyTo.userName}</span><span class="reply-text" class:jumbo-reply={_rj > 0} style:font-size={_rj > 0 ? JUMBO_SIZES[_rj - 1] : null}>{@html contentHtmlM(msg.replyTo.content)}</span></button>{/if}{@html bubbleHtmlM(msg.content, msg.mentions, !msg.noSplit)}{#if msg.edited}<span class="edited-tag"> (edited)</span>{/if}</p>
 					{/key}
 				{/if}
 				{#if !msg.pending}
@@ -3206,7 +3254,7 @@
 			onmouseup={onCeSelect}
 			onkeyup={onCeSelect}
 			onfocus={() => keyboardOpen = true}
-			onblur={() => { keyboardOpen = false; setTimeout(() => { const ae = document.activeElement; if (!ae?.closest('.text-fx-bar') && !ae?.closest('.text-typo-bar') && !ae?.closest('.compose-format-wrap')) showTextFxBar = false; }, 120); }}
+			onblur={() => { keyboardOpen = false; /* text fx bar stays until ✕ is pressed */ }}
 			oncopy={onCeCopy}
 			onpaste={onCePaste}
 			data-placeholder="Message {otherUser.name}"
@@ -3214,6 +3262,10 @@
 			style:font-weight={(messageFontWeight !== 400 && !_savedCeSel) ? messageFontWeight : null}
 			style:font-stretch={(messageFontStretch !== 100 && !_savedCeSel) ? `${messageFontStretch}%` : null}
 		></div>
+			<MentionAutocomplete
+				{inputEl}
+				members={[...(data.users ?? []), { id: data.currentUser.id, name: data.currentUser.name, role: data.currentUser.role }]}
+			/>
 			<div class="compose-fmt-row">
 				<button class="btn-fmt btn-fmt-bold" onmousedown={(e) => { e.preventDefault(); applyTextFx('bold'); }} title="Bold (⌘B)"><b>B</b></button>
 				<button class="btn-fmt btn-fmt-italic" onmousedown={(e) => { e.preventDefault(); applyTextFx('italic'); }} title="Italic (⌘I)"><i>I</i></button>

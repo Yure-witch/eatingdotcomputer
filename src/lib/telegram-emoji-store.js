@@ -114,7 +114,7 @@ export function spriteKeyForCustom(short, id) { return `tgc:${short}:${id}`; }
 // ── Render engine toggle ────────────────────────────────────────────────
 // `rlottie` (CPU): rasterise via rlottie WASM workers, ImageBitmap cache
 //   per emoji, drawImage to canvas. Pixel-perfect — handles every Lottie
-//   feature TGS uses correctly.
+//   feature TGS uses correctly. Safest fallback (no GL).
 // `skottie` (GPU): rasterise via Skia/CanvasKit-wasm in a shared WebGL
 //   surface on the MAIN thread. Way faster + cheaper than CPU, but
 //   mishandles certain TGS modifiers (Pucker & Bloat on stars/clovers,
@@ -123,13 +123,39 @@ export function spriteKeyForCustom(short, id) { return `tgc:${short}:${id}`; }
 //   `skottie`, but running in a Web Worker on an OffscreenCanvas. Main
 //   thread does zero per-frame GPU/WASM work — it just posts cell rects
 //   to the worker each frame. Same visual fidelity as `skottie`. Best
-//   for sustained-scroll perf. Requires OffscreenCanvas support.
+//   for sustained-scroll perf on desktop + Android. Default.
+// `skottie-webgpu` (experimental): same as `skottie-worker` but the
+//   underlying CanvasKit uses a WebGPU surface (canvaskit-webgpu
+//   fork) instead of WebGL. Targets browsers with WebGPU enabled —
+//   notably iOS 18+ where WebGL OffscreenCanvas is buggy.
 const ENGINE_KEY = 'tgEngine';
+const VALID_ENGINES = new Set(['rlottie', 'skottie', 'skottie-worker', 'skottie-webgpu']);
+
+// iOS Safari (including iPadOS in mobile mode) silently breaks on the
+// OffscreenCanvas + WebGL combo the WorkerGPU engine uses — frames
+// stop after a few seconds, sometimes the WebGL context is killed
+// entirely. Until WebGPU lands stably on iOS, default to rlottie there.
+function isIOS() {
+	if (typeof navigator === 'undefined') return false;
+	const ua = navigator.userAgent || '';
+	if (/iPhone|iPad|iPod/.test(ua)) return true;
+	// iPadOS 13+ identifies as Mac unless we look at touch points.
+	return navigator.platform === 'MacIntel' && (navigator.maxTouchPoints ?? 0) > 1;
+}
+
 const _initialEngine = (() => {
 	if (typeof localStorage === 'undefined') return 'rlottie';
 	const v = localStorage.getItem(ENGINE_KEY);
-	if (v === 'skottie' || v === 'skottie-worker') return v;
-	return 'rlottie';
+	if (v && VALID_ENGINES.has(v)) return v;
+	// First-time default: WebGPU everywhere except iOS without
+	// WebGPU. On a non-WebGPU browser the worker transparently falls
+	// back to WebGL — so this is effectively "try the fastest path,
+	// auto-downgrade if not supported". iOS pre-18 still gets rlottie
+	// directly because its WebGL OffscreenCanvas crashes the renderer.
+	if (isIOS() && !(typeof navigator !== 'undefined' && navigator.gpu)) {
+		return 'rlottie';
+	}
+	return 'skottie-webgpu';
 })();
 export const engineMode = writable(_initialEngine);
 if (typeof window !== 'undefined') {

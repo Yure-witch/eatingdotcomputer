@@ -59,7 +59,10 @@
 		try {
 			const engine = localStorage.getItem('tgEngine') || 'rlottie';
 			const inApp = location.pathname.startsWith('/app');
-			if (engine === 'skottie-worker' && inApp) {
+			if ((engine === 'skottie-worker' || engine === 'skottie-webgpu') && inApp) {
+				import('$lib/skottie-stage-worker.js').then((m) => {
+					m.setPreferWebGPU?.(engine === 'skottie-webgpu');
+				});
 				const kick = () => prewarmTelegramSkottieWorker();
 				if (typeof requestIdleCallback === 'function') {
 					requestIdleCallback(kick, { timeout: 2000 });
@@ -105,7 +108,12 @@
 			//    The priority queue in skottie-worker.js orders all of
 			//    this by viewport, so the user's actual scroll
 			//    position always wins regardless of queue depth.
-			const TOP_N = 24;
+			//    Mobile gets a much smaller slice — the cost of
+			//    building 600+ animations up-front is steep on
+			//    phones (CPU, RAM, battery), and on-demand loading
+			//    is fast enough on devices with WebGPU anyway.
+			const _isCoarse = window.matchMedia?.('(pointer: coarse)').matches;
+			const TOP_N = _isCoarse ? 8 : 24;
 			const urls = new Set();
 			if (m?.byCat) {
 				for (const items of Object.values(m.byCat)) {

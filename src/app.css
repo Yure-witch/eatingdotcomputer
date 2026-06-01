@@ -167,3 +167,40 @@ main {
 .dot {
 	color: var(--accent);
 }
+
+/* @mention pill — chat bubbles highlight mentioned users with a
+   subtle tinted background and a profile link. */
+.mention-pill {
+	display: inline;
+	padding: 0 0.25em;
+	margin: 0 -0.1em;
+	border-radius: 5px;
+	background: color-mix(in srgb, var(--accent) 22%, transparent);
+	color: var(--ink);
+	font-weight: 600;
+	text-decoration: none;
+	white-space: nowrap;
+}
+.mention-pill:hover {
+	background: color-mix(in srgb, var(--accent) 38%, transparent);
+}
+.message.mine .mention-pill {
+	background: color-mix(in srgb, var(--paper) 22%, transparent);
+	color: var(--paper);
+}
+.message.mine .mention-pill:hover {
+	background: color-mix(in srgb, var(--paper) 38%, transparent);
+}
+
+/* Deep-link landing highlight — when a notification or other deep link
+   targets a specific message (`?msg=ID`), scrollToMessage() adds the
+   `.flash` class to its `.message` wrapper for ~1.6 s so the user
+   immediately sees which bubble was linked. */
+@keyframes msg-flash {
+	0%   { background: color-mix(in srgb, var(--accent) 35%, transparent); }
+	100% { background: transparent; }
+}
+.message.flash {
+	animation: msg-flash 1.6s ease-out;
+	border-radius: 12px;
+}

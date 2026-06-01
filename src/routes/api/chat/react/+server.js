@@ -81,5 +81,44 @@ export async function POST({ request, locals }) {
 		}
 	}
 
+	// Notification fan-out: only when ADDING (not removing) a reaction
+	// to someone ELSE's message. We need the author's uid; check
+	// Firebase first (live message), fall back to Turso (archived).
+	if (!removing) {
+		try {
+			let authorUid = null;
+			const msgPath = `${base}/messages/${messageId}`;
+			const msgSnap = await adminDb.ref(msgPath).get();
+			if (msgSnap.exists()) {
+				const v = msgSnap.val();
+				authorUid = v?.u ?? v?.userId ?? null;
+			}
+			if (!authorUid && turso) {
+				const row = await turso.execute({
+					sql: 'SELECT user_id FROM chat_messages WHERE id = ?',
+					args: [messageId]
+				});
+				if (row.rows.length) authorUid = String(row.rows[0].user_id);
+			}
+			if (authorUid && authorUid !== userId) {
+				const senderName = session.user.name || session.user.email;
+				const notifId = adminDb.ref(`notifications/${authorUid}`).push().key;
+				await adminDb.ref(`notifications/${authorUid}/${notifId}`).set({
+					type: 'reaction',
+					fromUid: userId,
+					fromName: senderName,
+					convType: type === 'dm' ? 'dm' : 'channel',
+					convId: conversationId,
+					msgId: messageId,
+					// The emoji IS the snippet for reactions — the bell
+					// renders it as "reacted 😀" and the link scrolls
+					// the recipient to the message that was reacted to.
+					snippet: emoji,
+					createdAt: Date.now()
+				});
+			}
+		} catch { /* notification is best-effort — never fail the react */ }
+	}
+
 	return json({ ok: true, removed: removing });
 }

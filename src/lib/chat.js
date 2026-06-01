@@ -46,6 +46,13 @@ export function normaliseMessage(id, raw, userMap) {
 		attachment = { url: raw.att.url, filename: raw.att.name ?? '', mimetype: raw.att.type ?? '', size: raw.att.size ?? 0 };
 	}
 
+	// Mentions: compact `{ u, o, l }` → bubble-friendly `{ uid, offset, len }`.
+	const mentions = Array.isArray(raw.mn)
+		? raw.mn
+			.filter((m) => m && typeof m.u === 'string' && typeof m.o === 'number' && typeof m.l === 'number')
+			.map((m) => ({ uid: m.u, offset: m.o, len: m.l }))
+		: [];
+
 	return {
 		id,
 		userId,
@@ -55,6 +62,7 @@ export function normaliseMessage(id, raw, userMap) {
 		createdAt: ts,
 		replyTo,
 		attachment,
+		mentions,
 		edited: !!(raw.ed),
 		fx: raw.fx ?? null,
 		fontSize: raw.fs ?? 1,

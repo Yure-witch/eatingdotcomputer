@@ -10,6 +10,7 @@
 	import { invalidateAll, afterNavigate } from '$app/navigation';
 	import ProfileHover from '$lib/components/ProfileHover.svelte';
 	import BottomNav from '$lib/components/BottomNav.svelte';
+	import NotificationBell from '$lib/components/NotificationBell.svelte';
 
 	let { data, children } = $props();
 
@@ -869,6 +870,14 @@
 	{@render children()}
 </div>
 
+<!-- Global notification bell. Lives in the layout (not per-page
+     headers) so it's in the same fixed spot on every app page —
+     home, chat, atlas, manage, files, profile, playground. Sits at
+     z-index above page headers so it's never hidden behind one. -->
+<div class="global-bell">
+	<NotificationBell user={data.currentUser} />
+</div>
+
 <!-- Toasts -->
 {#if toasts.length}
 	<div class="toast-stack">
@@ -1170,6 +1179,17 @@
 		.global-sidebar .sidebar-class-name { display: block; }
 		/* No backdrop needed — sidebar is full-screen */
 		.sidebar-backdrop { display: none; }
+	}
+
+	/* ── Global notification bell ── */
+	.global-bell {
+		position: fixed;
+		top: 14px;
+		right: 18px;
+		z-index: 50;
+	}
+	@media (max-width: 640px) {
+		.global-bell { top: 10px; right: 12px; }
 	}
 
 	/* ── App shell ── */

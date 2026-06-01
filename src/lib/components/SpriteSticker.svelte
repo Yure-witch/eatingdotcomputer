@@ -19,9 +19,11 @@
 	// Resolve the right Skottie stage module based on engine. Both
 	// modules export the identical API, so dispatch is just module
 	// selection — every call site below uses `stage.<fn>` and the right
-	// implementation runs underneath.
+	// implementation runs underneath. `skottie-webgpu` uses the same
+	// worker pool as `skottie-worker` but with a WebGPU surface
+	// preference set via `setPreferWebGPU`.
 	function skModule(eng) {
-		return eng === 'skottie-worker' ? SkWorker : SkMain;
+		return (eng === 'skottie-worker' || eng === 'skottie-webgpu') ? SkWorker : SkMain;
 	}
 
 	let {
@@ -85,7 +87,7 @@
 	// Remember which Skottie module owns the current cell so teardown
 	// hits the right one even after an engine swap mid-flight.
 	let skottieMod = null;
-	const isSkottieEngine = (eng) => eng === 'skottie' || eng === 'skottie-worker';
+	const isSkottieEngine = (eng) => eng === 'skottie' || eng === 'skottie-worker' || eng === 'skottie-webgpu';
 
 	const px = $derived(Math.round(size * (typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 2)));
 
@@ -193,6 +195,13 @@
 		const eng = activeEngine;
 		const mod = skModule(eng);
 		skottieMod = mod;
+		// Tell the worker proxy whether to boot with a WebGPU or WebGL
+		// surface. Only takes effect on the first ensureStage(); a
+		// later engine swap between skottie-worker ↔ skottie-webgpu
+		// won't switch the underlying surface backend without a reload.
+		if (mod === SkWorker && typeof mod.setPreferWebGPU === 'function') {
+			mod.setPreferWebGPU(eng === 'skottie-webgpu');
+		}
 		await mod.ensureStage();
 		if (!mounted || activeEngine !== eng) return;
 

@@ -323,6 +323,15 @@ export function setHost(scrollContent, scrollViewport) {
 	if (shards.length) repositionCanvases();
 }
 
+// Whether the worker pool should boot with a WebGPU surface. Read at
+// first ensureStage(); switching at runtime requires a page reload
+// because tearing down + recreating the workers + their OffscreenCanvas
+// transfers is more disruption than it's worth for an opt-in mode.
+let _preferWebGPU = false;
+export function setPreferWebGPU(prefer) {
+	_preferWebGPU = !!prefer;
+}
+
 export function ensureStage() {
 	if (_ready) return _ready;
 	_ready = (async () => {
@@ -337,7 +346,7 @@ export function ensureStage() {
 				{ type: 'module' }
 			);
 			sh.worker.addEventListener('message', (e) => onShardMessage(i, e));
-			sh.worker.postMessage({ type: 'init', canvas: offscreen }, [offscreen]);
+			sh.worker.postMessage({ type: 'init', canvas: offscreen, preferWebGPU: _preferWebGPU }, [offscreen]);
 			await new Promise((resolve, reject) => {
 				const handler = (e) => {
 					if (e.data.type === 'ready') {
