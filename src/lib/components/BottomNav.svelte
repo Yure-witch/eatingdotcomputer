@@ -45,18 +45,35 @@
 		const onFocusOut = (e) => {
 			if (!isTextInput(e.target)) return;
 			keyboardOpen = false;
-			// iOS Safari leaves the document scrolled after the
-			// keyboard closes — if it scrolled up to bring the input
-			// into view, position:fixed elements (chat header, this
-			// nav, the global notification bell) get parked at the
-			// scrolled offset and look "scrollable". Snapping the
-			// window scroll back to 0 forces the fixed elements to
-			// re-anchor at the top of the visual viewport.
-			if (isTouchDevice) {
-				// Defer one tick so iOS finishes its own keyboard-
-				// close scroll restoration before we override it.
-				requestAnimationFrame(() => window.scrollTo(0, 0));
-			}
+			if (!isTouchDevice) return;
+			// iOS Safari has TWO bugs after a keyboard close:
+			//   1. The document scroll position is left at wherever
+			//      iOS scrolled to reveal the focused input, so
+			//      position:fixed elements look offset.
+			//   2. Even after we scroll back, fixed elements keep
+			//      acting like position:absolute relative to the
+			//      document — scrolling moves them with the content
+			//      instead of pinning to the viewport. They stay in
+			//      this broken state until something forces iOS to
+			//      re-resolve their containing block.
+			//
+			// Fix:
+			//   - rAF #1: scroll to 0 (after iOS settles).
+			//   - rAF #2: set a transient `transform` on <html>.
+			//     Any non-`none` transform makes the element a new
+			//     containing block for fixed descendants, which is
+			//     exactly what iOS needs to "wake up" and re-anchor
+			//     them. We pull it back off the next frame so it
+			//     doesn't actually become a containing block for
+			//     keeps — the bump alone is enough.
+			requestAnimationFrame(() => {
+				window.scrollTo(0, 0);
+				const root = document.documentElement;
+				root.style.transform = 'translateZ(0)';
+				requestAnimationFrame(() => {
+					root.style.transform = '';
+				});
+			});
 		};
 		document.addEventListener('focusin', onFocusIn);
 		document.addEventListener('focusout', onFocusOut);

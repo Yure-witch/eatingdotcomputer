@@ -109,7 +109,13 @@ html.noto-emoji .reaction-tooltip-emoji {
 
 body {
 	margin: 0;
-	min-height: 100vh;
+	/* `100dvh` tracks the *visual* viewport, so when the iOS keyboard
+	   opens/closes the body shrinks/grows with it. `100vh` is the
+	   static layout viewport and stays put when the keyboard appears,
+	   which means body would overflow into a phantom scrollable
+	   region and drag every "fixed-looking" flex child (the chat
+	   header + input bar inside `.chat-wrap`) along for the ride. */
+	min-height: 100dvh;
 	background: var(--paper);
 	overflow-x: hidden;
 }
