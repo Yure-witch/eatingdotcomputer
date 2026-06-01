@@ -3981,6 +3981,20 @@
 	.btn-emoji:hover, .btn-emoji.active { color: var(--ink); border-color: var(--muted-fg); background: var(--surface-2); }
 	.compose-picker-backdrop { position: fixed; inset: 0; z-index: 49; }
 	.compose-picker-pop { position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 50; }
+	@media (max-width: 640px) {
+		/* Mobile: every expression picker (emoji / kitchen / custom /
+		   tg / gif / formatting) docks as a full-width sheet right
+		   above the input bar, centered horizontally. Bottom offset is
+		   the input bar's ~56 px plus iOS safe-area so the sheet
+		   always sits flush above the compose row. */
+		.compose-picker-pop {
+			position: fixed;
+			left: 0; right: 0;
+			bottom: calc(56px + env(safe-area-inset-bottom, 0px));
+			width: 100%;
+			z-index: 60;
+		}
+	}
 
 	/* Inline Emoji Kitchen images */
 	:global(.ek-img) {
@@ -4035,6 +4049,15 @@
 	.btn-kitchen:hover, .btn-kitchen.active { color: var(--ink); border-color: var(--muted-fg); background: var(--surface-2); }
 	.btn-gif { font-size: 0.65rem; font-weight: 700; font-family: inherit; letter-spacing: -0.02em; }
 	.compose-kitchen-pop { position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 50; }
+	@media (max-width: 640px) {
+		.compose-kitchen-pop {
+			position: fixed;
+			left: 0; right: 0;
+			bottom: calc(56px + env(safe-area-inset-bottom, 0px));
+			width: 100%;
+			z-index: 60;
+		}
+	}
 
 	.send-wrap {
 		position: relative; flex-shrink: 0; touch-action: none; user-select: none; z-index: 299;

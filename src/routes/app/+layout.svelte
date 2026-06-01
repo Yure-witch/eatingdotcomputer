@@ -1193,7 +1193,13 @@
 	}
 
 	/* ── App shell ── */
-	.app-shell { min-height: 100vh; }
+	/* `100dvh` tracks the visual viewport so app-shell never extends
+	   past the bottom of what the user can see. With `100vh` (static
+	   layout viewport) the shell is taller than the visible area
+	   whenever the mobile URL bar is up — body grows to match, and
+	   the chat layout inside (header + input bar) scrolls with the
+	   page instead of staying anchored. */
+	.app-shell { min-height: 100dvh; }
 
 	@media (min-width: 641px) {
 		/* Default margin matches sidebar width; overridden by inline style when collapsed */

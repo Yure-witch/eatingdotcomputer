@@ -227,7 +227,18 @@
 			// Worker's surface was wiped (tab switch, resize). Bring
 			// the backdrop back to cover the cell while the canvas
 			// rebuilds; next 3-paint cycle will hide it again.
-			onSurfaceLost: () => { if (mounted) painted = false; }
+			onSurfaceLost: () => {
+				if (!mounted) return;
+				painted = false;
+				// Worker may have freed our animation (mobile tab
+				// switch triggers an aggressive _anims clear to
+				// stop GPU memory from accumulating). Reset our
+				// "already queued" flag so the next visibility
+				// transition re-acquires; if we're currently
+				// visible, re-queue right now so playback resumes.
+				skottieAnimQueued = false;
+				if (visible) queueSkottieAnimation();
+			}
 		});
 		mod.setCellVisible(skottieCellId, true);
 

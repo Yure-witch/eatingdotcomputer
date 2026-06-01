@@ -121,7 +121,11 @@ body {
 }
 
 main {
-	min-height: 100vh;
+	/* `100dvh` so the landing-page `<main>` (and any other page that
+	   uses `<main>`) tracks the visual viewport. With `100vh` it
+	   overflows the visible area on mobile whenever the URL bar is
+	   up, creating a phantom scrollable region. */
+	min-height: 100dvh;
 	display: grid;
 	place-items: center;
 	padding: 2rem;

@@ -391,6 +391,20 @@
 		display: flex; flex-direction: column; overflow: hidden;
 		font-family: 'Google Sans Flex', 'Space Grotesk', sans-serif; font-size: 0.85rem;
 	}
+	/* Mobile: shrink the picker so the visible grid is only ~3 rows
+	   (≈24 cells at the typical phone width). Fewer mounted cells →
+	   fewer concurrent Skottie animations → far less GPU pressure
+	   while scrolling and especially across tab switches. The whole
+	   picker is then full-width above the input bar (see the
+	   chat-page popover styles). */
+	@media (max-width: 640px) {
+		.tg-panel {
+			width: 100%;
+			height: 230px;
+			border-radius: 14px 14px 0 0;
+			box-shadow: 0 -4px 24px rgba(0,0,0,0.18);
+		}
+	}
 	.tg-tabs { display: flex; gap: 1px; border-bottom: 1.5px solid var(--border); background: var(--surface-2); flex-shrink: 0; overflow-x: auto; }
 	.tg-tabs::-webkit-scrollbar { height: 0; }
 	.tg-tab { flex: 1 0 auto; min-width: 34px; padding: 0.45rem 0; border: none; background: none; font-size: 1.05rem; line-height: 1; cursor: pointer; opacity: 0.55; transition: opacity 0.13s, background 0.13s; border-bottom: 2px solid transparent; }

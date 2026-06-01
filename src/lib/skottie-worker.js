@@ -613,6 +613,27 @@ self.onmessage = async (e) => {
 				diag('log', '[skottie-worker] clear: dropping', _pending.size, 'pending builds');
 				_pending.clear();
 			}
+			// AGGRESSIVE: free every built animation's GPU resources
+			// too. Without this, each Skottie animation in `_anims`
+			// keeps pinning textures/buffers in the GPU surface, and
+			// switching tabs on iOS WebGPU piles them up until the
+			// per-page budget is exceeded → the renderer (and tab)
+			// crashes. Cells re-queue on next viewport visibility;
+			// the rebuild cost is acceptable because the JSON is
+			// already HTTP-cached. We tell main about each released
+			// URL so its `_loadedUrls` mirror stays accurate.
+			if (_anims.size) {
+				diag('log', '[skottie-worker] clear: freeing', _anims.size, 'built animations to recover GPU memory');
+				const releasedUrls = [];
+				for (const [url, entry] of _anims) {
+					try { entry.animation.delete(); } catch {}
+					releasedUrls.push(url);
+				}
+				_anims.clear();
+				for (const url of releasedUrls) {
+					self.postMessage({ type: 'anim-released', url });
+				}
+			}
 			// Drop stale rect cache so the priority queue doesn't
 			// keep treating old-tab URLs as "in viewport" via their
 			// last-known position. Render messages will repopulate it
