@@ -145,16 +145,22 @@ function isIOS() {
 
 const _initialEngine = (() => {
 	if (typeof localStorage === 'undefined') return 'rlottie';
+	const isCoarsePointer = typeof window !== 'undefined'
+		&& window.matchMedia?.('(pointer: coarse)').matches;
 	const v = localStorage.getItem(ENGINE_KEY);
+	// Touch-device migration: any Skia-backed engine (skottie /
+	// skottie-worker / skottie-webgpu) reliably crashes iOS Safari +
+	// iOS PWAs in the Telegram picker once a couple dozen animations
+	// are alive. Force rlottie on coarse-pointer devices regardless
+	// of what's saved, so anyone whose engine was set to a Skottie
+	// variant by the previous default isn't stuck in a crash loop.
+	// rlottie is CPU-bound, so memory is the device's RAM (not a
+	// hard GPU texture budget) and degrades gracefully under load.
+	if (isCoarsePointer) return 'rlottie';
 	if (v && VALID_ENGINES.has(v)) return v;
-	// First-time default: WebGPU everywhere except iOS without
-	// WebGPU. On a non-WebGPU browser the worker transparently falls
-	// back to WebGL — so this is effectively "try the fastest path,
-	// auto-downgrade if not supported". iOS pre-18 still gets rlottie
-	// directly because its WebGL OffscreenCanvas crashes the renderer.
-	if (isIOS() && !(typeof navigator !== 'undefined' && navigator.gpu)) {
-		return 'rlottie';
-	}
+	// Desktop / mouse → skottie-webgpu (massive perf win on capable
+	// browsers; auto-falls-back to WebGL inside the worker if
+	// WebGPU isn't supported).
 	return 'skottie-webgpu';
 })();
 export const engineMode = writable(_initialEngine);

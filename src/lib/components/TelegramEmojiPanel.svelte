@@ -62,11 +62,16 @@
 	// Virtualization — render LottieStickers only for cells in viewport + buffer.
 	// Cell layout is preserved via empty <div class="tg-cell"> placeholders so the
 	// scrollbar stays accurate without measuring every emoji.
-	const CELL_PX = 36;            // matches the regular EmojiPicker's 36×36 cell pitch (gap: 0)
-	const GRID_PAD_X = 4;          // 0.25rem padding on .tg-grid-wrap each side (matches regular picker)
 	// Coarse-pointer / touch device test for mobile perf tuning.
 	const _IS_COARSE = typeof window !== 'undefined'
 		&& window.matchMedia?.('(pointer: coarse)').matches;
+	// Cell pitch — desktop is 36 (matches the regular EmojiPicker).
+	// Mobile uses 44 so phones get 8 cells per row at typical widths
+	// (360 px content / 44 ≈ 8), giving a clean 3×8 = 24-cell viewport
+	// with no buffer. Keeps Skottie active animations bounded to 24,
+	// which is well within iOS WebGPU's per-page GPU budget.
+	const CELL_PX = _IS_COARSE ? 44 : 36;
+	const GRID_PAD_X = 4;          // 0.25rem padding on .tg-grid-wrap each side (matches regular picker)
 	// Buffer ≈ 3 rows each side. Smaller cells mean more cells/row, so a
 	// large buffer can balloon active spritesheet memory. 3 is enough to
 	// hide rapid scroll given the new tiny per-frame raster (9 KB/frame).
@@ -84,10 +89,11 @@
 	// above + below for jank-free flings. Mobile pays the cost in
 	// GPU memory — each mounted animated cell pins a Skottie surface
 	// in the worker, and iOS WebGPU kills the renderer once the
-	// per-page budget is exceeded. One row of buffer on each side is
-	// enough to cover a slow scroll without holding more than a couple
-	// dozen animations resident at once.
-	const BUFFER_ROWS = _IS_COARSE ? 1 : 20;
+	// per-page budget is exceeded. Zero buffer means only the cells
+	// strictly in the viewport are mounted; scrolling pulls in a new
+	// row and the row that scrolls out unmounts (releasing its anim
+	// via SpriteSticker's teardown → worker refcount drop → free).
+	const BUFFER_ROWS = _IS_COARSE ? 0 : 20;
 	let scrollTop = $state(0);
 	let gridH = $state(420);
 	let gridW = $state(340);
@@ -391,18 +397,25 @@
 		display: flex; flex-direction: column; overflow: hidden;
 		font-family: 'Google Sans Flex', 'Space Grotesk', sans-serif; font-size: 0.85rem;
 	}
-	/* Mobile: shrink the picker so the visible grid is only ~3 rows
-	   (≈24 cells at the typical phone width). Fewer mounted cells →
-	   fewer concurrent Skottie animations → far less GPU pressure
-	   while scrolling and especially across tab switches. The whole
-	   picker is then full-width above the input bar (see the
-	   chat-page popover styles). */
+	/* Mobile: shrink the picker so the visible grid is exactly 3 rows
+	   of 44 px cells = 132 px of grid + ~70 px of chrome (tabs +
+	   search + mode toggle + footer) = ~205 px total. At ~360 px
+	   phone-content width that's a clean 8 cells per row → 24 active
+	   animations in the viewport with zero buffer. Well within iOS
+	   WebGPU's per-page GPU budget; matches what native Telegram
+	   shows in its compact picker mode. */
 	@media (max-width: 640px) {
 		.tg-panel {
 			width: 100%;
-			height: 230px;
+			height: 205px;
 			border-radius: 14px 14px 0 0;
 			box-shadow: 0 -4px 24px rgba(0,0,0,0.18);
+		}
+		/* Bigger cell pitch on mobile (44 px) — keep the rendered
+		   sprite/canvas sized to match so emoji don't look squished. */
+		:global(.tg-cell) {
+			width: 44px !important;
+			height: 44px !important;
 		}
 	}
 	.tg-tabs { display: flex; gap: 1px; border-bottom: 1.5px solid var(--border); background: var(--surface-2); flex-shrink: 0; overflow-x: auto; }
