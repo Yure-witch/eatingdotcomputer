@@ -3013,7 +3013,7 @@
 {/if}
 
 
-<div class="input-area" class:kb-open={keyboardOpen} bind:clientHeight={inputAreaHeight}>
+<div class="input-area" class:kb-open={keyboardOpen} bind:clientHeight={inputAreaHeight} style:--input-area-h="{inputAreaHeight}px">
 	{#if replyingTo}
 		<div class="reply-bar">
 			<div class="reply-bar-content">
@@ -3897,10 +3897,10 @@
 	.compose-picker-pop { position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 50; }
 	@media (max-width: 640px) {
 		.compose-picker-pop {
-			position: absolute;
-			bottom: 100%;
+			position: fixed;
 			left: 0; right: 0;
-			width: 100%;
+			bottom: calc(var(--input-area-h, 56px) + env(safe-area-inset-bottom, 0px));
+			width: 100vw;
 			z-index: 60;
 		}
 	}
@@ -3960,10 +3960,10 @@
 	.compose-kitchen-pop { position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 50; }
 	@media (max-width: 640px) {
 		.compose-kitchen-pop {
-			position: absolute;
-			bottom: 100%;
+			position: fixed;
 			left: 0; right: 0;
-			width: 100%;
+			bottom: calc(var(--input-area-h, 56px) + env(safe-area-inset-bottom, 0px));
+			width: 100vw;
 			z-index: 60;
 		}
 	}

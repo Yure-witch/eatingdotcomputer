@@ -3096,7 +3096,7 @@
 {/if}
 
 
-<div class="input-area" class:kb-open={keyboardOpen} bind:clientHeight={inputAreaHeight}>
+<div class="input-area" class:kb-open={keyboardOpen} bind:clientHeight={inputAreaHeight} style:--input-area-h="{inputAreaHeight}px">
 	{#if replyingTo}
 		<div class="reply-bar">
 			<div class="reply-bar-content">
@@ -3983,18 +3983,19 @@
 	.compose-picker-pop { position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 50; }
 	@media (max-width: 640px) {
 		/* Mobile: every expression picker (emoji / kitchen / custom /
-		   tg / gif / formatting) docks as a full-width sheet right
-		   above the input-area, anchored to its top via the
-		   `position: relative` on `.input-area`. This auto-tracks
-		   the input-area's actual height — including reply bars,
-		   attachment previews, and format toolbars — so the picker
-		   never overlaps the compose row no matter what state it's
-		   in. */
+		   tg / gif / formatting) docks as a full-width sheet anchored
+		   to the viewport — width spans the full screen so the grid
+		   has room for ~8 cells per row, not just the narrow button
+		   wrapper. Bottom-offset reads `--input-area-h` (bound to
+		   `inputAreaHeight` on the `.input-area` element) so the
+		   picker auto-tracks the compose row's actual height through
+		   reply bars, attachment previews, formatting toolbars,
+		   etc. — never overlapping the input. */
 		.compose-picker-pop {
-			position: absolute;
-			bottom: 100%;
+			position: fixed;
 			left: 0; right: 0;
-			width: 100%;
+			bottom: calc(var(--input-area-h, 56px) + env(safe-area-inset-bottom, 0px));
+			width: 100vw;
 			z-index: 60;
 		}
 	}
@@ -4054,10 +4055,10 @@
 	.compose-kitchen-pop { position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 50; }
 	@media (max-width: 640px) {
 		.compose-kitchen-pop {
-			position: absolute;
-			bottom: 100%;
+			position: fixed;
 			left: 0; right: 0;
-			width: 100%;
+			bottom: calc(var(--input-area-h, 56px) + env(safe-area-inset-bottom, 0px));
+			width: 100vw;
 			z-index: 60;
 		}
 	}
