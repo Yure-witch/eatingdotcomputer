@@ -324,13 +324,20 @@
 				if (activeEngine === 'rlottie' && !eager) ensureLoaded();
 				if (isSkottieEngine(activeEngine)) queueSkottieAnimation();
 			} else if (!visible && wasVisible && isSkottieEngine(activeEngine)) {
-				// Cell just left the viewport. If its animation is
-				// still pending (not built yet), cancel — user scrolled
-				// past before we got to it; let the visible cells take
-				// the queue's bandwidth instead.
+				// Cell just left the viewport. On desktop we only cancel
+				// PENDING builds (already-loaded animations keep their
+				// GPU resources so the cell snaps back instantly on
+				// re-entry). On mobile we release EVERYTHING — each
+				// resident Skottie animation pins a chunk of GPU memory
+				// and iOS WebGPU kills the renderer once it overruns
+				// its per-page budget. Re-acquire is cheap (HTTP cache)
+				// when the cell scrolls back into view.
 				const mod = skottieMod || skModule(activeEngine);
-				if (skottieAnimQueued && skottieUrl && !mod.isAnimationLoaded(skottieUrl)) {
-					releaseSkottieAnimation();
+				const _coarse = window.matchMedia?.('(pointer: coarse)').matches;
+				if (skottieAnimQueued && skottieUrl) {
+					if (_coarse || !mod.isAnimationLoaded(skottieUrl)) {
+						releaseSkottieAnimation();
+					}
 				}
 			}
 			updatePlay();

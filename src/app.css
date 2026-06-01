@@ -51,18 +51,18 @@
 	   intentionally contrast with the rest of the UI. */
 	--inverse-surface:    var(--md-sys-color-inverse-surface,    #1a1a1a);
 	--inverse-on-surface: var(--md-sys-color-inverse-on-surface, #f7f2ea);
-	/* Sidebar palette — the sidebar intentionally inverts from the
-	   body (dark panel on light theme, light panel on dark theme) so
-	   it always reads as a distinct chrome surface. Muted + hover
-	   colors are mixed against the bg so they adapt automatically:
-	   light-on-dark uses a soft white overlay, dark-on-light uses a
-	   soft black overlay, no per-theme branching needed. */
-	--sidebar-bg:        var(--inverse-surface);
-	--sidebar-fg:        var(--inverse-on-surface);
-	--sidebar-fg-muted:  color-mix(in srgb, var(--sidebar-fg) 65%, var(--sidebar-bg));
-	--sidebar-hover:     color-mix(in srgb, var(--sidebar-fg) 12%, transparent);
-	--sidebar-active:    color-mix(in srgb, var(--sidebar-fg) 18%, transparent);
-	--sidebar-border:    color-mix(in srgb, var(--sidebar-fg) 14%, transparent);
+	/* Sidebar palette — same color family as the body, just a step
+	   darker so it reads as a distinct chrome surface without
+	   inverting. We mix a small amount of ink into paper for the
+	   background; text + muted colors are the body's regular ink /
+	   muted-fg tokens (no inversion). Hover/active are subtle ink
+	   overlays that adapt automatically with the theme. */
+	--sidebar-bg:        color-mix(in srgb, var(--paper) 88%, var(--ink) 12%);
+	--sidebar-fg:        var(--ink);
+	--sidebar-fg-muted:  var(--muted-fg);
+	--sidebar-hover:     color-mix(in srgb, var(--ink) 8%, transparent);
+	--sidebar-active:    color-mix(in srgb, var(--ink) 14%, transparent);
+	--sidebar-border:    color-mix(in srgb, var(--ink) 10%, transparent);
 	--sidebar-width: 220px;
 }
 

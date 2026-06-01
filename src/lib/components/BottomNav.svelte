@@ -43,7 +43,20 @@
 			if (isTextInput(e.target)) keyboardOpen = true;
 		};
 		const onFocusOut = (e) => {
-			if (isTextInput(e.target)) keyboardOpen = false;
+			if (!isTextInput(e.target)) return;
+			keyboardOpen = false;
+			// iOS Safari leaves the document scrolled after the
+			// keyboard closes — if it scrolled up to bring the input
+			// into view, position:fixed elements (chat header, this
+			// nav, the global notification bell) get parked at the
+			// scrolled offset and look "scrollable". Snapping the
+			// window scroll back to 0 forces the fixed elements to
+			// re-anchor at the top of the visual viewport.
+			if (isTouchDevice) {
+				// Defer one tick so iOS finishes its own keyboard-
+				// close scroll restoration before we override it.
+				requestAnimationFrame(() => window.scrollTo(0, 0));
+			}
 		};
 		document.addEventListener('focusin', onFocusIn);
 		document.addEventListener('focusout', onFocusOut);

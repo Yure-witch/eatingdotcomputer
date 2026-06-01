@@ -59,7 +59,14 @@
 		try {
 			const engine = localStorage.getItem('tgEngine') || 'rlottie';
 			const inApp = location.pathname.startsWith('/app');
-			if ((engine === 'skottie-worker' || engine === 'skottie-webgpu') && inApp) {
+			// Skip the prewarm entirely on touch devices. Each pre-built
+			// Skottie animation pins GPU memory (and on iOS WebGPU the
+			// renderer is killed once we exceed the per-page budget),
+			// and the prewarm queues hundreds whose refcount never
+			// drops to zero because no cell ever "releases" them. On
+			// phones we rely on on-demand build via the IO observer.
+			const _isCoarse = window.matchMedia?.('(pointer: coarse)').matches;
+			if ((engine === 'skottie-worker' || engine === 'skottie-webgpu') && inApp && !_isCoarse) {
 				import('$lib/skottie-stage-worker.js').then((m) => {
 					m.setPreferWebGPU?.(engine === 'skottie-webgpu');
 				});
@@ -69,6 +76,13 @@
 				} else {
 					setTimeout(kick, 500);
 				}
+			} else if ((engine === 'skottie-worker' || engine === 'skottie-webgpu') && inApp && _isCoarse) {
+				// Still need to flip the WebGPU preference so cells
+				// boot the worker with the right surface backend on
+				// first mount — just skip the bulk anim queue.
+				import('$lib/skottie-stage-worker.js').then((m) => {
+					m.setPreferWebGPU?.(engine === 'skottie-webgpu');
+				});
 			}
 		} catch {}
 

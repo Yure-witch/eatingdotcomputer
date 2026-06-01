@@ -82,9 +82,12 @@
 	// skottie-stage.js — note that's about painting, not mounting).
 	// Desktop with WebGPU absorbs the cost of pre-mounting 20 rows
 	// above + below for jank-free flings. Mobile pays the cost in
-	// memory + per-frame draws so we mount a much tighter halo there
-	// (6 rows → roughly one screenful of pre-rendered buffer).
-	const BUFFER_ROWS = _IS_COARSE ? 6 : 20;
+	// GPU memory — each mounted animated cell pins a Skottie surface
+	// in the worker, and iOS WebGPU kills the renderer once the
+	// per-page budget is exceeded. One row of buffer on each side is
+	// enough to cover a slow scroll without holding more than a couple
+	// dozen animations resident at once.
+	const BUFFER_ROWS = _IS_COARSE ? 1 : 20;
 	let scrollTop = $state(0);
 	let gridH = $state(420);
 	let gridW = $state(340);
