@@ -120,6 +120,22 @@ body {
 	overflow-x: hidden;
 }
 
+/* While inside the chat shell, lock html + body scrolling entirely.
+   Mobile browsers will otherwise expose a tiny scrollable region
+   whenever 100dvh transiently disagrees with the visual viewport
+   (URL-bar collapse, keyboard close, orientation change), and that
+   scroll drags the chat header + input bar — which look "fixed" but
+   are flex children of `.chat-wrap` — along with the page. The
+   `.message-list` inside the chat has its own internal overflow so
+   message scrolling still works as expected. The `in-chat` class is
+   added/removed by `src/routes/app/chat/+layout.svelte`. */
+html.in-chat,
+html.in-chat body {
+	overflow: hidden;
+	height: 100dvh;
+	overscroll-behavior: none;
+}
+
 main {
 	/* `100dvh` so the landing-page `<main>` (and any other page that
 	   uses `<main>`) tracks the visual viewport. With `100vh` it

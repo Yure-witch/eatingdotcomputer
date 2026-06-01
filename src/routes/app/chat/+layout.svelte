@@ -1,5 +1,5 @@
 <script>
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { page } from '$app/stores';
 	import { auth } from '$lib/firebase.js';
 	import { signInWithCustomToken } from 'firebase/auth';
@@ -11,6 +11,12 @@
 	let firebaseError = $state(false);
 
 	onMount(async () => {
+		// Lock the document so the chat layout can't be scrolled by
+		// the page itself — only the `.message-list` inside scrolls.
+		// Removed on destroy so other app routes stay scrollable.
+		// CSS lives in `src/app.css` under `html.in-chat`.
+		document.documentElement.classList.add('in-chat');
+
 		const MAX_RETRIES = 5;
 		for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
 			try {
@@ -24,6 +30,11 @@
 		firebaseReady = true;
 		// Preload EK data in the background so the picker opens instantly
 		setTimeout(preloadEK, 1000);
+	});
+
+	onDestroy(() => {
+		if (typeof document === 'undefined') return;
+		document.documentElement.classList.remove('in-chat');
 	});
 </script>
 
