@@ -2,9 +2,14 @@
 	import { onMount } from 'svelte';
 	import { invalidateCustomEmojiCache, addToCustomEmojiCache, removeFromCustomEmojiCache } from '$lib/custom-emoji-store.js';
 
-	let { onInsertEmoji, onInsertReaction, isInstructor = false } = $props();
+	let { onInsertEmoji, onInsertReaction, isInstructor = false, mode = 'both' } = $props();
 
-	let tab = $state('emoji'); // 'emoji' | 'reactions'
+	// `mode` constrains which side of the panel the parent wants:
+	//   'emoji'     — only uploaded class emotes (no reactions UI, no tab bar)
+	//   'reactions' — only reaction images (no emote UI, no tab bar)
+	//   'both'      — legacy: show internal tab bar and both surfaces
+	// Default lands on 'both' so any existing caller keeps current behavior.
+	let tab = $state(mode === 'reactions' ? 'reactions' : 'emoji'); // 'emoji' | 'reactions'
 
 	// Emoji tab state
 	let emojiList = $state([]);
@@ -179,14 +184,19 @@
 	$effect(() => { if (emojiBgCanvas && emojiFile) renderPreview(emojiBgCanvas, emojiFile); });
 	$effect(() => { if (reactionBgCanvas && reactionFile) renderPreview(reactionBgCanvas, reactionFile); });
 
-	onMount(() => { loadEmoji(); loadReactions(); });
+	onMount(() => {
+		if (mode !== 'reactions') loadEmoji();
+		if (mode !== 'emoji') loadReactions();
+	});
 </script>
 
 <div class="ce-panel">
-	<div class="ce-tabs">
-		<button class="ce-tab" class:active={tab === 'emoji'} onclick={() => tab = 'emoji'}>Custom Emotes</button>
-		<button class="ce-tab" class:active={tab === 'reactions'} onclick={() => tab = 'reactions'}>Reaction Images</button>
-	</div>
+	{#if mode === 'both'}
+		<div class="ce-tabs">
+			<button class="ce-tab" class:active={tab === 'emoji'} onclick={() => tab = 'emoji'}>Custom Emotes</button>
+			<button class="ce-tab" class:active={tab === 'reactions'} onclick={() => tab = 'reactions'}>Reaction Images</button>
+		</div>
+	{/if}
 
 	{#if tab === 'emoji'}
 		<div class="ce-upload-section">

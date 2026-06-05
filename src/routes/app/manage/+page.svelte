@@ -1,6 +1,5 @@
 <script>
 	import { enhance } from '$app/forms';
-	import AppHeader from '$lib/components/AppHeader.svelte';
 	import SyllabusBuilder from '$lib/components/SyllabusBuilder.svelte';
 	import { createContentRenderer, bubbleFontSize, jumboEmojiCountM, stripMarkup } from '$lib/message-render.js';
 	import { onMount, onDestroy, getContext } from 'svelte';
@@ -399,8 +398,6 @@
 </svelte:head>
 
 <div class="shell">
-	<AppHeader currentClass={data.currentClass} allClasses={data.allClasses} user={data.currentUser ?? null} />
-
 	<main style:margin-left={syllabusPreviewOpen ? '0px' : null}>
 		<div class="page-header">
 			<div>

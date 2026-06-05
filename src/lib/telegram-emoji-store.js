@@ -248,7 +248,12 @@ export function tgcEntry(id) { return _custom?.byId?.[id] ?? null; }
 
 // Packs we want to render as a static frame instead of animating (artwork is
 // effectively still, or the animation glitches even with dotLottie).
-export const STATIC_PACKS = new Set(['MadEmoji', 'MadEmoji2']);
+// MadEmoji is the pack whose title is "CrazyEmoji" — they share the same
+// flat sticker art with no motion frame-to-frame. HeartEmoji is also
+// effectively static (a single heart pose per sticker), so treat it the
+// same way for the picker (no animation = belongs under Emotes, not
+// Animated).
+export const STATIC_PACKS = new Set(['MadEmoji', 'MadEmoji2', 'HeartEmoji']);
 export const isStaticPack = (short) => STATIC_PACKS.has(short);
 
 // ── Adaptive packs (Telegram's `text_color: true` stickerset flag) ──

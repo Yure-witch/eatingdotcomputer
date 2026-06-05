@@ -4,7 +4,6 @@
 	import { enhance } from '$app/forms';
 	import { invalidateAll } from '$app/navigation';
 	import { subscribeToPush, unsubscribeFromPush, isPushSubscribed } from '$lib/push.js';
-	import AppHeader from '$lib/components/AppHeader.svelte';
 	import FileTypeIcon from '$lib/components/FileTypeIcon.svelte';
 	import FormattedInput from '$lib/components/FormattedInput.svelte';
 	import { createContentRenderer } from '$lib/message-render.js';
@@ -165,8 +164,6 @@
 {/if}
 
 <div class="shell">
-	<AppHeader currentClass={data.currentClass} allClasses={data.allClasses} user={user} />
-
 	<main>
 		{#if isInstructor}
 			<!-- ══════════════ INSTRUCTOR VIEW ══════════════ -->

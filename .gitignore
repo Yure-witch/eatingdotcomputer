@@ -33,3 +33,8 @@ vite.config.ts.timestamp-*
 # pack_sprite_sheet.mjs). Re-runnable locally; upload to R2 directly.
 /thumbs_out/
 /sprite_out/
+
+# Local design reference (~300 MB Flutter build). Used to study the
+# Material 3 TemperatureCache complement algorithm — see
+# src/lib/theme-store.js.
+/examples/monet-gallery/

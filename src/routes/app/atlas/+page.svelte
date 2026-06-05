@@ -1,6 +1,5 @@
 <script>
 	import { enhance } from '$app/forms';
-	import AppHeader from '$lib/components/AppHeader.svelte';
 	import FileTypeIcon from '$lib/components/FileTypeIcon.svelte';
 
 	let { data, form } = $props();
@@ -47,8 +46,6 @@
 <svelte:head><title>Atlas — eating.computer</title></svelte:head>
 
 <div class="shell">
-	<AppHeader currentClass={data.currentClass} allClasses={data.allClasses} user={data.currentUser ?? null} />
-
 	<main>
 		<!-- ═══════════════════ ROADMAP ═══════════════════ -->
 		<div class="page-header">

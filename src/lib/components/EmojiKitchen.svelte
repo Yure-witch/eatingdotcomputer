@@ -24,9 +24,158 @@
 </script>
 
 <script>
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 
 	let { onInsert } = $props();
+
+	// Scrollable content container — bound so the IntersectionObserver can
+	// use it as its root (each tab renders inside this element).
+	let kitchenContentEl = $state(null);
+
+	// Single IO shared across every <img use:lazyImg> in the panel. Created
+	// lazily after kitchenContentEl is bound. Without this, every popular
+	// token (~11k+) would issue a network fetch + decode pass as soon as
+	// it mounted, even with native loading="lazy" — Chrome's pre-fetch
+	// margin under a tall flex container is generous enough to fire
+	// hundreds of requests at once.
+	let _kitchenIO = null;
+	function ensureIO() {
+		if (_kitchenIO || !kitchenContentEl) return _kitchenIO;
+		_kitchenIO = new IntersectionObserver((entries) => {
+			for (const e of entries) {
+				if (!e.isIntersecting) continue;
+				const url = e.target.dataset.lazyUrl;
+				if (url && e.target.getAttribute('src') !== url) {
+					e.target.src = url;
+				}
+				// One-shot: stop observing once the src is bound so the
+				// browser's own decode/cache takes over. Re-observing on
+				// scroll-out would cause flicker without saving anything
+				// meaningful (the PNG is now in the HTTP cache).
+				_kitchenIO.unobserve(e.target);
+			}
+		}, {
+			root: kitchenContentEl,
+			// Pre-load images ~one screen above/below the viewport so they
+			// fade in just before the user scrolls to them.
+			rootMargin: '300px 0px'
+		});
+		return _kitchenIO;
+	}
+
+	// use:lazyImg={url} — registers the <img> with the panel's IO. The
+	// element renders without an `src` attribute until it scrolls into
+	// (or near) the viewport, at which point the IO sets `src` and
+	// unobserves. If the URL changes while still pending, the dataset
+	// hint updates so the next intersect uses the new URL.
+	function lazyImg(node, url) {
+		node.dataset.lazyUrl = url;
+		const start = () => {
+			const io = ensureIO();
+			if (io) io.observe(node);
+		};
+		start();
+		// If kitchenContentEl wasn't bound yet (action ran before {#if}
+		// chain attached the container), retry on the next frame.
+		if (!_kitchenIO) requestAnimationFrame(start);
+		return {
+			update(newUrl) {
+				node.dataset.lazyUrl = newUrl;
+				if (node.src && node.src !== newUrl) node.src = newUrl;
+			},
+			destroy() {
+				_kitchenIO?.unobserve(node);
+			}
+		};
+	}
+
+	onDestroy(() => {
+		_kitchenIO?.disconnect();
+		_kitchenIO = null;
+		_virtRO?.disconnect();
+		_virtRO = null;
+	});
+
+	// ── Rank-tab virtualization ──────────────────────────────────────
+	// Popular alone has ~11k entries. Even rendering 11k empty <div>s on
+	// tab open is enough to lock the main thread for ~half a second on
+	// mobile. Mount only the rows visible in the viewport (+ a small
+	// buffer), and slide them inside a tall spacer that preserves the
+	// real scroll height so the scrollbar still tracks correctly.
+	const VIRT_GAP = 6.4;            // 0.4rem in px; matches .popular-grid gap
+	const VIRT_MIN_CELL = 56;        // grid-template-columns minmax(56px, 1fr)
+	const VIRT_BUFFER_ROWS = 4;      // rows kept mounted above/below viewport
+	const VIRT_THRESHOLD = 80;       // tokens below this — skip virtualization
+
+	let virtScrollTop = $state(0);
+	let virtContainerH = $state(440);
+	let virtCols = $state(5);
+	let virtRowH = $state(72);
+	let virtGridEl = $state(null);
+	let _virtRO = null;
+
+	function measureVirt() {
+		if (!virtGridEl || !kitchenContentEl) return;
+		const w = virtGridEl.clientWidth;
+		if (w > 0) {
+			virtCols = Math.max(1, Math.floor((w + VIRT_GAP) / (VIRT_MIN_CELL + VIRT_GAP)));
+		}
+		const firstCell = virtGridEl.querySelector('.mix-result-item');
+		if (firstCell) {
+			const r = firstCell.getBoundingClientRect();
+			if (r.height > 0) virtRowH = r.height + VIRT_GAP;
+		}
+		virtContainerH = kitchenContentEl.clientHeight || virtContainerH;
+	}
+
+	// Re-measure on container resize (window resize, picker open/close).
+	$effect(() => {
+		if (!kitchenContentEl) return;
+		_virtRO?.disconnect();
+		_virtRO = new ResizeObserver(() => measureVirt());
+		_virtRO.observe(kitchenContentEl);
+		measureVirt();
+	});
+
+	// Re-measure the moment a grid mounts (mode swap → new bind).
+	$effect(() => {
+		if (virtGridEl) requestAnimationFrame(measureVirt);
+	});
+
+	// Reset scroll position whenever the active tab/mode changes —
+	// otherwise a deep scroll on Popular carries over to Gboard etc.
+	$effect(() => {
+		mode;
+		virtScrollTop = 0;
+		if (kitchenContentEl) kitchenContentEl.scrollTop = 0;
+	});
+
+	function onKitchenScroll(e) {
+		virtScrollTop = e.currentTarget.scrollTop;
+	}
+
+	// Resolve { startIdx, endIdx, padTop, totalH } for a token list. When
+	// the list is short we bail out and tell the caller to render the
+	// whole array directly (no spacer, no slice).
+	function virtRange(len) {
+		if (len < VIRT_THRESHOLD || virtCols < 1 || virtRowH <= 0) {
+			return { skip: true, startIdx: 0, endIdx: len };
+		}
+		const totalRows = Math.ceil(len / virtCols);
+		const totalH = totalRows * virtRowH;
+		const firstRow = Math.max(0, Math.floor(virtScrollTop / virtRowH) - VIRT_BUFFER_ROWS);
+		const lastRow = Math.min(
+			totalRows,
+			Math.ceil((virtScrollTop + virtContainerH) / virtRowH) + VIRT_BUFFER_ROWS
+		);
+		return {
+			skip: false,
+			startIdx: firstRow * virtCols,
+			endIdx: Math.min(len, lastRow * virtCols),
+			padTop: firstRow * virtRowH,
+			totalH
+		};
+	}
 
 	// Recent tab state (persisted in localStorage)
 	let recents = $state([]);
@@ -413,21 +562,38 @@
 	</div>
 
 	<!-- Content area -->
-	<div class="kitchen-content">
+	<div class="kitchen-content" bind:this={kitchenContentEl} onscroll={onKitchenScroll}>
 		{#snippet rankTab(tokens, loadingState, errorState)}
 			{#if loadingState}
 				<div class="kitchen-loading"><span class="kitchen-spinner"></span>Loading…</div>
 			{:else if errorState}
 				<div class="kitchen-error">{errorState}</div>
 			{:else if tokens?.length}
-				<div class="popular-grid">
-					{#each tokens as token}
-						<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-						<div class="mix-result-item" onclick={() => insertToken(token)} data-tip={tokenLabel(token)}>
-							<img src={tokenToUrl(token)} alt={tokenToEmoji(token)} loading="lazy" class="mix-img" />
+				{@const r = virtRange(tokens.length)}
+				{#if r.skip}
+					<!-- Small list — render the whole array, no spacer needed. -->
+					<div class="popular-grid" bind:this={virtGridEl}>
+						{#each tokens as token}
+							<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+							<div class="mix-result-item" onclick={() => insertToken(token)} data-tip={tokenLabel(token)}>
+								<img use:lazyImg={tokenToUrl(token)} alt={tokenToEmoji(token)} class="mix-img" />
+							</div>
+						{/each}
+					</div>
+				{:else}
+					<!-- Virtualized: tall spacer holds the real scroll height;
+					     only the visible window of rows is mounted. -->
+					<div class="popular-grid-virt" style:height="{r.totalH}px" bind:this={virtGridEl}>
+						<div class="popular-grid popular-grid-window" style:transform="translateY({r.padTop}px)">
+							{#each tokens.slice(r.startIdx, r.endIdx) as token, i (r.startIdx + i)}
+								<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+								<div class="mix-result-item" onclick={() => insertToken(token)} data-tip={tokenLabel(token)}>
+									<img use:lazyImg={tokenToUrl(token)} alt={tokenToEmoji(token)} class="mix-img" />
+								</div>
+							{/each}
 						</div>
-					{/each}
-				</div>
+					</div>
+				{/if}
 			{/if}
 		{/snippet}
 
@@ -505,7 +671,7 @@
 					{#each mixResults as mix}
 						<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 						<div class="mix-result-item" onclick={() => insertToken(mix.token)} data-tip={tokenLabel(mix.token)}>
-							<img src={mix.url} alt={mix.label} loading="lazy" class="mix-img" />
+							<img use:lazyImg={mix.url} alt={mix.label} class="mix-img" />
 						</div>
 					{/each}
 				{:else if slotA && slotB}
@@ -540,7 +706,7 @@
 					{#each browseResults as item}
 						<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 						<div class="browse-item" onclick={() => insertToken(item.token)} title={item.childEmoji}>
-							<img src={item.url} alt={item.childEmoji} loading="lazy" class="mix-img" />
+							<img use:lazyImg={item.url} alt={item.childEmoji} class="mix-img" />
 							<span class="browse-item-child">{item.childEmoji}</span>
 						</div>
 					{/each}
@@ -569,7 +735,7 @@
 					{#each ekSearchResults as mix}
 						<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 						<div class="mix-result-item" onclick={() => insertToken(mix.token)} data-tip={tokenLabel(mix.token)}>
-							<img src={mix.url} alt={tokenToEmoji(mix.token)} loading="lazy" class="mix-img" />
+							<img use:lazyImg={mix.url} alt={tokenToEmoji(mix.token)} class="mix-img" />
 						</div>
 					{/each}
 				</div>
@@ -753,7 +919,22 @@
 		z-index: 200;
 		font-family: inherit;
 	}
-	.mix-img { width: 56px; height: 56px; object-fit: contain; display: block; }
+	/* Fill the grid cell rather than being a fixed 56px square — fixed
+	   width was making the last column of `repeat(5, 1fr)` overflow on
+	   narrow panels. Aspect-ratio + max-size caps how big a single mix
+	   ever gets on very wide grids. */
+	.mix-img {
+		width: 100%;
+		max-width: 56px;
+		aspect-ratio: 1;
+		height: auto;
+		object-fit: contain;
+		display: block;
+		margin: 0 auto;
+		/* Reserve space before src lands so lazy-loaded cells don't
+		   collapse to 0×0 and trigger a reflow cascade on intersect. */
+		min-height: 32px;
+	}
 
 	.mix-empty, .mix-hint {
 		font-size: 0.8rem;
@@ -766,8 +947,29 @@
 	/* Popular */
 	.popular-grid {
 		display: grid;
-		grid-template-columns: repeat(5, 1fr);
+		/* auto-fill so narrow panels (mobile, 100% width) wrap to fewer
+		   columns instead of clipping the last one. minmax floor of 56
+		   keeps cells touch-target sized. */
+		grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));
 		gap: 0.4rem;
+	}
+	/* Virtualized rank tab: the wrapper reserves the full scrollable
+	   height (totalRows * rowHeight) so the scroll bar still tracks the
+	   real list size. The inner grid is the "sliding window" — only the
+	   rows in view are mounted and it's pushed down with translateY so
+	   they land at the correct scroll offset. */
+	.popular-grid-virt {
+		position: relative;
+		width: 100%;
+	}
+	.popular-grid-window {
+		position: absolute;
+		left: 0;
+		right: 0;
+		top: 0;
+		/* Stable transforms keep scrolling buttery on mobile by
+		   promoting the layer to its own compositor texture. */
+		will-change: transform;
 	}
 
 	/* Browse */
@@ -790,7 +992,7 @@
 
 	.browse-grid {
 		display: grid;
-		grid-template-columns: repeat(5, 1fr);
+		grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));
 		gap: 0.4rem;
 	}
 	.browse-item {
@@ -838,7 +1040,7 @@
 	}
 	.search-ek-grid {
 		display: grid;
-		grid-template-columns: repeat(5, 1fr);
+		grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));
 		gap: 0.4rem;
 	}
 	.search-results-grid {

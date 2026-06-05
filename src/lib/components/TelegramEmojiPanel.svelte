@@ -4,7 +4,8 @@
 		loadTelegramEmoji,
 		loadCustomPacks,
 		loadSpriteSheet,
-		engineMode
+		engineMode,
+		isStaticPack
 	} from '$lib/telegram-emoji-store.js';
 	// Picker uses a pre-rasterised sprite renderer: each emoji is rendered
 	// once via rlottie (the worker WASM renderer Telegram itself uses for
@@ -37,7 +38,17 @@
 		clearSkottieWorker();
 	}
 
-	let { onInsert } = $props();
+	let { onInsert, packFilter = 'all' } = $props();
+	// `packFilter` decides which custom packs the panel will surface and
+	// whether the standard Telegram categories (Effects, Custom aggregate,
+	// Smileys, …) are shown at all. Used by ExpressionPicker so the
+	// Animated tab can hide static packs and the Emotes tab's library
+	// section can show ONLY static packs.
+	//   'all'      — current behavior (every pack + every category)
+	//   'animated' — drop static packs from the pack rail
+	//   'static'   — show only static packs; hide head categories entirely
+	const _isAnimatedOnly = packFilter === 'animated';
+	const _isStaticOnly = packFilter === 'static';
 
 	// display order + tab icon for each Telegram-category present in the manifest
 	const CAT_ORDER = [
@@ -176,14 +187,26 @@
 			};
 		};
 
+		// Apply packFilter BEFORE building any of the aggregate categories
+		// so 'static'/'animated' modes never even index packs they shouldn't
+		// surface. The unfiltered Custom aggregate would pull in the other
+		// kind otherwise.
+		const visiblePacks = (custom?.packs || []).filter((p) => {
+			if (_isAnimatedOnly && isStaticPack(p.short_name)) return false;
+			if (_isStaticOnly && !isStaticPack(p.short_name)) return false;
+			return true;
+		});
+
 		// Aggregate all custom emoji into one "Custom" category, preserving pack-then-pack order
-		if (custom?.flatAll?.length) {
-			sorted['Custom'] = custom.flatAll.map((it) => toCustomItem(it, null));
+		if (!_isStaticOnly && visiblePacks.length) {
+			const flat = [];
+			for (const p of visiblePacks) for (const e of p.emoji) flat.push(toCustomItem(e, p));
+			sorted['Custom'] = flat;
 		}
 
 		// Per-pack tabs: each pack gets its own tab (icon = first emoji animated)
 		const packTabsLocal = [];
-		for (const p of (custom?.packs || [])) {
+		for (const p of visiblePacks) {
 			const key = 'pack:' + p.short_name;
 			sorted[key] = p.emoji.map((e) => toCustomItem(e, p));
 			if (p.emoji[0]?.id) packTabsLocal.push({ key, label: p.title, pack: { short: p.short_name, firstId: p.emoji[0].id } });
@@ -191,10 +214,17 @@
 
 		byCat = sorted;
 		const head = [];
-		if (fx.length) head.push({ key: 'Effects', label: 'Effects', icon: '✨' });
-		if (sorted['Custom']?.length) head.push({ key: 'Custom', label: 'Custom', icon: '🎨' });
-		for (const c of CAT_ORDER) {
-			if (sorted[c.key]?.length) head.push({ key: c.key, label: c.key, icon: c.icon });
+		// In static-only mode the standard categories (Effects, Custom
+		// aggregate, Smileys, etc.) are intentionally hidden — the user
+		// reached this panel via the Emotes tab specifically to browse the
+		// static TG packs, so showing animated FX or unicode categories
+		// would defeat the point.
+		if (!_isStaticOnly) {
+			if (fx.length) head.push({ key: 'Effects', label: 'Effects', icon: '✨' });
+			if (sorted['Custom']?.length) head.push({ key: 'Custom', label: 'Custom', icon: '🎨' });
+			for (const c of CAT_ORDER) {
+				if (sorted[c.key]?.length) head.push({ key: c.key, label: c.key, icon: c.icon });
+			}
 		}
 		headCats = head;
 		packCats = packTabsLocal;

@@ -1,4 +1,5 @@
 <script>
+	import { goto } from '$app/navigation';
 	import { themeStore, PRESETS, setPreset, setDark } from '$lib/theme-store.js';
 
 	let menuOpen = $state(false);
@@ -7,6 +8,18 @@
 
 	function toggleMenu() { menuOpen = !menuOpen; }
 	function closeMenu() { menuOpen = false; }
+	function openCustomTheme() {
+		// Close the menu and route to the picker. Originally an <a href>,
+		// but pairing onclick={closeMenu} with the navigation made the
+		// anchor unreliable — the menu element unmounted during the same
+		// tick the browser tried to follow the link, so the click looked
+		// like it went nowhere. Programmatic goto avoids the race. The
+		// picker now lives at /app/theme so it inherits the global
+		// sidebar (desktop) + bottom nav (mobile) from /app/+layout
+		// without needing its own AppHeader on top of the picker.
+		menuOpen = false;
+		goto('/app/theme');
+	}
 
 	function onWindowClick(e) {
 		if (!menuOpen) return;
@@ -69,6 +82,10 @@
 		<div bind:this={menuEl} class="menu" role="menu">
 			<div class="menu-section-title">Theme</div>
 			{#each PRESETS as p}
+				<!-- Same emoji-only convention as the full theme picker:
+				     Default keeps its written name; every other entry
+				     shows just the emoji. Full name still surfaces via
+				     `title` + `aria-label` for accessibility. -->
 				<button
 					type="button"
 					class="menu-item"
@@ -76,10 +93,19 @@
 					onclick={() => pick(p.id)}
 					role="menuitemradio"
 					aria-checked={$themeStore.presetId === p.id}
+					title={p.name}
+					aria-label={p.name}
 				>
 					<span class="menu-dot" style:background={p.seed}></span>
 					<span class="menu-emoji">{p.emoji}</span>
-					<span class="menu-name">{p.name}</span>
+					{#if p.id === 'default'}
+						<span class="menu-name">{p.name}</span>
+					{:else}
+						<!-- Spacer keeps the active-check aligned to the
+						     right edge consistently across rows even when
+						     there's no written label. -->
+						<span class="menu-name" aria-hidden="true"></span>
+					{/if}
 					{#if $themeStore.presetId === p.id}
 						<svg class="menu-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
 							<polyline points="20 6 9 17 4 12"/>
@@ -87,9 +113,9 @@
 					{/if}
 				</button>
 			{/each}
-			<a class="menu-footer" href="/app/playground" onclick={closeMenu}>
+			<button type="button" class="menu-footer" onclick={openCustomTheme}>
 				Custom theme →
-			</a>
+			</button>
 		</div>
 	{/if}
 </div>
@@ -180,6 +206,17 @@
 	.menu-check { color: var(--md-sys-color-primary, var(--accent)); flex-shrink: 0; }
 
 	.menu-footer {
+		/* Originally an <a>; now a <button> for reliable navigation via
+		   programmatic goto(). Reset the button defaults that would
+		   otherwise show through. */
+		appearance: none;
+		-webkit-appearance: none;
+		border: none;
+		background: transparent;
+		font: inherit;
+		text-align: left;
+		cursor: pointer;
+		width: 100%;
 		margin-top: 4px;
 		padding: 7px 8px;
 		font-size: 0.78rem;

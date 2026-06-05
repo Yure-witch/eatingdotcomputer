@@ -1,6 +1,7 @@
 <script>
 	import { onMount, onDestroy, tick, getContext } from 'svelte';
 	import { afterNavigate } from '$app/navigation';
+	import { pageTitle } from '$lib/page-title-store.js';
 	import { db } from '$lib/firebase.js';
 	import { ref, onChildAdded, onValue, off, query, limitToLast, set, remove, get } from 'firebase/database';
 	import { normaliseMessage, buildUserMap, formatTime } from '$lib/chat.js';
@@ -11,6 +12,7 @@
 	import CustomEmojiPanel from '$lib/components/CustomEmojiPanel.svelte';
 	import TelegramEmojiPanel from '$lib/components/TelegramEmojiPanel.svelte';
 	import GifPicker from '$lib/components/GifPicker.svelte';
+	import ExpressionPicker from '$lib/components/ExpressionPicker.svelte';
 	import MentionAutocomplete from '$lib/components/MentionAutocomplete.svelte';
 	import lottie from 'lottie-web';
 	import { loadTelegramEmoji, getCachedTgEmoji, tgEntry, tgAnimatedUrl, tgFlagUrl, tgAnimationUrl, fetchLottie, cpToToken,
@@ -498,7 +500,12 @@
 					result += node.dataset.ek;
 				} else if (node.tagName === 'IMG' && node.dataset.ce) {
 					result += node.dataset.ce;
-				} else if (node.tagName === 'IMG' && node.dataset.tg) {
+				} else if (node.dataset?.tg) {
+					// Compose-box <img data-tg> AND bubble <span class="tg-emoji" data-tg>
+					// both carry the [tg:…]/[tgc:…] token in dataset.tg. The bubble span
+					// has no text content (its Lottie SVG is empty to the serializer),
+					// so without this case copying an animated emoji out of a bubble
+					// yielded an empty string.
 					result += node.dataset.tg;
 				} else if (node.dataset?.fx) {
 					const fxStack = node.dataset.fx.split(' ').filter(fx => FX_TO_CHAR[fx]);
@@ -578,6 +585,20 @@
 
 	// Unicode markup → DOM nodes (nested spans — one per effect for composable CSS animations)
 	// Unicode markup → DOM nodes, with EK token support and correct FX wrapping on EK images
+	// Tiny syntax highlight wrapper around the module-scope hljs. Used by
+	// the code-block builders below (and the file viewer overlay).
+	// Previously lived here as `highlightCode`; was dropped during the
+	// message-render refactor (commit c70ee12) without updating these
+	// callers, which broke "format as code block" with a ReferenceError.
+	function highlightCode(code, lang) {
+		if (!code) return '';
+		try {
+			if (lang && hljs.getLanguage(lang)) return hljs.highlight(code, { language: lang }).value;
+			return hljs.highlightAuto(code).value;
+		} catch {
+			return code.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+		}
+	}
 	let _ceCodeRehighlightTimer = null;
 	function rehighlightCodeBlock(pre, lang) {
 		// Get cursor offset as plain text position
@@ -1032,6 +1053,32 @@
 	}
 
 	let _savedCeSel = null; // { start, end } plain-text offsets
+	// Bubble TG emoji are rendered as empty <span class="tg-emoji"> with a
+	// Lottie SVG mounted inside; the SVG has pointer-events: none and the
+	// span has no text, so browsers don't paint the selection highlight
+	// on it natively even though the range mathematically includes it.
+	// Walk visible spans on every selectionchange, toggle a .tg-selected
+	// class on the ones whose box intersects the selection, and let CSS
+	// overlay a translucent highlight on top of the Lottie via ::after.
+	function onMsgListSelectionChange() {
+		if (!listEl) return;
+		const sel = window.getSelection();
+		const clearAll = () => {
+			for (const span of listEl.querySelectorAll('.tg-emoji.tg-selected'))
+				span.classList.remove('tg-selected');
+		};
+		if (!sel || sel.isCollapsed || !sel.rangeCount) { clearAll(); return; }
+		const range = sel.getRangeAt(0);
+		if (!listEl.contains(range.commonAncestorContainer)) { clearAll(); return; }
+		for (const span of listEl.querySelectorAll('.tg-emoji')) {
+			const r = document.createRange();
+			r.selectNode(span);
+			const intersects = range.compareBoundaryPoints(Range.START_TO_END, r) > 0
+				&& range.compareBoundaryPoints(Range.END_TO_START, r) < 0;
+			span.classList.toggle('tg-selected', intersects);
+		}
+	}
+
 	function onCeSelect() {
 		const sel = window.getSelection();
 		// Show the bar when a non-collapsed selection lives in the
@@ -1256,9 +1303,10 @@
 		const doc = new DOMParser().parseFromString(html, 'text/html');
 		const img = doc.querySelector('img');
 		if (!img) return null;
-		// Check data-ce / data-ek attributes (from internal app copy)
+		// Check data-ce / data-ek / data-tg attributes (from internal app copy)
 		if (img.dataset?.ce) return { type: 'ce', token: img.dataset.ce };
 		if (img.dataset?.ek) return { type: 'ek', token: img.dataset.ek };
+		if (img.dataset?.tg) return { type: 'tg', token: img.dataset.tg };
 		// Match src URL against known custom emotes
 		const src = img.getAttribute('src');
 		if (src) {
@@ -1279,14 +1327,14 @@
 		// If clipboard has internal markup (from selecting + copying in chat), prefer that over file items
 		const internalMarkup = e.clipboardData.getData('text/x-eating-markup');
 		const plainText = e.clipboardData.getData('text/plain');
-		const hasMarkupTokens = internalMarkup || (plainText && (/\[ce:|^\[sz:|^\[wght:|^\[wdth:|\[ek:|\[bold\]|\[italic\]/i.test(plainText)));
+		const hasMarkupTokens = internalMarkup || (plainText && (/\[ce:|^\[sz:|^\[wght:|^\[wdth:|\[ek:|\[tg:|\[tgc:|\[bold\]|\[italic\]/i.test(plainText)));
 		const items = Array.from(e.clipboardData?.items ?? []);
 		const fileItem = items.find(i => i.kind === 'file' && (i.type.startsWith('image/') || i.type.startsWith('video/')));
 		if (fileItem && !hasMarkupTokens) {
 			// Check if this is a known app image before uploading
 			const match = matchPastedImage(e.clipboardData);
 			if (match) {
-				if (match.type === 'ce' || match.type === 'ek') {
+				if (match.type === 'ce' || match.type === 'ek' || match.type === 'tg') {
 					// Insert token into compose box
 					const nodes = ceMarkupToNodes(match.token);
 					const sel = window.getSelection();
@@ -1339,9 +1387,13 @@
 			if (!pastedText) return;
 		}
 
-		// When pasted text contains EK tokens, use direct DOM insertion to avoid
-		// markup-based cursor arithmetic breaking on img nodes.
-		if (pastedText.indexOf('[ek:') !== -1 || pastedText.indexOf('[ce:') !== -1) {
+		// When pasted text contains any image-token (EK/CE/TG/TGC), use direct DOM
+		// insertion so markup-level cursor arithmetic doesn't try to slice through
+		// an inline <img>. Telegram tokens were previously falling through to the
+		// markup path and getting mangled — same fast-path now handles them so a
+		// copied TG sticker round-trips back into the compose box intact.
+		if (pastedText.indexOf('[ek:') !== -1 || pastedText.indexOf('[ce:') !== -1
+			|| pastedText.indexOf('[tg:') !== -1 || pastedText.indexOf('[tgc:') !== -1) {
 			const nodes = ceMarkupToNodes(rawMarkup ? pastedText : normalizeLegacyMarkup(pastedText));
 			const sel = window.getSelection();
 			if (sel && sel.rangeCount > 0 && inputEl.contains(sel.anchorNode)) {
@@ -2008,6 +2060,11 @@
 	}
 
 	onMount(async () => {
+		// Publish the channel name to the global AppHeader. The page's
+		// own chat-header markup has been removed in favour of this so
+		// chats land with one top bar, not two.
+		pageTitle.set('# ' + data.channelId);
+
 		// ── Performance monitoring ─────────────────────────────────────────────
 		// Long task observer — fires when any main-thread task takes >50 ms
 		if (typeof PerformanceObserver !== 'undefined') {
@@ -2084,6 +2141,7 @@
 		getCustomEmojiMap().then(m => { _ceMap = m; _clearHtmlCache(); messages = [...messages]; });
 		Promise.all([loadTelegramEmoji(), loadCustomPacks()]).then(() => { mountTgStickers(); });
 		document.addEventListener('selectionchange', onCeSelect);
+		document.addEventListener('selectionchange', onMsgListSelectionChange);
 		if (heartsCanvas) {
 			heartsCanvas.width = window.innerWidth;
 			heartsCanvas.height = window.innerHeight;
@@ -2418,6 +2476,7 @@
 	}
 
 	onDestroy(() => {
+		pageTitle.set(null);
 		_cancelFpsLoop();
 		if (firebaseRef) off(firebaseRef);
 		if (typingRef) off(typingRef);
@@ -2426,6 +2485,7 @@
 		cancelAttachment();
 		if (heartsAnimId) cancelAnimationFrame(heartsAnimId);
 		document.removeEventListener('selectionchange', onCeSelect);
+		document.removeEventListener('selectionchange', onMsgListSelectionChange);
 		_tgObserver?.disconnect();
 		while (_tgHeldSlots > 0) { _tgYieldPlay(); _tgHeldSlots--; }
 	});
@@ -2876,14 +2936,10 @@
 	</div>
 {/if}
 
-<div class="chat-header">
-	<button class="sidebar-toggle" onclick={openSidebar} aria-label="Open menu">
-		<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
-	</button>
-	<h1># {data.channelId}</h1>
-	<UserMenu user={data.currentUser} />
-</div>
-
+<!-- chat-header removed — channel name now publishes to the global
+     AppHeader via pageTitle. On mobile, BottomNav's Chat button opens
+     the chat sidebar, replacing what the local sidebar-toggle used to
+     do here. -->
 <div class="message-list" bind:this={listEl} style:padding-bottom="{inputAreaHeight}px" onscroll={onListScroll} oncopy={onMsgListCopy} onmouseover={onMsgListMouseover} onmousemove={onMsgListMousemove} onmouseleave={onMsgListMouseleave}>
 	{#if loadingMore}
 		<div class="load-more-spinner"><span class="sending-spinner"></span></div>
@@ -3221,82 +3277,29 @@
 	<div class="input-bar">
 		<label class="btn-attach" class:disabled={uploading || sending} title="Attach file">
 			{#if uploading}
-				<svg class="spin" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+				<span class="msi msi-18 spin">progress_activity</span>
 			{:else}
-				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+				<span class="msi msi-18">attach_file</span>
 			{/if}
 			<input bind:this={fileInputEl} type="file" style="display:none" onchange={handleFileSelect} disabled={uploading || sending} />
 		</label>
 		<div class="compose-picker-wrap">
-			<button class="btn-emoji" class:active={showComposePicker} title="Emoji" onclick={() => showComposePicker = !showComposePicker}>
-				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
+			<button class="btn-emoji" class:active={showComposePicker} title="Expressions" onclick={() => showComposePicker = !showComposePicker}>
+				<span class="msi msi-18" class:msi-fill={showComposePicker}>mood</span>
 			</button>
 			{#if showComposePicker}
 				<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-				<div class="compose-picker-backdrop" onclick={() => showComposePicker = false}></div>
+				<div class="compose-picker-backdrop" onclick={() => { showComposePicker = false; _clearHtmlCache(); }}></div>
 				<div class="compose-picker-pop">
-					<EmojiPicker onSelect={insertEmoji} />
-				</div>
-			{/if}
-		</div>
-		<div class="compose-kitchen-wrap">
-			<button class="btn-kitchen" class:active={showKitchen} title="Emoji Kitchen" onclick={() => showKitchen = !showKitchen}>
-				<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-					<ellipse cx="12" cy="10" rx="8" ry="7"/>
-					<ellipse cx="6" cy="12" rx="4" ry="5"/>
-					<ellipse cx="18" cy="12" rx="4" ry="5"/>
-					<rect x="4" y="16" width="16" height="3.5" rx="1.5"/>
-				</svg>
-			</button>
-			{#if showKitchen}
-				<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-				<div class="compose-picker-backdrop" onclick={() => showKitchen = false}></div>
-				<div class="compose-kitchen-pop">
-					<EmojiKitchen onInsert={onKitchenInsert} />
-				</div>
-			{/if}
-		</div>
-		<div class="compose-custom-emoji-wrap">
-			<button class="btn-kitchen btn-gif" class:active={showGifPicker} title="GIF" onclick={() => showGifPicker = !showGifPicker}>GIF</button>
-			{#if showGifPicker}
-				<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-				<div class="compose-picker-backdrop" onclick={() => showGifPicker = false}></div>
-				<div class="compose-kitchen-pop">
-					<GifPicker onSelect={onGifSelect} />
-				</div>
-			{/if}
-		</div>
-		<div class="compose-custom-emoji-wrap">
-			<button class="btn-kitchen btn-custom-emoji" class:active={showCustomEmoji} title="Custom Emoji & Reactions" onclick={() => showCustomEmoji = !showCustomEmoji}>
-				<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-					<circle cx="12" cy="12" r="10"/>
-					<path d="M8 14s1.5 2 4 2 4-2 4-2"/>
-					<line x1="9" y1="9" x2="9.01" y2="9" stroke-width="3"/>
-					<line x1="15" y1="9" x2="15.01" y2="9" stroke-width="3"/>
-					<path d="M16 3.5C16 3.5 20 5 20 8" stroke-width="1.5"/>
-					<circle cx="20" cy="4" r="2" fill="currentColor" stroke="none"/>
-				</svg>
-			</button>
-			{#if showCustomEmoji}
-				<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-				<div class="compose-picker-backdrop" onclick={() => { showCustomEmoji = false; _clearHtmlCache(); }}></div>
-				<div class="compose-kitchen-pop">
-					<CustomEmojiPanel onInsertEmoji={onCustomEmojiInsert} onInsertReaction={onReactionInsert} isInstructor={data.currentUser.role === 'instructor'} />
-				</div>
-			{/if}
-		</div>
-		<div class="compose-picker-wrap">
-			<button class="btn-kitchen btn-tg-emoji" class:active={showTgEmoji} title="Telegram animated emoji" onclick={() => showTgEmoji = !showTgEmoji}>
-				<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-					<path d="M21.5 4.5 2.5 12l6 2 2 6 3-4 5 4 3-15.5z" fill="currentColor" stroke="none"/>
-					<path d="M8.5 14 18 7l-7 9" stroke="var(--paper,var(--paper))" stroke-width="1.2"/>
-				</svg>
-			</button>
-			{#if showTgEmoji}
-				<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-				<div class="compose-picker-backdrop" onclick={() => { showTgEmoji = false; _clearHtmlCache(); }}></div>
-				<div class="compose-kitchen-pop">
-					<TelegramEmojiPanel onInsert={onTgEmojiInsert} />
+					<ExpressionPicker
+						onSelectEmoji={insertEmoji}
+						onInsertKitchen={onKitchenInsert}
+						onSelectGif={onGifSelect}
+						onInsertCustomEmoji={onCustomEmojiInsert}
+						onInsertReaction={onReactionInsert}
+						onInsertTgEmoji={onTgEmojiInsert}
+						isInstructor={data.currentUser.role === 'instructor'}
+					/>
 				</div>
 			{/if}
 		</div>
@@ -3350,12 +3353,12 @@
 				members={[...(data.users ?? []), { id: data.currentUser.id, name: data.currentUser.name, role: data.currentUser.role }]}
 			/>
 			<div class="compose-fmt-row">
-				<button class="btn-fmt btn-fmt-bold" onmousedown={(e) => { e.preventDefault(); applyTextFx('bold'); }} title="Bold (⌘B)"><b>B</b></button>
-				<button class="btn-fmt btn-fmt-italic" onmousedown={(e) => { e.preventDefault(); applyTextFx('italic'); }} title="Italic (⌘I)"><i>I</i></button>
-				<button class="btn-fmt btn-fmt-underline" onmousedown={(e) => { e.preventDefault(); applyTextFx('underline'); }} title="Underline (⌘U)"><u>U</u></button>
-				<button class="btn-fmt btn-fmt-strike" onmousedown={(e) => { e.preventDefault(); applyTextFx('strike'); }} title="Strikethrough"><s>S</s></button>
+				<button class="btn-fmt btn-fmt-bold" onmousedown={(e) => { e.preventDefault(); applyTextFx('bold'); }} title="Bold (⌘B)"><span class="msi msi-18">format_bold</span></button>
+				<button class="btn-fmt btn-fmt-italic" onmousedown={(e) => { e.preventDefault(); applyTextFx('italic'); }} title="Italic (⌘I)"><span class="msi msi-18">format_italic</span></button>
+				<button class="btn-fmt btn-fmt-underline" onmousedown={(e) => { e.preventDefault(); applyTextFx('underline'); }} title="Underline (⌘U)"><span class="msi msi-18">format_underlined</span></button>
+				<button class="btn-fmt btn-fmt-strike" onmousedown={(e) => { e.preventDefault(); applyTextFx('strike'); }} title="Strikethrough"><span class="msi msi-18">format_strikethrough</span></button>
 				<div class="compose-format-wrap">
-					<button class="btn-fmt btn-fmt-color" class:active={showFormatPanel} onmousedown={(e) => { e.preventDefault(); showFormatPanel = !showFormatPanel; showCodePanel = false; }} title="Text color">A</button>
+					<button class="btn-fmt btn-fmt-color" class:active={showFormatPanel} onmousedown={(e) => { e.preventDefault(); showFormatPanel = !showFormatPanel; showCodePanel = false; }} title="Text color"><span class="msi msi-18">format_color_text</span></button>
 					{#if showFormatPanel}
 						<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 						<div class="compose-picker-backdrop" onclick={() => showFormatPanel = false}></div>
@@ -3370,8 +3373,8 @@
 					{/if}
 				</div>
 				<div class="compose-format-wrap code-btn-group">
-					<button class="btn-fmt btn-fmt-code" onmousedown={(e) => { e.preventDefault(); toggleCodeBlock(); }} title="Toggle code block">&lt;/&gt;</button>
-					<button class="btn-fmt btn-fmt-code-arrow" class:active={showCodePanel} onmousedown={(e) => { e.preventDefault(); showCodePanel = !showCodePanel; showFormatPanel = false; }} title="Choose language">▾</button>
+					<button class="btn-fmt btn-fmt-code" onmousedown={(e) => { e.preventDefault(); toggleCodeBlock(); }} title="Toggle code block"><span class="msi msi-18">code</span></button>
+					<button class="btn-fmt btn-fmt-code-arrow" class:active={showCodePanel} onmousedown={(e) => { e.preventDefault(); showCodePanel = !showCodePanel; showFormatPanel = false; }} title="Choose language"><span class="msi msi-18">arrow_drop_down</span></button>
 					{#if showCodePanel}
 						<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 						<div class="compose-picker-backdrop" onclick={() => showCodePanel = false}></div>
@@ -3386,7 +3389,7 @@
 		</div>
 		<div class="compose-effect-wrap">
 			<button class="btn-effect" class:active={messageEffect !== null || showEffectPanel}
-					title="Message effects" onclick={() => showEffectPanel = !showEffectPanel}>✨</button>
+					title="Message effects" onclick={() => showEffectPanel = !showEffectPanel}><span class="msi msi-18" class:msi-fill={messageEffect !== null || showEffectPanel}>auto_awesome</span></button>
 			{#if showEffectPanel}
 				<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 				<div class="compose-picker-backdrop" onclick={() => { showEffectPanel = false; _savedCeSel = null; _lastInlineTypo = {}; }}></div>
@@ -3504,10 +3507,15 @@
 	.reply-author { display: block; font-size: 0.7rem; font-weight: 700; color: #5a4e44; }
 	.reply-text { display: block; font-size: 0.78rem; color: var(--muted-fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 	.reply-text.jumbo-reply { white-space: normal; text-overflow: clip; line-height: 1.15; }
-	.message.mine .bubble .reply-quote { background: rgba(255,255,255,0.15); }
-	.message.mine .bubble .reply-quote:hover { background: rgba(255,255,255,0.24); }
-	.message.mine .bubble .reply-author { color: rgba(255,255,255,0.75); }
-	.message.mine .bubble .reply-text { color: rgba(255,255,255,0.92); }
+	/* Overlays inside the sent-bubble are tinted with `currentColor`
+	   so they adapt whether the bubble is dark (ink era) or light
+	   (primary-container era). Mixing currentColor with transparent
+	   produces a darken/lighten effect that always reads as a hint
+	   of the bubble's own text color. */
+	.message.mine .bubble .reply-quote { background: color-mix(in srgb, currentColor 12%, transparent); }
+	.message.mine .bubble .reply-quote:hover { background: color-mix(in srgb, currentColor 20%, transparent); }
+	.message.mine .bubble .reply-author { color: color-mix(in srgb, currentColor 70%, transparent); }
+	.message.mine .bubble .reply-text { color: color-mix(in srgb, currentColor 92%, transparent); }
 
 	/* Bubble row */
 	.bubble-row { position: relative; display: flex; align-items: flex-end; gap: 0.3rem; max-width: 100%; min-width: 0; }
@@ -3614,7 +3622,17 @@
 		font-size: 0.9rem; line-height: 1.45; white-space: pre-wrap; word-break: break-word;
 		background: var(--paper); border: 1.5px solid var(--border);
 	}
-	.message.mine .bubble { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+	/* Sent-bubble: M3 primary-container + on-primary-container — the
+	   designed-together pair for "user-owned content in the primary
+	   family". Previously this was ink-on-paper (near-black bubble,
+	   near-white text), which read as pure black-and-white and felt
+	   stark. The container variant keeps the chromatic identity of
+	   the user's seed while landing in a comfortable contrast range. */
+	.message.mine .bubble {
+		background: var(--md-sys-color-primary-container, color-mix(in srgb, var(--accent) 30%, var(--paper)));
+		color: var(--md-sys-color-on-primary-container, var(--ink));
+		border-color: var(--md-sys-color-primary-container, color-mix(in srgb, var(--accent) 30%, var(--paper)));
+	}
 	.message.starred:not(.mine) .bubble { background: #fff8e6; border-color: #e6cc70; }
 	.message.starred.mine .bubble { border-color: #c8900f; }
 	.msg-sending-indicator { position: absolute; bottom: -14px; left: 4px; }
@@ -3723,7 +3741,7 @@
 		background: rgba(0,0,0,0.07); padding: 0.1em 0.35em; border-radius: 4px;
 		font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace; font-size: 0.88em;
 	}
-	:global(.message.mine .inline-code) { background: rgba(255,255,255,0.15); }
+	:global(.message.mine .inline-code) { background: color-mix(in srgb, currentColor 12%, transparent); }
 	/* highlight.js token colors (Catppuccin Mocha) */
 	:global(.code-block .hljs-keyword), :global(.file-viewer-code .hljs-keyword) { color: #cba6f7; }
 	:global(.code-block .hljs-string), :global(.file-viewer-code .hljs-string) { color: #a6e3a1; }
@@ -3799,8 +3817,8 @@
 	}
 	.att-btn:hover { background: rgba(0,0,0,0.06); }
 	.att-btn-icon { width: 13px; height: 13px; flex-shrink: 0; }
-	.message.mine .att-btn { border-color: rgba(255,255,255,0.3); }
-	.message.mine .att-btn:hover { background: rgba(255,255,255,0.12); }
+	.message.mine .att-btn { border-color: color-mix(in srgb, currentColor 25%, transparent); }
+	.message.mine .att-btn:hover { background: color-mix(in srgb, currentColor 10%, transparent); }
 
 	/* File viewer modal */
 	.file-viewer-overlay {
@@ -3962,10 +3980,10 @@
 		display: flex; align-items: center; justify-content: center;
 		width: 36px; height: 36px; flex-shrink: 0;
 		border: 1.5px solid var(--border); border-radius: 10px;
-		background: var(--paper); color: var(--muted-fg); cursor: pointer;
-		transition: color 0.15s, border-color 0.15s;
+		background: var(--paper); color: var(--ink); cursor: pointer;
+		transition: border-color 0.15s, background 0.15s;
 	}
-	.btn-attach:hover { color: var(--ink); border-color: var(--muted-fg); }
+	.btn-attach:hover { border-color: var(--muted-fg); background: var(--surface-2); }
 	.btn-attach.disabled { opacity: 0.4; pointer-events: none; }
 	.spin { animation: spin 1s linear infinite; }
 	@keyframes spin { to { transform: rotate(360deg); } }
@@ -3975,10 +3993,10 @@
 		display: flex; align-items: center; justify-content: center;
 		width: 36px; height: 36px;
 		border: 1.5px solid var(--border); border-radius: 10px;
-		background: var(--paper); color: var(--muted-fg); cursor: pointer;
-		transition: color 0.15s, border-color 0.15s, background 0.15s;
+		background: var(--paper); color: var(--ink); cursor: pointer;
+		transition: border-color 0.15s, background 0.15s;
 	}
-	.btn-emoji:hover, .btn-emoji.active { color: var(--ink); border-color: var(--muted-fg); background: var(--surface-2); }
+	.btn-emoji:hover, .btn-emoji.active { border-color: var(--muted-fg); background: var(--surface-2); }
 	.compose-picker-backdrop { position: fixed; inset: 0; z-index: 49; }
 	.compose-picker-pop { position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 50; }
 	@media (max-width: 640px) {
@@ -4027,8 +4045,21 @@
 	/* Telegram animated emoji */
 	:global(.tg-img) { height: 1.3em; width: 1.3em; vertical-align: -0.3em; object-fit: contain; }
 	:global(.tg-img-ce) { cursor: default; }
-	:global(.tg-emoji) { display: inline-block; width: 1.4em; height: 1.4em; vertical-align: -0.3em; cursor: default; line-height: 0; }
+	:global(.tg-emoji) { display: inline-block; position: relative; width: 1.4em; height: 1.4em; vertical-align: -0.3em; cursor: default; line-height: 0; }
 	:global(.tg-emoji.tg-fx) { cursor: pointer; }
+	/* Selection highlight overlay — see onMsgListSelectionChange. The
+	   ::after sits above the Lottie SVG via z-index so the highlight is
+	   visible even when the animation is fully painted. pointer-events
+	   off so it doesn't swallow clicks meant for the .tg-fx underlay. */
+	:global(.tg-emoji.tg-selected::after) {
+		content: '';
+		position: absolute;
+		inset: -1px;
+		background: color-mix(in srgb, var(--accent) 40%, transparent);
+		border-radius: 3px;
+		pointer-events: none;
+		z-index: 10;
+	}
 	/* Let the parent span catch the click — SVG/canvas inside default to capturing
 	   pointer events only on painted pixels, so transparent corners would miss. */
 	:global(.tg-emoji svg), :global(.tg-emoji canvas) { pointer-events: none; }
@@ -4113,20 +4144,17 @@
 		display: flex; align-items: center; justify-content: center;
 		width: 26px; height: 26px; flex-shrink: 0;
 		border: none; border-radius: 6px;
-		background: none; cursor: pointer; color: var(--ink); opacity: 0.45;
+		background: none; cursor: pointer; color: var(--ink);
 		font-size: 0.85rem; line-height: 1; font-family: inherit;
-		transition: opacity 0.15s, background 0.1s;
+		transition: background 0.1s;
 	}
-	.btn-fmt:hover, .btn-fmt.active { opacity: 1; background: var(--surface-2); }
-	.btn-fmt-bold { font-weight: 700; }
-	.btn-fmt-italic { font-style: italic; font-weight: 600; }
-	.btn-fmt-underline { text-decoration: underline; text-underline-offset: 2px; }
-	.btn-fmt-strike { text-decoration: line-through; }
-	.btn-fmt-color {
-		font-weight: 700; font-size: 0.8rem;
-		text-decoration: underline; text-decoration-color: #e74c3c;
-		text-decoration-thickness: 2px; text-underline-offset: 1px;
-	}
+	.btn-fmt:hover, .btn-fmt.active { background: var(--surface-2); }
+	/* Bold/italic/underline/strike/color modifier classes used to style
+	   the literal letter inside the button (B / I / U / S / A); now that
+	   each button holds a Material Symbols icon, the only remaining job
+	   of these class hooks is :class targeting from outside this file
+	   if needed. No per-modifier font/decoration styling required —
+	   leaving them as semantic no-op selectors. */
 	.compose-format-wrap { position: relative; flex-shrink: 0; }
 	.format-pop {
 		position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%);
@@ -4148,8 +4176,11 @@
 	}
 	.format-rainbow-btn:hover { background: var(--surface-2); }
 
-	.btn-fmt-code { font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace; font-size: 0.65rem !important; letter-spacing: -0.02em; border-top-right-radius: 0 !important; border-bottom-right-radius: 0 !important; }
-	.btn-fmt-code-arrow { font-size: 0.55rem !important; padding: 0 0.15rem !important; border-top-left-radius: 0 !important; border-bottom-left-radius: 0 !important; margin-left: -1px; min-width: 0; }
+	/* Square off the inner edges of the split code/lang-dropdown pair so
+	   they read as one control. Per-button size/typography is now driven
+	   by the icon span, not the button itself. */
+	.btn-fmt-code { border-top-right-radius: 0 !important; border-bottom-right-radius: 0 !important; }
+	.btn-fmt-code-arrow { padding: 0 0.15rem !important; border-top-left-radius: 0 !important; border-bottom-left-radius: 0 !important; margin-left: -1px; min-width: 0; }
 	.code-btn-group { display: flex; align-items: center; }
 	.code-lang-pop {
 		display: flex; flex-wrap: wrap; gap: 0.2rem; padding: 0.45rem; width: 200px;
@@ -4169,7 +4200,7 @@
 		display: flex; align-items: center; justify-content: center;
 		width: 36px; height: 36px; font-size: 1rem; line-height: 1;
 		border: 1.5px solid var(--border); border-radius: 10px;
-		background: var(--paper); cursor: pointer;
+		background: var(--paper); color: var(--ink); cursor: pointer;
 		transition: border-color 0.15s, background 0.15s;
 	}
 	.btn-effect:hover, .btn-effect.active { border-color: var(--muted-fg); background: var(--surface-2); }

@@ -35,35 +35,77 @@
 	/* App tokens read from the Material 3 sys palette set by
 	   src/lib/theme-store.js. The hex fallback after each var keeps
 	   the pre-JS / SSR paint identical to the original color set, so
-	   nothing flashes before the theme has had a chance to apply. */
-	--ink:        var(--md-sys-color-on-surface,            #0c0c0c);
+	   nothing flashes before the theme has had a chance to apply.
+
+	   --ink and --muted-fg deliberately DO NOT read from on-surface /
+	   on-surface-variant. The M3 spec tunes those for "comfortable"
+	   AA-ish contrast, which can render as a soft mid-charcoal that
+	   feels washed-out. We hardcode near-black in light mode and
+	   near-white in dark mode (see :root.theme-dark below) so text
+	   and icon strokes always max out the contrast against the
+	   surface, regardless of the seed colour. */
+	--ink:        #0a0a0a;
 	--paper:      var(--md-sys-color-surface,               #f7f2ea);
-	--accent:     var(--md-sys-color-primary,               #ffb347);
+	/* Fallback matches the Default preset's seed so the
+	   pre-hydration paint matches what the theme store will produce
+	   the moment JS runs. */
+	--accent:     var(--md-sys-color-primary,               #ffa305);
 	/* Semantic helpers — components consume these instead of the raw
 	   M3 names so the mapping stays in one place. Hex fallbacks keep
 	   the page paintable before JS hydrates. */
 	--surface-2:  var(--md-sys-color-surface-variant,       #f0ebe3);
 	--border:     var(--md-sys-color-outline-variant,       #ddd7cc);
-	--muted-fg:   var(--md-sys-color-on-surface-variant,    #a09688);
+	/* Muted is still dark — about 65% of the way from paper to ink —
+	   so secondary copy reads clearly. The previous value (≈#a09688)
+	   was too pale for body text. */
+	--muted-fg:   #3d3833;
 	--danger:     var(--md-sys-color-error,                 #c0392b);
 	--on-danger:  var(--md-sys-color-on-error,              #ffffff);
 	/* Inverse surface is the M3 token for tooltips/banners that
 	   intentionally contrast with the rest of the UI. */
 	--inverse-surface:    var(--md-sys-color-inverse-surface,    #1a1a1a);
 	--inverse-on-surface: var(--md-sys-color-inverse-on-surface, #f7f2ea);
-	/* Sidebar palette — same color family as the body, just a step
-	   darker so it reads as a distinct chrome surface without
-	   inverting. We mix a small amount of ink into paper for the
-	   background; text + muted colors are the body's regular ink /
-	   muted-fg tokens (no inversion). Hover/active are subtle ink
-	   overlays that adapt automatically with the theme. */
-	--sidebar-bg:        color-mix(in srgb, var(--paper) 88%, var(--ink) 12%);
-	--sidebar-fg:        var(--ink);
-	--sidebar-fg-muted:  var(--muted-fg);
-	--sidebar-hover:     color-mix(in srgb, var(--ink) 8%, transparent);
-	--sidebar-active:    color-mix(in srgb, var(--ink) 14%, transparent);
-	--sidebar-border:    color-mix(in srgb, var(--ink) 10%, transparent);
+	/* Sidebar palette — neutral chrome surface (responds to the
+	   Surface chroma slider via the M3 neutral palette). We use
+	   `surface-container` for the background, which is the M3-spec'd
+	   token for "elevated chrome" — a touch darker than `surface`
+	   but still neutral. The selected pill below still uses the
+	   secondary family so a chosen row pops in the seed's colour
+	   without dragging the whole rail into that family. */
+	--sidebar-bg:        var(--md-sys-color-surface-container, color-mix(in srgb, var(--paper) 88%, var(--ink) 12%));
+	--sidebar-fg:        var(--md-sys-color-on-surface, var(--ink));
+	--sidebar-fg-muted:  color-mix(in srgb, var(--md-sys-color-on-surface, var(--ink)) 60%, transparent);
+	/* Hover is intentionally neutral — an `on-surface` darkening
+	   overlay, the same pattern M3 uses for hover/focus state layers.
+	   Earlier we used translucent `secondary`, which at 10% over the
+	   already-secondary-tinted rail read MORE chromatic than the
+	   active pill below (because secondary is full chroma, while
+	   secondary-container is desaturated by spec). Neutral hover +
+	   chromatic active gives the proper visual hierarchy. */
+	--sidebar-hover:     color-mix(in srgb,
+	                       var(--md-sys-color-on-surface, var(--ink)) 7%,
+	                       transparent);
+	/* Selected nav item — full `secondary-container`. Pairs with
+	   --sidebar-active-fg = on-secondary-container, the M3-spec'd
+	   foreground for that surface. The hover above is intentionally a
+	   neutral darkening (not a translucent `secondary`) so it never
+	   reads more chromatic than this pill. */
+	--sidebar-active:    var(--md-sys-color-secondary-container,
+	                       color-mix(in srgb, var(--md-sys-color-secondary, var(--ink)) 30%, var(--paper)));
+	--sidebar-active-fg: var(--md-sys-color-on-secondary-container, var(--ink));
+	--sidebar-border:    color-mix(in srgb,
+	                       var(--md-sys-color-on-surface, var(--ink)) 10%,
+	                       transparent);
 	--sidebar-width: 220px;
+}
+
+/* Dark mode: theme-store toggles `theme-dark` on <html> in tandem with
+   color-scheme: dark. Flip the hardcoded ink/muted-fg so contrast
+   still maxes against the dark surface. Everything else still reads
+   from the M3 palette, which adapts on its own. */
+:root.theme-dark {
+	--ink:      #fafafa;
+	--muted-fg: #cfc7bb;
 }
 
 /* Hide per-page wordmarks on desktop — sidebar has the logo */
@@ -210,12 +252,14 @@ main {
 .mention-pill:hover {
 	background: color-mix(in srgb, var(--accent) 38%, transparent);
 }
+/* Sent-bubble mentions: currentColor mixes adapt regardless of bubble
+   tone (previously assumed a dark bubble and used `--paper` overlays). */
 .message.mine .mention-pill {
-	background: color-mix(in srgb, var(--paper) 22%, transparent);
-	color: var(--paper);
+	background: color-mix(in srgb, currentColor 18%, transparent);
+	color: inherit;
 }
 .message.mine .mention-pill:hover {
-	background: color-mix(in srgb, var(--paper) 38%, transparent);
+	background: color-mix(in srgb, currentColor 30%, transparent);
 }
 
 /* Deep-link landing highlight — when a notification or other deep link
@@ -230,3 +274,42 @@ main {
 	animation: msg-flash 1.6s ease-out;
 	border-radius: 12px;
 }
+
+/* ── Material Symbols Rounded helper ──────────────────────────────────────
+   Wrap any Material Symbols ligature in `<span class="msi">name</span>`
+   to render it. Use modifier classes for fill / weight / size:
+     <span class="msi msi-fill">blender</span>
+     <span class="msi msi-20">close</span>
+   The font is loaded once globally in app.html so HMR is instant. */
+.msi {
+	font-family: 'Material Symbols Rounded';
+	font-weight: normal;
+	font-style: normal;
+	font-size: 20px;
+	line-height: 1;
+	letter-spacing: normal;
+	text-transform: none;
+	display: inline-block;
+	white-space: nowrap;
+	word-wrap: normal;
+	direction: ltr;
+	-webkit-font-feature-settings: 'liga';
+	-webkit-font-smoothing: antialiased;
+	font-feature-settings: 'liga';
+	/* Explicit override in case the icon ends up under any ancestor
+	   that disabled ligatures for the surrounding text (the landing
+	   page's `.letter` block does this for the font-swap effect). */
+	font-variant-ligatures: normal;
+	/* Default: weight 400, grade 0, optical size 20. Originally set to
+	   wght=200 for an editorial feel but at small (18–20 px) toolbar
+	   sizes the strokes disappeared into the background — bumped two
+	   gradations so the icons stay legible without looking chunky.
+	   Every modifier below keeps wght=400 / GRAD=0 / opsz=20 and only
+	   varies FILL or px size. */
+	font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 20;
+	user-select: none;
+}
+.msi-fill { font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 20; }
+.msi-20 { font-size: 20px; }
+.msi-18 { font-size: 18px; }
+.msi-24 { font-size: 24px; }

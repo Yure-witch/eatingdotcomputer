@@ -2,6 +2,8 @@
 	import ClassSwitcher from './ClassSwitcher.svelte';
 	import UserMenu from './UserMenu.svelte';
 	import ThemeSwitcher from './ThemeSwitcher.svelte';
+	import NotificationBell from './NotificationBell.svelte';
+	import { pageTitle } from '$lib/page-title-store.js';
 
 	let { currentClass = null, allClasses = [], user = null } = $props();
 </script>
@@ -11,7 +13,16 @@
 		<a class="wordmark" href="/">eating.computer</a>
 		<ClassSwitcher {currentClass} {allClasses} />
 	</div>
+	{#if $pageTitle}
+		<!-- Per-page title (e.g. chat channel name, DM partner). Pages
+		     publish this via the pageTitle store — set on mount, clear
+		     on destroy — so the global header always shows where you
+		     are without the page needing to render its own duplicate
+		     title bar. -->
+		<h1 class="page-title">{$pageTitle}</h1>
+	{/if}
 	<div class="header-right">
+		<NotificationBell {user} />
 		<ThemeSwitcher />
 		<UserMenu {user} />
 	</div>
@@ -32,6 +43,19 @@
 		text-decoration: none; white-space: nowrap;
 	}
 	.wordmark:hover { opacity: 0.7; }
+	.page-title {
+		font-family: 'Avara', serif;
+		font-weight: 400;
+		font-size: 1.05rem;
+		color: var(--ink);
+		margin: 0;
+		min-width: 0;
+		flex: 1;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		text-align: left;
+	}
 	.header-right {
 		margin-left: auto;
 		flex-shrink: 0;

@@ -1,14 +1,10 @@
 <script>
-	import AppHeader from '$lib/components/AppHeader.svelte';
-
 	let { data } = $props();
 </script>
 
 <svelte:head><title>Playground — eating.computer</title></svelte:head>
 
 <div class="shell">
-	<AppHeader currentClass={data.currentClass} allClasses={data.allClasses} user={data.currentUser ?? null} />
-
 	<main>
 		<div class="page-header">
 			<h1>Playground</h1>
