@@ -126,7 +126,13 @@
 								href={notifHref(n)}
 								onclick={closeMenu}
 							>
-								<Avatar name={n.fromName} uid={n.fromUid} size={28} />
+								<Avatar
+									name={n.fromName}
+									uid={n.fromUid}
+									avatarKind={n.fromAvatarKind ?? 'gen'}
+									avatarValue={n.fromAvatarValue ?? null}
+									size={28}
+								/>
 								<span class="notif-body">
 									<span class="notif-line">
 										<strong>{n.fromName}</strong>

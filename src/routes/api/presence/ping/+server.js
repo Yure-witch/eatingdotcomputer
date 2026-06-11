@@ -17,13 +17,20 @@ export async function POST({ request, locals }) {
 	let body;
 	try { body = await request.json(); } catch { body = {}; }
 
-	const { deviceId, ua, pwa, mobile, notif, sessionStart } = body;
+	const { deviceId, ua, pwa, mobile, notif, sessionStart, lastInputAt } = body;
 	if (!deviceId) error(400, 'deviceId required');
 
 	const now = Date.now();
 	const payload = {
 		online: true,
 		lastSeen: now,
+		// lastInputAt — most recent user input on the device. The
+		// client passes it on every ping so the active/idle dot
+		// colour stays accurate even if the client's direct RTDB
+		// write was blocked by rules or auth lag. Falls back to
+		// `now` when the client didn't send it (older clients), which
+		// reads as "active" until the next 4-minute window elapses.
+		lastInputAt: typeof lastInputAt === 'number' ? lastInputAt : now,
 		sessionStart: sessionStart ?? now,
 		ua: ua ?? null,
 		pwa: !!pwa,

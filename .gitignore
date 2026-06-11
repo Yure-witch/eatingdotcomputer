@@ -38,3 +38,9 @@ vite.config.ts.timestamp-*
 # Material 3 TemperatureCache complement algorithm — see
 # src/lib/theme-store.js.
 /examples/monet-gallery/
+
+# Raw Emoji Kitchen source dump from Google (~245 MB textproto with
+# all ~140k combos). Too big to commit; a slimmer JSON derivative
+# (just emoji-pair → URL) is what gets shipped to the client.
+/emoji_kitchen_v6.textproto
+*.textproto

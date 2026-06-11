@@ -9,6 +9,7 @@
 	import { getConvId } from '$lib/convId.js';
 	import { invalidateAll, afterNavigate } from '$app/navigation';
 	import ProfileHover from '$lib/components/ProfileHover.svelte';
+	import Avatar from '$lib/components/Avatar.svelte';
 	import BottomNav from '$lib/components/BottomNav.svelte';
 	import AppHeader from '$lib/components/AppHeader.svelte';
 
@@ -27,9 +28,14 @@
 			iconName: 'home'
 		},
 		{
-			href: '/app/atlas',
+			href: '/app/orbit',
 			label: 'Orbit',
-			active: (p) => p.startsWith('/app/atlas') || p.startsWith('/app/collection') || p.startsWith('/app/assignments') || p.startsWith('/app/files'),
+			// Old aliases (/app/atlas, /app/assignments, /app/files,
+			// /app/collection) still mark the row active so anyone
+			// hitting a bookmark or deep-link to those keeps seeing
+			// the right nav highlight while the redirect lands them
+			// on /app/orbit.
+			active: (p) => p.startsWith('/app/orbit') || p.startsWith('/app/atlas') || p.startsWith('/app/collection') || p.startsWith('/app/assignments') || p.startsWith('/app/files'),
 			iconName: 'planet'
 		},
 		{
@@ -75,6 +81,11 @@
 	// Expose rawPresence to child pages (e.g. manage) via a getter so the manage
 	// tab uses the exact same signal as the sidebar — no separate Firebase subscription.
 	setContext('rawPresence', { get value() { return rawPresence; } });
+	// `presenceStatus` is the 3-state derivation { uid → 'active' |
+	// 'idle' | 'offline' } that drives dot colour. Children that
+	// already read rawPresence can opt-in to the richer signal
+	// without rewriting their own derivation logic.
+	setContext('presenceStatus', { get value() { return presenceStatus; } });
 	setContext('refreshPresence', () => pollPresence());
 	setContext('addToast', (convId, convPath, title, body) => addToast(convId, convPath, title, body));
 	let showNewChannel = $state(false);
@@ -124,21 +135,63 @@
 
 	// ── Presence ──
 	const PRESENCE_TTL = 5 * 60 * 1000;      // 5 min — how stale a lastSeen can be before considered offline
+	const IDLE_THRESHOLD = 4 * 60 * 1000;    // 4 min — no input → status flips from active (green) to idle (yellow)
 	const HEARTBEAT_INTERVAL = 2.5 * 60 * 1000; // 2.5 min — keeps lastSeen fresh within TTL with 2.5min margin
 	const POLL_INTERVAL = 5 * 60 * 1000;     // 5 min — fallback only; allPresenceRef subscription handles real-time
 	const PING_DEBOUNCE = 90 * 1000;         // navigation pings skipped if we pinged within this window
+	const INPUT_WRITE_DEBOUNCE = 30 * 1000;  // throttle RTDB lastInputAt writes so mousemove doesn't hammer Firebase
 	let rawPresence = $state({});
 	let presenceTick = $state(0);
+	// Local timestamp of the most recent real input (mouse / key /
+	// touch / scroll / wheel) on this tab. Bumped by the listeners
+	// installed in onMount and reflected to RTDB on heartbeats + on
+	// wake-from-idle so other clients see the green dot return
+	// immediately when the user moves their mouse again.
+	let _lastInputAt = $state(Date.now());
+	let _lastInputWriteAt = 0;
+	let _myStatusIsIdle = false;
 
-	let onlineIds = $derived.by(() => {
+	// Per-user activity status. Three levels:
+	//   'active'  — online && most recent input within IDLE_THRESHOLD
+	//   'idle'    — online but no input for ≥ IDLE_THRESHOLD
+	//   'offline' — tab closed or heartbeat stale beyond PRESENCE_TTL
+	// presenceTick re-evaluates this every minute so a user who walked
+	// away mid-session slides from active → idle without a fresh
+	// presence event from their side.
+	let presenceStatus = $derived.by(() => {
 		presenceTick;
-		const cutoff = Date.now() - PRESENCE_TTL;
-		return new Set(
-			Object.entries(rawPresence)
-				.filter(([, v]) => v.online && (v.lastSeen ?? 0) > cutoff)
-				.map(([uid]) => uid)
-		);
+		const now = Date.now();
+		const map = {};
+		for (const [uid, v] of Object.entries(rawPresence)) {
+			if (!v.online || (now - (v.lastSeen ?? 0)) > PRESENCE_TTL) {
+				map[uid] = 'offline';
+				continue;
+			}
+			// Other devices may report the same uid; if any device shows
+			// fresh input we treat the user as active. devices is a flat
+			// array populated by /api/presence/me + the live RTDB merge.
+			let mostRecentInput = v.lastInputAt ?? 0;
+			if (Array.isArray(v.devices)) {
+				for (const d of v.devices) {
+					mostRecentInput = Math.max(mostRecentInput, d.lastInputAt ?? 0);
+				}
+			}
+			// Fall back to lastSeen if the client never wrote lastInputAt
+			// (e.g. older sessions before this rollout). lastSeen + tab
+			// open is the best signal we have.
+			if (!mostRecentInput) mostRecentInput = v.lastSeen ?? 0;
+			map[uid] = (now - mostRecentInput) > IDLE_THRESHOLD ? 'idle' : 'active';
+		}
+		return map;
 	});
+
+	// Backward-compat: anything still asking "is this user's tab open
+	// at all" gets a Set of every uid whose status isn't offline.
+	let onlineIds = $derived(new Set(
+		Object.entries(presenceStatus)
+			.filter(([, s]) => s !== 'offline')
+			.map(([uid]) => uid)
+	));
 
 	// ── Profile hover card ──
 	let hoverUserId = $state(null);
@@ -205,7 +258,7 @@
 	let userChatsRef, lastReadRef, presenceRef, connectedRef, allPresenceRef;
 	let channelMetaRef, unreadCountsRef;
 	let pushBroadcast; // BroadcastChannel for push-notification relay from service worker
-	let heartbeatTimer, tickTimer, presencePollTimer;
+	let heartbeatTimer, tickTimer, presencePollTimer, idleTickTimer;
 	const channelRefs = {}; // per-channel lastAt subscriptions
 
 	async function pollPresence() {
@@ -281,7 +334,8 @@
 					pwa: isPwa,
 					mobile: isMob,
 					notif: typeof Notification !== 'undefined' && Notification.permission === 'granted',
-					sessionStart: _pingSessionStart
+					sessionStart: _pingSessionStart,
+					lastInputAt: _lastInputAt
 				})
 			})
 				.then(async (r) => {
@@ -446,6 +500,10 @@
 			name: data.currentUser.name,
 			online: true,
 			lastSeen: Date.now(),
+			// lastInputAt — most recent real input on this device.
+			// Drives the active vs idle distinction; other clients
+			// compare it to IDLE_THRESHOLD when colouring the dot.
+			lastInputAt: _lastInputAt,
 			sessionStart,
 			ua: navigator.userAgent,
 			screen: `${screen.width}x${screen.height}`,
@@ -481,8 +539,42 @@
 			const connected = !!snap.val();
 			console.info('[ec:presence] Firebase connection state:', connected ? 'CONNECTED' : 'DISCONNECTED');
 			if (!connected) return;
-			// Set up disconnect handler and re-write on reconnect
-			onDisconnect(presenceRef).update({ online: false }); // lastSeen stays at last heartbeat
+			// The socket coming back up IS an activity signal — closing
+			// a laptop tears the WebSocket down; opening it triggers
+			// this reconnect. Bumping _lastInputAt here gives the user
+			// a brief green window when they wake the device even if
+			// they haven't moved the mouse yet. If they then walk
+			// away, the 4-minute idle timer will flip them to yellow
+			// as expected.
+			_lastInputAt = Date.now();
+			_lastInputWriteAt = _lastInputAt;
+			_myStatusIsIdle = false;
+			rawPresence = {
+				...rawPresence,
+				[data.currentUser.id]: {
+					...(rawPresence[data.currentUser.id] ?? {}),
+					online: true,
+					lastSeen: _lastInputAt,
+					lastInputAt: _lastInputAt
+				}
+			};
+			// Disconnect handler. When the WebSocket dies (tab close,
+			// network drop, crash) Firebase server fires this write on
+			// our behalf. We mark `online: false` AND `lastInputAt: 0`
+			// so the read-side derivation has TWO independent signals
+			// to fall back on:
+			//   - `online: false` immediately drops this device from the
+			//     aggregated fresh-device list → uid status flips to
+			//     'offline' as soon as the last live device dies.
+			//   - `lastInputAt: 0` separately drives the active/idle
+			//     check, so even if the snapshot still reads `online: true`
+			//     for a beat (network jitter, stale cache), the user
+			//     reads as at-minimum 'idle' (yellow) right away
+			//     instead of lingering as 'active' (green) while
+			//     they're clearly gone.
+			// `lastSeen` is intentionally left at its last heartbeat
+			// so observers can show "last seen N ago" accurately.
+			onDisconnect(presenceRef).update({ online: false, lastInputAt: 0 });
 			set(presenceRef, presencePayload())
 				.catch((e) => console.error('[ec:presence] reconnect RTDB write FAILED:', e.code, e.message));
 		});
@@ -501,6 +593,75 @@
 			};
 		}, HEARTBEAT_INTERVAL);
 		tickTimer = setInterval(() => { presenceTick++; }, 60_000); // 1 min tick — re-evaluates TTL in onlineIds
+
+		// Input tracking. `onAnyInput` is the ONLY function in this
+		// file that bumps `_lastInputAt`. Heartbeats, presencePing,
+		// reconnect writes, the rawPresence mirror inside the
+		// heartbeat — none of them touch `_lastInputAt`; they only
+		// refresh `lastSeen` (tab-is-open proof) so RTDB writes keep
+		// the user marked online without lying about their activity.
+		// That separation is what makes the yellow/idle state stable
+		// even though Firebase is being pinged in the background.
+		//
+		// Two RTDB write paths on real input:
+		//   - immediate, full `set()` when waking from idle so other
+		//     clients flip yellow → green within one round-trip;
+		//   - throttled `update({ lastInputAt, lastSeen })` otherwise
+		//     so an active user moving the mouse continuously doesn't
+		//     hammer Firebase. Heartbeats still ride the regular
+		//     interval and carry the (possibly stale) `_lastInputAt`
+		//     verbatim — that's the whole point.
+		//
+		// `scroll` is deliberately NOT in the listener list. Chat
+		// auto-scrolls to the bottom on new messages, and a browser-
+		// dispatched scroll from `element.scrollTop = …` is `isTrusted`
+		// even though no human moved a finger. The events below cover
+		// every real human-initiated scroll path: keydown (arrows /
+		// page up / home), mousedown (scrollbar drag), wheel
+		// (trackpad / mouse wheel), touchstart (touch swipe). If you
+		// can scroll without one of those firing first, it wasn't you.
+		const onAnyInput = (e) => {
+			// `isTrusted` filters out anything synthesised by
+			// `dispatchEvent` — the few code paths that do this for
+			// keyboard simulation, etc., shouldn't masquerade as
+			// real human activity.
+			if (e && e.isTrusted === false) return;
+			const now = Date.now();
+			_lastInputAt = now;
+			// Also reflect locally so my own dot updates instantly,
+			// not waiting for the RTDB round-trip.
+			rawPresence = {
+				...rawPresence,
+				[data.currentUser.id]: {
+					...(rawPresence[data.currentUser.id] ?? {}),
+					online: true,
+					lastSeen: now,
+					lastInputAt: now
+				}
+			};
+			if (_myStatusIsIdle) {
+				_myStatusIsIdle = false;
+				_lastInputWriteAt = now;
+				if (presenceRef) set(presenceRef, presencePayload())
+					.catch((err) => console.error('[ec:presence] wake-from-idle write FAILED:', err.code, err.message));
+				return;
+			}
+			if (now - _lastInputWriteAt > INPUT_WRITE_DEBOUNCE) {
+				_lastInputWriteAt = now;
+				if (presenceRef) update(presenceRef, { lastInputAt: now, lastSeen: now })
+					.catch(() => { /* best-effort */ });
+			}
+		};
+		const INPUT_EVENTS = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'wheel'];
+		for (const ev of INPUT_EVENTS) {
+			document.addEventListener(ev, onAnyInput, { passive: true, capture: true });
+		}
+		// Idle-flag tick. Runs alongside presenceTick so my own
+		// _myStatusIsIdle stays in sync — the boolean only matters for
+		// detecting the wake transition above.
+		idleTickTimer = setInterval(() => {
+			_myStatusIsIdle = (Date.now() - _lastInputAt) > IDLE_THRESHOLD;
+		}, 30_000);
 
 		// All presence — normalize both old (flat) and new (per-device) formats.
 		// Store full device metadata so the manage tab can use this same signal.
@@ -523,18 +684,24 @@
 					const fresh = !!v.online && (v.lastSeen ?? 0) > fbNow - PRESENCE_TTL;
 					normalized[uid] = {
 						online: fresh, lastSeen: v.lastSeen ?? 0,
+						// lastInputAt threads up to the uid-level so the
+						// `presenceStatus` derivation can compare it
+						// against IDLE_THRESHOLD without falling back to
+						// lastSeen (which heartbeats refresh on its own
+						// schedule and would mask the idle state).
+						lastInputAt: v.lastInputAt ?? 0,
 						ua: v.ua ?? null, pwa: v.pwa ?? null, mobile: v.mobile ?? null, notif: v.notif ?? null,
-						devices: fresh ? [{ ua: v.ua ?? null, pwa: !!v.pwa, mobile: !!v.mobile, lastSeen: v.lastSeen ?? 0 }] : []
+						devices: fresh ? [{ ua: v.ua ?? null, pwa: !!v.pwa, mobile: !!v.mobile, lastSeen: v.lastSeen ?? 0, lastInputAt: v.lastInputAt ?? 0 }] : []
 					};
 				} else {
 					// Per-device format (or mixed — only read the object children)
-					let online = false, lastSeen = 0, ua = null, pwa = null, mobile = null, notif = null;
+					let online = false, lastSeen = 0, lastInputAt = 0, ua = null, pwa = null, mobile = null, notif = null;
 					const devices = [];
 					for (const d of deviceObjects) {
 						const fresh = d.online && (d.lastSeen ?? 0) > fbNow - PRESENCE_TTL;
 						if (fresh) {
 							online = true;
-							devices.push({ ua: d.ua ?? null, pwa: !!d.pwa, mobile: !!d.mobile, lastSeen: d.lastSeen ?? 0 });
+							devices.push({ ua: d.ua ?? null, pwa: !!d.pwa, mobile: !!d.mobile, lastSeen: d.lastSeen ?? 0, lastInputAt: d.lastInputAt ?? 0 });
 						}
 						if ((d.lastSeen ?? 0) > lastSeen) {
 							lastSeen = d.lastSeen;
@@ -542,9 +709,20 @@
 							pwa = d.pwa ?? null;
 							mobile = d.mobile ?? null;
 						}
+						// Take the freshest input across all devices —
+						// even a stale device shouldn't suppress activity
+						// from a live one, but a non-fresh device's old
+						// `lastInputAt` shouldn't keep someone "active"
+						// after they walked away either. Only count
+						// `lastInputAt` from devices that are themselves
+						// online, so a phone closed an hour ago doesn't
+						// contradict the desktop going idle.
+						if (fresh && (d.lastInputAt ?? 0) > lastInputAt) {
+							lastInputAt = d.lastInputAt;
+						}
 						if (d.notif != null) notif = d.notif;
 					}
-					normalized[uid] = { online, lastSeen, ua, pwa, mobile, notif, devices };
+					normalized[uid] = { online, lastSeen, lastInputAt, ua, pwa, mobile, notif, devices };
 				}
 			}
 			// Never let Firebase override the current user as offline — they're online
@@ -552,7 +730,7 @@
 			// Also correct device metadata to match the current session (not a stale mobile entry).
 			if (data?.currentUser?.id) {
 				const existing = normalized[data.currentUser.id] ?? rawPresence[data.currentUser.id] ?? {};
-				const currentDevice = { ua: navigator.userAgent, pwa: isPwa, mobile: isMobile, lastSeen: Date.now() };
+				const currentDevice = { ua: navigator.userAgent, pwa: isPwa, mobile: isMobile, lastSeen: Date.now(), lastInputAt: _lastInputAt };
 				// Replace or add this session's device in the devices array
 				const otherDevices = (existing.devices ?? []).filter(
 					(d) => d.ua !== navigator.userAgent
@@ -561,6 +739,11 @@
 					...existing,
 					online: true,
 					lastSeen: Date.now(),
+					// Use the local `_lastInputAt` (not whatever the
+					// snapshot saw) so my own dot reflects my actual
+					// activity instantly — heartbeats might still be
+					// pushing stale values to RTDB.
+					lastInputAt: _lastInputAt,
 					ua: navigator.userAgent,
 					pwa: isPwa,
 					mobile: isMobile,
@@ -684,6 +867,7 @@
 		clearInterval(heartbeatTimer);
 		clearInterval(tickTimer);
 		clearInterval(presencePollTimer);
+		clearInterval(idleTickTimer);
 		if (userChatsRef) off(userChatsRef);
 		if (lastReadRef) off(lastReadRef);
 		if (allPresenceRef) off(allPresenceRef);
@@ -819,8 +1003,14 @@
 				<div class="member-row self" onmouseenter={(e) => showHover(e, data.currentUser.id)} onmouseleave={hideHover}>
 					<a class="member-inner" href="/app/profile/{data.currentUser.id}">
 						<span class="avatar-wrap">
-							<span class="avatar">{data.currentUser.name[0].toUpperCase()}</span>
-							<span class="presence-dot"></span>
+							<Avatar
+								name={data.currentUser.name}
+								uid={data.currentUser.id}
+								avatarKind={data.currentUser.avatarKind ?? 'gen'}
+								avatarValue={data.currentUser.avatarValue ?? null}
+								size={26}
+							/>
+							<span class="presence-dot" class:idle={presenceStatus[data.currentUser.id] === 'idle'}></span>
 						</span>
 						<div class="member-text">
 							<span class="member-name">{data.currentUser.name} <span class="you-tag">you</span></span>
@@ -840,8 +1030,14 @@
 				<div class="member-row" onmouseenter={(e) => showHover(e, u.id)} onmouseleave={hideHover}>
 					<a class="member-inner" href={dmPath} class:active={$page.url.pathname === dmPath}>
 						<span class="avatar-wrap">
-							<span class="avatar">{u.name[0].toUpperCase()}</span>
-							{#if isOnline}<span class="presence-dot"></span>{/if}
+							<Avatar
+								name={u.name}
+								uid={u.id}
+								avatarKind={u.avatarKind ?? 'gen'}
+								avatarValue={u.avatarValue ?? null}
+								size={26}
+							/>
+							{#if isOnline}<span class="presence-dot" class:idle={presenceStatus[u.id] === 'idle'}></span>{/if}
 						</span>
 						<div class="member-text">
 							<span class="member-name" class:bold={dmUnreadCount > 0 || dmUnreadDot}>{u.name}</span>
@@ -1143,6 +1339,10 @@
 		width: 7px; height: 7px; border-radius: 50%;
 		background: #4caf50; border: 1.5px solid var(--ink);
 	}
+	/* Idle = tab open, no input for ≥4 min. Amber is the standard
+	   away signal across iMessage / Slack / Discord so the colour
+	   reads as "they're around but not at the keyboard". */
+	.presence-dot.idle { background: #ffc107; }
 
 	.member-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.05rem; }
 	.member-name { font-size: 0.82rem; color: var(--sidebar-fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

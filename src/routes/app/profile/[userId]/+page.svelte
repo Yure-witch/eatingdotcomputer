@@ -1,6 +1,21 @@
 <script>
+	import { onMount, tick } from 'svelte';
+	import Avatar from '$lib/components/Avatar.svelte';
+	import { createContentRenderer } from '$lib/message-render.js';
+	import { mountStaticEmotes } from '$lib/emote-mount.js';
+
 	let { data } = $props();
 	const { profile, isOwnProfile, currentUserId } = data;
+	const { contentHtml } = createContentRenderer();
+
+	// Mount static-frame emotes after the bio renders so TG / TGC
+	// tokens animate / show frames instead of empty spans.
+	let bioEl = $state(null);
+	$effect(() => {
+		if (!bioEl) return;
+		void profile.bio;
+		tick().then(() => mountStaticEmotes(bioEl));
+	});
 
 	function formatJoined(str) {
 		if (!str) return '';
@@ -33,7 +48,13 @@
 
 		<div class="profile-card">
 			<div class="profile-top">
-				<div class="avatar">{profile.name ? profile.name[0].toUpperCase() : '?'}</div>
+				<Avatar
+					name={profile.name ?? ''}
+					uid={profile.id}
+					avatarKind={profile.avatarKind ?? 'gen'}
+					avatarValue={profile.avatarValue ?? null}
+					size={84}
+				/>
 				<div class="profile-meta">
 					<div class="name-row">
 						<h1>{profile.name || 'Unnamed'}</h1>
@@ -65,7 +86,36 @@
 			{#if profile.bio}
 				<div class="section">
 					<h2>About</h2>
-					<p class="bio">{profile.bio}</p>
+					<p class="bio" bind:this={bioEl}>{@html contentHtml(profile.bio, false)}</p>
+				</div>
+			{/if}
+
+			<!-- Study details: year + school + focus. Rendered together
+			     as a key/value list whenever any of the three is set so
+			     the layout stays cohesive even with partial info. -->
+			{#if profile.year || profile.school || profile.focus}
+				<div class="section">
+					<h2>Studies</h2>
+					<dl class="detail-list">
+						{#if profile.year}
+							<div class="detail-row">
+								<dt>Year</dt>
+								<dd>{profile.year}</dd>
+							</div>
+						{/if}
+						{#if profile.school}
+							<div class="detail-row">
+								<dt>School</dt>
+								<dd>{profile.school}</dd>
+							</div>
+						{/if}
+						{#if profile.focus}
+							<div class="detail-row">
+								<dt>Focus</dt>
+								<dd>{profile.focus}</dd>
+							</div>
+						{/if}
+					</dl>
 				</div>
 			{/if}
 
@@ -76,13 +126,13 @@
 				</div>
 			{/if}
 
-			{#if !profile.bio && !profile.website && !isOwnProfile}
+			{#if !profile.bio && !profile.website && !profile.year && !profile.school && !profile.focus && !isOwnProfile}
 				<p class="empty">This person hasn't filled out their profile yet.</p>
 			{/if}
 
-			{#if isOwnProfile && !profile.bio && !profile.website}
+			{#if isOwnProfile && !profile.bio && !profile.website && !profile.year && !profile.school && !profile.focus}
 				<div class="empty-own">
-					<p>Your profile is pretty bare. <a href="/app/profile/edit">Add a bio and website →</a></p>
+					<p>Your profile is pretty bare. <a href="/app/profile/edit">Add a bio, school, and more →</a></p>
 				</div>
 			{/if}
 		</div>
@@ -151,19 +201,8 @@
 		flex-wrap: wrap;
 	}
 
-	.avatar {
-		width: 64px;
-		height: 64px;
-		border-radius: 50%;
-		background: var(--ink);
-		color: var(--paper);
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		font-family: 'Avara', serif;
-		font-size: 1.75rem;
-		flex-shrink: 0;
-	}
+	/* Old .avatar styles removed — the shared Avatar component
+	   owns the typography + gradient now. */
 
 	.profile-meta {
 		flex: 1;
@@ -270,6 +309,33 @@
 		line-height: 1.6;
 		margin: 0;
 		white-space: pre-wrap;
+	}
+
+	.detail-list {
+		margin: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 0.45rem;
+	}
+	.detail-row {
+		display: grid;
+		grid-template-columns: 80px 1fr;
+		gap: 0.75rem;
+		align-items: baseline;
+	}
+	.detail-row dt {
+		font-size: 0.72rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		color: var(--muted-fg);
+		margin: 0;
+	}
+	.detail-row dd {
+		font-size: 0.9rem;
+		color: var(--ink);
+		margin: 0;
+		line-height: 1.4;
 	}
 
 	.website-link {

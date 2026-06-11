@@ -110,9 +110,12 @@
 			iconName: 'home'
 		},
 		{
-			href: '/app/atlas',
+			href: '/app/orbit',
 			label: 'Orbit',
-			active: (p) => p.startsWith('/app/atlas') || p.startsWith('/app/collection') || p.startsWith('/app/assignments') || p.startsWith('/app/files'),
+			// Aliases include the old /app/atlas + adjacent /assignments,
+			// /files, /collection routes so the active highlight survives
+			// the rename until those old routes have all redirected.
+			active: (p) => p.startsWith('/app/orbit') || p.startsWith('/app/atlas') || p.startsWith('/app/collection') || p.startsWith('/app/assignments') || p.startsWith('/app/files'),
 			iconName: 'planet'
 		},
 		{

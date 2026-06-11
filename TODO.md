@@ -1,5 +1,5 @@
 # eating.computer — TODO
-*Last updated: May 19, 2026*
+*Last updated: June 7, 2026*
 
 Items roughly ordered by priority. See `NORTH_STAR.md` for the big picture.
 
@@ -45,7 +45,10 @@ Items roughly ordered by priority. See `NORTH_STAR.md` for the big picture.
 ---
 
 ## User Profiles & Social
-- [ ] **Profile picture uploading** — custom photo to R2 + procedural avatar options
+- [ ] **Custom & generative avatars** — three flavors, all replacing the current initial-on-tint placeholder used in chat read receipts, mention picker, notification bell, etc.:
+	- *Custom upload*: pick a photo, upload to R2, mirror to users.avatar_url.
+	- *Generative procedural*: pregenerated/random-seed procedural avatars (e.g. blob/shape/pattern compositions) the user can pick from without uploading.
+	- *Animated emoji avatar*: pick a Telegram-style animated emoji (re-use the existing Lottie pipeline + emote-mount.js) as a looping avatar that animates everywhere the static Avatar component renders today.
 - [ ] **MySpace-style user profiles** — customizable decorated profile pages
 - [ ] **Profile "last seen" accuracy** — profile pages don't accurately show last seen time
 - [ ] **Spotify / Apple Music integration** — show what users are listening to

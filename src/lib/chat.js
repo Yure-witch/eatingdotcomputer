@@ -19,8 +19,18 @@ export function pushIdToTimestamp(pushId) {
  */
 export function buildUserMap(currentUser, users) {
 	const map = {};
-	map[currentUser.id] = { name: currentUser.name, role: currentUser.role };
-	for (const u of users) map[u.id] = { name: u.name, role: u.role };
+	map[currentUser.id] = {
+		name: currentUser.name,
+		role: currentUser.role,
+		avatarKind: currentUser.avatarKind ?? 'gen',
+		avatarValue: currentUser.avatarValue ?? null
+	};
+	for (const u of users) map[u.id] = {
+		name: u.name,
+		role: u.role,
+		avatarKind: u.avatarKind ?? 'gen',
+		avatarValue: u.avatarValue ?? null
+	};
 	return map;
 }
 

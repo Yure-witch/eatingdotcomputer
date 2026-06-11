@@ -3,7 +3,7 @@
 	import UserMenu from './UserMenu.svelte';
 	import ThemeSwitcher from './ThemeSwitcher.svelte';
 	import NotificationBell from './NotificationBell.svelte';
-	import { pageTitle } from '$lib/page-title-store.js';
+	import { pageTitle, pageTitleHref } from '$lib/page-title-store.js';
 
 	let { currentClass = null, allClasses = [], user = null } = $props();
 </script>
@@ -16,10 +16,22 @@
 	{#if $pageTitle}
 		<!-- Per-page title (e.g. chat channel name, DM partner). Pages
 		     publish this via the pageTitle store — set on mount, clear
-		     on destroy — so the global header always shows where you
-		     are without the page needing to render its own duplicate
-		     title bar. -->
-		<h1 class="page-title">{$pageTitle}</h1>
+		     on destroy. If the page also sets pageTitleHref, the title
+		     renders as a link (e.g. DM partner's name → their profile),
+		     otherwise as plain text.
+		     The class name renders as a subtitle directly under the
+		     title so a #channel or a DM partner is always grounded in
+		     which class context the conversation belongs to. */ -->
+		<div class="page-title-block">
+			{#if $pageTitleHref}
+				<a class="page-title page-title-link" href={$pageTitleHref}>{$pageTitle}</a>
+			{:else}
+				<h1 class="page-title">{$pageTitle}</h1>
+			{/if}
+			{#if currentClass?.name}
+				<span class="page-subtitle">{currentClass.name}</span>
+			{/if}
+		</div>
 	{/if}
 	<div class="header-right">
 		<NotificationBell {user} />
@@ -43,6 +55,17 @@
 		text-decoration: none; white-space: nowrap;
 	}
 	.wordmark:hover { opacity: 0.7; }
+	/* Title + class subtitle stack. The block grows into the flex
+	   space the lone <h1> used to take, so the right-side controls
+	   keep their alignment. */
+	.page-title-block {
+		display: flex;
+		flex-direction: column;
+		min-width: 0;
+		flex: 1;
+		gap: 0.05rem;
+		line-height: 1.15;
+	}
 	.page-title {
 		font-family: 'Avara', serif;
 		font-weight: 400;
@@ -50,11 +73,29 @@
 		color: var(--ink);
 		margin: 0;
 		min-width: 0;
-		flex: 1;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 		text-align: left;
+	}
+	.page-subtitle {
+		font-size: 0.72rem;
+		color: var(--md-sys-color-on-surface-variant, var(--muted-fg));
+		text-transform: uppercase;
+		letter-spacing: 0.08em;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.page-title-link {
+		text-decoration: none;
+		padding: 0.2rem 0.45rem;
+		margin: 0 -0.45rem;
+		border-radius: 8px;
+		transition: background 140ms ease;
+	}
+	.page-title-link:hover {
+		background: color-mix(in srgb, var(--ink) 7%, transparent);
 	}
 	.header-right {
 		margin-left: auto;

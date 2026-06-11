@@ -18,7 +18,12 @@ export async function POST({ request, locals }) {
 	if (!deviceId) error(400, 'deviceId required');
 
 	try {
-		await getAdminDb().ref(`presence/${uid}/${deviceId}`).update({ online: false });
+		// online: false drops this device from the aggregated fresh
+		// list immediately; lastInputAt: 0 is the belt-and-suspenders
+		// signal that flips the status derivation to at-least 'idle'
+		// even if the online flag's snapshot fan-out lags. Matches the
+		// onDisconnect write set up by the client.
+		await getAdminDb().ref(`presence/${uid}/${deviceId}`).update({ online: false, lastInputAt: 0 });
 		console.info(`[ec:presence/offline] uid=${uid} device=${deviceId} marked offline`);
 	} catch (e) {
 		console.error('[ec:presence/offline] RTDB write failed:', e?.message);

@@ -1,6 +1,7 @@
 import { redirect, fail } from '@sveltejs/kit';
 import { getAssignments, createAssignment, updateAssignment, deleteAssignment } from '$lib/server/assignments.js';
 import { getSubmissionsForAssignment } from '$lib/server/submissions.js';
+import { getWeekPlans, getAllProgressForClass, getStudentCountForClass, deleteWeekPlan } from '$lib/server/week-plans.js';
 import { getDb } from '$lib/server/turso.js';
 import { getAdminDb } from '$lib/server/firebase-admin.js';
 import { notifyInactiveStudents } from '$lib/server/notify-inactive.js';
@@ -12,37 +13,52 @@ export async function load({ locals, parent }) {
 	if (!session || session.user.role !== 'instructor') redirect(303, '/app');
 
 	const classId = parentData.currentClass?.id ?? 'idc-fall-2026';
-	const rows = await getAssignments(classId);
 
-	const byWeek = {};
-	for (const row of rows) {
-		const w = row.week;
-		if (!byWeek[w]) byWeek[w] = [];
-		let acceptedTypes;
-		try { acceptedTypes = JSON.parse(row.accepted_types ?? '["link"]'); } catch { acceptedTypes = ['link']; }
-		const submissionRows = await getSubmissionsForAssignment(row.id);
-		byWeek[w].push({
-			id: row.id,
-			title: row.title,
-			description: row.description ?? '',
-			dueDate: row.due_date ?? '',
-			acceptedTypes,
-			submissionCount: submissionRows.length
+	// Assignments tab reads from the same `week_plans` table the home
+	// page writes to — the legacy `assignments` table is no longer
+	// being populated, so this page sat empty for every class that
+	// only ever used the newer flow. Each week_plan rolls up to one
+	// row in the UI (week number, headline, due date, item count +
+	// completion ratio for instructors).
+	const plans = await getWeekPlans(classId);
+	const allProgress = await getAllProgressForClass(classId);
+	const studentCount = await getStudentCountForClass(classId);
+
+	const weeks = [...plans]
+		.sort((a, b) => a.week - b.week)
+		.map((p) => {
+			const itemProgress = allProgress[p.id] ?? {};
+			let totalSubs = 0;
+			for (const it of p.items ?? []) totalSubs += Number(itemProgress[it.id] ?? 0);
+			return {
+				week: p.week,
+				assignments: [{
+					id: p.id,
+					week: p.week,
+					title: p.headline,
+					description: p.topicPreview ?? '',
+					dueDate: p.dueDate ?? '',
+					important: !!p.important,
+					itemCount: (p.items ?? []).length,
+					items: (p.items ?? []).map((it) => ({
+						id: it.id,
+						label: it.label,
+						requiresSubmission: it.requiresSubmission,
+						acceptedTypes: it.acceptedTypes,
+						completedCount: Number(itemProgress[it.id] ?? 0)
+					})),
+					submissionCount: totalSubs,
+					studentCount
+				}]
+			};
 		});
-	}
 
-	const weeks = Object.keys(byWeek)
-		.map(Number)
-		.sort((a, b) => a - b)
-		.map((w) => ({ week: w, assignments: byWeek[w] }));
-
-	// Find the highest week number so we can suggest the next one
 	const maxWeek = weeks.length ? Math.max(...weeks.map((w) => w.week)) : 0;
 
 	// All members + online status — scoped to current class (instructors always included)
 	const db = getDb();
 	const usersResult = db ? await db.execute({
-		sql: `SELECT u.id, u.name, u.email, u.role, u.created_at FROM users u
+		sql: `SELECT u.id, u.name, u.email, u.role, u.created_at, u.avatar_kind, u.avatar_value FROM users u
 		      WHERE u.role = 'instructor'
 		         OR EXISTS (
 		              SELECT 1 FROM class_memberships cm
@@ -102,6 +118,8 @@ export async function load({ locals, parent }) {
 			email: String(r.email ?? ''),
 			role: String(r.role ?? 'student'),
 			joinedAt: String(r.created_at ?? ''),
+			avatarKind: r.avatar_kind ? String(r.avatar_kind) : 'gen',
+			avatarValue: r.avatar_value ? String(r.avatar_value) : null,
 			online: presence?.online ?? false,
 			lastSeen,
 			ua: presence?.ua ?? null,
@@ -333,7 +351,8 @@ export async function load({ locals, parent }) {
 	const pendingResult = db ? await db.execute({
 		sql: `SELECT cm.id, cm.class_id, cm.user_id, cm.requested_at,
 		             c.name AS class_name, c.term,
-		             u.name AS user_name, u.email, u.pronouns, u.bio, u.website
+		             u.name AS user_name, u.email, u.pronouns, u.bio, u.website,
+		             u.avatar_kind, u.avatar_value
 		      FROM class_memberships cm
 		      JOIN classes c ON cm.class_id = c.id
 		      JOIN users u ON cm.user_id = u.id
@@ -352,7 +371,9 @@ export async function load({ locals, parent }) {
 		email: String(r.email ?? ''),
 		pronouns: String(r.pronouns ?? ''),
 		bio: String(r.bio ?? ''),
-		website: String(r.website ?? '')
+		website: String(r.website ?? ''),
+		avatarKind: r.avatar_kind ? String(r.avatar_kind) : 'gen',
+		avatarValue: r.avatar_value ? String(r.avatar_value) : null
 	}));
 
 	// Avg session length (minutes) grouped by device_type × is_pwa × notifications on/off
@@ -440,7 +461,27 @@ export async function load({ locals, parent }) {
 		})
 		.sort((a, b) => (b.lastAt || 0) - (a.lastAt || 0));
 
-	return { weeks, maxWeek, members, activityByUser, userDeviceActivity, deviceNotifData, pendingRequests, classId, dmConversations };
+	// Enrollment window for the currently selected class. Surfaces
+	// the toggle + start/end dates that drive the student onboarding
+	// picker — only classes with enrollment_open=1 AND today inside
+	// the window show up there.
+	let enrollment = { open: false, start: null, end: null };
+	if (db && classId) {
+		const r = await db.execute({
+			sql: 'SELECT enrollment_open, enrollment_start, enrollment_end FROM classes WHERE id = ?',
+			args: [classId]
+		});
+		const row = r.rows[0];
+		if (row) {
+			enrollment = {
+				open: Number(row.enrollment_open) === 1,
+				start: row.enrollment_start ? String(row.enrollment_start) : null,
+				end: row.enrollment_end ? String(row.enrollment_end) : null
+			};
+		}
+	}
+
+	return { weeks, maxWeek, members, activityByUser, userDeviceActivity, deviceNotifData, pendingRequests, classId, dmConversations, enrollment };
 }
 
 const ALL_TYPES = ['link', 'image', 'video'];
@@ -588,5 +629,56 @@ export const actions = {
 		const id = String(data.get('id') ?? '');
 		if (!id) return fail(400, { error: 'Missing id' });
 		await deleteAssignment(id);
+	},
+
+	// Open/close enrollment for the currently selected class and set
+	// the optional [start, end] window. Drives the student
+	// onboarding/class picker — only classes with enrollment_open=1
+	// AND today inside the window are listed there. Blank date fields
+	// store as NULL ("no lower / upper bound"), so the instructor can
+	// run an open-ended window if they want.
+	setEnrollment: async ({ request, locals, cookies }) => {
+		const session = await locals.auth();
+		if (!session || session.user.role !== 'instructor') return fail(403, { error: 'Forbidden' });
+		const db = getDb();
+		if (!db) return fail(503, { error: 'Database unavailable' });
+
+		const data = await request.formData();
+		const open = data.get('enrollment_open') === '1';
+		const start = String(data.get('enrollment_start') ?? '').trim() || null;
+		const end = String(data.get('enrollment_end') ?? '').trim() || null;
+		// Operate on the same class the loader pulled. The instructor's
+		// active class is the cookie-resolved one, falling back to the
+		// first class — mirror that lookup here so the action can't be
+		// confused by a stale form posted from another tab.
+		const selectedId = cookies.get('selected_class_id');
+		const cls = await db.execute({
+			sql: 'SELECT id FROM classes WHERE id = ? OR ? IS NULL LIMIT 1',
+			args: [selectedId ?? null, selectedId ?? null]
+		});
+		const targetId = String(cls.rows[0]?.id ?? '');
+		if (!targetId) return fail(400, { error: 'No class selected' });
+
+		if (start && end && start > end) {
+			return fail(400, { error: 'Enrollment start date must be on or before the end date.', action: 'setEnrollment' });
+		}
+
+		await db.execute({
+			sql: 'UPDATE classes SET enrollment_open = ?, enrollment_start = ?, enrollment_end = ? WHERE id = ?',
+			args: [open ? 1 : 0, start, end, targetId]
+		});
+	},
+
+	// Delete a week_plan (the assignments tab now lists these instead
+	// of the legacy `assignments` table). FK cascades wipe the plan's
+	// items + every student completion attached to them.
+	deleteWeekPlan: async ({ request, locals }) => {
+		const session = await locals.auth();
+		if (!session || session.user.role !== 'instructor') return fail(403, { error: 'Forbidden' });
+
+		const data = await request.formData();
+		const id = String(data.get('id') ?? '');
+		if (!id) return fail(400, { error: 'Missing id' });
+		await deleteWeekPlan(id);
 	}
 };

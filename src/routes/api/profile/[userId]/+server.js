@@ -9,7 +9,7 @@ export async function GET({ locals, params }) {
 	if (!db) error(503, 'Database unavailable');
 
 	const result = await db.execute({
-		sql: 'SELECT id, name, pronouns, bio, website, year, school, focus, role FROM users WHERE id = ?',
+		sql: 'SELECT id, name, pronouns, bio, website, year, school, focus, role, avatar_kind, avatar_value FROM users WHERE id = ?',
 		args: [params.userId]
 	});
 
@@ -25,6 +25,8 @@ export async function GET({ locals, params }) {
 		year: String(u.year ?? ''),
 		school: String(u.school ?? ''),
 		focus: String(u.focus ?? ''),
-		role: String(u.role ?? 'student')
+		role: String(u.role ?? 'student'),
+		avatarKind: u.avatar_kind ? String(u.avatar_kind) : 'gen',
+		avatarValue: u.avatar_value ? String(u.avatar_value) : null
 	});
 }

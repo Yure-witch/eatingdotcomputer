@@ -1,13 +1,14 @@
 <script>
 	import { onMount, onDestroy, tick, getContext } from 'svelte';
-	import { pageTitle } from '$lib/page-title-store.js';
+	import { pageTitle, pageTitleHref } from '$lib/page-title-store.js';
+	import { profileLink } from '$lib/profile-link.js';
 	import { afterNavigate } from '$app/navigation';
 	import { db } from '$lib/firebase.js';
 	import { ref, onChildAdded, onValue, off, query, limitToLast, set, remove, get } from 'firebase/database';
 	import { normaliseMessage, buildUserMap, formatTime } from '$lib/chat.js';
 	import { resolveMentionsFromText, segmentMentions } from '$lib/mentions.js';
 	import { scallopedClip, starburstClip } from '$lib/scalloped.js';
-	import EmojiPicker from '$lib/components/EmojiPicker.svelte';
+	// EmojiPicker import removed — ExpressionPicker mode="react" replaces it.
 	import EmojiKitchen from '$lib/components/EmojiKitchen.svelte';
 	import CustomEmojiPanel from '$lib/components/CustomEmojiPanel.svelte';
 	import TelegramEmojiPanel from '$lib/components/TelegramEmojiPanel.svelte';
@@ -19,8 +20,10 @@
 		loadCustomPacks, getCachedCustomPacks, tgcUrl, tgcToToken, tgcEntry, isStaticPack, STATIC_FRAME_INDEX } from '$lib/telegram-emoji-store.js';
 	import { tryPlay as _tgTryPlay, yieldPlay as _tgYieldPlay } from '$lib/lottie-throttle.js';
 	import { tgStaticFrame, tgcStaticFrame, TG_PLACEHOLDER } from '$lib/tg-frame.js';
+	import { mountStaticEmotes } from '$lib/emote-mount.js';
 	import FileTypeIcon from '$lib/components/FileTypeIcon.svelte';
 	import ProfileHover from '$lib/components/ProfileHover.svelte';
+	import Avatar from '$lib/components/Avatar.svelte';
 	import UserMenu from '$lib/components/UserMenu.svelte';
 	import { loadEmojiNames, getEmojiName } from '$lib/emoji-names.js';
 	import { initSemanticSearch, searchEmoji, cpToChar } from '$lib/emoji-semantic.js';
@@ -80,6 +83,11 @@
 	let { data } = $props();
 
 	const openSidebar = getContext('openSidebar');
+	// Same live presence map the channel page uses — exposed by the
+	// layout via setContext('presenceStatus', ...). Reading `.value`
+	// inside template bindings is reactive so RTDB updates fan in
+	// without a per-page subscription.
+	const presenceStatusCtx = getContext('presenceStatus');
 	const otherUserId = data.convId.replace(data.currentUser.id, '').replace(/^_|_$/, '');
 	const otherUser = data.users.find((u) => u.id === otherUserId) ?? { name: 'Unknown', id: otherUserId };
 
@@ -100,6 +108,24 @@
 	let typingUsers = $state([]);
 	let keyboardOpen = $state(false);
 	let inputAreaHeight = $state(0);
+	// Read-receipt index: { [uid]: lastReadTimestamp }. The DM only
+	// has two participants, so this maxes out at 2 entries — but the
+	// listener and lookup math are identical to the channel page.
+	let convReads = $state({});
+
+	// Latest of my messages the other user has actually read past.
+	// iMessage-style: the "Seen" pill hangs under the most recent
+	// message confirmed delivered to their eyes — not every message
+	// in the run.
+	const otherSeenAt = $derived(Number(convReads[otherUser.id] ?? 0));
+	const lastSeenOwnMsgId = $derived.by(() => {
+		const uid = data.currentUser.id;
+		let id = null;
+		for (const m of messages) {
+			if (m.userId === uid && m.createdAt <= otherSeenAt) id = m.id;
+		}
+		return id;
+	});
 
 	// Replies
 	let replyingTo = $state(null);
@@ -459,7 +485,7 @@
 				pos += len;
 				return null;
 			}
-			if (node.nodeType === Node.ELEMENT_NODE && node.tagName === 'IMG' && (node.dataset.ek || node.dataset.ce || node.dataset.tg)) {
+			if (node.nodeType === Node.ELEMENT_NODE && ((node.tagName === 'IMG' && (node.dataset.ek || node.dataset.ce || node.dataset.tg)) || (node.tagName === 'SPAN' && node.dataset.tg))) {
 				const tokenLen = (node.dataset.ek || node.dataset.ce || node.dataset.tg).length;
 				if (pos + tokenLen >= target) {
 					const idx = Array.from(node.parentNode.childNodes).indexOf(node);
@@ -819,6 +845,7 @@
 		inputEl.innerHTML = '';
 		if (!markup) return;
 		for (const node of ceMarkupToNodes(markup)) inputEl.appendChild(node);
+		mountStaticEmotes(inputEl);
 		const range = document.createRange();
 		range.selectNodeContents(inputEl);
 		range.collapse(false);
@@ -950,7 +977,7 @@
 			if (node.nodeType !== Node.ELEMENT_NODE) return;
 			if (node.tagName === 'IMG' && node.dataset.ek) { n += node.dataset.ek.length; return; }
 			if (node.tagName === 'IMG' && node.dataset.ce) { n += node.dataset.ce.length; return; }
-			if (node.tagName === 'IMG' && node.dataset.tg) { n += node.dataset.tg.length; return; }
+			if ((node.tagName === 'IMG' || node.tagName === 'SPAN') && node.dataset.tg) { n += node.dataset.tg.length; return; }
 			if (node.tagName === 'BR') { n += 1; return; }
 			for (const c of node.childNodes) full(c);
 		}
@@ -965,7 +992,7 @@
 			}
 			if (node.tagName === 'IMG' && node.dataset.ek) { n += node.dataset.ek.length; return; }
 			if (node.tagName === 'IMG' && node.dataset.ce) { n += node.dataset.ce.length; return; }
-			if (node.tagName === 'IMG' && node.dataset.tg) { n += node.dataset.tg.length; return; }
+			if ((node.tagName === 'IMG' || node.tagName === 'SPAN') && node.dataset.tg) { n += node.dataset.tg.length; return; }
 			if (node.tagName === 'BR') { n += 1; return; }
 			for (const c of node.childNodes) { if (done) break; walk(c); }
 		}
@@ -986,7 +1013,7 @@
 			if (node.nodeType !== Node.ELEMENT_NODE) return;
 			if (node.tagName === 'IMG' && node.dataset.ek) { buf += node.dataset.ek; return; }
 			if (node.tagName === 'IMG' && node.dataset.ce) { buf += node.dataset.ce; return; }
-			if (node.tagName === 'IMG' && node.dataset.tg) { buf += node.dataset.tg; return; }
+			if ((node.tagName === 'IMG' || node.tagName === 'SPAN') && node.dataset.tg) { buf += node.dataset.tg; return; }
 			if (node.tagName === 'BR') { buf += '\n'; return; }
 			const fx = node.dataset?.fx ? node.dataset.fx.split(' ').filter(f => FX_TO_CHAR[f]) : [];
 			if (fx.length) buf += fx.map(f => FX_TO_CHAR[f]).join('');
@@ -1007,7 +1034,7 @@
 			}
 			if (node.tagName === 'IMG' && node.dataset.ek) { buf += node.dataset.ek; return; }
 			if (node.tagName === 'IMG' && node.dataset.ce) { buf += node.dataset.ce; return; }
-			if (node.tagName === 'IMG' && node.dataset.tg) { buf += node.dataset.tg; return; }
+			if ((node.tagName === 'IMG' || node.tagName === 'SPAN') && node.dataset.tg) { buf += node.dataset.tg; return; }
 			if (node.tagName === 'BR') { buf += '\n'; return; }
 			const fx = node.dataset?.fx ? node.dataset.fx.split(' ').filter(f => FX_TO_CHAR[f]) : [];
 			if (fx.length) buf += fx.map(f => FX_TO_CHAR[f]).join('');
@@ -1158,6 +1185,7 @@
 		const newMarkup = segmentsToMarkup(mergedSegs);
 		inputEl.innerHTML = '';
 		for (const node of ceMarkupToNodes(newMarkup)) inputEl.appendChild(node);
+		mountStaticEmotes(inputEl);
 
 		// Restore selection over the same plain-text range so the bar stays visible
 		const startPos = findDomPos(inputEl, selStart);
@@ -1212,6 +1240,7 @@
 		const newMarkup = segmentsToMarkup(mergedSegs);
 		inputEl.innerHTML = '';
 		for (const node of ceMarkupToNodes(newMarkup)) inputEl.appendChild(node);
+		mountStaticEmotes(inputEl);
 		try {
 			const startPos = findDomPos(inputEl, selStart);
 			const endPos = findDomPos(inputEl, selEnd);
@@ -1420,6 +1449,7 @@
 		input = newMarkup;
 		inputEl.innerHTML = '';
 		for (const node of ceMarkupToNodes(newMarkup)) inputEl.appendChild(node);
+		mountStaticEmotes(inputEl);
 
 		// Place cursor after pasted content
 		const newCaret = caretOffset + pastedPlainLen;
@@ -1802,7 +1832,7 @@
 	}
 
 
-	let firebaseRef, typingRef, reactionsRef;
+	let firebaseRef, typingRef, reactionsRef, convReadsRef;
 	let typingTimer;
 
 	let userScrolledUp = false;
@@ -1868,8 +1898,15 @@
 
 	function markRead() {
 		const uid = data.currentUser.id;
-		set(ref(db, `lastRead/${uid}/${data.convId}`), Date.now());
+		const now = Date.now();
+		set(ref(db, `lastRead/${uid}/${data.convId}`), now);
 		set(ref(db, `unreadCounts/${uid}/${data.convId}`), 0);
+		// Conversation-scoped index for read receipts — see channel
+		// page comment. Catch surfaces rules-violations in DevTools
+		// so the "pill never shows" failure mode is debuggable.
+		set(ref(db, `convReads/${data.convId}/${uid}`), now).catch((e) => {
+			console.warn('[read-receipt] convReads write blocked:', e?.message ?? e);
+		});
 	}
 
 	function clearTyping() {
@@ -2002,10 +2039,14 @@
 	}
 
 	onMount(async () => {
-		// Publish the DM partner's name to the global AppHeader so the
-		// chat lands with one top bar (the page's old chat-header has
-		// been removed).
+		// Publish the DM partner's name + a link to their profile to
+		// the global AppHeader, so clicking the name in the header
+		// drops you into their profile view (or, if you're somehow
+		// DMing yourself, your own edit page — profileLink handles
+		// that branch). The page's local chat-header is gone so this
+		// is the only place the partner's name surfaces at the top.
 		pageTitle.set(otherUser.name);
+		pageTitleHref.set(profileLink(otherUser.id, data.currentUser.id));
 
 		// ── Performance monitoring ─────────────────────────────────────────────
 		if (typeof PerformanceObserver !== 'undefined') {
@@ -2111,6 +2152,27 @@
 				.map(([, v]) => v.name);
 		});
 
+		// Read-receipt subscription — see channel page comment.
+		convReadsRef = ref(db, `convReads/${data.convId}`);
+		onValue(convReadsRef, (snap) => {
+			convReads = snap.exists() ? snap.val() : {};
+		});
+		// Backfill the other participant's read state from the legacy
+		// per-user `lastRead/{uid}/{convId}` path. Anyone who read this
+		// conversation before the dual-write to `convReads/…` shipped
+		// has their timestamp there but not yet in the new index, so
+		// without this the "Seen" pill stays hidden until they happen
+		// to re-open the chat. One-shot get; live updates come from
+		// the convReads listener once the other side writes.
+		get(ref(db, `lastRead/${otherUser.id}/${data.convId}`)).then((snap) => {
+			if (!snap.exists()) return;
+			const v = Number(snap.val());
+			if (!v) return;
+			if (!convReads[otherUser.id] || v > Number(convReads[otherUser.id])) {
+				convReads = { ...convReads, [otherUser.id]: v };
+			}
+		}).catch(() => { /* rules may forbid — pill just stays hidden */ });
+
 		reactionsRef = ref(db, `dms/${data.convId}/reactions`);
 		onValue(reactionsRef, (snap) => {
 			const fbReactions = snap.exists() ? snap.val() : {};
@@ -2191,31 +2253,34 @@
 	// hasn't resolved yet (the 5-min freshness check still covers very recent msgs).
 	let _lastReadAtMount = Date.now();
 
+	// Compose-box TG / TGC tokens are `<span contenteditable="false">`
+	// wrappers (same shape as rendered bubble spans) so the shared
+	// mountStaticEmotes() helper can drop a lottie-web SVG player
+	// inside them and the emote actually animates while the user is
+	// typing. data-tg carries the `[tg:…]` / `[tgc:…]` token;
+	// serializeCe + cePlainOffset etc. were extended to accept SPAN
+	// with data-tg alongside the IMG shapes used by EK / CE (those
+	// remain static rasters).
 	function makeTgImg(cp, token) {
-		const img = document.createElement('img');
-		img.dataset.tg = token;
-		img.className = 'tg-img tg-img-ce';
-		img.setAttribute('contenteditable', 'false');
-		img.setAttribute('alt', token);
-		img.src = TG_PLACEHOLDER;
-		loadTelegramEmoji().then(() => {
-			const entry = tgEntry(cp);
-			if (entry?.flag) { img.src = tgFlagUrl(cp); return; }
-			tgStaticFrame(cp, false).then((src) => { if (src) img.src = src; });
-		});
-		return img;
+		const span = document.createElement('span');
+		span.dataset.tg = token;
+		span.dataset.tgCp = cp;
+		span.className = 'tg-emoji';
+		span.setAttribute('contenteditable', 'false');
+		span.setAttribute('role', 'img');
+		span.setAttribute('aria-label', token);
+		return span;
 	}
 	function makeTgcImg(short, id, token) {
-		const img = document.createElement('img');
-		img.dataset.tg = token;
-		img.className = 'tg-img tg-img-ce';
-		img.setAttribute('contenteditable', 'false');
-		img.setAttribute('alt', token);
-		img.src = TG_PLACEHOLDER;
-		loadCustomPacks().then(() => {
-			tgcStaticFrame(short, id).then((src) => { if (src) img.src = src; });
-		});
-		return img;
+		const span = document.createElement('span');
+		span.dataset.tg = token;
+		span.dataset.tgPack = short;
+		span.dataset.tgId = id;
+		span.className = 'tg-emoji tgc-emoji';
+		span.setAttribute('contenteditable', 'false');
+		span.setAttribute('role', 'img');
+		span.setAttribute('aria-label', token);
+		return span;
 	}
 
 	function onTgEmojiInsert(it) {
@@ -2243,6 +2308,7 @@
 		input = serializeCe(inputEl);
 		onInput();
 		_clearHtmlCache();
+		if (inputEl) mountStaticEmotes(inputEl);
 		inputEl?.focus();
 	}
 
@@ -2407,10 +2473,12 @@
 
 	onDestroy(() => {
 		pageTitle.set(null);
+		pageTitleHref.set(null);
 		_cancelFpsLoop();
 		if (firebaseRef) off(firebaseRef);
 		if (typingRef) off(typingRef);
 		if (reactionsRef) off(reactionsRef);
+		if (convReadsRef) off(convReadsRef);
 		clearTyping();
 		cancelAttachment();
 		if (heartsAnimId) cancelAnimationFrame(heartsAnimId);
@@ -2566,8 +2634,8 @@
 	// If node is an FX span wrapping only an EK/CE, dives in and returns node itself.
 	function getEkOutermost(node) {
 		if (!node || node.nodeType !== Node.ELEMENT_NODE) return null;
-		if (node.tagName === 'IMG' && (node.dataset.ek || node.dataset.ce || node.dataset.tg)) {
-			// Climb up through single-child FX spans that contain only this img
+		if ((node.tagName === 'IMG' && (node.dataset.ek || node.dataset.ce || node.dataset.tg)) || (node.tagName === 'SPAN' && node.dataset.tg)) {
+			// Climb up through single-child FX spans that contain only this img/span
 			let outer = node;
 			while (outer.parentNode && outer.parentNode !== inputEl &&
 			       outer.parentNode.nodeType === Node.ELEMENT_NODE &&
@@ -2873,9 +2941,25 @@
 		{@const hasReactions = Object.values(msgReactions).some(u => Object.keys(u).length > 0)}
 		<div class="message" class:mine={isMine} class:first={isFirst} class:starred={starredIds.has(msg.id)} class:slam-shock={slamShockSet.has(msg.id)} data-msg-id={msg.id}>
 			{#if isFirst}
+				{@const isMineMeta = msg.userId === data.currentUser.id}
+				{@const senderStatus = presenceStatusCtx?.value?.[msg.userId]}
 				<div class="meta">
 					<ProfileHover userId={msg.userId}>
-						<span class="name">{msg.userName}</span>
+						<span class="meta-name-row">
+							<span class="meta-avatar-wrap">
+								<Avatar
+									name={msg.userName}
+									uid={msg.userId}
+									avatarKind={(isMineMeta ? data.currentUser.avatarKind : otherUser.avatarKind) ?? 'gen'}
+									avatarValue={(isMineMeta ? data.currentUser.avatarValue : otherUser.avatarValue) ?? null}
+									size={22}
+								/>
+								{#if senderStatus === 'active' || senderStatus === 'idle'}
+									<span class="meta-presence-dot" class:idle={senderStatus === 'idle'}></span>
+								{/if}
+							</span>
+							<span class="name">{msg.userName}</span>
+						</span>
 					</ProfileHover>
 					<span class="time">{formatTime(msg.createdAt)}</span>
 				</div>
@@ -3002,10 +3086,13 @@
 					{#each Object.entries(msgReactions) as [emoji, users]}
 						{@const count = Object.keys(users).length}
 						{#if count > 0}
+							<!-- Reaction key may be a plain emoji OR an inline
+							     token (kitchen / custom emote / Telegram); contentHtml
+							     handles both shapes consistently. -->
 							<button class="reaction-chip" class:reacted={data.currentUser.id in users} onclick={() => toggleReaction(msg.id, emoji)} onmouseenter={positionReactionTooltip}>
-								<span class="reaction-emoji">{emoji}</span> <span class="reaction-count">{count}</span>
+								<span class="reaction-emoji">{@html contentHtml(emoji, false)}</span> <span class="reaction-count">{count}</span>
 								<div class="reaction-tooltip">
-									<span class="reaction-tooltip-emoji">{emoji}</span>
+									<span class="reaction-tooltip-emoji">{@html contentHtml(emoji, false)}</span>
 									<div class="reaction-tooltip-text">
 										<span class="reaction-tooltip-names">{Object.keys(users).map(uid => userMap[uid]?.name ?? 'Someone').join(', ')}</span>
 										<span class="reaction-tooltip-label">reacted with {emojiNames[emoji] ?? emoji}</span>
@@ -3014,6 +3101,18 @@
 							</button>
 						{/if}
 					{/each}
+				</div>
+			{/if}
+			{#if isMine && msg.id === lastSeenOwnMsgId}
+				<div class="seen-row" title="Seen by {otherUser.name}">
+					<!-- Double-check icon makes the receipt readable
+					     even before the avatar has hashed in. -->
+					<span class="msi msi-14 msi-fill seen-check">done_all</span>
+					<span class="seen-avatars">
+						<span class="seen-avatar-slot">
+							<Avatar name={otherUser.name} uid={otherUser.id} avatarKind={otherUser.avatarKind ?? 'gen'} avatarValue={otherUser.avatarValue ?? null} size={18} />
+						</span>
+					</span>
 				</div>
 			{/if}
 		</div>
@@ -3061,7 +3160,20 @@
 {#if pickerMsgId}
 	<div class="picker-overlay" onclick={() => pickerMsgId = null} onkeydown={(e) => e.key === 'Escape' && (pickerMsgId = null)} role="presentation"></div>
 	<div class="picker-popover" style:left="{pickerPos.x}px" style:top="{pickerPos.y}px">
-		<EmojiPicker onSelect={(emoji) => { toggleReaction(pickerMsgId, emoji); pickerMsgId = null; }} />
+		<!-- Reaction popover uses ExpressionPicker in inline mode so
+		     the user gets the same 4 tabs the assignment form uses
+		     (Emoji / Kitchen / Emotes / Animated), without GIFs or
+		     the full-size Reactions gallery. -->
+		<ExpressionPicker
+			inline
+			onSelectEmoji={(emoji) => { toggleReaction(pickerMsgId, emoji); pickerMsgId = null; }}
+			onInsertKitchen={(token) => { toggleReaction(pickerMsgId, token); pickerMsgId = null; }}
+			onInsertCustomEmoji={(emoji) => { toggleReaction(pickerMsgId, `[ce:${emoji.shortcode}]`); pickerMsgId = null; }}
+			onInsertTgEmoji={(it) => {
+				const tok = it.custom ? `[tgc:${it.short}:${it.id}]` : `[tg:${it.cp}]`;
+				toggleReaction(pickerMsgId, tok); pickerMsgId = null;
+			}}
+		/>
 	</div>
 {/if}
 
@@ -3189,34 +3301,8 @@
 		</div>
 	{/if}
 	<div class="input-bar">
-		<label class="btn-attach" class:disabled={uploading || sending} title="Attach file">
-			{#if uploading}
-				<span class="msi msi-18 spin">progress_activity</span>
-			{:else}
-				<span class="msi msi-18">attach_file</span>
-			{/if}
-			<input bind:this={fileInputEl} type="file" style="display:none" onchange={handleFileSelect} disabled={uploading || sending} />
-		</label>
-			<div class="compose-picker-wrap">
-				<button class="btn-emoji" class:active={showComposePicker} title="Expressions" onclick={() => showComposePicker = !showComposePicker}>
-					<span class="msi msi-18" class:msi-fill={showComposePicker}>mood</span>
-				</button>
-				{#if showComposePicker}
-					<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-					<div class="compose-picker-backdrop" onclick={() => { showComposePicker = false; _clearHtmlCache(); }}></div>
-					<div class="compose-picker-pop">
-						<ExpressionPicker
-							onSelectEmoji={insertEmoji}
-							onInsertKitchen={onKitchenInsert}
-							onSelectGif={onGifSelect}
-							onInsertCustomEmoji={onCustomEmojiInsert}
-							onInsertReaction={onReactionInsert}
-							onInsertTgEmoji={onTgEmojiInsert}
-							isInstructor={data.currentUser.role === 'instructor'}
-						/>
-					</div>
-				{/if}
-			</div>
+		<!-- Attach + emoji moved into .compose-fmt-row below so the
+		     compose-wrap can take the full width of the input-bar. -->
 		<div class="compose-wrap">
 			<!-- svelte-ignore a11y_interactive_supports_focus -->
 			<div
@@ -3267,6 +3353,36 @@
 				members={[...(data.users ?? []), { id: data.currentUser.id, name: data.currentUser.name, role: data.currentUser.role }]}
 			/>
 			<div class="compose-fmt-row">
+				<label class="btn-fmt btn-fmt-attach" class:disabled={uploading || sending} title="Attach file">
+					{#if uploading}
+						<span class="msi msi-18 spin">progress_activity</span>
+					{:else}
+						<span class="msi msi-18">attach_file</span>
+					{/if}
+					<input bind:this={fileInputEl} type="file" style="display:none" onchange={handleFileSelect} disabled={uploading || sending} />
+				</label>
+				<div class="compose-picker-wrap">
+					<button class="btn-fmt btn-fmt-expr" class:active={showComposePicker} title="Expressions"
+						onmousedown={(e) => { e.preventDefault(); showComposePicker = !showComposePicker; }}>
+						<span class="msi msi-18" class:msi-fill={showComposePicker}>mood</span>
+					</button>
+					{#if showComposePicker}
+						<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+						<div class="compose-picker-backdrop" onclick={() => { showComposePicker = false; _clearHtmlCache(); }}></div>
+						<div class="compose-picker-pop">
+							<ExpressionPicker
+								onSelectEmoji={insertEmoji}
+								onInsertKitchen={onKitchenInsert}
+								onSelectGif={onGifSelect}
+								onInsertCustomEmoji={onCustomEmojiInsert}
+								onInsertReaction={onReactionInsert}
+								onInsertTgEmoji={onTgEmojiInsert}
+								isInstructor={data.currentUser.role === 'instructor'}
+							/>
+						</div>
+					{/if}
+				</div>
+				<span class="fmt-divider" aria-hidden="true"></span>
 				<button class="btn-fmt btn-fmt-bold" onmousedown={(e) => { e.preventDefault(); applyTextFx('bold'); }} title="Bold (⌘B)"><span class="msi msi-18">format_bold</span></button>
 				<button class="btn-fmt btn-fmt-italic" onmousedown={(e) => { e.preventDefault(); applyTextFx('italic'); }} title="Italic (⌘I)"><span class="msi msi-18">format_italic</span></button>
 				<button class="btn-fmt btn-fmt-underline" onmousedown={(e) => { e.preventDefault(); applyTextFx('underline'); }} title="Underline (⌘U)"><span class="msi msi-18">format_underlined</span></button>
@@ -3395,6 +3511,13 @@
 		display: flex; flex-direction: column; gap: 0.15rem;
 		scrollbar-width: none;
 		overscroll-behavior: contain;
+		/* Centered reading column on wide desktops — same 840px as
+		   the channel page so DMs and channels feel cohesive. Mobile
+		   keeps the full-width behaviour via the override below. */
+		width: 100%;
+		max-width: 840px;
+		margin: 0 auto;
+		box-sizing: border-box;
 	}
 	.message-list::-webkit-scrollbar { display: none; }
 	.empty { color: var(--muted-fg); font-size: 0.9rem; text-align: center; margin: auto; }
@@ -3404,6 +3527,17 @@
 	.message:not(.mine) { align-self: flex-start; align-items: flex-start; }
 	.message.first { margin-top: 0.75rem; }
 	.meta { display: flex; align-items: center; gap: 0.4rem; padding: 0 0.5rem; }
+	.meta-name-row { display: inline-flex; align-items: center; gap: 0.4rem; }
+	.meta-avatar-wrap { position: relative; display: inline-flex; }
+	.meta-presence-dot {
+		position: absolute;
+		bottom: -1px; right: -1px;
+		width: 8px; height: 8px;
+		border-radius: 50%;
+		background: #4caf50;
+		box-shadow: 0 0 0 2px var(--paper);
+	}
+	.meta-presence-dot.idle { background: #ffc107; }
 	.name { font-size: 0.78rem; font-weight: 600; color: var(--ink); cursor: pointer; }
 	.name:hover { text-decoration: underline; text-underline-offset: 2px; }
 	.time { font-size: 0.72rem; color: var(--muted-fg); }
@@ -3770,6 +3904,30 @@
 
 	/* Reactions */
 	.reactions { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.2rem; }
+
+	/* Read-receipt pill. iMessage-style "Seen" under the most recent
+	   of my messages the other user has read past — right-aligned
+	   because the whole .mine bubble run is right-aligned. */
+	.seen-row {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
+		margin-top: 0.3rem;
+		align-self: flex-end;
+		font-size: 0.72rem;
+		font-weight: 500;
+		color: var(--md-sys-color-on-surface-variant, var(--muted-fg));
+	}
+	.message.mine .seen-row { margin-left: auto; }
+	.seen-check { color: var(--md-sys-color-primary, var(--accent)); }
+	.seen-avatars { display: inline-flex; align-items: center; }
+	.seen-avatar-slot {
+		display: inline-flex;
+		margin-left: -6px;
+		box-shadow: 0 0 0 1.5px var(--paper);
+		border-radius: 6px;
+	}
+	.seen-avatar-slot:first-child { margin-left: 0; }
 	.reaction-chip {
 		position: relative;
 		display: flex; align-items: center; gap: 0.22rem;
@@ -3844,7 +4002,29 @@
 	}
 	.input-bar {
 		display: flex; align-items: flex-end; gap: 0.5rem;
-		padding: 0.75rem 1.5rem 1.5rem; border-top: 1.5px solid var(--border);
+		padding: 0.75rem 1.5rem 1.5rem;
+		/* Matches the message-list column above so compose stays in
+		   the same vertical alignment as messages. */
+		width: 100%;
+		max-width: 840px;
+		margin: 0 auto;
+		box-sizing: border-box;
+		background: var(--paper);
+	}
+	/* Fade lives on .input-area parent so reply-bar / attachment
+	   preview aren't washed out (see channel page for the rationale).
+	   z-index: 1 keeps it below the message hover action bar (z:50)
+	   and kebab menu (z:21). */
+	.input-area::before {
+		content: '';
+		position: absolute;
+		bottom: 100%;
+		left: 0;
+		right: 0;
+		height: 40px;
+		background: linear-gradient(to bottom, transparent 0%, var(--paper) 100%);
+		pointer-events: none;
+		z-index: 1;
 	}
 	textarea {
 		flex: 1; padding: 0.6rem 0.85rem; border: 1.5px solid var(--border); border-radius: 10px;
@@ -3882,30 +4062,28 @@
 	}
 	.compose-ce[contenteditable="false"] { opacity: 0.5; cursor: default; }
 	.compose-fmt-row {
+		/* No separator between the editor and the toolbar row — same
+		   change as the channel page. */
 		display: flex; align-items: center; gap: 0.1rem;
-		padding: 0.2rem 0.5rem 0.3rem; border-top: 1px solid #ede9e3;
+		padding: 0.2rem 0.5rem 0.3rem;
 	}
-	.btn-attach {
-		display: flex; align-items: center; justify-content: center;
-		width: 36px; height: 36px; flex-shrink: 0;
-		border: 1.5px solid var(--border); border-radius: 10px;
-		background: var(--paper); color: var(--ink); cursor: pointer;
-		transition: border-color 0.15s, background 0.15s;
+	/* Attach + emoji moved INTO .compose-fmt-row as .btn-fmt variants
+	   so the input-bar's compose-wrap can take full width. */
+	.btn-fmt-attach { color: var(--ink); }
+	.btn-fmt-attach.disabled { opacity: 0.4; pointer-events: none; }
+	.btn-fmt-expr { color: var(--ink); }
+	.fmt-divider {
+		display: inline-block;
+		width: 1px;
+		height: 18px;
+		background: var(--border);
+		margin: 0 0.3rem;
+		flex-shrink: 0;
 	}
-	.btn-attach:hover { border-color: var(--muted-fg); background: var(--surface-2); }
-	.btn-attach.disabled { opacity: 0.4; pointer-events: none; }
 	.spin { animation: spin 1s linear infinite; }
 	@keyframes spin { to { transform: rotate(360deg); } }
 
 	.compose-picker-wrap { position: relative; flex-shrink: 0; }
-	.btn-emoji {
-		display: flex; align-items: center; justify-content: center;
-		width: 36px; height: 36px;
-		border: 1.5px solid var(--border); border-radius: 10px;
-		background: var(--paper); color: var(--ink); cursor: pointer;
-		transition: border-color 0.15s, background 0.15s;
-	}
-	.btn-emoji:hover, .btn-emoji.active { border-color: var(--muted-fg); background: var(--surface-2); }
 	.compose-picker-backdrop { position: fixed; inset: 0; z-index: 49; }
 	.compose-picker-pop { position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 50; }
 	@media (max-width: 640px) {

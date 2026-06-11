@@ -1,5 +1,6 @@
 <script>
 	import { onMount } from 'svelte';
+	import Avatar from './Avatar.svelte';
 
 	let { user = null } = $props();
 
@@ -27,7 +28,13 @@
 			onclick={() => menuOpen = !menuOpen}
 			onpointerdown={(e) => e.stopPropagation()}
 		>
-			<span class="user-avatar">{(user.name || user.email || '?')[0].toUpperCase()}</span>
+			<Avatar
+				name={user.name || user.email || '?'}
+				uid={user.id}
+				avatarKind={user.avatarKind ?? 'gen'}
+				avatarValue={user.avatarValue ?? null}
+				size={28}
+			/>
 			<span class="user-first-name">{firstName(user.name || user.email)}</span>
 		</button>
 		{#if menuOpen}
@@ -54,13 +61,10 @@
 		transition: background 0.15s;
 	}
 	.user-trigger:hover { background: rgba(0,0,0,0.04); }
-	.user-avatar {
-		width: 28px; height: 28px; border-radius: 50%;
-		background: var(--ink); color: var(--paper);
-		display: flex; align-items: center; justify-content: center;
-		font-size: 0.72rem; font-weight: 700; flex-shrink: 0;
-		letter-spacing: -0.02em;
-	}
+	/* Old .user-avatar styles removed — the Avatar component owns
+	   its own typography (matches the user-menu chip we used to
+	   hand-roll here) and palette, so any other surface that mounts
+	   <Avatar size={28}> reads identically. */
 	.user-first-name {
 		font-size: 0.82rem; font-weight: 500; color: var(--muted-fg);
 	}

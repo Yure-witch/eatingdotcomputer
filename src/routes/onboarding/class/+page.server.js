@@ -19,7 +19,20 @@ export async function load({ locals }) {
 		if (step !== 'class') redirect(303, '/onboarding/profile');
 	}
 
-	const result = db ? await db.execute('SELECT id, name, term, description FROM classes ORDER BY created_at ASC') : { rows: [] };
+	// Only surface classes the instructor has opened for enrollment
+	// AND where today's date is inside the optional [start, end]
+	// window. Without the filter the picker listed every class in
+	// the DB (current + past terms), which got noisy fast. NULL
+	// start/end means "no lower / upper bound" so an instructor
+	// can leave the window open-ended.
+	const result = db ? await db.execute({
+		sql: `SELECT id, name, term, description
+		      FROM classes
+		      WHERE enrollment_open = 1
+		        AND (enrollment_start IS NULL OR date(enrollment_start) <= date('now'))
+		        AND (enrollment_end   IS NULL OR date(enrollment_end)   >= date('now'))
+		      ORDER BY created_at ASC`
+	}) : { rows: [] };
 
 	return {
 		classes: result.rows.map((r) => ({
@@ -49,6 +62,22 @@ export const actions = {
 		const data = await request.formData();
 		const classId = String(data.get('class_id') ?? '').trim();
 		if (!classId) return fail(400, { error: 'Please select a class' });
+
+		// Double-check the class is actually open right now — the
+		// picker filter only hides closed classes from the dropdown,
+		// but a malicious / stale POST shouldn't be able to slip a
+		// request into a class whose enrollment window is closed.
+		const openCheck = await db.execute({
+			sql: `SELECT 1 FROM classes
+			      WHERE id = ?
+			        AND enrollment_open = 1
+			        AND (enrollment_start IS NULL OR date(enrollment_start) <= date('now'))
+			        AND (enrollment_end   IS NULL OR date(enrollment_end)   >= date('now'))`,
+			args: [classId]
+		});
+		if (!openCheck.rows.length) {
+			return fail(400, { error: 'Enrollment for that class is not open right now.' });
+		}
 
 		await db.execute({
 			sql: 'INSERT OR IGNORE INTO class_memberships (id, class_id, user_id) VALUES (?, ?, ?)',

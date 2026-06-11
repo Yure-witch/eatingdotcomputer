@@ -11,14 +11,18 @@ export async function DELETE({ params, locals }) {
 	const db = getDb();
 	if (!db) error(503, 'Database not available');
 
-	// Fetch the record — only the uploader can delete
+	// Fetch the record — the uploader can always delete; instructors
+	// can delete anyone's upload so they can moderate the Orbit
+	// uploads gallery. (Students who didn't upload still get a 403.)
 	const result = await db.execute({
 		sql: 'SELECT r2_key, uploaded_by_id FROM uploaded_files WHERE id = ?',
 		args: [id]
 	});
 	const row = result.rows[0];
 	if (!row) error(404, 'Not found');
-	if (String(row.uploaded_by_id) !== session.user.id) error(403, 'Forbidden');
+	const isInstructor = session.user.role === 'instructor';
+	const isUploader = String(row.uploaded_by_id) === session.user.id;
+	if (!isInstructor && !isUploader) error(403, 'Forbidden');
 
 	await Promise.all([
 		deleteFromR2(String(row.r2_key)),

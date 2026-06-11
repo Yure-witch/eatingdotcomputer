@@ -1,7 +1,7 @@
 import { redirect, fail } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
 import { signOut } from '../../auth.js';
-import { getWeekPlans, getCompletionsForStudent, getCompletionsForWeek, getAllProgressForClass, getSubmissionsByItem, createWeekPlan, createWeekItems, completeItem, uncompleteItem, deleteWeekPlan, toggleWeekSubmissions, toggleItemSubmissions, getVisibleSubmissionsForPlan } from '$lib/server/week-plans.js';
+import { getWeekPlans, getCompletionsForStudent, getCompletionsForWeek, getAllProgressForClass, getSubmissionsByItem, createWeekPlan, createWeekItems, updateWeekPlan, completeItem, uncompleteItem, deleteWeekPlan, toggleWeekSubmissions, toggleItemSubmissions, getVisibleSubmissionsForPlan, getStudentCountForClass } from '$lib/server/week-plans.js';
 import { uploadToR2 } from '$lib/server/r2.js';
 
 export async function load({ locals, parent }) {
@@ -42,6 +42,7 @@ export async function load({ locals, parent }) {
 		};
 	}
 
+	let studentCount = 0;
 	if (isInstructor) {
 		if (currentPlan) progress = await getCompletionsForWeek(currentPlan.id);
 		allProgress = await getAllProgressForClass(classId);
@@ -49,8 +50,18 @@ export async function load({ locals, parent }) {
 		for (const [itemId, subs] of Object.entries(rawSubs)) {
 			submissionsByItem[itemId] = subs.map(resolveSubmissionUrl);
 		}
+		// Class roster size — used by the All Assignments overview to
+		// render "N/M done" badges per item so instructors see
+		// completion as a ratio against the class, not just a raw count.
+		studentCount = await getStudentCountForClass(classId);
 	} else if (currentPlan) {
-		completions = await getCompletionsForStudent(currentPlan.id, userId);
+		const rawCompletions = await getCompletionsForStudent(currentPlan.id, userId);
+		// Resolve R2 keys to public URLs so the inline "Edit submission"
+		// UI can render an image/video preview chip for the student's
+		// own past upload without each row having to know the R2 base.
+		for (const [itemId, c] of Object.entries(rawCompletions)) {
+			completions[itemId] = resolveSubmissionUrl(c);
+		}
 		const rawPeer = await getVisibleSubmissionsForPlan(currentPlan.id);
 		for (const [itemId, subs] of Object.entries(rawPeer)) {
 			peerSubmissions[itemId] = subs.map(resolveSubmissionUrl);
@@ -72,6 +83,7 @@ export async function load({ locals, parent }) {
 		submissionsByItem,
 		peerSubmissions,
 		nextWeekNumber: maxWeek + 1,
+		studentCount,
 		classId
 	};
 }
@@ -91,6 +103,7 @@ export const actions = {
 		const headline = String(data.get('headline') ?? '').trim();
 		const topicPreview = String(data.get('topic_preview') ?? '').trim();
 		const dueDate = String(data.get('due_date') ?? '').trim();
+		const important = String(data.get('important') ?? '') === '1';
 		const classId = String(data.get('class_id') ?? 'idc-fall-2026');
 
 		if (!headline) return fail(400, { error: 'Headline is required', action: 'createWeekPlan' });
@@ -132,12 +145,82 @@ export const actions = {
 
 		let planId;
 		try {
-			planId = await createWeekPlan({ week, headline, topicPreview: topicPreview || null, dueDate: dueDate || null, classId, createdBy: session.user.id });
+			planId = await createWeekPlan({ week, headline, topicPreview: topicPreview || null, dueDate: dueDate || null, important, classId, createdBy: session.user.id });
 		} catch (e) {
 			if (e.message?.includes('UNIQUE constraint')) return fail(400, { error: `Week ${week} already exists`, action: 'createWeekPlan' });
 			throw e;
 		}
 		if (items.length) await createWeekItems(planId, items);
+	},
+
+	/**
+	 * Edit an existing week plan. Same form shape as createWeekPlan
+	 * with two additions: `plan_id` identifies which plan to update,
+	 * and each item carries an optional `item_id` so existing rows
+	 * (and their completions / submissions) are preserved instead of
+	 * deleted-and-recreated. Items submitted with a blank `item_id`
+	 * are new; items already on the plan but absent from this submit
+	 * are deleted by updateWeekPlan().
+	 */
+	updateWeekPlan: async ({ request, locals }) => {
+		const session = await locals.auth();
+		if (!session || session.user.role !== 'instructor') return fail(403, { error: 'Forbidden' });
+
+		const data = await request.formData();
+		const planId = String(data.get('plan_id') ?? '').trim();
+		const week = parseInt(String(data.get('week') ?? '0'));
+		const headline = String(data.get('headline') ?? '').trim();
+		const topicPreview = String(data.get('topic_preview') ?? '').trim();
+		const dueDate = String(data.get('due_date') ?? '').trim();
+		const important = String(data.get('important') ?? '') === '1';
+
+		if (!planId) return fail(400, { error: 'Missing plan_id', action: 'updateWeekPlan' });
+		if (!headline) return fail(400, { error: 'Headline is required', action: 'updateWeekPlan' });
+
+		const allLabels = data.getAll('item_label').map(String);
+		const allIds = data.getAll('item_id').map(String);
+		const requiresSub = data.getAll('item_requires_submission').map(String);
+		const resourceUrls = data.getAll('item_resource_url').map(String);
+		const resourceLabels = data.getAll('item_resource_label').map(String);
+		const items = [];
+		for (let i = 0; i < allLabels.length; i++) {
+			const label = allLabels[i].trim();
+			if (!label) continue;
+			const id = allIds[i]?.trim() || null;
+			const req = requiresSub[i] === '1';
+			let acceptedTypes = ['link'];
+			if (req) {
+				const types = data.getAll(`item_accepted_types_${i}`).map(String);
+				if (types.length) acceptedTypes = types;
+			}
+			let resourceUrl = resourceUrls[i]?.trim() || null;
+			const resourceLabel = resourceLabels[i]?.trim() || null;
+			let resourceFilename = null;
+			let resourceMimetype = null;
+
+			// New file uploads for the resource. Same path as create.
+			const file = data.get(`item_resource_file_${i}`);
+			if (file && typeof file !== 'string' && file.size > 0) {
+				const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+				const key = `resources/${crypto.randomUUID()}-${safeName}`;
+				await uploadToR2(key, Buffer.from(await file.arrayBuffer()), file.type);
+				const publicBase = (env.R2_PUBLIC_BASE_URL ?? env.PUBLIC_R2_PUBLIC_BASE_URL ?? '').replace(/\/$/, '');
+				resourceUrl = publicBase ? `${publicBase}/${key}` : key;
+				resourceFilename = file.name;
+				resourceMimetype = file.type;
+			}
+
+			items.push({ id, label, requiresSubmission: req, acceptedTypes, resourceUrl, resourceLabel, resourceFilename, resourceMimetype });
+		}
+
+		try {
+			await updateWeekPlan(planId, { week, headline, topicPreview, dueDate, important }, items);
+		} catch (e) {
+			if (e.message?.includes('UNIQUE constraint')) {
+				return fail(400, { error: `Week ${week} already exists`, action: 'updateWeekPlan' });
+			}
+			throw e;
+		}
 	},
 
 	completeItem: async ({ request, locals }) => {

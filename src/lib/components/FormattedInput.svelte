@@ -2,15 +2,164 @@
 	import { onMount, tick } from 'svelte';
 	import {
 		TEXT_FXS, FX_TO_CHAR, CHAR_TO_FX, FX_CLOSE_CHAR, FX_OPEN_CHARS,
-		TEXT_COLORS, WDTH_FX_MAP, WDTH_STEPS, WGHT_FX_MAP, WGHT_STEPS, SZ_FX_MAP, SZ_STEPS,
+		TEXT_COLORS, WDTH_FX_MAP, WDTH_STEPS, WGHT_FX_MAP, WGHT_STEPS, SZ_FX_MAP, SZ_STEPS, ekTokenToUrl,
 		markupToSegments, segmentsToMarkup, normalizeLegacyMarkup, unicodeToReadable
 	} from '$lib/message-render.js';
+	import ExpressionPicker from './ExpressionPicker.svelte';
+	import {
+		tgEntry, tgFlagUrl, loadTelegramEmoji, loadCustomPacks,
+		cpToToken, tgcToToken
+	} from '$lib/telegram-emoji-store.js';
+	import { tgStaticFrame, tgcStaticFrame, TG_PLACEHOLDER } from '$lib/tg-frame.js';
+	import { getCustomEmojiMap, getCachedCustomEmojiMap } from '$lib/custom-emoji-store.js';
+	import { mountStaticEmotes } from '$lib/emote-mount.js';
+	import { popoverPos } from '$lib/popover-pos.js';
 
-	let { value = $bindable(''), placeholder = '', singleLine = false } = $props();
+	let {
+		value = $bindable(''),
+		placeholder = '',
+		singleLine = false,
+		// Hides the size slider in the typo bar. Bold / italic /
+		// underline / strike / colour / emoji / emote / animation /
+		// weight / width all stay — only the per-span font-size axis
+		// is suppressed, since making one item in a checklist 3× its
+		// neighbours rarely makes sense.
+		disableSize = false
+	} = $props();
 
 	let inputEl = $state(null);
 	let showTextFxBar = $state(false);
 	let showFormatPanel = $state(false);
+	let showExprPicker = $state(false);
+	// Trigger refs for the smart popover positioning action.
+	let colorBtnEl = $state(null);
+	let exprBtnEl = $state(null);
+	// Bumps once `getCustomEmojiMap()` resolves so the edit-mode
+	// re-sync $effect re-runs and `[ce:…]` tokens that were rendered
+	// without a `src` (because the cache was empty) pick up their
+	// URLs. Reading this inside the effect makes Svelte's reactivity
+	// pick it up as a dependency.
+	let _ceMapVersion = $state(0);
+
+	// ── Inline expression insertion helpers ─────────────────────────
+	// Each helper builds the same <img> shape the chat compose box uses
+	// so the serializer's data-attribute round-trip already covers the
+	// markup back-and-forth. The expression picker calls into these
+	// from its callback props (onSelectEmoji, onInsertKitchen, etc.).
+	function insertAtCursor(node) {
+		if (!inputEl) return;
+		inputEl.focus();
+		const sel = window.getSelection();
+		if (sel?.rangeCount && inputEl.contains(sel.anchorNode)) {
+			const range = sel.getRangeAt(0);
+			range.deleteContents();
+			range.insertNode(node);
+			range.setStartAfter(node);
+			range.collapse(true);
+			sel.removeAllRanges();
+			sel.addRange(range);
+		} else {
+			inputEl.appendChild(node);
+		}
+		value = serializeCe(inputEl);
+		// Newly inserted TG / TGC spans need a Lottie player. The
+		// mounter is idempotent so spans that already animate are
+		// skipped — only the freshly inserted one picks up an SVG.
+		mountStaticEmotes(inputEl);
+	}
+
+	function insertEmojiText(emoji) {
+		if (!emoji) return;
+		insertAtCursor(document.createTextNode(emoji));
+	}
+
+	function makeEkImg(token) {
+		const m = token.match(/^\[ek:([a-z0-9]+):([0-9a-f-]+):([0-9a-f-]+)\]$/i);
+		const img = document.createElement('img');
+		img.dataset.ek = token;
+		img.className = 'ek-img ek-img-ce';
+		img.setAttribute('contenteditable', 'false');
+		img.setAttribute('alt', '');
+		if (m) img.src = ekTokenToUrl(m[1], m[2], m[3]);
+		return img;
+	}
+
+	function makeCeImg(emoji) {
+		const token = `[ce:${emoji.shortcode}]`;
+		const img = document.createElement('img');
+		img.dataset.ce = token;
+		img.className = 'ce-img ce-img-ce';
+		img.setAttribute('contenteditable', 'false');
+		img.setAttribute('alt', ':' + emoji.shortcode + ':');
+		if (emoji.url) img.src = emoji.url;
+		return img;
+	}
+
+	// TG / TGC emotes are Lottie animations, not static rasters. We
+	// build them as `<span contenteditable="false">` carrying the
+	// same `data-tg-cp` (or `data-tg-pack` + `data-tg-id`) attributes
+	// the rendered `.tg-emoji` spans use. The shared `mountStaticEmotes`
+	// helper then mounts a lottie-web SVG player into each one, just
+	// like it does for non-chat surfaces. contenteditable=false keeps
+	// the span atomic for caret + backspace; data-tg holds the
+	// `[tg:…]` / `[tgc:…]` token so `serializeCe` round-trips them
+	// without caring whether the underlying element is an <img> or
+	// a <span>.
+	function makeTgImg(cp, token) {
+		const span = document.createElement('span');
+		span.dataset.tg = token;
+		span.dataset.tgCp = cp;
+		span.className = 'tg-emoji';
+		span.setAttribute('contenteditable', 'false');
+		span.setAttribute('role', 'img');
+		span.setAttribute('aria-label', token);
+		return span;
+	}
+
+	function makeTgcImg(short, id, token) {
+		const span = document.createElement('span');
+		span.dataset.tg = token;
+		span.dataset.tgPack = short;
+		span.dataset.tgId = id;
+		span.className = 'tg-emoji tgc-emoji';
+		span.setAttribute('contenteditable', 'false');
+		span.setAttribute('role', 'img');
+		span.setAttribute('aria-label', token);
+		return span;
+	}
+
+	// ExpressionPicker callbacks. Closing the popover after each insert
+	// matches how chat compose works — users can re-open for the next
+	// pick if they want a second one.
+	function onPickerSelectEmoji(emoji)   { insertEmojiText(emoji); showExprPicker = false; }
+	function onPickerInsertKitchen(token) { insertAtCursor(makeEkImg(token)); showExprPicker = false; }
+	function onPickerInsertCustomEmoji(emoji) {
+		insertAtCursor(makeCeImg(emoji));
+		showExprPicker = false;
+	}
+	function onPickerInsertTgEmoji(it) {
+		const node = it.custom
+			? makeTgcImg(it.short, it.id, tgcToToken(it.short, it.id))
+			: makeTgImg(it.cp, cpToToken(it.cp));
+		insertAtCursor(node);
+		showExprPicker = false;
+	}
+	// Reactions / GIFs aren't meaningful in plain assignment text fields
+	// — leave them as no-ops so callers don't have to special-case the
+	// callback shape. (Reactions panel is still visible in the picker so
+	// instructors can insert reaction *images* as inline emotes.)
+	function onPickerInsertReaction(reaction) {
+		if (reaction?.url) {
+			const img = document.createElement('img');
+			img.className = 'ce-img ce-img-ce';
+			img.src = reaction.url;
+			img.setAttribute('contenteditable', 'false');
+			img.setAttribute('alt', reaction.name || 'reaction');
+			insertAtCursor(img);
+		}
+		showExprPicker = false;
+	}
+	function onPickerSelectGif() { showExprPicker = false; }
 	let allowFxNesting = $state(true);
 	let allowFxMultiply = $state(false);
 	let fxSplitWords = $state(true);
@@ -29,16 +178,56 @@
 		if (value && inputEl) {
 			inputEl.innerHTML = '';
 			for (const node of ceMarkupToNodes(value)) inputEl.appendChild(node);
+			mountStaticEmotes(inputEl);
+		}
+		// Custom-emoji URLs aren't available until /api/custom-emoji
+		// resolves. Edit-mode loads of `[ce:…]` tokens depend on the
+		// map being populated — kick off the fetch and bump the
+		// version so the re-sync effect re-rebuilds the DOM with real
+		// src URLs once the cache fills.
+		getCustomEmojiMap().then(() => { _ceMapVersion += 1; });
+	});
+
+	// Re-sync the contenteditable DOM when `value` changes from the
+	// outside (e.g. the parent reassigns it during an "edit existing
+	// row" flow). Without this, switching the form into edit mode
+	// changes the bound JS state but leaves the visible field showing
+	// whatever was there before — the user sees no headline / item
+	// labels even though the data was loaded.
+	//
+	// During normal typing the input handler sets
+	//   value = serializeCe(inputEl)
+	// so value already matches the DOM. The guard below compares
+	// against a fresh serialization and skips the rebuild in that
+	// case, which prevents caret jumps mid-keystroke.
+	$effect(() => {
+		// Track _ceMapVersion so the rebuild re-runs once the
+		// custom-emoji cache fills (see onMount). Without this, ce
+		// tokens loaded before the cache resolved would keep their
+		// empty src.
+		void _ceMapVersion;
+		if (!inputEl) return;
+		const current = serializeCe(inputEl);
+		if (current === value) return;
+		inputEl.innerHTML = '';
+		if (value) {
+			for (const node of ceMarkupToNodes(value)) inputEl.appendChild(node);
+			mountStaticEmotes(inputEl);
 		}
 	});
 
-	function makeFxNode(fxStack, text, delay = null) {
+	function makeFxNode(fxStack, content, delay = null) {
 		const decorFx = fxStack.filter(fx => fx === 'underline' || fx === 'strike');
 		const wdthFx = fxStack.find(fx => fx.startsWith('wdth-'));
 		const wghtFx = fxStack.find(fx => fx.startsWith('wght-'));
 		const szFx = fxStack.find(fx => fx.startsWith('sz-'));
 		const animFx = fxStack.filter(fx => fx !== 'underline' && fx !== 'strike' && !fx.startsWith('wdth-') && !fx.startsWith('wght-') && !fx.startsWith('sz-'));
-		let innerNode = document.createTextNode(text);
+		// `content` is either a plain string (segment text) or a Node
+		// (e.g. an emote <img> we want to wrap in the current fx
+		// stack). Edit-mode loading uses the Node branch to keep
+		// formatted emotes inside their fx span instead of flattening
+		// the markup to literal token text.
+		let innerNode = (content instanceof Node) ? content : document.createTextNode(content);
 		if (decorFx.length) {
 			const span = document.createElement('span');
 			span.className = `tfx ${decorFx.map(fx => `tfx-${fx}`).join(' ')}`;
@@ -121,8 +310,71 @@
 			nodes.push(makeFxNode(fxStack, text));
 		}
 
+		// Emote tokens inside segment text. contentHtml (the render
+		// path) detects and replaces these with inline images; the
+		// editor's loader has to do the same — otherwise switching the
+		// form into edit mode shows literal tokens like
+		// `[tg:1f600]` instead of the emoji the instructor originally
+		// inserted via the picker.
+		const EMOTE_RE = /\[ek:[a-z0-9]+:[0-9a-f-]+:[0-9a-f-]+\]|\[ce:[a-zA-Z0-9_-]{1,32}\]|\[tgc:[A-Za-z0-9_]+:\d+\]|\[tg:[0-9a-f-]+\]/gi;
+
+		function makeCeImgFromToken(token) {
+			const shortM = token.match(/^\[ce:([a-zA-Z0-9_-]{1,32})\]$/);
+			if (!shortM) return null;
+			const shortcode = shortM[1];
+			const entry = getCachedCustomEmojiMap()[shortcode];
+			const img = document.createElement('img');
+			img.dataset.ce = token;
+			img.className = 'ce-img ce-img-ce';
+			img.setAttribute('contenteditable', 'false');
+			img.setAttribute('alt', ':' + shortcode + ':');
+			if (entry?.url) img.src = entry.url;
+			return img;
+		}
+
+		function nodeForToken(token) {
+			if (token.startsWith('[ek:')) return makeEkImg(token);
+			if (token.startsWith('[ce:')) return makeCeImgFromToken(token);
+			if (token.startsWith('[tgc:')) {
+				const m = token.match(/^\[tgc:([A-Za-z0-9_]+):(\d+)\]$/);
+				return m ? makeTgcImg(m[1], m[2], token) : null;
+			}
+			if (token.startsWith('[tg:')) {
+				const m = token.match(/^\[tg:([0-9a-f-]+)\]$/i);
+				return m ? makeTgImg(m[1], token) : null;
+			}
+			return null;
+		}
+
+		function pushSegment(text, fxStack) {
+			if (!text) return;
+			EMOTE_RE.lastIndex = 0;
+			let last = 0;
+			let any = false;
+			let m;
+			while ((m = EMOTE_RE.exec(text)) !== null) {
+				any = true;
+				if (m.index > last) pushText(text.slice(last, m.index), fxStack);
+				const node = nodeForToken(m[0]);
+				if (node) {
+					// Wrap the emote in the current fx stack so bold /
+					// rainbow / shake / etc. carry through across the
+					// surrounding text. Plain emotes (no fxStack) go in
+					// as-is.
+					nodes.push(fxStack.length ? makeFxNode(fxStack, node) : node);
+				} else {
+					// Unknown token shape — fall back to literal text so
+					// the data isn't silently dropped on save.
+					pushText(m[0], fxStack);
+				}
+				last = m.index + m[0].length;
+			}
+			if (!any) { pushText(text, fxStack); return; }
+			if (last < text.length) pushText(text.slice(last), fxStack);
+		}
+
 		for (const seg of segs) {
-			pushText(seg.text, seg.fxStack);
+			pushSegment(seg.text, seg.fxStack);
 		}
 		return nodes;
 	}
@@ -133,6 +385,22 @@
 			if (node.nodeType === Node.TEXT_NODE) {
 				result += node.textContent;
 			} else if (node.nodeType === Node.ELEMENT_NODE) {
+				// Inline image tokens written by the ExpressionPicker
+				// integration (emoji-kitchen, custom emotes, Telegram
+				// stickers). Each <img> stores its canonical token in a
+				// data attribute so we can round-trip them back into
+				// the markup string the form submits / the renderer
+				// re-parses. Without this branch they'd be silently
+				// dropped here.
+				if (node.tagName === 'IMG' && node.dataset?.ek) { result += node.dataset.ek; continue; }
+				if (node.tagName === 'IMG' && node.dataset?.ce) { result += node.dataset.ce; continue; }
+				if (node.tagName === 'IMG' && node.dataset?.tg) { result += node.dataset.tg; continue; }
+				// TG / TGC emotes are now <span contenteditable="false">
+				// wrappers (so a Lottie SVG player can mount inside them).
+				// Detect them here too so the [tg:…] / [tgc:…] tokens
+				// round-trip back into the serialized markup string.
+				if (node.tagName === 'SPAN' && node.dataset?.tg) { result += node.dataset.tg; continue; }
+
 				if (node.dataset?.fx) {
 					const fxStack = node.dataset.fx.split(' ').filter(fx => FX_TO_CHAR[fx]);
 					result += fxStack.map(fx => FX_TO_CHAR[fx]).join('') + serializeCe(node) + FX_CLOSE_CHAR.repeat(fxStack.length);
@@ -468,11 +736,11 @@
 			<button class="fi-btn fi-btn-underline" onmousedown={(e) => { e.preventDefault(); applyTextFx('underline'); }} title="Underline (⌘U)"><u>U</u></button>
 			<button class="fi-btn fi-btn-strike" onmousedown={(e) => { e.preventDefault(); applyTextFx('strike'); }} title="Strikethrough"><s>S</s></button>
 			<div class="fi-color-wrap">
-				<button class="fi-btn fi-btn-color" class:active={showFormatPanel} onmousedown={(e) => { e.preventDefault(); showFormatPanel = !showFormatPanel; }} title="Text color">A</button>
+				<button bind:this={colorBtnEl} class="fi-btn fi-btn-color" class:active={showFormatPanel} onmousedown={(e) => { e.preventDefault(); showFormatPanel = !showFormatPanel; }} title="Text color">A</button>
 				{#if showFormatPanel}
 					<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 					<div class="fi-backdrop" onclick={() => showFormatPanel = false}></div>
-					<div class="fi-color-pop">
+					<div class="fi-color-pop" use:popoverPos={{ anchor: colorBtnEl, side: 'top' }}>
 						<div class="fi-color-grid">
 							{#each TEXT_COLORS as c}
 								<button class="fi-swatch" style="background:{c.hex}" onmousedown={(e) => { e.preventDefault(); applyTextFx(c.name); showFormatPanel = false; }} title={c.name.replace('color-', '')}></button>
@@ -482,19 +750,48 @@
 					</div>
 				{/if}
 			</div>
+			<!-- Expression picker (emoji / kitchen / custom emotes /
+			     Telegram animated stickers / reaction images). Same
+			     ExpressionPicker the chat compose uses, so recents +
+			     skin tone + last-tab choice are shared via its
+			     localStorage keys. -->
+			<div class="fi-expr-wrap">
+				<button bind:this={exprBtnEl} class="fi-btn fi-btn-expr" class:active={showExprPicker}
+					onmousedown={(e) => { e.preventDefault(); showExprPicker = !showExprPicker; }}
+					title="Insert emoji / emote / sticker">
+					<span class="msi msi-18" class:msi-fill={showExprPicker}>mood</span>
+				</button>
+				{#if showExprPicker}
+					<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+					<div class="fi-backdrop" onclick={() => showExprPicker = false}></div>
+					<div class="fi-expr-pop" use:popoverPos={{ anchor: exprBtnEl, side: 'top' }}>
+						<ExpressionPicker
+							inline
+							onSelectEmoji={onPickerSelectEmoji}
+							onInsertKitchen={onPickerInsertKitchen}
+							onSelectGif={onPickerSelectGif}
+							onInsertCustomEmoji={onPickerInsertCustomEmoji}
+							onInsertReaction={onPickerInsertReaction}
+							onInsertTgEmoji={onPickerInsertTgEmoji}
+						/>
+					</div>
+				{/if}
+			</div>
 		</div>
 	</div>
 
 	{#if showTextFxBar}
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div class="fi-typo-bar" onfocusin={() => { showTextFxBar = true; }}>
-			<div class="fi-typo-row">
-				<span class="fi-typo-label">Size</span>
-				<input class="fi-typo-range" type="range" min="0.55" max="5" step="0.05"
-					bind:value={messageFontSize}
-					oninput={() => { if (_savedCeSel) { applyInlineSize(messageFontSize); showTextFxBar = true; } }} />
-				{#if messageFontSize !== 1.0}<button class="fi-typo-reset" onmousedown={(e) => { e.preventDefault(); messageFontSize = 1.0; _lastInlineTypo['sz-'] = null; if (_savedCeSel) applyInlineSize(1.0); }}>↺</button>{/if}
-			</div>
+			{#if !disableSize}
+				<div class="fi-typo-row">
+					<span class="fi-typo-label">Size</span>
+					<input class="fi-typo-range" type="range" min="0.55" max="5" step="0.05"
+						bind:value={messageFontSize}
+						oninput={() => { if (_savedCeSel) { applyInlineSize(messageFontSize); showTextFxBar = true; } }} />
+					{#if messageFontSize !== 1.0}<button class="fi-typo-reset" onmousedown={(e) => { e.preventDefault(); messageFontSize = 1.0; _lastInlineTypo['sz-'] = null; if (_savedCeSel) applyInlineSize(1.0); }}>↺</button>{/if}
+				</div>
+			{/if}
 			<div class="fi-typo-row">
 				<span class="fi-typo-label">Weight</span>
 				<input class="fi-typo-range" type="range" min="100" max="700" step="50"
@@ -587,9 +884,23 @@
 		text-decoration-thickness: 2px; text-underline-offset: 1px;
 	}
 	.fi-color-wrap { position: relative; flex-shrink: 0; }
+
+	/* Expression picker popover. Mirrors the chat compose's
+	   .compose-picker-pop positioning so the picker drops upward
+	   above the toolbar with the same visual chrome (border, shadow,
+	   rounded corners). Picker itself supplies its own width/height. */
+	.fi-expr-wrap { position: relative; flex-shrink: 0; }
+	.fi-btn-expr { color: var(--ink); }
+	/* Position is owned by the popoverPos action — it flips above /
+	   below and clamps to the viewport. We only declare z-index and
+	   visual chrome here. */
+	.fi-expr-pop {
+		z-index: 50;
+		filter: drop-shadow(0 4px 18px rgba(0,0,0,0.14));
+	}
+
 	.fi-backdrop { position: fixed; inset: 0; z-index: 40; }
 	.fi-color-pop {
-		position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%);
 		background: var(--paper); border: 1.5px solid var(--border); border-radius: 10px;
 		box-shadow: 0 4px 16px rgba(0,0,0,0.12); z-index: 50;
 		padding: 0.5rem; display: flex; flex-direction: column; gap: 0.35rem; min-width: 152px;

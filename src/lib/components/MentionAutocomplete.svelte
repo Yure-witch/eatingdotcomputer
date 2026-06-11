@@ -175,7 +175,13 @@
 				onmousedown={(e) => { e.preventDefault(); pick(m); }}
 				onmouseenter={() => (activeIdx = i)}
 			>
-				<Avatar name={m.name} uid={m.id} size={22} />
+				<Avatar
+					name={m.name}
+					uid={m.id}
+					avatarKind={m.avatarKind ?? 'gen'}
+					avatarValue={m.avatarValue ?? null}
+					size={22}
+				/>
 				<span class="mention-name">{m.name}</span>
 				{#if m.role && m.role !== 'student'}
 					<span class="mention-role">{m.role}</span>

@@ -20,37 +20,70 @@
 		onInsertCustomEmoji,  // (emoji: object) → from CustomEmojiPanel
 		onInsertReaction,     // (reaction: object) → from CustomEmojiPanel
 		onInsertTgEmoji,      // (sticker: object) → from TelegramEmojiPanel
-		isInstructor = false
+		isInstructor = false,
+		// `mode` controls which surface the picker renders:
+		//   'compose' (default) — full 6-tab picker for chat compose and
+		//                         assignment-form text fields. Every
+		//                         callback fires; consumer wires what
+		//                         it cares about.
+		//   'react'             — compact emoji-only view for message
+		//                         reactions. No tab strip; the picker
+		//                         is just the bare EmojiPicker so the
+		//                         reaction-pick UX stays focused while
+		//                         still sharing the same `emoji-recent`
+		//                         localStorage that compose mode uses.
+		mode = 'compose',
+		// `inline` hides surfaces that don't make sense outside of a
+		// real chat compose: Giphy GIFs (always full-size attachment-
+		// style) and reaction images (the big "react sticker" gallery).
+		// Used by FormattedInput when the picker is embedded inside a
+		// formatted text field — assignments, notes, etc. — where you
+		// just want emoji + emotes + animated stickers, not GIF
+		// uploads or reaction-image attachments. Default `false` so
+		// chat usage is unchanged.
+		inline = false
 	} = $props();
 
 	// Top-level tab. Persisted so reopening the picker lands on the
-	// last category the user was using.
+	// last category the user was using. In inline mode the GIFs and
+	// Reactions tabs are hidden — if the persisted choice was one of
+	// those, fall back to emoji so the picker doesn't open on an
+	// invisible tab.
 	const TAB_KEY = 'exprTab';
 	const VALID_TABS = new Set(['emoji', 'kitchen', 'gifs', 'emotes', 'animated', 'reactions']);
+	const INLINE_HIDDEN_TABS = new Set(['gifs', 'reactions']);
 	const _saved = typeof localStorage !== 'undefined' ? localStorage.getItem(TAB_KEY) : null;
-	let tab = $state(VALID_TABS.has(_saved) ? _saved : 'emoji');
+	const _initialTab = VALID_TABS.has(_saved)
+		? (inline && INLINE_HIDDEN_TABS.has(_saved) ? 'emoji' : _saved)
+		: 'emoji';
+	let tab = $state(_initialTab);
 	$effect(() => {
+		// Don't persist inline-only fallbacks; the chat usage owns the
+		// shared exprTab key, so an inline switch shouldn't change
+		// what compose opens on next time.
+		if (inline && INLINE_HIDDEN_TABS.has(tab)) return;
 		try { localStorage.setItem(TAB_KEY, tab); } catch {}
 	});
 
-	// Emotes tab is itself split into two sections — uploaded class
-	// emotes ("Uploaded") and the static Telegram pack libraries
-	// (CrazyEmoji / MadEmoji2 / HeartEmoji — "Library"). Sub-tabs let
-	// each section keep its own search/scroll chrome rather than
-	// fighting in a single 320px-tall mobile panel.
-	const EMOTES_SUB_KEY = 'exprEmotesSub';
-	const _savedSub = typeof localStorage !== 'undefined' ? localStorage.getItem(EMOTES_SUB_KEY) : null;
-	let emotesSub = $state(_savedSub === 'library' ? 'library' : 'uploaded');
-	$effect(() => {
-		try { localStorage.setItem(EMOTES_SUB_KEY, emotesSub); } catch {}
-	});
+	// Emotes tab used to have Uploaded / Library sub-tabs (the latter
+	// surfacing the static Telegram packs). Telegram packs in their
+	// entirety now live in the Animated tab so Emotes is uploads-only
+	// — no sub-tab state needed.
 
 	// Reactions tab only handles reactions; pass a no-op for emoji
 	// insertion. CustomEmojiPanel hides the unused side via `mode`.
 	const _noop = () => {};
 </script>
 
-<div class="expr-panel">
+<div class="expr-panel" class:expr-panel-react={mode === 'react'}>
+	{#if mode === 'react'}
+		<!-- Reaction mode: just the EmojiPicker, no chrome. The chat
+		     pages used to mount a bare EmojiPicker for this; routing
+		     through ExpressionPicker means recents + skin-tone +
+		     popular-tab state are shared with the compose picker (via
+		     EmojiPicker's own localStorage keys). -->
+		<EmojiPicker onSelect={onSelectEmoji} />
+	{:else}
 	<nav class="expr-tabs" aria-label="Expression categories">
 		<button class="expr-tab" class:active={tab === 'emoji'} onclick={() => (tab = 'emoji')} title="Emoji">
 			<span class="msi msi-20" class:msi-fill={tab === 'emoji'}>mood</span>
@@ -58,23 +91,31 @@
 		<button class="expr-tab" class:active={tab === 'kitchen'} onclick={() => (tab = 'kitchen')} title="Emoji Kitchen">
 			<span class="msi msi-20" class:msi-fill={tab === 'kitchen'}>blender</span>
 		</button>
-		<button class="expr-tab" class:active={tab === 'gifs'} onclick={() => (tab = 'gifs')} title="GIFs">
-			<!-- `gif` is letters in a tight bounding box, so the glyph
-			     renders ~60% the optical size of icons at the same px
-			     value. Bumping font-size to ~30px makes the letters
-			     match the visual weight of `mood`, `blender`, etc.
-			     Variation axes still come from the .msi class. -->
-			<span class="msi gif-glyph" class:msi-fill={tab === 'gifs'}>gif</span>
-		</button>
+		{#if !inline}
+			<!-- GIFs and Reactions are hidden in inline mode (assignment
+			     text fields, etc.) — they always insert full-size
+			     attachments which don't make sense outside a chat
+			     compose. -->
+			<button class="expr-tab" class:active={tab === 'gifs'} onclick={() => (tab = 'gifs')} title="GIFs">
+				<!-- `gif` is letters in a tight bounding box, so the glyph
+				     renders ~60% the optical size of icons at the same px
+				     value. Bumping font-size to ~30px makes the letters
+				     match the visual weight of `mood`, `blender`, etc.
+				     Variation axes still come from the .msi class. -->
+				<span class="msi gif-glyph" class:msi-fill={tab === 'gifs'}>gif</span>
+			</button>
+		{/if}
 		<button class="expr-tab" class:active={tab === 'emotes'} onclick={() => (tab = 'emotes')} title="Custom emotes">
 			<span class="msi msi-20" class:msi-fill={tab === 'emotes'}>sentiment_very_satisfied</span>
 		</button>
 		<button class="expr-tab" class:active={tab === 'animated'} onclick={() => (tab = 'animated')} title="Animated stickers">
 			<span class="msi msi-20" class:msi-fill={tab === 'animated'}>animated_images</span>
 		</button>
-		<button class="expr-tab" class:active={tab === 'reactions'} onclick={() => (tab = 'reactions')} title="Reactions">
-			<span class="msi msi-20" class:msi-fill={tab === 'reactions'}>favorite</span>
-		</button>
+		{#if !inline}
+			<button class="expr-tab" class:active={tab === 'reactions'} onclick={() => (tab = 'reactions')} title="Reactions">
+				<span class="msi msi-20" class:msi-fill={tab === 'reactions'}>favorite</span>
+			</button>
+		{/if}
 	</nav>
 
 	<div class="expr-body">
@@ -82,29 +123,26 @@
 			<EmojiPicker onSelect={onSelectEmoji} />
 		{:else if tab === 'kitchen'}
 			<EmojiKitchen onInsert={onInsertKitchen} />
-		{:else if tab === 'gifs'}
+		{:else if tab === 'gifs' && !inline}
 			<GifPicker onSelect={onSelectGif} />
 		{:else if tab === 'emotes'}
-			<nav class="expr-subtabs" aria-label="Emote source">
-				<button class="expr-subtab" class:active={emotesSub === 'uploaded'} onclick={() => (emotesSub = 'uploaded')}>Uploaded</button>
-				<button class="expr-subtab" class:active={emotesSub === 'library'} onclick={() => (emotesSub = 'library')}>Library</button>
-			</nav>
-			{#if emotesSub === 'uploaded'}
-				<CustomEmojiPanel mode="emoji" onInsertEmoji={onInsertCustomEmoji} onInsertReaction={_noop} {isInstructor} />
-			{:else}
-				<!-- Static-only TG packs (CrazyEmoji/MadEmoji2/HeartEmoji).
-				     These don't animate so they live with emotes instead of
-				     under the Animated tab. -->
-				<TelegramEmojiPanel onInsert={onInsertTgEmoji} packFilter="static" />
-			{/if}
+			<!-- Emotes is now strictly uploaded class emotes (the
+			     custom .webp / .gif uploads instructors and students
+			     post to R2). Any Telegram pack — animated or static —
+			     lives in the Animated tab so this tab can't surprise
+			     users with motion they expected to see one tab over. -->
+			<CustomEmojiPanel mode="emoji" onInsertEmoji={onInsertCustomEmoji} onInsertReaction={_noop} {isInstructor} />
 		{:else if tab === 'animated'}
-			<!-- Animated stickers only — static packs are routed to the
-			     Emotes tab's Library sub-tab. -->
-			<TelegramEmojiPanel onInsert={onInsertTgEmoji} packFilter="animated" />
-		{:else if tab === 'reactions'}
+			<!-- Every Telegram pack (animated + nominally-static) — the
+			     panel decides per-cell whether to play or freeze via
+			     LottieSticker's `paused` check. Consolidating here
+			     means the Emotes tab stays uploads-only. -->
+			<TelegramEmojiPanel onInsert={onInsertTgEmoji} packFilter="all" />
+		{:else if tab === 'reactions' && !inline}
 			<CustomEmojiPanel mode="reactions" onInsertEmoji={_noop} onInsertReaction={onInsertReaction} {isInstructor} />
 		{/if}
 	</div>
+	{/if}
 </div>
 
 <style>
@@ -211,10 +249,16 @@
 
 	/* The inner pickers each manage their own width/height inside the
 	   expr-body container. Reset their default panel chrome so they
-	   blend into the unified shell instead of double-styling. */
+	   blend into the unified shell instead of double-styling. The
+	   Emoji Kitchen component uses `.kitchen-panel` (not
+	   `.emoji-kitchen`) on its root, so it was sitting at its own
+	   hard-coded 380px width inside the 340px picker shell and
+	   overflowing the right edge — adding `.kitchen-panel` to the
+	   reset list snaps it to the container. */
 	.expr-body :global(.tg-panel),
 	.expr-body :global(.emoji-picker),
 	.expr-body :global(.emoji-kitchen),
+	.expr-body :global(.kitchen-panel),
 	.expr-body :global(.gif-picker),
 	.expr-body :global(.custom-emoji-panel) {
 		width: 100% !important;

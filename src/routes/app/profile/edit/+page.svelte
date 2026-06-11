@@ -1,8 +1,23 @@
 <script>
 	import { enhance } from '$app/forms';
+	import AvatarPicker from '$lib/components/AvatarPicker.svelte';
+	import FormattedInput from '$lib/components/FormattedInput.svelte';
 	let { data, form } = $props();
 
 	const YEARS = ['Freshman', 'Sophomore', 'Junior', 'Senior', 'Graduate', 'Other'];
+
+	// Avatar state. Pre-filled from whatever is already on the row;
+	// the AvatarPicker binds these so submit picks them up. photoFile
+	// is the raw File object the user picked — appended to the form
+	// FormData inside use:enhance so the server can stream it to R2.
+	let avatarKind = $state(data.prefill.avatarKind ?? 'gen');
+	let avatarValue = $state(data.prefill.avatarValue ?? null);
+	let photoFile = $state(null);
+
+	// Bio uses FormattedInput so inline emotes work here too. Hidden
+	// input mirrors the value into the form payload; the existing
+	// server action reads `data.get('bio')` unchanged.
+	let bioValue = $state(form?.bio ?? data.prefill.bio ?? '');
 </script>
 
 <svelte:head><title>Edit profile — eating.computer</title></svelte:head>
@@ -22,7 +37,27 @@
 				<p class="error">{form.error}</p>
 			{/if}
 
-			<form method="POST" use:enhance>
+			<form method="POST" enctype="multipart/form-data" use:enhance={({ formData }) => {
+				// AvatarPicker holds the photo File outside the form so
+				// SvelteKit's FormData serialisation doesn't know about
+				// it. Append at submit time. The hidden fields below
+				// already carry kind + value.
+				if (avatarKind === 'photo' && photoFile) {
+					formData.append('avatar_photo', photoFile);
+				}
+			}}>
+				<div class="avatar-section">
+					<AvatarPicker
+						name={form?.name ?? data.prefill.name}
+						uid={data.session?.user?.id ?? data.prefill.name}
+						bind:avatarKind
+						bind:avatarValue
+						bind:photoFile
+					/>
+				</div>
+				<input type="hidden" name="avatar_kind" value={avatarKind} />
+				<input type="hidden" name="avatar_value" value={avatarKind === 'expr' ? (avatarValue ?? '') : ''} />
+
 				<label>
 					<span>Name <span class="req">*</span></span>
 					<input type="text" name="name" value={form?.name ?? data.prefill.name} required placeholder="Your full name" />
@@ -57,7 +92,10 @@
 
 				<label>
 					<span>Bio</span>
-					<textarea name="bio" placeholder="A little about yourself…" rows="4">{form?.bio ?? data.prefill.bio}</textarea>
+					<input type="hidden" name="bio" value={bioValue} />
+					<div class="bio-fi">
+						<FormattedInput bind:value={bioValue} placeholder="A little about yourself…" />
+					</div>
 				</label>
 
 				<label>
@@ -123,4 +161,23 @@
 
 	.btn-ghost { padding: 0.6rem 0.75rem; background: none; border: none; font-family: inherit; font-size: 0.9rem; color: var(--muted-fg); cursor: pointer; text-decoration: none; }
 	.btn-ghost:hover { color: var(--ink); }
+	/* Bio wrapper mirrors the visual weight of the textarea this
+	   replaced so the rich-text field sits naturally next to the
+	   other inputs. FormattedInput owns the inner contenteditable. */
+	.bio-fi {
+		border: 1.5px solid var(--border);
+		border-radius: 8px;
+		background: var(--paper);
+	}
+	.bio-fi :global(.fi-wrap) { padding: 0; }
+	.bio-fi :global(.fi-ce) {
+		min-height: 80px; padding: 0.6rem 0.85rem;
+		font-size: 0.9rem; line-height: 1.45;
+	}
+
+	.avatar-section {
+		display: flex; justify-content: center;
+		padding: 0.25rem 0 0.75rem;
+		position: relative;
+	}
 </style>

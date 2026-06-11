@@ -1,45 +1,146 @@
 <script>
 	/**
-	 * Compact user avatar. v1 shows the first character of the user's
-	 * name on a deterministic-by-uid background tint. When profile
-	 * photo uploads ship, this is the one place to swap in an `<img>`.
+	 * Compact user avatar. Three rendering kinds — selected by
+	 * `avatarKind`, falling back to 'gen' for any unknown value:
+	 *
+	 *   gen   — Generative default. A two-stop linear gradient hashed
+	 *           deterministically from `uid` (same uid → same gradient,
+	 *           forever) with the first letter of `name` centered. The
+	 *           letter colour picks ink-on-paper or paper-on-ink based
+	 *           on the gradient's average luminance so it stays legible
+	 *           against any hashed colour combination.
+	 *
+	 *   photo — Uploaded photo. `avatarValue` is an absolute URL
+	 *           (Cloudflare R2 in practice). Rendered as an <img>
+	 *           cover-fit to the chip.
+	 *
+	 *   expr  — Emoji / EK kitchen / custom emote / TG emote token.
+	 *           `avatarValue` is the canonical inline token (bare
+	 *           emoji char, `[ek:…]`, `[ce:…]`, `[tg:…]`, `[tgc:…]`).
+	 *           contentHtml + the existing mountStaticEmotes pipeline
+	 *           handle rendering, so animated TG emote avatars actually
+	 *           animate wherever the component appears.
 	 *
 	 * Sized via the `size` prop (CSS pixels). Default 24 is the right
-	 * scale for inline lists (mention picker, notification bell items).
+	 * scale for inline lists (mention picker, notification bell).
 	 */
-	let { name = '', uid = '', size = 24 } = $props();
+	import { onMount, tick } from 'svelte';
+	import { createContentRenderer } from '$lib/message-render.js';
+	import { mountStaticEmotes } from '$lib/emote-mount.js';
+	import { genPalette } from '$lib/avatar-gen.js';
+
+	let {
+		name = '',
+		uid = '',
+		size = 24,
+		avatarKind = 'gen',
+		avatarValue = null
+	} = $props();
+
+	const { contentHtml } = createContentRenderer();
 
 	const initial = $derived(((name || '?').trim().charAt(0) || '?').toUpperCase());
 
-	// Stable hue from the uid (or name as fallback) so each user
-	// always gets the same tint. Hash via djb2 → 0–359 hue.
-	const hue = $derived.by(() => {
-		const seed = uid || name || '';
-		let h = 5381;
-		for (let i = 0; i < seed.length; i++) h = ((h << 5) + h + seed.charCodeAt(i)) | 0;
-		return Math.abs(h) % 360;
+	// Deterministic palette selection. genPalette() picks one of a
+	// curated 24-entry palette (see avatar-gen.js for the rationale)
+	// keyed off the uid, plus a hashed gradient angle so two adjacent
+	// users in a member list don't read as duplicates.
+	const palette = $derived(genPalette(uid || name || ''));
+
+	// `expr` rendering goes through contentHtml so emote tokens
+	// produce the right `<img>` / `<span>` shape. Plain emoji chars
+	// pass straight through.
+	const exprHtml = $derived(
+		avatarKind === 'expr' && avatarValue ? contentHtml(avatarValue, false) : ''
+	);
+
+	let exprEl = $state(null);
+	$effect(() => {
+		void exprHtml;
+		if (!exprEl) return;
+		tick().then(() => mountStaticEmotes(exprEl));
 	});
 </script>
 
-<span
-	class="avatar"
-	style:width="{size}px"
-	style:height="{size}px"
-	style:background="hsl({hue}, 35%, 78%)"
-	style:color="hsl({hue}, 38%, 22%)"
-	style:font-size="{Math.round(size * 0.46)}px"
-	aria-hidden="true"
->{initial}</span>
+{#if avatarKind === 'photo' && avatarValue}
+	<span class="avatar avatar-photo" style:width="{size}px" style:height="{size}px">
+		<img src={avatarValue} alt={name} loading="lazy" />
+	</span>
+{:else if avatarKind === 'expr' && avatarValue}
+	<span
+		class="avatar avatar-expr"
+		style:width="{size}px"
+		style:height="{size}px"
+		style:font-size="{Math.round(size * 0.78)}px"
+		aria-label={name}
+		bind:this={exprEl}
+	>{@html exprHtml}</span>
+{:else}
+	<!-- Default generative gradient + initial. Curated palette gives
+	     the chip a friendly painterly look instead of muddy HSL,
+	     and the ink colour is pre-chosen per palette so the letter is
+	     legible without a runtime contrast computation. -->
+	<span
+		class="avatar avatar-gen"
+		style:width="{size}px"
+		style:height="{size}px"
+		style:background="linear-gradient({palette.angle}deg, {palette.a} 0%, {palette.b} 100%)"
+		style:color={palette.ink}
+		style:font-size="{Math.round(size * 0.41)}px"
+		aria-hidden="true"
+	>{initial}</span>
+{/if}
 
 <style>
 	.avatar {
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-		border-radius: 6px;
-		font-weight: 700;
+		border-radius: 50%;
 		flex-shrink: 0;
 		line-height: 1;
-		font-family: 'Avara', serif;
+		overflow: hidden;
+		position: relative;
+	}
+	/* Letter typography mirrors the top-right user-menu chip
+	   (.user-avatar in UserMenu.svelte): inherits the app's body
+	   sans, 700 weight, slight negative tracking so the cap sits
+	   confidently centered. The vibrant palette is the personality;
+	   the type stays neutral so it doesn't fight the colour. */
+	.avatar-gen {
+		font-family: inherit;
+		font-weight: 700;
+		letter-spacing: -0.02em;
+		/* Subtle inset highlight + bottom-shadow keep the chip from
+		   looking flat-painted; a sharp text-shadow gives the letter
+		   a bit of separation against the most chromatic palette
+		   stops without dulling the colour. */
+		box-shadow:
+			inset 0 0 0 1px rgba(255, 255, 255, 0.22),
+			inset 0 -2px 5px rgba(0, 0, 0, 0.12);
+		text-shadow: 0 1px 0 rgba(0, 0, 0, 0.18);
+	}
+	.avatar-photo img {
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+		display: block;
+	}
+	.avatar-expr {
+		background: var(--md-sys-color-surface-container, var(--surface-2));
+		line-height: 1;
+	}
+	/* Emote tokens inside an expression-avatar should fill the chip.
+	   contentHtml's `.tg-emoji` / `.ek-img` / `.ce-img` default to
+	   em-sizes meant for inline-with-text rendering; here they need
+	   to take the whole square. */
+	.avatar-expr :global(.tg-emoji),
+	.avatar-expr :global(.tg-emoji-img),
+	.avatar-expr :global(.ek-img),
+	.avatar-expr :global(.ce-img),
+	.avatar-expr :global(.tg-img) {
+		width: 100%;
+		height: 100%;
+		vertical-align: middle;
 	}
 </style>

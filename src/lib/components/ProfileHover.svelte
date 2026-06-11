@@ -4,14 +4,32 @@
 </script>
 
 <script>
-	import { onMount } from 'svelte';
+	import { onMount, tick, getContext } from 'svelte';
+	import Avatar from './Avatar.svelte';
+	import { createContentRenderer } from '$lib/message-render.js';
+	import { mountStaticEmotes } from '$lib/emote-mount.js';
 
 	let { userId, children } = $props();
+	const { contentHtml } = createContentRenderer();
+	// Live presence comes from the layout's contexts so the hover
+	// card reflects whatever the sidebar / chat bubble dot is showing
+	// — no separate Firebase subscription needed.
+	const presenceStatusCtx = getContext('presenceStatus');
+	const rawPresenceCtx = getContext('rawPresence');
+	// Tick once a minute so "last active 4m ago" rolls forward while
+	// the card is open without waiting for a presence write.
+	let nowTick = $state(Date.now());
+	let nowTickTimer;
 
 	const CARD_W = 228;
 	const CARD_H = 220;
 
 	let profile = $state(null);
+	let bioEl = $state(null);
+	$effect(() => {
+		if (!bioEl || !profile?.bio) return;
+		tick().then(() => mountStaticEmotes(bioEl));
+	});
 	let loading = $state(true);
 	let anchorEl = $state(null);
 	let x = $state(0);
@@ -47,11 +65,49 @@
 		const scrollEl = anchorEl?.closest('.message-list');
 		scrollEl?.addEventListener('scroll', updatePos, { passive: true });
 		window.addEventListener('resize', updatePos, { passive: true });
+		nowTickTimer = setInterval(() => { nowTick = Date.now(); }, 60_000);
 		return () => {
 			scrollEl?.removeEventListener('scroll', updatePos);
 			window.removeEventListener('resize', updatePos);
+			clearInterval(nowTickTimer);
 		};
 	});
+
+	// Derived presence summary for the hovered user. Reads both the
+	// 'active' / 'idle' / 'offline' classification AND the underlying
+	// lastInputAt timestamp so the card can show:
+	//   active   → "Active now"
+	//   idle     → "Last active {N} ago"  (relative to lastInputAt)
+	//   offline  → "Last online {N} ago"  (also relative to lastInputAt,
+	//              since lastSeen is the heartbeat — input is the real
+	//              "was here doing things" signal)
+	const presence = $derived.by(() => {
+		nowTick; // keep the relative phrasing fresh as time passes
+		if (!userId) return null;
+		const status = presenceStatusCtx?.value?.[userId] ?? 'offline';
+		const raw = rawPresenceCtx?.value?.[userId];
+		let lastInputAt = raw?.lastInputAt ?? 0;
+		if (Array.isArray(raw?.devices)) {
+			for (const d of raw.devices) lastInputAt = Math.max(lastInputAt, d.lastInputAt ?? 0);
+		}
+		// Fall back to lastSeen if no device ever wrote lastInputAt
+		// (pre-rollout sessions). It's the next best proxy.
+		if (!lastInputAt) lastInputAt = raw?.lastSeen ?? 0;
+		return { status, lastInputAt };
+	});
+
+	function formatRelative(ts) {
+		if (!ts) return 'a while ago';
+		const diff = Math.max(0, nowTick - ts);
+		if (diff < 60_000) return 'just now';
+		const mins = Math.floor(diff / 60_000);
+		if (mins < 60) return `${mins}m ago`;
+		const hrs = Math.floor(mins / 60);
+		if (hrs < 24) return `${hrs}h ago`;
+		const days = Math.floor(hrs / 24);
+		if (days < 30) return `${days}d ago`;
+		return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+	}
 
 	// Mobile: tap the name to toggle; tap anywhere else to dismiss
 	function onTap(e) {
@@ -78,7 +134,13 @@
 			<div class="hc-loading">…</div>
 		{:else if profile}
 			<div class="hc-top">
-				<div class="hc-avatar">{profile.name?.[0]?.toUpperCase() ?? '?'}</div>
+				<Avatar
+					name={profile.name ?? ''}
+					uid={profile.id ?? userId}
+					avatarKind={profile.avatarKind ?? 'gen'}
+					avatarValue={profile.avatarValue ?? null}
+					size={44}
+				/>
 				<div class="hc-meta">
 					<div class="hc-name-row">
 						<span class="hc-name">{profile.name || 'Unnamed'}</span>
@@ -86,6 +148,18 @@
 					</div>
 					<div class="hc-sub-row">
 						<span class="hc-role" class:instructor={profile.role === 'instructor'}>{profile.role}</span>
+						{#if presence}
+							<span class="hc-status hc-status-{presence.status}">
+								<span class="hc-status-dot"></span>
+								{#if presence.status === 'active'}
+									Active now
+								{:else if presence.status === 'idle'}
+									Last active {formatRelative(presence.lastInputAt)}
+								{:else}
+									Last online {formatRelative(presence.lastInputAt)}
+								{/if}
+							</span>
+						{/if}
 					</div>
 				</div>
 			</div>
@@ -97,7 +171,12 @@
 				</div>
 			{/if}
 			{#if profile.bio}
-				<p class="hc-bio">{profile.bio.slice(0, 120)}{profile.bio.length > 120 ? '…' : ''}</p>
+				<!-- Bio may contain inline emote tokens; render through
+				     contentHtml so the chips show as actual emotes
+				     instead of `[ek:…]` / `[tg:…]` raw strings. We
+				     truncate the SOURCE string before rendering so a
+				     long token doesn't get split mid-marker. -->
+				<p class="hc-bio" bind:this={bioEl}>{@html contentHtml(profile.bio.slice(0, 200), false)}{profile.bio.length > 200 ? '…' : ''}</p>
 			{/if}
 			{#if profile.website}
 				<a class="hc-website" href={profile.website} target="_blank" rel="noopener noreferrer">
@@ -142,12 +221,8 @@
 
 	.hc-top { display: flex; gap: 0.6rem; align-items: flex-start; }
 
-	.hc-avatar {
-		width: 36px; height: 36px; border-radius: 8px;
-		background: #333; color: var(--paper);
-		display: flex; align-items: center; justify-content: center;
-		font-family: 'Avara', serif; font-size: 1.1rem; flex-shrink: 0;
-	}
+	/* Old .hc-avatar styles removed — the Avatar component now owns
+	   sizing + typography for the hover card. */
 
 	.hc-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.25rem; }
 
@@ -161,6 +236,24 @@
 		background: #333; color: var(--muted-fg); padding: 0.1rem 0.35rem; border-radius: 99px;
 	}
 	.hc-role.instructor { background: var(--paper); color: var(--ink); }
+
+	/* Live presence line. Colour-coded dot + a relative timestamp;
+	   the row is hidden entirely when no presence has been written
+	   for this user yet so we don't show "Last online a while ago"
+	   for someone the card just doesn't have data for. */
+	.hc-status {
+		display: inline-flex; align-items: center; gap: 0.3rem;
+		font-size: 0.68rem; color: var(--muted-fg);
+		white-space: nowrap;
+	}
+	.hc-status-dot {
+		width: 7px; height: 7px; border-radius: 50%;
+		background: #888; flex-shrink: 0;
+	}
+	.hc-status-active { color: var(--paper); }
+	.hc-status-active .hc-status-dot { background: #4caf50; }
+	.hc-status-idle .hc-status-dot { background: #ffc107; }
+	.hc-status-offline .hc-status-dot { background: #777; }
 
 	.hc-details { display: flex; flex-wrap: wrap; gap: 0.3rem; }
 	.hc-tag {

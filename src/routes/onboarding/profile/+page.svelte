@@ -1,8 +1,25 @@
 <script>
 	import { enhance } from '$app/forms';
+	import AvatarPicker from '$lib/components/AvatarPicker.svelte';
+	import FormattedInput from '$lib/components/FormattedInput.svelte';
 	let { data, form } = $props();
 
 	const YEARS = ['Freshman', 'Sophomore', 'Junior', 'Senior', 'Graduate', 'Other'];
+
+	// Same picker shape /app/profile/edit uses. Default to 'gen' so a
+	// brand-new user gets the generative gradient + initial without
+	// having to interact with the picker. They can swap to photo or
+	// emote any time later from their profile.
+	let avatarKind = $state(data.prefill.avatarKind ?? 'gen');
+	let avatarValue = $state(data.prefill.avatarValue ?? null);
+	let photoFile = $state(null);
+
+	// Bio uses FormattedInput so students/teachers can drop inline
+	// emotes (emoji, Emoji Kitchen mixes, custom emotes, animated TG
+	// stickers) into their own bio at onboarding. Hidden input mirrors
+	// the value into the form payload so the existing server action
+	// (which reads `data.get('bio')`) keeps working unchanged.
+	let bioValue = $state(form?.bio ?? data.prefill.bio ?? '');
 </script>
 
 <svelte:head><title>Set up your profile — eating.computer</title></svelte:head>
@@ -15,7 +32,23 @@
 		<p class="error">{form.error}</p>
 	{/if}
 
-	<form method="POST" use:enhance>
+	<form method="POST" enctype="multipart/form-data" use:enhance={({ formData }) => {
+		if (avatarKind === 'photo' && photoFile) {
+			formData.append('avatar_photo', photoFile);
+		}
+	}}>
+		<div class="avatar-section">
+			<AvatarPicker
+				name={form?.name ?? data.prefill.name}
+				uid={data.session?.user?.id ?? data.prefill.name}
+				bind:avatarKind
+				bind:avatarValue
+				bind:photoFile
+			/>
+		</div>
+		<input type="hidden" name="avatar_kind" value={avatarKind} />
+		<input type="hidden" name="avatar_value" value={avatarKind === 'expr' ? (avatarValue ?? '') : ''} />
+
 		<label>
 			<span>Name <span class="req">*</span></span>
 			<input type="text" name="name" value={form?.name ?? data.prefill.name} required placeholder="Your full name" />
@@ -50,7 +83,10 @@
 
 		<label>
 			<span>Bio</span>
-			<textarea name="bio" placeholder="A little about yourself…" rows="3">{form?.bio ?? data.prefill.bio}</textarea>
+			<input type="hidden" name="bio" value={bioValue} />
+			<div class="bio-fi">
+				<FormattedInput bind:value={bioValue} placeholder="A little about yourself…" />
+			</div>
 		</label>
 
 		<label>
@@ -139,4 +175,25 @@
 		align-self: flex-end;
 	}
 	.btn-primary:hover { opacity: 0.8; }
+	/* Match the visual weight of the textarea this replaced — same
+	   border / radius / min-height so the bio field doesn't suddenly
+	   feel foreign next to the inputs above it. The inner contenteditable
+	   gets its own padding from FormattedInput's defaults. */
+	.bio-fi {
+		border: 1.5px solid var(--border);
+		border-radius: 8px;
+		background: var(--paper);
+	}
+	.bio-fi :global(.fi-wrap) { padding: 0; }
+	.bio-fi :global(.fi-ce) {
+		min-height: 72px; padding: 0.55rem 0.75rem;
+		font-size: 0.9rem; line-height: 1.45;
+	}
+
+	.avatar-section {
+		display: flex;
+		justify-content: center;
+		padding: 0.5rem 0 0.5rem;
+		position: relative;
+	}
 </style>

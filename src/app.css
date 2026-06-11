@@ -313,3 +313,96 @@ main {
 .msi-20 { font-size: 20px; }
 .msi-18 { font-size: 18px; }
 .msi-24 { font-size: 24px; }
+.msi-14 { font-size: 14px; }
+
+/* ─── Inline emote rendering ────────────────────────────────────────
+   contentHtml() emits these classes for Emoji Kitchen mixes, Telegram
+   stock emoji, Telegram custom emoji, and pasteable custom emotes.
+   The chat surfaces already redeclare them under :global() inside
+   their own <style> blocks; promoting the canonical sizes to app.css
+   lets every non-chat surface (home roster, /app/weeks rail tooltip,
+   /app/orbit roadmap, assignment chips, etc.) render the same tokens
+   at the same inline size without re-importing the chat stylesheet. */
+.ek-img {
+	height: 1.4em;
+	width: 1.4em;
+	vertical-align: -0.3em;
+	object-fit: contain;
+	display: inline-block;
+}
+.ce-img {
+	height: 1.2em;
+	width: 1.2em;
+	vertical-align: -0.25em;
+	object-fit: contain;
+	display: inline-block;
+}
+.tg-emoji {
+	display: inline-block;
+	position: relative;
+	width: 1.4em;
+	height: 1.4em;
+	vertical-align: -0.3em;
+	line-height: 0;
+}
+.tg-emoji svg,
+.tg-emoji canvas,
+.tg-emoji img,
+.tg-emoji-img {
+	width: 100%;
+	height: 100%;
+	object-fit: contain;
+	display: block;
+	pointer-events: none;
+}
+.tg-img {
+	height: 1.4em;
+	width: 1.4em;
+	vertical-align: -0.3em;
+	object-fit: contain;
+	display: inline-block;
+}
+
+/* ─── Text effects (bold / italic / weight / width / size / color /
+   underline / strike / animations).  contentHtml() wraps spans in
+   `.tfx tfx-{fx}` with inline style for axis values; the animation
+   class itself drives the keyframe.  Keep this list in sync with the
+   chat surfaces — both files declare the same set, but app.css makes
+   them visible on every page. */
+.tfx { display: inline-block; }
+.tfx-bold { font-weight: 700; }
+.tfx-italic { font-style: italic; }
+.tfx-underline { text-decoration-line: underline; text-underline-offset: 2px; }
+.tfx-strike { text-decoration-line: line-through; }
+
+@keyframes tfx-shake { 0%,100% { transform: translate(0,0); } 25% { transform: translate(-1px,1px); } 50% { transform: translate(1px,-1px); } 75% { transform: translate(-1px,-1px); } }
+.tfx-shake { animation: tfx-shake 0.35s ease-in-out infinite; }
+
+@keyframes tfx-wave { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+.tfx-wave { animation: tfx-wave 1.2s ease-in-out infinite; }
+
+@keyframes tfx-bounce { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+.tfx-bounce { animation: tfx-bounce 0.7s cubic-bezier(0.5, 0, 0.5, 1) infinite; }
+
+@keyframes tfx-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.tfx-spin { animation: tfx-spin 1.6s linear infinite; }
+
+@keyframes tfx-flash { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.tfx-flash { animation: tfx-flash 1.2s ease-in-out infinite; }
+
+@keyframes tfx-rainbow {
+	0%   { color: #ff3b30; }
+	16%  { color: #ff9500; }
+	33%  { color: #ffcc00; }
+	50%  { color: #34c759; }
+	66%  { color: #007aff; }
+	83%  { color: #af52de; }
+	100% { color: #ff3b30; }
+}
+.tfx-rainbow { animation: tfx-rainbow 4s linear infinite; }
+
+@keyframes tfx-glow {
+	0%, 100% { text-shadow: 0 0 6px color-mix(in srgb, currentColor 45%, transparent); }
+	50%      { text-shadow: 0 0 14px color-mix(in srgb, currentColor 90%, transparent); }
+}
+.tfx-glow { animation: tfx-glow 1.6s ease-in-out infinite; }

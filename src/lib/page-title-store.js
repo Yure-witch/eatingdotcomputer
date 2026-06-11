@@ -6,9 +6,14 @@
  * (and clear it on destroy) and the header subscribes — yields one
  * top bar for the whole app whose label tracks whatever route is open.
  *
- * Set to `null` (or empty string) when you don't want a title — the
- * header falls back to the wordmark.
+ * `pageTitleHref` is an optional companion: when set, the AppHeader
+ * renders the title as a link instead of plain text. Used by the DM
+ * chat to make the partner's name click into their profile.
+ *
+ * Set both to `null` when you don't want a title — the header falls
+ * back to the wordmark.
  */
 import { writable } from 'svelte/store';
 
 export const pageTitle = writable(null);
+export const pageTitleHref = writable(null);

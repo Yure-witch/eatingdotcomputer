@@ -1,12 +1,74 @@
 <script>
+	import { tick } from 'svelte';
 	import { enhance } from '$app/forms';
 	import FileTypeIcon from '$lib/components/FileTypeIcon.svelte';
+	import { createContentRenderer } from '$lib/message-render.js';
+	import { mountStaticEmotes } from '$lib/emote-mount.js';
 
 	let { data, form } = $props();
 	const isInstructor = data.role === 'instructor';
+	const { contentHtml } = createContentRenderer();
+
+	// Static-frame mounting for `.tg-emoji` spans rendered by
+	// contentHtml() inside week headlines / topic previews / item
+	// labels. Without this they show up as empty boxes outside chat,
+	// where the full Lottie pipeline isn't running.
+	let pageEl = $state(null);
+	$effect(() => {
+		void data.weeks;
+		if (!pageEl) return;
+		tick().then(() => mountStaticEmotes(pageEl));
+	});
+
+	function fmtDueDate(s) {
+		if (!s) return '';
+		return new Date(s + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+	}
 
 	const TYPE_LABELS = { link: 'Link', image: 'Image', video: 'Video' };
 	const ALL_TYPES = ['link', 'image', 'video'];
+
+	// 5-week window centered on the current plan: 2 prior, current,
+	// 2 upcoming. If we're sitting near the beginning or end of the
+	// term, the window slides over so it always shows up to 5 rows
+	// when there's that much data available — never an awkward "+1
+	// week before and 3 after" because we clamped early.
+	const WINDOW_RADIUS = 2;
+	const orderedWeeks = $derived(
+		[...(data.weeks ?? [])].sort((a, b) => a.week - b.week)
+	);
+	const currentIdx = $derived(
+		data.currentPlanId
+			? orderedWeeks.findIndex((w) => w.planId === data.currentPlanId)
+			: -1
+	);
+	const visibleWeeks = $derived.by(() => {
+		if (!orderedWeeks.length) return [];
+		const n = orderedWeeks.length;
+		if (currentIdx < 0) {
+			// No "current" plan resolved — fall back to the first 5.
+			return orderedWeeks.slice(0, Math.min(n, WINDOW_RADIUS * 2 + 1));
+		}
+		const span = WINDOW_RADIUS * 2 + 1;
+		let start = currentIdx - WINDOW_RADIUS;
+		let end = currentIdx + WINDOW_RADIUS + 1;
+		if (start < 0) { end += -start; start = 0; }
+		if (end > n) { start -= (end - n); end = n; }
+		start = Math.max(0, start);
+		return orderedWeeks.slice(start, end);
+	});
+
+	// Per-week status for the student. Instructors get a flat
+	// "N items" tag so they see the shape of each week without a
+	// personal completion icon (they don't submit anything).
+	function weekStatus(wk) {
+		const items = wk.items ?? [];
+		if (!items.length) return { kind: 'empty', label: 'No tasks' };
+		const done = items.filter((it) => it.mine).length;
+		if (done === items.length) return { kind: 'done', label: 'Completed', done, total: items.length };
+		if (done > 0) return { kind: 'progress', label: `${done}/${items.length} done`, done, total: items.length };
+		return { kind: 'todo', label: 'Not started', done: 0, total: items.length };
+	}
 
 	let showForm = $state(false);
 	let openSubmit = $state(null);
@@ -15,6 +77,25 @@
 	let links = $state(data.links);
 	let uploadedFiles = $state(data.uploadedFiles ?? []);
 	let starredMessages = $state(data.starredMessages ?? []);
+
+	// Instructor delete-from-Orbit. Hits the existing /api/upload/[id]
+	// DELETE which now also accepts instructor callers (see
+	// src/routes/api/upload/[id]/+server.js). Optimistic remove first
+	// so the chip disappears immediately; refilled from server on
+	// next page load.
+	async function deleteUpload(file) {
+		if (!confirm(`Delete "${file.filename}"? This removes it from R2 and from anywhere it's referenced.`)) return;
+		const id = file.id;
+		uploadedFiles = uploadedFiles.filter((u) => u.id !== id);
+		try {
+			const r = await fetch(`/api/upload/${id}`, { method: 'DELETE' });
+			if (!r.ok) throw new Error(await r.text());
+		} catch (e) {
+			alert('Delete failed: ' + (e?.message ?? e));
+			// Restore the chip so the user can retry.
+			uploadedFiles = [...uploadedFiles, file].sort((a, b) => b.uploadedAt - a.uploadedAt);
+		}
+	}
 
 	function displayName(sub) {
 		return sub.name || sub.email;
@@ -43,178 +124,75 @@
 	}
 </script>
 
-<svelte:head><title>Atlas — eating.computer</title></svelte:head>
+<svelte:head><title>Orbit — eating.computer</title></svelte:head>
 
 <div class="shell">
-	<main>
+	<main bind:this={pageEl}>
 		<!-- ═══════════════════ ROADMAP ═══════════════════ -->
+		<!--
+			Roadmap is now sourced from the same week_plans the home page
+			renders. Instructors create / edit assignments on /app; this
+			page is the read-only "map" view — every week is here in
+			order, with its headline + items. Click any row to jump to
+			that week on the home page (or, for instructors, into the
+			edit form via /app#edit-{id}).
+		-->
 		<div class="page-header">
 			<h1>Roadmap</h1>
-			{#if isInstructor}
-				<button class="btn-secondary" onclick={() => (showForm = !showForm)}>
-					{showForm ? 'Cancel' : '+ New assignment'}
-				</button>
-			{/if}
+			<a class="btn-secondary" href="/app">
+				{isInstructor ? 'Manage on home →' : 'Open current week →'}
+			</a>
 		</div>
 
-		{#if isInstructor && showForm}
-			<div class="create-card">
-				<h2>New Assignment</h2>
-				{#if form?.error && form?.action === 'create'}
-					<p class="error">{form.error}</p>
-				{/if}
-				<form method="POST" action="?/create" use:enhance={() => () => { showForm = false; }}>
-					<input type="hidden" name="class_id" value={data.classId} />
-					<div class="form-row">
-						<label>
-							<span>Week <span class="required">*</span></span>
-							<input type="number" name="week" min="1" max="52" required placeholder="1" />
-						</label>
-						<label class="grow">
-							<span>Title <span class="required">*</span></span>
-							<input type="text" name="title" required placeholder="e.g. Reading response" />
-						</label>
-					</div>
-					<label>
-						<span>Description</span>
-						<textarea name="description" rows="3" placeholder="Details, instructions, links…"></textarea>
-					</label>
-					<label>
-						<span>Due date</span>
-						<input type="date" name="due_date" />
-					</label>
-					<fieldset>
-						<legend>Accepted submission types <span class="required">*</span></legend>
-						<div class="checkbox-row">
-							{#each ALL_TYPES as t}
-								<label class="checkbox-label">
-									<input type="checkbox" name="accepted_types" value={t} checked={t === 'link'} />
-									{TYPE_LABELS[t]}
-								</label>
-							{/each}
-						</div>
-					</fieldset>
-					<div class="form-actions">
-						<button type="submit" class="btn-primary">Create</button>
-					</div>
-				</form>
-			</div>
-		{/if}
-
-		{#if data.weeks.length === 0}
+		<!--
+			Compact 5-week window. The current week sits in the middle
+			(highlighted) with up to two prior + two upcoming weeks around
+			it. Each row is just topic + status — for the full checklist
+			the student / instructor jumps to the home page via the
+			button above (or by clicking a row).
+		-->
+		{#if visibleWeeks.length === 0}
 			<p class="empty">No assignments yet.</p>
 		{:else}
-			{#each data.weeks as { week, assignments }}
-				<section class="week-section">
-					<h2 class="week-label">Week {week}</h2>
-					<div class="assignment-list">
-						{#each assignments as a}
-							<div class="assignment-card">
-								<div class="card-top">
-									<div class="assignment-body">
-										<p class="assignment-title">{a.title}</p>
-										{#if a.description}
-											<p class="assignment-desc">{a.description}</p>
-										{/if}
-										{#if a.dueDate}
-											<p class="due">Due {new Date(a.dueDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</p>
-										{/if}
-									</div>
-									{#if isInstructor}
-										<form method="POST" action="?/delete" use:enhance>
-											<input type="hidden" name="id" value={a.id} />
-											<button type="submit" class="btn-delete" aria-label="Delete">×</button>
-										</form>
-									{/if}
-								</div>
-
-								<p class="accepted-note">
-									Accepted: {a.acceptedTypes.map((t) => TYPE_LABELS[t]).join(', ')}
-								</p>
-
-								{#if !isInstructor}
-									{#if a.mySubmission}
-										<div class="my-submission">
-											<span class="submitted-label">Submitted</span>
-											{#if a.mySubmission.type === 'link'}
-												<a href={a.mySubmission.value} target="_blank" rel="noopener">{a.mySubmission.value}</a>
-											{:else}
-												<a href="/api/submissions/{a.mySubmission.id}" target="_blank">
-													View {a.mySubmission.type}
-												</a>
-											{/if}
-										</div>
-									{:else if openSubmit === a.id}
-										{@const chosenType = submitTypes[a.id] ?? a.acceptedTypes[0]}
-										<div class="submit-form-wrap">
-											{#if form?.action === 'submit' && form?.assignmentId === a.id && form?.error}
-												<p class="error small">{form.error}</p>
-											{/if}
-											{#if a.acceptedTypes.length > 1}
-												<div class="type-tabs">
-													{#each a.acceptedTypes as t}
-														<button
-															type="button"
-															class="type-tab"
-															class:active={submitTypes[a.id] === t}
-															onclick={() => (submitTypes[a.id] = t)}
-														>{TYPE_LABELS[t]}</button>
-													{/each}
-												</div>
-											{/if}
-											<form
-												method="POST"
-												action="?/submit"
-												enctype="multipart/form-data"
-												use:enhance={() => () => { openSubmit = null; }}
-											>
-												<input type="hidden" name="assignment_id" value={a.id} />
-												<input type="hidden" name="type" value={chosenType} />
-												{#if chosenType === 'link'}
-													<input type="url" name="link" placeholder="https://…" required />
-												{:else if chosenType === 'image'}
-													<input type="file" name="file" accept="image/*" required />
-												{:else if chosenType === 'video'}
-													<input type="file" name="file" accept="video/*" required />
-												{/if}
-												<div class="submit-actions">
-													<button type="button" class="btn-ghost" onclick={() => (openSubmit = null)}>Cancel</button>
-													<button type="submit" class="btn-primary small">Submit</button>
-												</div>
-											</form>
-										</div>
-									{:else}
-										<button class="btn-submit" onclick={() => { openSubmit = a.id; submitTypes[a.id] = a.acceptedTypes[0]; }}>
-											Submit work
-										</button>
-									{/if}
+			<ul class="roadmap-window">
+				{#each visibleWeeks as wk (wk.planId)}
+					{@const isCurrent = wk.planId === data.currentPlanId}
+					{@const status = weekStatus(wk)}
+					<li class="roadmap-row" class:current={isCurrent}>
+						<a class="roadmap-link" href="/app">
+							<span class="roadmap-week-num">Week {wk.week}</span>
+							<div class="roadmap-body">
+								{#if wk.headline}
+									<span class="roadmap-headline">{@html contentHtml(wk.headline, false)}</span>
+								{:else}
+									<span class="roadmap-headline muted">Untitled week</span>
 								{/if}
-
-								{#if isInstructor && a.submissions}
-									<div class="submissions-section">
-										<p class="submissions-header">{a.submissions.length} submission{a.submissions.length === 1 ? '' : 's'}</p>
-										{#if a.submissions.length > 0}
-											<ul class="submissions-list">
-												{#each a.submissions as s}
-													<li class="submission-item">
-														<span class="sub-student">{displayName(s)}</span>
-														<span class="sub-type">{TYPE_LABELS[s.type]}</span>
-														{#if s.type === 'link'}
-															<a href={s.value} target="_blank" rel="noopener" class="sub-link">Open ↗</a>
-														{:else}
-															<a href="/api/submissions/{s.id}" target="_blank" class="sub-link">View ↗</a>
-														{/if}
-													</li>
-												{/each}
-											</ul>
-										{/if}
-									</div>
+								{#if wk.dueDate}
+									<span class="roadmap-due">Due {fmtDueDate(wk.dueDate)}</span>
 								{/if}
 							</div>
-						{/each}
-					</div>
-				</section>
-			{/each}
+							{#if isInstructor}
+								<span class="roadmap-status instructor">
+									{wk.items.length} item{wk.items.length === 1 ? '' : 's'}
+								</span>
+							{:else}
+								<span class="roadmap-status status-{status.kind}">
+									{#if status.kind === 'done'}
+										<span class="msi msi-18 msi-fill">check_circle</span>
+									{:else if status.kind === 'progress'}
+										<span class="msi msi-18">timelapse</span>
+									{:else if status.kind === 'todo'}
+										<span class="msi msi-18">radio_button_unchecked</span>
+									{:else}
+										<span class="msi msi-18">remove</span>
+									{/if}
+									{status.label}
+								</span>
+							{/if}
+						</a>
+					</li>
+				{/each}
+			</ul>
 		{/if}
 
 		<!-- ═══════════════════ FILES ═══════════════════ -->
@@ -228,24 +206,36 @@
 			<p class="section-label">Uploads</p>
 			<div class="links-grid" style="margin-bottom: 2rem;">
 				{#each uploadedFiles as f (f.id)}
-					<a href={f.url} target="_blank" rel="noopener noreferrer" class="link-chip">
-						<div class="chip-favicon">
-							<FileTypeIcon filename={f.filename} mimetype={f.mimetype} url={f.url} iconSize={28} />
-						</div>
-						<div class="chip-body">
-							<span class="chip-title">{f.filename}</span>
-							<span class="chip-meta">
-								<span class="chip-domain">{formatSize(f.size)}</span>
-								<span class="chip-dot">·</span>
-								<span>uploaded by {f.uploadedByName}</span>
-								<span class="chip-dot">·</span>
-								<span>{formatAge(f.uploadedAt)}</span>
-								<span class="chip-dot">·</span>
-								<span class="chip-channel">{f.contextType === 'dm' ? 'DM' : `#${f.convName}`}</span>
-							</span>
-						</div>
-						<svg class="ext-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-					</a>
+					<!-- Wrapper turns the anchor into "row + trailing
+					     instructor-only delete button". The anchor still
+					     opens the file in a new tab; the delete button
+					     is its own click target. -->
+					<div class="chip-with-actions">
+						<a href={f.url} target="_blank" rel="noopener noreferrer" class="link-chip">
+							<div class="chip-favicon">
+								<FileTypeIcon filename={f.filename} mimetype={f.mimetype} url={f.url} iconSize={28} />
+							</div>
+							<div class="chip-body">
+								<span class="chip-title">{f.filename}</span>
+								<span class="chip-meta">
+									<span class="chip-domain">{formatSize(f.size)}</span>
+									<span class="chip-dot">·</span>
+									<span>uploaded by {f.uploadedByName}</span>
+									<span class="chip-dot">·</span>
+									<span>{formatAge(f.uploadedAt)}</span>
+									<span class="chip-dot">·</span>
+									<span class="chip-channel">{f.contextType === 'dm' ? 'DM' : `#${f.convName}`}</span>
+								</span>
+							</div>
+							<svg class="ext-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+						</a>
+						{#if isInstructor}
+							<button type="button" class="chip-delete-btn" title="Delete from R2 and Orbit"
+								onclick={() => deleteUpload(f)}>
+								<span class="msi msi-18">delete</span>
+							</button>
+						{/if}
+					</div>
 				{/each}
 			</div>
 		{/if}
@@ -518,18 +508,210 @@
 	}
 	.error.small { font-size: 0.8rem; padding: 0.4rem 0.6rem; }
 
-	/* ── Week sections ── */
-	.week-section { margin-bottom: 2rem; }
+	/* ── Compact roadmap window ──────────────────────
+	   Replaces the long per-week sections with a 5-row list centered
+	   on the current week. Rows themselves are plain anchors that
+	   jump to /app for the full checklist. */
+	.roadmap-window {
+		list-style: none;
+		padding: 0;
+		margin: 0 0 2rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.4rem;
+	}
+	.roadmap-row { display: block; }
+	.roadmap-link {
+		display: grid;
+		grid-template-columns: 64px 1fr auto;
+		align-items: center;
+		gap: 0.85rem;
+		padding: 0.7rem 0.95rem;
+		background: var(--md-sys-color-surface-container, var(--surface-2));
+		border: 1px solid var(--md-sys-color-outline-variant, var(--border));
+		border-radius: 12px;
+		text-decoration: none;
+		color: var(--ink);
+		transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+	}
+	.roadmap-link:hover {
+		transform: translateY(-1px);
+		border-color: color-mix(in srgb, var(--md-sys-color-primary, var(--accent)) 50%, var(--border));
+	}
+	.roadmap-row.current .roadmap-link {
+		background: var(--md-sys-color-primary-container, color-mix(in srgb, var(--md-sys-color-primary, var(--accent)) 18%, var(--paper)));
+		border-color: var(--md-sys-color-primary, var(--accent));
+		box-shadow: 0 6px 18px color-mix(in srgb, var(--md-sys-color-primary, var(--accent)) 22%, transparent);
+	}
+	.roadmap-row.current .roadmap-link:hover { transform: translateY(-1px); }
 
-	.week-label {
-		font-size: 0.75rem;
-		font-weight: 600;
+	.roadmap-week-num {
+		font-family: 'JetBrains Mono', ui-monospace, monospace;
+		font-size: 0.72rem;
+		font-weight: 700;
 		text-transform: uppercase;
 		letter-spacing: 0.08em;
-		color: var(--muted-fg);
-		margin: 0 0 0.75rem;
+		color: var(--md-sys-color-secondary, var(--muted-fg));
+	}
+	.roadmap-row.current .roadmap-week-num {
+		color: var(--md-sys-color-on-primary-container, var(--ink));
 	}
 
+	.roadmap-body {
+		display: flex;
+		flex-direction: column;
+		gap: 0.15rem;
+		min-width: 0;
+	}
+	.roadmap-headline {
+		font-family: 'Avara', serif;
+		font-size: 0.98rem;
+		line-height: 1.2;
+		color: var(--ink);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.roadmap-headline.muted { color: var(--muted-fg); font-style: italic; }
+	.roadmap-due {
+		font-family: 'JetBrains Mono', ui-monospace, monospace;
+		font-size: 0.7rem;
+		color: var(--md-sys-color-on-surface-variant, var(--muted-fg));
+	}
+
+	.roadmap-status {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
+		font-size: 0.78rem;
+		font-weight: 600;
+		padding: 0.25rem 0.65rem;
+		border-radius: 999px;
+		background: color-mix(in srgb, var(--ink) 6%, transparent);
+		color: var(--muted-fg);
+		flex-shrink: 0;
+	}
+	.roadmap-status.status-done {
+		background: color-mix(in srgb, var(--md-sys-color-primary, var(--accent)) 18%, transparent);
+		color: var(--md-sys-color-primary, var(--accent));
+	}
+	.roadmap-status.status-progress {
+		background: color-mix(in srgb, var(--md-sys-color-tertiary, var(--accent)) 18%, transparent);
+		color: var(--md-sys-color-tertiary, var(--accent));
+	}
+	.roadmap-status.status-todo,
+	.roadmap-status.status-empty,
+	.roadmap-status.instructor {
+		background: color-mix(in srgb, var(--ink) 6%, transparent);
+		color: var(--md-sys-color-on-surface-variant, var(--muted-fg));
+	}
+
+	@media (max-width: 600px) {
+		.roadmap-link {
+			grid-template-columns: 56px 1fr;
+			gap: 0.65rem;
+		}
+		.roadmap-status {
+			grid-column: 2;
+			justify-self: start;
+			margin-top: 0.15rem;
+		}
+	}
+
+	/* ── Week sections ── (Roadmap reads from week_plans now) */
+	.week-section {
+		margin-bottom: 1.5rem;
+		padding: 1.1rem 1.2rem;
+		background: var(--md-sys-color-surface-container, var(--surface-2));
+		border: 1px solid var(--border);
+		border-radius: 14px;
+	}
+	.week-head {
+		display: flex;
+		align-items: baseline;
+		gap: 0.6rem;
+		margin-bottom: 0.5rem;
+	}
+	.week-label {
+		font-size: 0.72rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.08em;
+		color: var(--md-sys-color-secondary, var(--muted-fg));
+		margin: 0;
+	}
+	.due-pill {
+		font-family: 'JetBrains Mono', ui-monospace, monospace;
+		font-size: 0.7rem;
+		color: var(--md-sys-color-on-surface-variant, var(--muted-fg));
+	}
+	.week-headline {
+		font-family: 'Avara', serif;
+		font-size: 1.1rem;
+		font-weight: 400;
+		color: var(--ink);
+		margin: 0 0 0.3rem;
+	}
+	.week-topic-preview {
+		font-size: 0.82rem;
+		color: var(--md-sys-color-on-surface-variant, var(--muted-fg));
+		font-style: italic;
+		margin: 0 0 0.75rem;
+	}
+	.item-list {
+		list-style: none;
+		padding: 0;
+		margin: 0.5rem 0 0;
+		display: flex;
+		flex-direction: column;
+		gap: 0.35rem;
+	}
+	.item-row {
+		display: grid;
+		grid-template-columns: 22px 1fr auto auto;
+		align-items: center;
+		gap: 0.55rem;
+		padding: 0.4rem 0.6rem;
+		background: var(--paper);
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		font-size: 0.88rem;
+		color: var(--ink);
+	}
+	.item-row.done .item-label { color: var(--muted-fg); text-decoration: line-through; text-decoration-thickness: 1px; }
+	.item-bullet {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		color: var(--md-sys-color-secondary, var(--muted-fg));
+	}
+	.item-row.done .item-bullet { color: var(--md-sys-color-primary, var(--accent)); }
+	.item-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.item-tag {
+		font-size: 0.68rem;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		color: var(--md-sys-color-on-surface-variant, var(--muted-fg));
+		background: color-mix(in srgb, var(--md-sys-color-secondary, var(--accent)) 12%, transparent);
+		padding: 0.08rem 0.45rem;
+		border-radius: 999px;
+		flex-shrink: 0;
+	}
+	.item-count {
+		font-size: 0.72rem;
+		font-family: 'JetBrains Mono', ui-monospace, monospace;
+		color: var(--muted-fg);
+	}
+	.item-count.positive {
+		color: var(--md-sys-color-primary, var(--accent));
+		font-weight: 600;
+	}
+	.empty.small { font-size: 0.82rem; padding: 0.35rem 0; }
+
+	/* Old assignments-render leftovers — kept so file uploads + the
+	   legacy form actions still resolve their CSS, but no longer
+	   rendered by the Roadmap. */
 	.assignment-list { display: flex; flex-direction: column; gap: 0.75rem; }
 
 	.assignment-card {
@@ -699,6 +881,33 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.5rem;
+	}
+
+	/* Wraps the chip + instructor-only delete button so they read as
+	   one row. The button sits flush to the chip's right edge with a
+	   slim gap. */
+	.chip-with-actions {
+		display: flex;
+		align-items: stretch;
+		gap: 0.35rem;
+	}
+	.chip-with-actions .link-chip { flex: 1; min-width: 0; }
+	.chip-delete-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 40px;
+		flex-shrink: 0;
+		background: var(--paper);
+		border: 1.5px solid var(--border);
+		border-radius: 12px;
+		color: var(--md-sys-color-error, var(--danger));
+		cursor: pointer;
+		transition: background 140ms ease, border-color 140ms ease;
+	}
+	.chip-delete-btn:hover {
+		background: color-mix(in srgb, var(--md-sys-color-error, var(--danger)) 12%, transparent);
+		border-color: var(--md-sys-color-error, var(--danger));
 	}
 
 	.link-chip {

@@ -69,7 +69,7 @@ export async function load({ locals, cookies }) {
 	if (classId && db) {
 		const [usersResult, channelsResult] = await Promise.all([
 			db.execute({
-				sql: `SELECT u.id, u.name, u.email, u.role FROM users u
+				sql: `SELECT u.id, u.name, u.email, u.role, u.avatar_kind, u.avatar_value FROM users u
 				      WHERE u.role = 'instructor'
 				         OR EXISTS (
 				              SELECT 1 FROM class_memberships cm
@@ -86,15 +86,40 @@ export async function load({ locals, cookies }) {
 
 		users = usersResult.rows
 			.filter((u) => String(u.id) !== session.user.id)
-			.map((u) => ({ id: String(u.id), name: String(u.name || u.email), role: String(u.role) }));
+			.map((u) => ({
+				id: String(u.id),
+				name: String(u.name || u.email),
+				role: String(u.role),
+				avatarKind: u.avatar_kind ? String(u.avatar_kind) : 'gen',
+				avatarValue: u.avatar_value ? String(u.avatar_value) : null
+			}));
 
 		channels = channelsResult.rows.map((c) => ({ id: String(c.id), name: String(c.name) }));
 	}
 
+	// Pull the current user's avatar so the sidebar / user menu /
+	// own-message bubbles can render it without falling back to a
+	// generic chip. session.user doesn't carry this — it's set via
+	// the profile flow after auth.
+	let myAvatarKind = 'gen';
+	let myAvatarValue = null;
+	if (db) {
+		try {
+			const r = await db.execute({
+				sql: 'SELECT avatar_kind, avatar_value FROM users WHERE id = ?',
+				args: [session.user.id]
+			});
+			const row = r.rows[0];
+			if (row?.avatar_kind) myAvatarKind = String(row.avatar_kind);
+			if (row?.avatar_value) myAvatarValue = String(row.avatar_value);
+		} catch { /* non-fatal */ }
+	}
 	const currentUser = {
 		id: session.user.id,
 		name: session.user.name || session.user.email || '',
-		role: session.user.role ?? 'student'
+		role: session.user.role ?? 'student',
+		avatarKind: myAvatarKind,
+		avatarValue: myAvatarValue
 	};
 
 	// Fetch initial unread state from Firebase Admin (bypasses client auth/rules).

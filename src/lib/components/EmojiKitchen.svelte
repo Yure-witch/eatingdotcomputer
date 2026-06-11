@@ -542,8 +542,16 @@
 </script>
 
 <div class="kitchen-panel">
-	<!-- Tab strip -->
+	<!-- Tab strip. Search lives in the leftmost slot — it's the most
+	     common entry point once people know what they're looking for,
+	     so giving it the primary position cuts a tap on every fresh
+	     open. The chip is icon-only (Material Symbols magnifying
+	     glass) to keep it visually distinct from the word-labeled
+	     ranking tabs that follow. -->
 	<div class="kitchen-tabs">
+		<button class="kitchen-tab icon-tab" class:active={mode === 'search'}  onclick={() => setMode('search')}  title="Search mixes &amp; emoji" aria-label="Search">
+			<span class="msi msi-18" class:msi-fill={mode === 'search'}>search</span>
+		</button>
 		<button class="kitchen-tab" class:active={mode === 'recent'}   onclick={() => setMode('recent')}   title="Recently used">🕐</button>
 		<button class="kitchen-tab" class:active={mode === 'popular'}  onclick={() => setMode('popular')}>Popular</button>
 		{#if showGboard}
@@ -557,7 +565,6 @@
 		{/if}
 		<button class="kitchen-tab" class:active={mode === 'mix'}      onclick={() => setMode('mix')}>Mix</button>
 		<button class="kitchen-tab" class:active={mode === 'browse'}   onclick={() => setMode('browse')}>Browse</button>
-		<button class="kitchen-tab" class:active={mode === 'search'}   onclick={() => setMode('search')}>Search</button>
 		<button class="kitchen-tab settings-tab" class:active={mode === 'settings'} onclick={() => setMode('settings')} title="Tab settings">⚙️</button>
 	</div>
 
@@ -797,28 +804,44 @@
 		font-family: 'Google Sans Flex', 'Space Grotesk', sans-serif;
 	}
 
-	/* Tabs */
+	/* Tabs — pill-chip toggle row, matching the Emotes tab's
+	   Uploaded / Library sub-tabs. Horizontally scrollable so the
+	   Mix / Browse / Search / Settings chips don't get cramped when
+	   optional ranking tabs (Gboard / Emojimix / Funbox) are enabled. */
 	.kitchen-tabs {
 		display: flex;
-		border-bottom: 1.5px solid var(--border);
-		background: var(--surface-2);
+		gap: 0.25rem;
+		padding: 0.35rem 0.5rem;
+		border-bottom: 1px solid var(--border);
+		background: var(--md-sys-color-surface-container, var(--surface-2));
 		flex-shrink: 0;
+		overflow-x: auto;
+		scrollbar-width: none;
 	}
+	.kitchen-tabs::-webkit-scrollbar { display: none; }
 	.kitchen-tab {
-		flex: 1;
-		padding: 0.55rem 0;
-		border: none;
-		background: none;
-		color: var(--muted-fg);
+		padding: 0.25rem 0.7rem;
+		border: 1px solid transparent;
+		border-radius: 999px;
+		background: transparent;
+		color: var(--ink);
 		font-family: inherit;
-		font-size: 0.8rem;
+		font-size: 0.75rem;
 		font-weight: 600;
 		cursor: pointer;
-		transition: color 0.15s, background 0.15s;
-		letter-spacing: 0.02em;
+		white-space: nowrap;
+		flex-shrink: 0;
 	}
-	.kitchen-tab:hover { color: var(--ink); background: var(--surface-2); }
-	.kitchen-tab.active { color: var(--ink); background: var(--paper); border-bottom: 2px solid var(--ink); margin-bottom: -1.5px; }
+	.kitchen-tab.active {
+		background: var(--md-sys-color-secondary-container, var(--paper));
+		color: var(--md-sys-color-on-secondary-container, var(--ink));
+		border-color: var(--md-sys-color-secondary, var(--border));
+	}
+	.kitchen-tab:hover:not(.active) {
+		background: color-mix(in srgb,
+			var(--md-sys-color-on-surface, var(--ink)) 7%,
+			transparent);
+	}
 
 	/* Content */
 	.kitchen-content {
@@ -1102,8 +1125,11 @@
 	}
 	.key-btn:hover { background: #d8d0c4; }
 
-	/* Settings tab */
-	.settings-tab { flex: none; padding: 0 0.6rem; font-size: 0.95rem; }
+	/* Icon-only tabs (Search, Settings) — same pill chrome as the
+	   word-tabs but with a tight square padding so the glyph sits in
+	   a round chip instead of getting the wider word-tab treatment. */
+	.icon-tab { padding: 0.2rem 0.45rem; display: inline-flex; align-items: center; justify-content: center; }
+	.settings-tab { padding: 0.2rem 0.5rem; font-size: 0.9rem; }
 
 	.settings-panel {
 		display: flex;

@@ -1,12 +1,14 @@
 <script>
 	import { enhance } from '$app/forms';
 	import SyllabusBuilder from '$lib/components/SyllabusBuilder.svelte';
+	import Avatar from '$lib/components/Avatar.svelte';
 	import { createContentRenderer, bubbleFontSize, jumboEmojiCountM, stripMarkup } from '$lib/message-render.js';
-	import { onMount, onDestroy, getContext } from 'svelte';
+	import { onMount, onDestroy, tick, getContext } from 'svelte';
 	import { invalidateAll } from '$app/navigation';
 	import { auth, db as rtdb } from '$lib/firebase.js';
 	import { signInWithCustomToken } from 'firebase/auth';
 	import { ref, onValue, off } from 'firebase/database';
+	import { mountStaticEmotes } from '$lib/emote-mount.js';
 
 	// Use the layout's rawPresence directly — same signal that drives the sidebar
 	// green dots. No separate Firebase subscription needed for presence here.
@@ -313,16 +315,17 @@
 	const TYPE_LABELS = { link: 'Link', image: 'Image', video: 'Video' };
 	const ALL_TYPES = ['link', 'image', 'video'];
 
-	// Which assignment is being edited (by id)
-	let editing = $state(null);
-	// New-assignment form state: which week panel is open
-	let addingToWeek = $state(null);
-	// New week form open
-	let addingNewWeek = $state(false);
-	// Default week for new week form
-	let newWeekNumber = $state(data.maxWeek + 1);
-
-	$effect(() => { newWeekNumber = data.maxWeek + 1; });
+	// Drop a Lottie player into every `.tg-emoji` span rendered by
+	// renderModContent() so animated emote tokens inside week-plan
+	// headlines / item labels actually animate on this page. Re-runs
+	// whenever the underlying assignments data changes.
+	let pageEl = $state(null);
+	$effect(() => {
+		void data.weeks;
+		void activeTab;
+		if (!pageEl) return;
+		tick().then(() => mountStaticEmotes(pageEl));
+	});
 
 	// User × device bar chart — shares selectedRange with the activity line chart
 	const userBars = $derived.by(() => {
@@ -397,7 +400,7 @@
 	<title>Manage — eating.computer</title>
 </svelte:head>
 
-<div class="shell">
+<div class="shell" bind:this={pageEl}>
 	<main style:margin-left={syllabusPreviewOpen ? '0px' : null}>
 		<div class="page-header">
 			<div>
@@ -408,9 +411,7 @@
 					<button class="btn-secondary" onclick={sendTestNotification} disabled={testNotifStatus === 'sending'}>
 						{testNotifStatus ?? '🔔 Test notification'}
 					</button>
-					<button class="btn-primary" onclick={() => { addingNewWeek = !addingNewWeek; addingToWeek = null; }}>
-						{addingNewWeek ? 'Cancel' : '+ Add assignment'}
-					</button>
+					<a class="btn-primary" href="/app">+ Add on Home</a>
 				{/if}
 			</div>
 		</div>
@@ -433,188 +434,127 @@
 		{/if}
 
 		{#if activeTab === 'assignments'}
-		<!-- ── Global create form ── -->
-		{#if addingNewWeek}
-			<div class="create-card">
-				<h2>New assignment</h2>
-				{#if form?.error && form?.action === 'create'}
-					<p class="error">{form.error}</p>
-				{/if}
-				<form method="POST" action="?/create" use:enhance={() => () => { addingNewWeek = false; }}>
-				<input type="hidden" name="class_id" value={data.classId} />
-				<div class="form-row">
-						<label>
-							<span>Week <span class="req">*</span></span>
-							<input type="number" name="week" min="1" max="52" required bind:value={newWeekNumber} />
-						</label>
-						<label class="grow">
-							<span>Title <span class="req">*</span></span>
-							<input type="text" name="title" required placeholder="e.g. Reading response" />
-						</label>
-						<label>
-							<span>Due date</span>
-							<input type="date" name="due_date" />
-						</label>
-					</div>
-					<label>
-						<span>Description / instructions</span>
-						<textarea name="description" rows="3" placeholder="Instructions, links, rubric…"></textarea>
-					</label>
-					<fieldset>
-						<legend>Accepted submissions <span class="req">*</span></legend>
-						<div class="checkbox-row">
-							{#each ALL_TYPES as t}
-								<label class="checkbox-label">
-									<input type="checkbox" name="accepted_types" value={t} checked={t === 'link'} />
-									{TYPE_LABELS[t]}
-								</label>
-							{/each}
-						</div>
-					</fieldset>
-					<div class="form-actions">
-						<button type="button" class="btn-ghost" onclick={() => (addingNewWeek = false)}>Cancel</button>
-						<button type="submit" class="btn-primary">Create</button>
-					</div>
-				</form>
-			</div>
-		{/if}
+			{#if data.weeks.length === 0}
+				<p class="empty">
+					No assignments yet.
+					<a href="/app">Create one on the Home page</a>
+					— the instructor form there is the source of truth.
+				</p>
+			{/if}
 
-		<!-- ── Week-by-week list ── -->
-		{#if data.weeks.length === 0 && !addingNewWeek}
-			<p class="empty">No assignments yet. Click "+ Add assignment" to get started.</p>
-		{/if}
-
-		{#each data.weeks as { week, assignments }}
-			<section class="week-block">
-				<div class="week-header">
-					<h2>Week {week}</h2>
-					<button
-						class="btn-add-inline"
-						onclick={() => { addingToWeek = addingToWeek === week ? null : week; addingNewWeek = false; }}
-					>
-						{addingToWeek === week ? 'Cancel' : '+ Add to week'}
-					</button>
-				</div>
-
-				<!-- Inline add form for this week -->
-				{#if addingToWeek === week}
-					<div class="inline-form-card">
-						{#if form?.error && form?.action === 'create'}
-							<p class="error small">{form.error}</p>
-						{/if}
-						<form method="POST" action="?/create" use:enhance={() => () => { addingToWeek = null; }}>
-							<input type="hidden" name="week" value={week} />
-							<input type="hidden" name="class_id" value={data.classId} />
-							<label class="grow">
-								<span>Title <span class="req">*</span></span>
-								<input type="text" name="title" required placeholder="Assignment title" autofocus />
-							</label>
-							<label>
-								<span>Due date</span>
-								<input type="date" name="due_date" />
-							</label>
-							<label>
-								<span>Description</span>
-								<textarea name="description" rows="2" placeholder="Optional instructions…"></textarea>
-							</label>
-							<fieldset>
-								<legend>Accepted submissions</legend>
-								<div class="checkbox-row">
-									{#each ALL_TYPES as t}
-										<label class="checkbox-label">
-											<input type="checkbox" name="accepted_types" value={t} checked={t === 'link'} />
-											{TYPE_LABELS[t]}
-										</label>
-									{/each}
-								</div>
-							</fieldset>
-							<div class="form-actions">
-								<button type="button" class="btn-ghost" onclick={() => (addingToWeek = null)}>Cancel</button>
-								<button type="submit" class="btn-primary small">Add</button>
-							</div>
-						</form>
-					</div>
-				{/if}
-
-				<div class="assignment-table">
-					{#each assignments as a}
-						<div class="row">
-							{#if editing === a.id}
-								<!-- ── Edit form ── -->
-								<div class="edit-form">
-									{#if form?.error && form?.action === 'update' && form?.id === a.id}
-										<p class="error small">{form.error}</p>
+			{#each data.weeks as { week, assignments }}
+				{#each assignments as a (a.id)}
+					<section class="week-block plan-block" class:important={a.important}>
+						<div class="week-header">
+							<div class="plan-header-left">
+								<h2 class="plan-week">
+									Week {week}
+									{#if a.important}
+										<span class="plan-important-pill" title="Marked important">
+											<span class="msi msi-14 msi-fill">star</span> important
+										</span>
 									{/if}
-									<form method="POST" action="?/update" use:enhance={() => () => { editing = null; }}>
-										<input type="hidden" name="id" value={a.id} />
-										<div class="form-row">
-											<label>
-												<span>Week</span>
-												<input type="number" name="week" min="1" max="52" required value={a.week} />
-											</label>
-											<label class="grow">
-												<span>Title</span>
-												<input type="text" name="title" required value={a.title} />
-											</label>
-											<label>
-												<span>Due date</span>
-												<input type="date" name="due_date" value={a.dueDate} />
-											</label>
-										</div>
-										<label>
-											<span>Description</span>
-											<textarea name="description" rows="2">{a.description}</textarea>
-										</label>
-										<fieldset>
-											<legend>Accepted submissions</legend>
-											<div class="checkbox-row">
-												{#each ALL_TYPES as t}
-													<label class="checkbox-label">
-														<input type="checkbox" name="accepted_types" value={t} checked={a.acceptedTypes.includes(t)} />
-														{TYPE_LABELS[t]}
-													</label>
-												{/each}
-											</div>
-										</fieldset>
-										<div class="form-actions">
-											<button type="button" class="btn-ghost" onclick={() => (editing = null)}>Cancel</button>
-											<button type="submit" class="btn-primary small">Save</button>
-										</div>
-									</form>
-								</div>
-							{:else}
-								<!-- ── Read view ── -->
-								<div class="row-info">
-									<span class="row-title">{a.title}</span>
+								</h2>
+								{#if a.title}
+									<h3 class="plan-headline">{@html renderModContent(a.title, false)}</h3>
+								{/if}
+								<div class="plan-meta">
 									{#if a.dueDate}
-										<span class="row-due">Due {new Date(a.dueDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
+										<span class="plan-meta-pill">Due {new Date(a.dueDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
 									{/if}
-									<span class="row-types">{a.acceptedTypes.map((t) => TYPE_LABELS[t]).join(', ')}</span>
-									<span class="row-subs">{a.submissionCount} sub{a.submissionCount === 1 ? '' : 's'}</span>
+									<span class="plan-meta-pill">{a.itemCount} item{a.itemCount === 1 ? '' : 's'}</span>
+									<span class="plan-meta-pill">{a.submissionCount} submission{a.submissionCount === 1 ? '' : 's'}</span>
 								</div>
-								<div class="row-actions">
-									<button class="btn-edit" onclick={() => (editing = a.id)}>Edit</button>
-									<form method="POST" action="?/delete" use:enhance>
-										<input type="hidden" name="id" value={a.id} />
-										<button type="submit" class="btn-delete" onclick={(e) => { if (!confirm('Delete this assignment?')) e.preventDefault(); }}>Delete</button>
-									</form>
-								</div>
-							{/if}
+							</div>
+							<div class="row-actions">
+								<a class="btn-edit" href="/app#edit-{a.id}">Edit on Home</a>
+								<form method="POST" action="?/deleteWeekPlan" use:enhance>
+									<input type="hidden" name="id" value={a.id} />
+									<button type="submit" class="btn-delete" onclick={(e) => { if (!confirm(`Delete Week ${week}? This also removes its items and any student completions.`)) e.preventDefault(); }}>Delete</button>
+								</form>
+							</div>
 						</div>
-					{/each}
-				</div>
-			</section>
-		{/each}
+
+						{#if a.description}
+							<p class="plan-topic-preview">{@html renderModContent(a.description, false)}</p>
+						{/if}
+
+						{#if a.items.length > 0}
+							<ul class="plan-items">
+								{#each a.items as it (it.id)}
+									<li class="plan-item-row">
+										<span class="plan-item-label">{@html renderModContent(it.label, false)}</span>
+										{#if it.requiresSubmission}
+											<span class="plan-item-types">{it.acceptedTypes.map((t) => TYPE_LABELS[t] ?? t).join(' / ')}</span>
+										{/if}
+										<span class="plan-item-count" class:positive={it.completedCount > 0}>
+											{it.completedCount}/{a.studentCount} done
+										</span>
+									</li>
+								{/each}
+							</ul>
+						{/if}
+					</section>
+				{/each}
+			{/each}
 		{/if}
 
 		{#if activeTab === 'members'}
+	<!-- Enrollment window. Controls whether the student
+	     /onboarding/class picker lists THIS class at all. Toggle off
+	     and the class disappears from the picker — old students stay
+	     enrolled, but new requests can't come in. Optional date
+	     window narrows the open period further. -->
+	<section class="members-section enrollment-section">
+		<h2>Enrollment window</h2>
+		{#if form?.error && form?.action === 'setEnrollment'}
+			<p class="error small">{form.error}</p>
+		{/if}
+		<form method="POST" action="?/setEnrollment" use:enhance class="enrollment-form">
+			<label class="enrollment-toggle">
+				<input
+					type="checkbox"
+					name="enrollment_open"
+					value="1"
+					checked={data.enrollment?.open}
+				/>
+				<span class="enrollment-toggle-text">
+					<span class="enrollment-toggle-title">Accepting new students</span>
+					<span class="enrollment-toggle-sub">When off, the class is hidden from the join picker on /onboarding/class. Existing members are unaffected.</span>
+				</span>
+			</label>
+			<div class="enrollment-range">
+				<label class="enrollment-date">
+					<span>Open from</span>
+					<input type="date" name="enrollment_start" value={data.enrollment?.start ?? ''} />
+				</label>
+				<label class="enrollment-date">
+					<span>Open until</span>
+					<input type="date" name="enrollment_end" value={data.enrollment?.end ?? ''} />
+				</label>
+				<span class="enrollment-hint">Leave a date blank for no bound.</span>
+			</div>
+			<div class="enrollment-actions">
+				<button type="submit" class="btn-primary small">Save enrollment window</button>
+			</div>
+		</form>
+	</section>
+
 	{#if data.pendingRequests.length > 0}
 	<section class="members-section pending-section">
 		<h2>Pending requests <span class="member-count">({data.pendingRequests.length})</span></h2>
 		<div class="pending-list">
 			{#each data.pendingRequests as req}
 				<div class="pending-card">
-					<div class="pending-avatar">{req.userName ? req.userName[0].toUpperCase() : '?'}</div>
+					<div class="pending-avatar">
+						<Avatar
+							name={req.userName ?? ''}
+							uid={req.userId}
+							avatarKind={req.avatarKind ?? 'gen'}
+							avatarValue={req.avatarValue ?? null}
+							size={44}
+						/>
+					</div>
 					<div class="pending-info">
 						<div class="pending-name-row">
 							<a class="pending-name" href="/app/profile/{req.userId}">{req.userName || 'Unnamed'}</a>
@@ -1254,6 +1194,76 @@
 	/* ── Week blocks ── */
 	.week-block { margin-bottom: 2.5rem; }
 
+	/* ── Week-plan blocks (new) ───────────────────
+	   The assignments tab now mirrors the home page's data instead
+	   of the legacy `assignments` table. Each row collapses one
+	   week_plan into a card with its headline, items, and the same
+	   N/M completion ratios the instructor sees on the Home overview. */
+	.plan-block {
+		background: var(--paper);
+		border: 1.5px solid var(--border);
+		border-radius: 14px;
+		padding: 1rem 1.25rem;
+		margin-bottom: 1rem;
+	}
+	.plan-block.important {
+		border-color: color-mix(in srgb, var(--md-sys-color-secondary, var(--accent)) 55%, var(--border));
+		box-shadow: 0 0 0 2px color-mix(in srgb, var(--md-sys-color-secondary, var(--accent)) 18%, transparent);
+	}
+	.plan-block .week-header { align-items: flex-start; }
+	.plan-header-left { display: flex; flex-direction: column; gap: 0.35rem; min-width: 0; flex: 1; }
+	.plan-week {
+		display: inline-flex; align-items: center; gap: 0.5rem;
+		font-size: 0.72rem !important; font-weight: 700 !important;
+		text-transform: uppercase; letter-spacing: 0.09em;
+		color: var(--muted-fg) !important; margin: 0 !important;
+	}
+	.plan-important-pill {
+		display: inline-flex; align-items: center; gap: 0.25rem;
+		padding: 0.1rem 0.5rem; border-radius: 999px;
+		background: color-mix(in srgb, var(--md-sys-color-secondary, var(--accent)) 18%, transparent);
+		color: var(--md-sys-color-secondary, var(--accent));
+		font-size: 0.6rem; letter-spacing: 0.06em;
+	}
+	.plan-headline {
+		font-family: 'Avara', serif;
+		font-size: 1.05rem; font-weight: 400; line-height: 1.25;
+		color: var(--ink); margin: 0;
+	}
+	.plan-meta { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+	.plan-meta-pill {
+		font-size: 0.7rem; color: var(--muted-fg);
+		padding: 0.1rem 0.5rem; border-radius: 999px;
+		background: var(--surface-2);
+	}
+	.plan-topic-preview {
+		margin: 0.5rem 0 0;
+		font-size: 0.85rem; color: var(--muted-fg); line-height: 1.4;
+	}
+	.plan-items {
+		list-style: none; padding: 0;
+		margin: 0.75rem 0 0;
+		display: flex; flex-direction: column; gap: 0.3rem;
+	}
+	.plan-item-row {
+		display: flex; align-items: center; gap: 0.6rem;
+		padding: 0.4rem 0.6rem;
+		background: var(--surface-2); border-radius: 8px;
+		font-size: 0.85rem; color: var(--ink);
+	}
+	.plan-item-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+	.plan-item-types {
+		font-size: 0.7rem; color: var(--muted-fg);
+		padding: 0.1rem 0.45rem; border-radius: 999px;
+		background: color-mix(in srgb, var(--ink) 6%, transparent);
+		flex-shrink: 0;
+	}
+	.plan-item-count {
+		font-family: 'JetBrains Mono', ui-monospace, monospace;
+		font-size: 0.72rem; color: var(--muted-fg); flex-shrink: 0;
+	}
+	.plan-item-count.positive { color: var(--md-sys-color-primary, var(--accent)); font-weight: 600; }
+
 	.week-header {
 		display: flex;
 		align-items: center;
@@ -1454,6 +1464,67 @@
 	.pending-section { border: 1.5px solid #f5c6cb; border-radius: 12px; padding: 1.25rem 1.5rem; background: #fff8f8; margin-top: 2.5rem; }
 	.pending-section h2 { margin-bottom: 1rem; }
 
+	/* Enrollment window card. Sits above the pending-requests block
+	   so the instructor sees the gate first, then the queue of
+	   incoming requests it produces. */
+	.enrollment-section {
+		border: 1.5px solid var(--md-sys-color-outline-variant, var(--border));
+		border-radius: 12px;
+		padding: 1.25rem 1.5rem;
+		background: var(--md-sys-color-surface-container, var(--surface-2));
+		margin-top: 1.5rem;
+	}
+	.enrollment-section h2 { margin: 0 0 1rem; }
+	.enrollment-form {
+		display: flex;
+		flex-direction: column;
+		gap: 1rem;
+	}
+	.enrollment-toggle {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.65rem;
+		cursor: pointer;
+		padding: 0.6rem 0.75rem;
+		border-radius: 10px;
+		background: var(--paper);
+		border: 1px solid var(--md-sys-color-outline-variant, var(--border));
+		transition: border-color 140ms ease;
+	}
+	.enrollment-toggle:has(input:checked) {
+		border-color: var(--md-sys-color-primary, var(--accent));
+	}
+	.enrollment-toggle input { margin-top: 0.2rem; flex-shrink: 0; accent-color: var(--md-sys-color-primary, var(--accent)); }
+	.enrollment-toggle-text { display: flex; flex-direction: column; gap: 0.15rem; }
+	.enrollment-toggle-title { font-size: 0.92rem; font-weight: 600; color: var(--ink); }
+	.enrollment-toggle-sub { font-size: 0.78rem; color: var(--md-sys-color-on-surface-variant, var(--muted-fg)); line-height: 1.35; }
+	.enrollment-range {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.85rem;
+		align-items: flex-end;
+	}
+	.enrollment-date {
+		display: flex; flex-direction: column; gap: 0.25rem;
+		font-size: 0.78rem; color: var(--md-sys-color-on-surface-variant, var(--muted-fg));
+	}
+	.enrollment-date input {
+		padding: 0.4rem 0.6rem;
+		border: 1px solid var(--md-sys-color-outline-variant, var(--border));
+		border-radius: 8px;
+		background: var(--paper);
+		color: var(--ink);
+		font-family: inherit;
+		font-size: 0.85rem;
+	}
+	.enrollment-hint {
+		font-size: 0.72rem;
+		color: var(--md-sys-color-on-surface-variant, var(--muted-fg));
+		font-style: italic;
+		padding-bottom: 0.4rem;
+	}
+	.enrollment-actions { display: flex; justify-content: flex-end; }
+
 	.pending-list { display: flex; flex-direction: column; gap: 0.75rem; }
 
 	.pending-card {
@@ -1466,19 +1537,9 @@
 		padding: 1rem 1.25rem;
 	}
 
-	.pending-avatar {
-		width: 40px;
-		height: 40px;
-		border-radius: 50%;
-		background: var(--ink);
-		color: var(--paper);
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		font-family: 'Avara', serif;
-		font-size: 1.1rem;
-		flex-shrink: 0;
-	}
+	/* The Avatar component owns sizing + typography now; the wrapper
+	   just provides flex alignment in the pending-card row. */
+	.pending-avatar { flex-shrink: 0; display: inline-flex; }
 
 	.pending-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.2rem; }
 
