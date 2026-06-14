@@ -129,7 +129,7 @@ export function spriteKeyForCustom(short, id) { return `tgc:${short}:${id}`; }
 //   fork) instead of WebGL. Targets browsers with WebGPU enabled —
 //   notably iOS 18+ where WebGL OffscreenCanvas is buggy.
 const ENGINE_KEY = 'tgEngine';
-const VALID_ENGINES = new Set(['rlottie', 'skottie', 'skottie-worker', 'skottie-webgpu', 'webgpu-rasterized']);
+const VALID_ENGINES = new Set(['rlottie', 'skottie', 'skottie-worker', 'skottie-webgpu', 'webgpu-rasterized', 'cpu-rasterized']);
 
 // iOS Safari (including iPadOS in mobile mode) silently breaks on the
 // OffscreenCanvas + WebGL combo the WorkerGPU engine uses — frames
@@ -151,10 +151,10 @@ const _initialEngine = (() => {
 	if (isCoarsePointer) {
 		// iOS Safari / iOS PWAs reliably crash on ANY Skia/WebGL engine in
 		// the picker once a couple dozen animations are alive — WebGL in a
-		// worker is the unstable bit. CPU rlottie is the only safe choice
-		// there. (A future CPU-rasterise-into-atlas path could give iOS the
-		// cheap atlas playback without WebGL.)
-		if (isIOS()) return 'rlottie';
+		// worker is the unstable bit. `cpu-rasterized` avoids WebGL entirely:
+		// rlottie WASM (off-thread) bakes frames into a 2D atlas that's
+		// blitted on a single rAF — the cheap atlas playback without WebGL.
+		if (isIOS()) return (v === 'rlottie') ? 'rlottie' : 'cpu-rasterized';
 		// Other touch devices (Android, etc.): prefer the RASTERIZED engine.
 		// Unlike the old live engine it keeps no live WebGL animations alive
 		// — it bakes frames through one transient WebGL surface, then plays

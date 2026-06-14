@@ -17,16 +17,15 @@
 	import { acquire, release } from '$lib/lottie-spritesheet.js';
 	import * as SkMain from '$lib/skottie-stage.js';
 	import * as SkWorker from '$lib/skottie-stage-worker.js';
-	// Resolve the right Skottie stage module based on engine. Both
-	// modules export the identical API, so dispatch is just module
-	// selection — every call site below uses `stage.<fn>` and the right
-	// implementation runs underneath.
+	import * as CpuAtlas from '$lib/cpu-atlas.js';
+	// Resolve the right stage module based on engine. All three expose the
+	// same canvas-cell API surface, so dispatch is module selection — every
+	// call site below uses `mod.<fn>` and the right implementation runs.
 	function skModule(eng) {
-		// `skottie-webgpu` is now an alias for `skottie-worker` — the
-		// WebGPU-specific code path was reverted after CanvasKit's
-		// WebGPU canvas surface caused per-tile flicker / disappearing
-		// elements on the picker. Mapping both labels to SkWorker keeps
-		// the engine toggle UI working without re-introducing the bug.
+		// `cpu-rasterized` → no-WebGL CPU atlas (iOS-safe). `webgpu-rasterized`
+		// / `skottie-worker` / `skottie-webgpu` → Skia/WebGL worker atlas.
+		// Everything else → main-thread Skottie.
+		if (eng === 'cpu-rasterized') return CpuAtlas;
 		return (eng === 'skottie-worker' || eng === 'skottie-webgpu' || eng === 'webgpu-rasterized') ? SkWorker : SkMain;
 	}
 
@@ -102,7 +101,7 @@
 	// Remember which Skottie module owns the current cell so teardown
 	// hits the right one even after an engine swap mid-flight.
 	let skottieMod = null;
-	const isSkottieEngine = (eng) => eng === 'skottie' || eng === 'skottie-worker' || eng === 'skottie-webgpu' || eng === 'webgpu-rasterized';
+	const isSkottieEngine = (eng) => eng === 'skottie' || eng === 'skottie-worker' || eng === 'skottie-webgpu' || eng === 'webgpu-rasterized' || eng === 'cpu-rasterized';
 
 	const px = $derived(Math.round(size * (typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 2)));
 
@@ -232,39 +231,43 @@
 		// natively — no overlay, no per-frame rect math, no scroll lag.
 		if (typeof mod.registerCanvasCell === 'function' && canvas) {
 			// Keep the CSS placeholder (the sprite/SVG thumb) showing the
-			// whole time until the worker confirms a real paint into this
-			// canvas (onFirstPaint). Do NOT hide it preemptively just
-			// because the animation is built — the canvas is still blank
-			// until the first blit lands, and hiding the thumb early is
-			// exactly the "flash / disappears then re-appears" artifact.
+			// whole time until a real paint lands in this canvas (onFirstPaint).
+			// Do NOT hide it preemptively just because the animation is built —
+			// the canvas is still blank until the first blit, and hiding early
+			// is the "flash / disappears then re-appears" artifact.
 			painted = false;
-			let off;
-			try {
-				off = canvas.transferControlToOffscreen();
-			} catch (e) {
-				// Canvas already had a context (e.g. rlottie ran on it
-				// before an engine swap). The {#key engine} wrapper
-				// recreates the element on swap so this normally can't
-				// happen; if it does, bail rather than throw.
-				console.warn('[sprite] transferControlToOffscreen failed', e);
-				return;
+			// CPU atlas (iOS): the cell's canvas is the live DOM element drawn
+			// via a 2D context on the main thread — do NOT transfer it. Worker
+			// atlas: transferControlToOffscreen so the worker owns it.
+			const isCpu = (eng === 'cpu-rasterized');
+			let target = canvas;
+			if (!isCpu) {
+				try {
+					target = canvas.transferControlToOffscreen();
+				} catch (e) {
+					// Canvas already had a context (e.g. rlottie ran on it
+					// before an engine swap). The {#key engine} wrapper
+					// recreates the element on swap so this normally can't
+					// happen; if it does, bail rather than throw.
+					console.warn('[sprite] transferControlToOffscreen failed', e);
+					return;
+				}
 			}
 			skottieCanvasPath = true;
 			skottieCellId = mod.registerCanvasCell({
 				url: u,
-				canvas: off,
+				canvas: target,
 				w: px,
 				h: px,
 				paused,
 				loop,
 				visible: !!(eager || visible),
-				// 'webgpu-rasterized' engine: worker pre-rasterises frames to
-				// cached bitmaps and plays them back by blitting (no per-frame
-				// Skottie render). Other worker engines render live each frame.
+				// 'webgpu-rasterized' / 'cpu-rasterized': pre-rasterise frames to
+				// a cached atlas and play them back by blitting (no per-frame
+				// render). Other worker engines render live each frame.
 				rasterized: eng === 'webgpu-rasterized',
-				// Fires after the worker's confirmed paints of this cell —
-				// the canvas now holds the animation, so the CSS thumb
-				// backdrop can drop out.
+				// Fires after the confirmed paints of this cell — the canvas now
+				// holds the animation, so the CSS thumb backdrop can drop out.
 				onFirstPaint: () => { if (mounted) painted = true; }
 			});
 			if (paused) return;
