@@ -233,7 +233,14 @@
 		}
 		headCats = head;
 		packCats = packTabsLocal;
-		if (!byCat[active]) active = head[0]?.key ?? packTabsLocal[0]?.key ?? '';
+		// Reset `active` if it isn't a tab that exists in THIS mode — not just
+		// if its data is missing. `byCat['Effects']` is always built, so the
+		// old `!byCat[active]` check left the default active='Effects' in
+		// place even in static-only (Library) mode where Effects is hidden,
+		// making the Library open on the animated Effects grid. Validate
+		// against the actual visible tab keys instead.
+		const _validTabs = new Set([...head.map((c) => c.key), ...packTabsLocal.map((c) => c.key)]);
+		if (!_validTabs.has(active)) active = head[0]?.key ?? packTabsLocal[0]?.key ?? '';
 		loading = false;
 	});
 
@@ -434,6 +441,31 @@
 	}
 	onMount(() => { measureGrid(); });
 	$effect(() => { active; queueMicrotask(measureGrid); });
+
+	// Keep the active tab on-screen in the horizontal strip. When vertical
+	// scrolling (or a click) changes `active`, nudge `.tg-tabs` just enough
+	// to bring the highlighted tab fully into view — important once there
+	// are many custom-pack tabs that overflow the strip. Scrolls ONLY the
+	// strip horizontally (rect math), never the page or the grid.
+	$effect(() => {
+		active;
+		if (!tabsEl) return;
+		tick().then(() => {
+			if (!tabsEl) return;
+			const el = tabsEl.querySelector('.tg-tab.active');
+			if (!el) return;
+			const barRect = tabsEl.getBoundingClientRect();
+			const elRect = el.getBoundingClientRect();
+			const left = elRect.left - barRect.left + tabsEl.scrollLeft;
+			const right = left + elRect.width;
+			const PAD = 16;
+			if (left < tabsEl.scrollLeft + PAD) {
+				tabsEl.scrollTo({ left: Math.max(0, left - PAD), behavior: 'smooth' });
+			} else if (right > tabsEl.scrollLeft + tabsEl.clientWidth - PAD) {
+				tabsEl.scrollTo({ left: right - tabsEl.clientWidth + PAD, behavior: 'smooth' });
+			}
+		});
+	});
 	const visibleStart = $derived(
 		Math.max(0, (Math.floor(scrollTop / CELL_PX) - BUFFER_ROWS) * cellsPerRow)
 	);

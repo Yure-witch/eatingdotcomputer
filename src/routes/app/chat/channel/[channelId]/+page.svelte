@@ -112,34 +112,29 @@
 	// timestamp is ≥ a message's createdAt has seen that message.
 	let convReads = $state({});
 
-	// Latest message I sent — that's the one bubble we hang the
-	// "Seen by …" receipt below. Showing it on every prior message
-	// gets noisy fast; iMessage / Slack / etc. all collapse the
-	// indicator to the most recent.
-	const lastOwnMsgId = $derived.by(() => {
-		const uid = data.currentUser.id;
-		let id = null;
-		for (const m of messages) if (m.userId === uid) id = m.id;
-		return id;
+	// Per-user read position. For each OTHER participant, the id of the LAST
+	// message they've read (latest message whose createdAt ≤ their convReads
+	// timestamp). Keyed by message id → list of reader uids so several
+	// readers at the same spot stack. Each reader's avatar renders at that
+	// message, position:absolute — the marker never changes a message's
+	// height (no reflow / scroll-jank) as people's read pointers move
+	// independently through the timeline.
+	const readMarkers = $derived.by(() => {
+		const out = {};
+		const me = data.currentUser.id;
+		if (!messages.length) return out;
+		for (const [u, tsRaw] of Object.entries(convReads)) {
+			if (u === me) continue;
+			const ts = Number(tsRaw) || 0;
+			if (!ts) continue;
+			// messages are in ascending createdAt order, so the last one that
+			// satisfies the bound is this reader's furthest-read message.
+			let lastId = null;
+			for (const m of messages) if ((m.createdAt || 0) <= ts) lastId = m.id;
+			if (lastId) (out[lastId] ??= []).push(u);
+		}
+		return out;
 	});
-	// uids that have read past my latest message. Excludes me (own
-	// reads don't count) and anyone whose read pointer is older than
-	// the message — those people simply haven't seen it yet.
-	const seenByForLast = $derived.by(() => {
-		if (!lastOwnMsgId) return [];
-		const msg = messages.find((m) => m.id === lastOwnMsgId);
-		if (!msg) return [];
-		const uid = data.currentUser.id;
-		return Object.entries(convReads)
-			.filter(([u, ts]) => u !== uid && Number(ts) >= msg.createdAt)
-			.map(([u]) => u);
-	});
-	const seenByNames = $derived(seenByForLast.map((u) => userMap[u]?.name ?? 'Someone'));
-	// Tap-to-toggle the seen-by name list on mobile. Desktop users
-	// get the same popover via :hover, but on touch there's no
-	// equivalent — the click handler flips this and re-clicking the
-	// pill (or tapping elsewhere) closes it.
-	let seenPopOpen = $state(false);
 
 	// Replies
 	let replyingTo = $state(null); // { id, userId, userName, content }
@@ -1978,20 +1973,37 @@
 	}
 	afterNavigate(focusFromUrl);
 
-	// True only when this tab is genuinely being looked at right now:
-	// foreground (not a background tab) AND the window has OS focus.
-	// This is the "green / active on this page" gate for read receipts —
-	// a backgrounded or unfocused tab must NOT auto-acknowledge messages,
-	// otherwise the sender sees "read" before the recipient actually
-	// looked. See memory/project_read_receipts_gating.md.
+	// Last real interaction on THIS chat page (mouse / key / scroll / touch).
+	// Seeded to mount time — navigating here is itself an active action.
+	let _lastInputAt = Date.now();
+	// How recently the user must have interacted to count as "actively
+	// reading". A focused tab alone isn't enough — the chat can sit focused
+	// in the foreground while the user is looking at another screen, which is
+	// exactly the "online but didn't actually read it" false positive. We
+	// require a real interaction within this window too.
+	const ACTIVE_WINDOW_MS = 60_000;
+
+	// True only when the user is genuinely reading right now: the tab is
+	// foreground + focused AND they've interacted with the page within the
+	// active window. See memory/project_read_receipts_gating.md.
 	function isViewingActively() {
 		return typeof document !== 'undefined'
 			&& document.visibilityState === 'visible'
-			&& document.hasFocus();
+			&& document.hasFocus()
+			&& (Date.now() - _lastInputAt) < ACTIVE_WINDOW_MS;
 	}
-	// Set when markRead() was called while NOT actively viewing. We flush
-	// the deferred receipt the moment the tab returns to the foreground.
+	// Set when markRead() was called while NOT actively viewing. We flush the
+	// deferred receipt the moment the user is active on the page again.
 	let _readPending = false;
+
+	// Any real interaction marks the user active and flushes a deferred
+	// receipt — this is what makes a receipt mean "active on the page since
+	// the message arrived" rather than merely "tab was open".
+	function onChatActivity(e) {
+		if (e && e.isTrusted === false) return;
+		_lastInputAt = Date.now();
+		if (_readPending) flushPendingRead();
+	}
 
 	function markRead() {
 		if (!isViewingActively()) {
@@ -2241,6 +2253,13 @@
 		document.addEventListener('selectionchange', onMsgListSelectionChange);
 		document.addEventListener('visibilitychange', flushPendingRead);
 		window.addEventListener('focus', flushPendingRead);
+		// Real-interaction tracking: these keep `_lastInputAt` fresh (so the
+		// "actively reading" gate is satisfied) and flush any deferred receipt
+		// the instant the user does something on the page.
+		_lastInputAt = Date.now();
+		for (const ev of ['pointerdown', 'keydown', 'wheel', 'touchstart', 'mousemove']) {
+			document.addEventListener(ev, onChatActivity, { passive: true });
+		}
 		if (heartsCanvas) {
 			heartsCanvas.width = window.innerWidth;
 			heartsCanvas.height = window.innerHeight;
@@ -2624,6 +2643,9 @@
 		document.removeEventListener('selectionchange', onMsgListSelectionChange);
 		document.removeEventListener('visibilitychange', flushPendingRead);
 		window.removeEventListener('focus', flushPendingRead);
+		for (const ev of ['pointerdown', 'keydown', 'wheel', 'touchstart', 'mousemove']) {
+			document.removeEventListener(ev, onChatActivity);
+		}
 		_tgObserver?.disconnect();
 		while (_tgHeldSlots > 0) { _tgYieldPlay(); _tgHeldSlots--; }
 	});
@@ -3263,41 +3285,21 @@
 					{/each}
 				</div>
 			{/if}
-			{#if isMine && msg.id === lastOwnMsgId && seenByForLast.length > 0}
-				<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-				<div class="seen-row" class:open={seenPopOpen}
-					onclick={() => (seenPopOpen = !seenPopOpen)}
-					title={seenByNames.join(', ')}>
-					<!-- Double-check glyph (iMessage / WhatsApp / Slack
-					     convention for "delivered and read") leads the
-					     row so the receipt is recognisable even before
-					     the avatars resolve. -->
-					<span class="msi msi-14 msi-fill seen-check">done_all</span>
-					<span class="seen-avatars">
-						{#each seenByForLast.slice(0, 5) as uid (uid)}
-							<span class="seen-avatar-slot">
-								<Avatar name={userMap[uid]?.name ?? ''} uid={uid} avatarKind={userMap[uid]?.avatarKind ?? 'gen'} avatarValue={userMap[uid]?.avatarValue ?? null} size={18} />
-							</span>
-						{/each}
-						{#if seenByForLast.length > 5}
-							<span class="seen-avatar-overflow">+{seenByForLast.length - 5}</span>
-						{/if}
-					</span>
-					<!-- Hover (desktop) + tap-open (mobile) popover with
-					     every reader's name. position: absolute so it
-					     floats over the message stack instead of pushing
-					     the timeline downward. -->
-					<div class="seen-pop">
-						<div class="seen-pop-title">Seen by</div>
-						<ul class="seen-pop-list">
-							{#each seenByForLast as uid (uid)}
-								<li class="seen-pop-row">
-									<Avatar name={userMap[uid]?.name ?? ''} uid={uid} avatarKind={userMap[uid]?.avatarKind ?? 'gen'} avatarValue={userMap[uid]?.avatarValue ?? null} size={20} />
-									<span class="seen-pop-name">{userMap[uid]?.name ?? 'Someone'}</span>
-								</li>
-							{/each}
-						</ul>
-					</div>
+			{#if readMarkers[msg.id]?.length}
+				<!-- Per-user read markers. Each reader's avatar sits at the
+				     last message they've read. position:absolute (see CSS) so
+				     it overlays the row's bottom-right and never changes the
+				     message height — people's read pointers move around the
+				     timeline freely without ever reflowing it. -->
+				<div class="read-row" title={readMarkers[msg.id].map((u) => userMap[u]?.name ?? 'Someone').join(', ')}>
+					{#each readMarkers[msg.id].slice(0, 4) as uid (uid)}
+						<span class="read-dot">
+							<Avatar name={userMap[uid]?.name ?? ''} uid={uid} avatarKind={userMap[uid]?.avatarKind ?? 'gen'} avatarValue={userMap[uid]?.avatarValue ?? null} size={16} />
+						</span>
+					{/each}
+					{#if readMarkers[msg.id].length > 4}
+						<span class="read-more">+{readMarkers[msg.id].length - 4}</span>
+					{/if}
 				</div>
 			{/if}
 		</div>
@@ -4113,106 +4115,43 @@
 	   the trailing element of my bubble run — same place iMessage /
 	   Slack put their indicator. Right-aligned because all my
 	   messages already align right. */
-	.seen-row {
-		position: relative;
+	/* Per-user read markers. Absolutely positioned at the message's
+	   bottom-right, so they OVERLAY the row and never change its height —
+	   read pointers can sit anywhere in the timeline without ever reflowing
+	   it (the whole point: no layout shift = no scroll jank). pointer-events
+	   are off so the markers never intercept a click on the message. The
+	   avatars overlap and each rings itself in the page colour so a stack
+	   stays legible. `title` (set in markup) gives the reader names on hover. */
+	.read-row {
+		position: absolute;
+		right: 4px;
+		bottom: -7px;
 		display: inline-flex;
 		align-items: center;
-		gap: 0.35rem;
-		margin-top: 0.3rem;
-		align-self: flex-end;
-		font-size: 0.72rem;
-		font-weight: 500;
-		color: var(--md-sys-color-on-surface-variant, var(--muted-fg));
-		cursor: pointer;
-		user-select: none;
+		pointer-events: none;
+		z-index: 3;
 	}
-	.message.mine .seen-row { margin-left: auto; }
-	.seen-check { color: var(--md-sys-color-primary, var(--accent)); }
-
-	/* Avatar stack — overlap by ~5px each so a single chip reads as
-	   "this small group has seen it". Each slot rings the next avatar
-	   in the bubble background colour so the stack stays legible
-	   regardless of the avatars' hashed tints. */
-	.seen-avatars { display: inline-flex; align-items: center; }
-	.seen-avatar-slot {
+	.read-dot {
 		display: inline-flex;
 		margin-left: -6px;
+		border-radius: 50%;
 		box-shadow: 0 0 0 1.5px var(--paper);
-		border-radius: 6px;
 	}
-	.seen-avatar-slot:first-child { margin-left: 0; }
-	.seen-avatar-overflow {
+	.read-dot:first-child { margin-left: 0; }
+	.read-more {
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-		min-width: 18px;
-		height: 18px;
-		padding: 0 4px;
+		min-width: 16px;
+		height: 16px;
+		padding: 0 3px;
 		margin-left: -6px;
-		border-radius: 6px;
+		border-radius: 8px;
 		background: var(--md-sys-color-secondary-container, var(--surface-2));
 		color: var(--md-sys-color-on-secondary-container, var(--ink));
 		box-shadow: 0 0 0 1.5px var(--paper);
-		font-size: 0.6rem;
+		font-size: 0.55rem;
 		font-weight: 700;
-	}
-
-	/* Hover / tap popover with every reader's name. Hidden by default;
-	   :hover handles desktop, the `.open` class (toggled by onclick)
-	   handles touch. */
-	.seen-pop {
-		position: absolute;
-		bottom: calc(100% + 6px);
-		right: 0;
-		min-width: 180px;
-		max-width: 260px;
-		padding: 0.5rem 0.65rem;
-		background: var(--md-sys-color-surface-container-high, var(--paper));
-		border: 1px solid var(--md-sys-color-outline-variant, var(--border));
-		border-radius: 10px;
-		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
-		opacity: 0;
-		pointer-events: none;
-		transform: translateY(4px);
-		transition: opacity 120ms ease, transform 120ms ease;
-		z-index: 50;
-	}
-	.seen-row:hover .seen-pop,
-	.seen-row.open .seen-pop {
-		opacity: 1;
-		pointer-events: auto;
-		transform: translateY(0);
-	}
-	.seen-pop-title {
-		font-size: 0.62rem;
-		font-weight: 700;
-		text-transform: uppercase;
-		letter-spacing: 0.08em;
-		color: var(--md-sys-color-on-surface-variant, var(--muted-fg));
-		margin-bottom: 0.4rem;
-	}
-	.seen-pop-list {
-		list-style: none;
-		padding: 0;
-		margin: 0;
-		display: flex;
-		flex-direction: column;
-		gap: 0.3rem;
-		max-height: 160px;
-		overflow-y: auto;
-	}
-	.seen-pop-row {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		font-size: 0.78rem;
-		color: var(--ink);
-	}
-	.seen-pop-name {
-		min-width: 0;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
 	}
 	.reaction-chip {
 		position: relative;

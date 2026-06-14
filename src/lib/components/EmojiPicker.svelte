@@ -9,7 +9,7 @@
 </script>
 
 <script>
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { initSemanticSearch, searchEmoji, isSemanticReady, onSemanticReady } from '$lib/emoji-semantic.js';
 
 	let { onSelect } = $props();
@@ -26,6 +26,7 @@
 	let loading      = $state(true);
 	let query        = $state('');
 	let activeGroup  = $state(0);   // -2 = popular, -1 = recent, 0..N-1 = group index
+	let tabsEl       = $state(null); // category strip — auto-scrolled to keep the active tab in view
 	let skinTone     = $state('');  // '' | '1F3FB'–'1F3FF', set by picking a variant
 	let gender       = $state('');  // '' | 'female' | 'male', set by picking a variant
 	let recent       = $state([]);
@@ -793,6 +794,29 @@
 		syncActiveFromScroll();
 	}
 
+	// Keep the active category tab on-screen: when scrolling (or a click)
+	// changes `activeGroup`, nudge the horizontal `.tabs` strip just enough
+	// to bring the highlighted tab into view. Scrolls only the strip.
+	$effect(() => {
+		activeGroup;
+		if (!tabsEl) return;
+		tick().then(() => {
+			if (!tabsEl) return;
+			const el = tabsEl.querySelector('.tab.active');
+			if (!el) return;
+			const barRect = tabsEl.getBoundingClientRect();
+			const elRect = el.getBoundingClientRect();
+			const left = elRect.left - barRect.left + tabsEl.scrollLeft;
+			const right = left + elRect.width;
+			const PAD = 16;
+			if (left < tabsEl.scrollLeft + PAD) {
+				tabsEl.scrollTo({ left: Math.max(0, left - PAD), behavior: 'smooth' });
+			} else if (right > tabsEl.scrollLeft + tabsEl.clientWidth - PAD) {
+				tabsEl.scrollTo({ left: right - tabsEl.clientWidth + PAD, behavior: 'smooth' });
+			}
+		});
+	});
+
 	// Tab click handler. Standalone tabs (Popular / Recent) just
 	// switch the activeGroup so the standalone branch renders.
 	// Flowing tabs scroll the unified container to that section's
@@ -906,7 +930,7 @@
 
 	<!-- Category tabs -->
 	{#if !query.trim()}
-		<div class="tabs" role="tablist">
+		<div class="tabs" role="tablist" bind:this={tabsEl}>
 			<button role="tab" class="tab tab-text" class:active={activeGroup === -2} title="Most used"
 				onclick={() => pickTab(-2)}>#</button>
 			<button role="tab" class="tab tab-text" class:active={activeGroup === -1} title="Recently used"

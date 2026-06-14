@@ -118,12 +118,14 @@
 	// message confirmed delivered to their eyes — not every message
 	// in the run.
 	const otherSeenAt = $derived(Number(convReads[otherUser.id] ?? 0));
-	const lastSeenOwnMsgId = $derived.by(() => {
-		const uid = data.currentUser.id;
+	// The last message the other user has read — ANY message, not just our
+	// own — so the marker tracks where they actually are in the thread. Their
+	// avatar renders there, position:absolute, so it never changes a
+	// message's height (no reflow / scroll-jank).
+	const lastSeenMsgId = $derived.by(() => {
+		if (!otherSeenAt) return null;
 		let id = null;
-		for (const m of messages) {
-			if (m.userId === uid && m.createdAt <= otherSeenAt) id = m.id;
-		}
+		for (const m of messages) if ((m.createdAt || 0) <= otherSeenAt) id = m.id;
 		return id;
 	});
 
@@ -1901,20 +1903,34 @@
 	}
 	afterNavigate(focusFromUrl);
 
-	// True only when this tab is genuinely being looked at right now:
-	// foreground (not a background tab) AND the window has OS focus.
-	// This is the "green / active on this page" gate for read receipts —
-	// a backgrounded or unfocused tab must NOT auto-acknowledge messages,
-	// otherwise the sender sees "read" before the recipient actually
-	// looked. See memory/project_read_receipts_gating.md.
+	// Last real interaction on THIS chat page. Seeded to mount time —
+	// navigating here is itself an active action.
+	let _lastInputAt = Date.now();
+	const ACTIVE_WINDOW_MS = 60_000;
+
+	// True only when the user is genuinely reading right now: the tab is
+	// foreground + focused AND they've interacted within the active window.
+	// A focused-but-idle tab is exactly the "online but didn't actually read
+	// it" false positive, so a real interaction is required too.
+	// See memory/project_read_receipts_gating.md.
 	function isViewingActively() {
 		return typeof document !== 'undefined'
 			&& document.visibilityState === 'visible'
-			&& document.hasFocus();
+			&& document.hasFocus()
+			&& (Date.now() - _lastInputAt) < ACTIVE_WINDOW_MS;
 	}
-	// Set when markRead() was called while NOT actively viewing. We flush
-	// the deferred receipt the moment the tab returns to the foreground.
+	// Set when markRead() was called while NOT actively viewing. We flush the
+	// deferred receipt the moment the user is active on the page again.
 	let _readPending = false;
+
+	// Any real interaction marks the user active and flushes a deferred
+	// receipt — making a receipt mean "active on the page since the message
+	// arrived" rather than merely "tab was open".
+	function onChatActivity(e) {
+		if (e && e.isTrusted === false) return;
+		_lastInputAt = Date.now();
+		if (_readPending) flushPendingRead();
+	}
 
 	function markRead() {
 		if (!isViewingActively()) {
@@ -2156,6 +2172,10 @@
 		document.addEventListener('selectionchange', onMsgListSelectionChange);
 		document.addEventListener('visibilitychange', flushPendingRead);
 		window.addEventListener('focus', flushPendingRead);
+		_lastInputAt = Date.now();
+		for (const ev of ['pointerdown', 'keydown', 'wheel', 'touchstart', 'mousemove']) {
+			document.addEventListener(ev, onChatActivity, { passive: true });
+		}
 		if (heartsCanvas) {
 			heartsCanvas.width = window.innerWidth;
 			heartsCanvas.height = window.innerHeight;
@@ -2521,6 +2541,9 @@
 		document.removeEventListener('selectionchange', onMsgListSelectionChange);
 		document.removeEventListener('visibilitychange', flushPendingRead);
 		window.removeEventListener('focus', flushPendingRead);
+		for (const ev of ['pointerdown', 'keydown', 'wheel', 'touchstart', 'mousemove']) {
+			document.removeEventListener(ev, onChatActivity);
+		}
 		_tgObserver?.disconnect();
 		while (_tgHeldSlots > 0) { _tgYieldPlay(); _tgHeldSlots--; }
 	});
@@ -3140,15 +3163,13 @@
 					{/each}
 				</div>
 			{/if}
-			{#if isMine && msg.id === lastSeenOwnMsgId}
-				<div class="seen-row" title="Seen by {otherUser.name}">
-					<!-- Double-check icon makes the receipt readable
-					     even before the avatar has hashed in. -->
-					<span class="msi msi-14 msi-fill seen-check">done_all</span>
-					<span class="seen-avatars">
-						<span class="seen-avatar-slot">
-							<Avatar name={otherUser.name} uid={otherUser.id} avatarKind={otherUser.avatarKind ?? 'gen'} avatarValue={otherUser.avatarValue ?? null} size={18} />
-						</span>
+			{#if msg.id === lastSeenMsgId}
+				<!-- Other user's read marker — absolutely positioned at the
+				     row's bottom-right so it overlays without changing the
+				     message height (no reflow / scroll-jank). -->
+				<div class="read-row" title="Seen by {otherUser.name}">
+					<span class="read-dot">
+						<Avatar name={otherUser.name} uid={otherUser.id} avatarKind={otherUser.avatarKind ?? 'gen'} avatarValue={otherUser.avatarValue ?? null} size={16} />
 					</span>
 				</div>
 			{/if}
@@ -3942,29 +3963,23 @@
 	/* Reactions */
 	.reactions { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.2rem; }
 
-	/* Read-receipt pill. iMessage-style "Seen" under the most recent
-	   of my messages the other user has read past — right-aligned
-	   because the whole .mine bubble run is right-aligned. */
-	.seen-row {
+	/* Read marker — the other user's avatar at the last message they've
+	   read. Absolutely positioned at the row's bottom-right so it overlays
+	   the message and never changes its height (no reflow / scroll-jank). */
+	.read-row {
+		position: absolute;
+		right: 4px;
+		bottom: -7px;
 		display: inline-flex;
 		align-items: center;
-		gap: 0.35rem;
-		margin-top: 0.3rem;
-		align-self: flex-end;
-		font-size: 0.72rem;
-		font-weight: 500;
-		color: var(--md-sys-color-on-surface-variant, var(--muted-fg));
+		pointer-events: none;
+		z-index: 3;
 	}
-	.message.mine .seen-row { margin-left: auto; }
-	.seen-check { color: var(--md-sys-color-primary, var(--accent)); }
-	.seen-avatars { display: inline-flex; align-items: center; }
-	.seen-avatar-slot {
+	.read-dot {
 		display: inline-flex;
-		margin-left: -6px;
+		border-radius: 50%;
 		box-shadow: 0 0 0 1.5px var(--paper);
-		border-radius: 6px;
 	}
-	.seen-avatar-slot:first-child { margin-left: 0; }
 	.reaction-chip {
 		position: relative;
 		display: flex; align-items: center; gap: 0.22rem;
