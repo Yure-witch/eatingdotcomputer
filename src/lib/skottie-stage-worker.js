@@ -521,17 +521,17 @@ export function unregisterCell(id) {
 // overlay path's _cells ids when first-paint acks come back.
 export function registerCanvasCell({
 	url, canvas, w, h, paused = false, paintIndex = null,
-	loop = true, visible = false, onFirstPaint = null
+	loop = true, visible = false, rasterized = false, onFirstPaint = null
 }) {
 	const id = 1_000_000_000 + (_nextCanvasCellId++);
 	// Route to the shard that owns this URL — same shard builds AND renders
-	// it, so the cached animation is shared with any other cell of the same
-	// emoji and builds are spread across the pool.
+	// it, so the cached animation (and rasterized frame cache) is shared with
+	// any other cell of the same emoji and builds spread across the pool.
 	const shardIdx = shardOf(url);
 	_canvasCells.set(id, { onFirstPaint, url, shardIdx });
 	postToShard(shardIdx, {
 		type: 'register-canvas-cell',
-		id, url, w, h, paused, paintIndex, loop, visible, canvas
+		id, url, w, h, paused, paintIndex, loop, visible, rasterized, canvas
 	}, [canvas]);
 	return id;
 }
@@ -601,8 +601,12 @@ function startLoop() {
 		// the worker's render+readback load and, if a frame overruns
 		// 16 ms, backs the loop up and DROPS effective fps. Throttling
 		// keeps each frame inside budget so it stays smooth.
-		if (_canvasCells.size && (now - _lastCanvasTick) >= TARGET_FPS_INTERVAL_MS) {
-			_lastCanvasTick = now;
+		// Tick every frame (~60 fps). The worker's per-cell frame-skip means
+		// each animation only redraws when its frame index advances, so a
+		// 30 fps source redraws ~30x/s and a 60 fps source ~60x/s, each as
+		// smooth as its source allows, with no global cap flattening the fast
+		// ones. Rasterized playback is a cheap atlas blit at this rate.
+		if (_canvasCells.size) {
 			// Each shard renders only the canvas-cells it owns (no-op if it
 			// owns none), so a broadcast tick is correct and cheap.
 			postToAllShards({ type: 'tick', now });

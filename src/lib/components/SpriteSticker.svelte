@@ -11,7 +11,8 @@
 		spriteSheet,
 		spriteKeyForCp,
 		spriteKeyForCustom,
-		engineMode
+		engineMode,
+		isAdaptivePack
 	} from '$lib/telegram-emoji-store.js';
 	import { acquire, release } from '$lib/lottie-spritesheet.js';
 	import * as SkMain from '$lib/skottie-stage.js';
@@ -26,7 +27,7 @@
 		// WebGPU canvas surface caused per-tile flicker / disappearing
 		// elements on the picker. Mapping both labels to SkWorker keeps
 		// the engine toggle UI working without re-introducing the bug.
-		return (eng === 'skottie-worker' || eng === 'skottie-webgpu') ? SkWorker : SkMain;
+		return (eng === 'skottie-worker' || eng === 'skottie-webgpu' || eng === 'webgpu-rasterized') ? SkWorker : SkMain;
 	}
 
 	let {
@@ -52,6 +53,11 @@
 
 	const isCustom = $derived(!!(short && id));
 	const paused = $derived(isCustom && isStaticPack(short));
+	// Adaptive (Telegram text_color) packs ship monochrome silhouettes meant
+	// to render in the current text colour. The sprite/thumb placeholder is
+	// baked in a single colour, so for these we recolour it to the live
+	// --ink via a CSS mask instead of painting the baked pixels.
+	const adaptive = $derived(!!(short && isAdaptivePack(short)));
 	const url = $derived(isCustom ? tgcUrl(short, id) : tgAnimatedUrl(cp));
 	const thumbUrl = $derived(isCustom ? tgcThumbUrl(short, id) : tgThumbUrl(cp));
 	const itemKey = $derived(isCustom ? spriteKeyForCustom(short, id) : spriteKeyForCp(cp));
@@ -96,7 +102,7 @@
 	// Remember which Skottie module owns the current cell so teardown
 	// hits the right one even after an engine swap mid-flight.
 	let skottieMod = null;
-	const isSkottieEngine = (eng) => eng === 'skottie' || eng === 'skottie-worker' || eng === 'skottie-webgpu';
+	const isSkottieEngine = (eng) => eng === 'skottie' || eng === 'skottie-worker' || eng === 'skottie-webgpu' || eng === 'webgpu-rasterized';
 
 	const px = $derived(Math.round(size * (typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 2)));
 
@@ -252,6 +258,10 @@
 				paused,
 				loop,
 				visible: !!(eager || visible),
+				// 'webgpu-rasterized' engine: worker pre-rasterises frames to
+				// cached bitmaps and plays them back by blitting (no per-frame
+				// Skottie render). Other worker engines render live each frame.
+				rasterized: eng === 'webgpu-rasterized',
 				// Fires after the worker's confirmed paints of this cell —
 				// the canvas now holds the animation, so the CSS thumb
 				// backdrop can drop out.
@@ -481,7 +491,20 @@
 		style="width:{size}px;height:{size}px"
 		onmouseenter={() => (hovering = true)}
 		onmouseleave={() => (hovering = false)}>
-		{#if spritePos}
+		{#if adaptive && spritePos}
+			<!-- Adaptive placeholder: use the silhouette as a MASK painted
+			     with the live --ink so it matches the theme (and the
+			     recoloured animation) instead of the sprite's baked colour. -->
+			<span class="tg-thumb tg-thumb-tint" class:hidden={painted}
+				style="-webkit-mask-image:url({sprite.sheetUrl}); mask-image:url({sprite.sheetUrl});
+				       -webkit-mask-position:{-spritePos.x * spriteScale}px {-spritePos.y * spriteScale}px;
+				       mask-position:{-spritePos.x * spriteScale}px {-spritePos.y * spriteScale}px;
+				       -webkit-mask-size:{sprite.sheetW * spriteScale}px {sprite.sheetH * spriteScale}px;
+				       mask-size:{sprite.sheetW * spriteScale}px {sprite.sheetH * spriteScale}px;"></span>
+		{:else if adaptive && thumbUrl}
+			<span class="tg-thumb tg-thumb-tint tg-thumb-tint-img" class:hidden={painted}
+				style="-webkit-mask-image:url({thumbUrl}); mask-image:url({thumbUrl});"></span>
+		{:else if spritePos}
 			<!-- CSS backdrop covers the cell from mount until the
 			     worker has drawn 3 confirmed frames into the canvas
 			     tile (`painted` flips true). It's perfectly aligned
@@ -529,6 +552,21 @@
 		inset: 0;
 		width: 100%;
 		height: 100%;
+	}
+	/* Adaptive placeholder: the silhouette (sprite cell or thumb image) is
+	   used as an alpha mask and filled with the live --ink, so the
+	   placeholder is the theme's text colour, not the sprite's baked tone.
+	   --ink is a CSS var, so this recolours instantly on a theme switch. */
+	.tg-thumb-tint {
+		background-color: var(--ink);
+		-webkit-mask-repeat: no-repeat;
+		mask-repeat: no-repeat;
+	}
+	.tg-thumb-tint-img {
+		-webkit-mask-position: center;
+		mask-position: center;
+		-webkit-mask-size: contain;
+		mask-size: contain;
 	}
 	/* Placeholder sits ON TOP of the per-cell canvas and covers it until
 	   the animation is solidly rendering (`painted`). This is what keeps

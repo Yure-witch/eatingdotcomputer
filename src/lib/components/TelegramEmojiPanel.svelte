@@ -637,10 +637,12 @@
 				e === 'rlottie' ? 'skottie'
 				: e === 'skottie' ? 'skottie-worker'
 				: e === 'skottie-worker' ? 'skottie-webgpu'
+				: e === 'skottie-webgpu' ? 'webgpu-rasterized'
 				: 'rlottie'
 			)}>
 			Engine: <strong>{
-				$engineMode === 'skottie-webgpu' ? 'WebGPU'
+				$engineMode === 'webgpu-rasterized' ? 'Rasterized'
+				: $engineMode === 'skottie-webgpu' ? 'WebGPU'
 				: $engineMode === 'skottie-worker' ? 'WorkerGPU'
 				: $engineMode === 'skottie' ? 'GPU'
 				: 'CPU'

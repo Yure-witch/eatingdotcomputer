@@ -82,6 +82,221 @@ function ensureScratchForPx(px) {
 	return s;
 }
 
+// ── Rasterized playback ("webgpu-rasterized" engine) ─────────────────────
+// Render each animation's frames to ImageBitmaps ONCE (Skottie on the GPU),
+// cache them keyed by url@px, then play back by blitting the cached frame
+// into the cell's 2D canvas — drawImage(ImageBitmap) is a cheap GPU op with
+// NO per-frame Skottie render and NO per-frame GPU flush. This is what makes
+// many animated cells cheap: the expensive work happens once per unique
+// emoji, amortised + idle-yielded, instead of every cell every frame. The
+// live path (default worker engine) re-renders every frame; this trades a
+// one-time rasterise + a bit of memory for near-free steady-state playback.
+// SHARED ATLAS. Every animation's frames are packed into a few large 2D
+// atlas pages (one set per cell pixel size), indexed per (url, frame) by an
+// atlas slot. Playback blits the slot's sub-rect. This keeps the GPU texture
+// count tiny — a handful of atlas pages total instead of one texture per
+// emoji (let alone one per frame, which exhausted the GPU and lost the
+// WebGL context). When the atlas is full, the least-recently-shown emoji's
+// slots are reclaimed (LRU); cells touch their entry every frame so anything
+// on screen is never the eviction victim.
+//   _frameCache:  url@px -> { atlas, slots: [{page,x,y}], N }
+const _frameCache = new Map();
+const _frameJobs = new Set();         // url@px currently rasterising
+const _rasterSheetByPx = new Map();   // px -> { canvas, surface } — WebGL scratch to render frames before packing
+const _atlasByPx = new Map();         // px -> { px, cols, pages:[{canvas,ctx}], free:[{page,x,y}], lru:Map<key,entry> }
+// Device-adaptive raster config. Low-RAM devices (phones report
+// navigator.deviceMemory ≤ 4 GB; absent ⇒ assume a roomy desktop) get a
+// much smaller, cheaper atlas: native resolution (no supersample), fewer
+// frames, and a tiny 1024² atlas so total GPU memory stays in single-digit
+// MB. Desktops get the sharp 2× supersample + bigger cache.
+const _deviceMem = (typeof navigator !== 'undefined' && navigator.deviceMemory) || 8;
+const _isMobileUA = typeof navigator !== 'undefined'
+	&& /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
+// Any mobile UA (even an 8 GB flagship, which reports deviceMemory: 8) OR a
+// genuinely low-RAM machine gets the small atlas. Mobile GPUs are the
+// constraint, not just RAM, so the UA check matters.
+const _lowMem = _isMobileUA || _deviceMem <= 4;
+
+// SUPERSAMPLE: render each frame at this multiple of the cell's device px,
+// then downscale on blit → crisper edges than native 1:1. Most expensive
+// knob — cost scales with SUPERSAMPLE² (1.5× = 2.25× atlas memory). Desktop
+// uses 1.5 (sharper than native, but leaves memory budget for a high frame
+// count); mobile renders 1:1 (native) to keep atlases tiny.
+const SUPERSAMPLE = _lowMem ? 1 : 1.5;
+// Frame cap. Frames are sampled across the whole loop, so true 60fps needs
+// duration*60 frames; 120 gives a full 60fps for loops up to 2s. Mobile
+// targets ~40fps to keep its atlas small.
+const MAX_RASTER_FRAMES = _lowMem ? 40 : 120;
+const RASTER_COLS = 11;               // 11×11 grid holds up to 121 frames
+// Atlas page size + count. Mobile: 1024² × 6 pages ≈ 24 MB (≥ the picker's
+// ~24 visible cap at any dpr). Desktop: 2048² × 14 ≈ 224 MB — enough for
+// ~90 emojis at 120 frames and 1.5× slots, covering the visible set.
+const ATLAS_DIM = _lowMem ? 1024 : 2048;
+const MAX_ATLAS_PAGES = _lowMem ? 6 : 14;
+
+// `slot` = rendered/stored pixel size = px * SUPERSAMPLE (the cell displays
+// at px, so this is supersampled and downscaled on blit).
+function ensureRasterSheetForPx(px) {
+	let s = _rasterSheetByPx.get(px);
+	if (s) return s;
+	if (!_kit) return null;
+	const slot = Math.round(px * SUPERSAMPLE);
+	const canvas = new OffscreenCanvas(RASTER_COLS * slot, RASTER_COLS * slot);
+	const surface = _kit.MakeWebGLCanvasSurface(canvas, undefined, _surfaceOpts);
+	if (!surface) return null;
+	s = { canvas, surface, slot };
+	_rasterSheetByPx.set(px, s);
+	return s;
+}
+
+function getAtlas(px) {
+	let a = _atlasByPx.get(px);
+	if (a) return a;
+	const slot = Math.round(px * SUPERSAMPLE);
+	a = { px, slot, cols: Math.floor(ATLAS_DIM / slot), pages: [], free: [], lru: new Map() };
+	_atlasByPx.set(px, a);
+	addAtlasPage(a);
+	return a;
+}
+function addAtlasPage(a) {
+	if (a.pages.length >= MAX_ATLAS_PAGES) return false;
+	const canvas = new OffscreenCanvas(ATLAS_DIM, ATLAS_DIM);
+	const ctx = canvas.getContext('2d');
+	const page = a.pages.length;
+	a.pages.push({ canvas, ctx });
+	for (let r = 0; r < a.cols; r++)
+		for (let c = 0; c < a.cols; c++)
+			a.free.push({ page, x: c * a.slot, y: r * a.slot });
+	return true;
+}
+// Reserve n free slots, growing the atlas or evicting the LRU emoji as needed.
+function atlasAllocSlots(a, n) {
+	while (a.free.length < n) {
+		if (addAtlasPage(a)) continue;
+		const oldest = a.lru.keys().next();
+		if (oldest.done) break; // nothing left to evict
+		const oldKey = oldest.value;
+		const old = a.lru.get(oldKey);
+		a.lru.delete(oldKey);
+		_frameCache.delete(oldKey);
+		for (const s of old.slots) a.free.push(s);
+	}
+	if (a.free.length < n) return null;
+	const slots = [];
+	for (let i = 0; i < n; i++) slots.push(a.free.pop());
+	return slots;
+}
+
+// Pending rasterisation requests, drained by pumpRaster() VISIBLE-FIRST.
+// FIFO is wrong here: fast-scrolling to the bottom queues every emoji you
+// flew past ahead of the ones now on screen, so they'd bake first and the
+// visible row would sit on placeholders. Instead we (1) only ever pick a job
+// whose cells are currently on screen, and (2) drop jobs whose cells have
+// all scrolled off (they re-queue instantly if scrolled back). Net effect:
+// whatever is on screen bakes first; off-screen work is abandoned.
+const _rasterPending = new Map(); // key -> { url, px }
+let _rasterBusy = false;
+
+function scheduleRasterize(url, px) {
+	const key = url + '@' + px;
+	if (_frameCache.has(key) || _frameJobs.has(key) || _rasterPending.has(key)) return;
+	_rasterPending.set(key, { url, px });
+	pumpRaster();
+}
+
+// url@px keys that have at least one on-screen cell right now.
+function _visibleRasterKeys() {
+	const set = new Set();
+	for (const cell of _canvasCells.values()) {
+		if (cell.visible && cell.rasterized) set.add(cell.url + '@' + cell.w);
+	}
+	return set;
+}
+
+async function pumpRaster() {
+	if (_rasterBusy) return;
+	_rasterBusy = true;
+	try {
+		while (_rasterPending.size) {
+			const vis = _visibleRasterKeys();
+			// Abandon anything no longer on screen.
+			for (const key of [..._rasterPending.keys()]) {
+				if (!vis.has(key)) _rasterPending.delete(key);
+			}
+			if (!_rasterPending.size) break;
+			// Any remaining job is visible — take the first.
+			const [key, job] = _rasterPending.entries().next().value;
+			_rasterPending.delete(key);
+			_frameJobs.add(key);
+			try { await doRasterize(job.url, job.px, key); }
+			catch (e) {
+				_frameJobs.delete(key);
+				diag('warn', '[skottie-worker] rasterize failed', key, String(e?.message || e));
+			}
+		}
+	} finally {
+		_rasterBusy = false;
+	}
+}
+
+async function doRasterize(url, px, key) {
+	const entry = _anims.get(url);
+	if (!entry || entry.duration <= 0) { _frameJobs.delete(key); return; }
+	const sheet = ensureRasterSheetForPx(px);
+	const atlas = getAtlas(px);
+	if (!sheet || !atlas) { _frameJobs.delete(key); return; }
+	const sl = atlas.slot; // supersampled pixel size (px * SUPERSAMPLE)
+	const N = Math.min(entry.totalFrames, MAX_RASTER_FRAMES);
+	const slots = atlasAllocSlots(atlas, N);
+	if (!slots) { _frameJobs.delete(key); return; } // atlas full — thumb stays up
+
+	// Render all frames into the WebGL sheet grid (at supersampled size),
+	// then read back once.
+	const sk = sheet.surface.getCanvas();
+	sk.clear(_kit.TRANSPARENT);
+	for (let i = 0; i < N; i++) {
+		if (_anims.get(url) !== entry) { // released mid-job
+			for (const s of slots) atlas.free.push(s);
+			_frameJobs.delete(key);
+			return;
+		}
+		const cx = (i % RASTER_COLS) * sl;
+		const cy = ((i / RASTER_COLS) | 0) * sl;
+		entry.animation.seek(i / N);
+		entry.animation.render(sk, _kit.LTRBRect(cx, cy, cx + sl, cy + sl));
+		if ((i & 7) === 7) { sheet.surface.flush(); await _yieldIdle(); }
+	}
+	sheet.surface.flush();
+	const usedRows = Math.ceil(N / RASTER_COLS);
+	const bmp = await createImageBitmap(sheet.canvas, 0, 0, RASTER_COLS * sl, usedRows * sl);
+	// Blit each rendered frame from the sheet into its atlas slot (1:1 at
+	// supersampled size; the downscale happens later, on the cell blit).
+	for (let i = 0; i < N; i++) {
+		const scx = (i % RASTER_COLS) * sl;
+		const scy = ((i / RASTER_COLS) | 0) * sl;
+		const slot = slots[i];
+		const pctx = atlas.pages[slot.page].ctx;
+		pctx.clearRect(slot.x, slot.y, sl, sl);
+		pctx.drawImage(bmp, scx, scy, sl, sl, slot.x, slot.y, sl, sl);
+	}
+	try { bmp.close(); } catch {}
+
+	const cacheEntry = { atlas, slots, N };
+	_frameCache.set(key, cacheEntry);
+	atlas.lru.set(key, cacheEntry);
+	_frameJobs.delete(key);
+}
+
+function freeFrameCache(url) {
+	const suffix = url + '@';
+	for (const [key, cache] of _frameCache) {
+		if (!key.startsWith(suffix)) continue;
+		for (const s of cache.slots) cache.atlas.free.push(s);
+		cache.atlas.lru.delete(key);
+		_frameCache.delete(key);
+	}
+}
+
 // Render all visible, built canvas-cells. Driven by a 'tick' message the
 // proxy posts once per animation frame (it carries `now`; no DOM reads).
 function renderCanvasCells(now) {
@@ -111,6 +326,35 @@ function renderCanvasCells(now) {
 				? (elapsed % entry.duration) / entry.duration
 				: Math.min(1, elapsed / entry.duration);
 		}
+		// ── Rasterized engine: blit a frame from the shared atlas ────────
+		if (cell.rasterized) {
+			const ckey = cell.url + '@' + cell.w;
+			const cache = _frameCache.get(ckey);
+			if (!cache) { scheduleRasterize(cell.url, cell.w); continue; } // thumb covers until ready
+			// Touch LRU so an on-screen emoji is never the eviction victim.
+			cache.atlas.lru.delete(ckey);
+			cache.atlas.lru.set(ckey, cache);
+			const fi = Math.min(cache.N - 1, Math.floor(t * cache.N));
+			if (cell.firstPainted && fi === cell.lastFrame) continue; // frame unchanged
+			const slot = cache.slots[fi];
+			const ss = cache.atlas.slot; // supersampled source size
+			const pageCanvas = cache.atlas.pages[slot.page].canvas;
+			let okR = false;
+			try {
+				cell.ctx.clearRect(0, 0, cell.w, cell.h);
+				// Source rect is the supersampled slot; dest is the cell —
+				// the browser downsamples ss→cell.w for the crisp result.
+				cell.ctx.drawImage(pageCanvas, slot.x, slot.y, ss, ss, 0, 0, cell.w, cell.h);
+				okR = true;
+			} catch { /* detached */ }
+			if (!okR) continue;
+			cell.lastFrame = fi;
+			cell.paintCount = (cell.paintCount || 0) + 1;
+			// Frames are pre-rendered (no settling), so hand off immediately.
+			if (!cell.firstPainted) { cell.firstPainted = true; firstPaints.push(id); }
+			continue;
+		}
+
 		const frame = Math.min(entry.totalFrames - 1, Math.floor(t * entry.totalFrames));
 		if (cell.firstPainted && frame === cell.lastFrame) continue; // nothing new to draw
 
@@ -265,14 +509,22 @@ async function processQueue() {
 	if (_processing) return;
 	_processing = true;
 	while (_pending.size) {
-		// Priority 2: cell inside viewport (sub-sorted by reading order).
-		// Priority 1: cell off-screen but has a known rect.
+		// Priority 3: has an on-screen canvas (inline/rasterized) cell.
+		// Priority 2: overlay cell inside viewport (sub-sorted by reading order).
+		// Priority 1: overlay cell off-screen but has a known rect.
 		// Priority 0: no rect at all.
+		// The canvas/worker engines don't post per-frame rects, so without
+		// the pri-3 check the rect-based logic is blind to them and a fast
+		// scroll builds off-screen emojis ahead of the on-screen row.
+		const visCanvasUrls = new Set();
+		for (const cell of _canvasCells.values()) {
+			if (cell.visible) visCanvasUrls.add(cell.url);
+		}
 		let bestUrl = null;
 		let bestPri = -1;
 		let bestScore = Infinity;
 		for (const [url] of _pending) {
-			let pri = 0;
+			let pri = visCanvasUrls.has(url) ? 3 : 0;
 			let score = Infinity;
 			const r = _lastRectByUrl.get(url);
 			if (r && r.width > 0) {
@@ -597,11 +849,17 @@ self.onmessage = async (e) => {
 				|| prevInk[2] !== _adaptiveInk[2];
 			diag('log', '[skottie-worker] adaptive packs:', _adaptive.size,
 				'ink:', _adaptiveInk, 'inkChanged:', inkChanged);
-			if (inkChanged && prevInk) {
-				// Drop cached animations for adaptive URLs so the build
-				// pump rebuilds them in the new ink. Cells stay alive —
-				// they'll briefly fall back to the sprite thumb until the
-				// new animation finishes building (idle-scheduled).
+			// Re-tint on ANY ink change (including the very first push — an
+			// adaptive anim may have been built untinted in the race before
+			// the ink arrived).
+			if (inkChanged) {
+				// Drop cached animations AND their baked atlas frames for
+				// adaptive URLs so both the build pump and the rasteriser
+				// redo them in the new ink. Without freeing the frame cache,
+				// rasterized cells kept blitting the stale (old-ink) frames —
+				// e.g. dark silhouettes that stayed black after switching to
+				// a dark theme. Cells stay bound; they briefly show their CSS
+				// thumb / last frame until the new bake lands.
 				let dropped = 0;
 				for (const [url, entry] of _anims) {
 					const short = shortFromUrl(url);
@@ -611,7 +869,15 @@ self.onmessage = async (e) => {
 					// Re-queue with the old refcount so cells stay bound.
 					_pending.set(url, { dataPromise: fetchLottieWorker(url), refcount: entry.refcount });
 					_lottieCache.delete(url);
+					freeFrameCache(url); // stale rasterized frames → re-bake in new ink
 					dropped++;
+				}
+				// Force re-draw of affected canvas cells: their frame index may
+				// be unchanged, but the pixels behind it are new, so clear the
+				// frame-skip guard.
+				for (const cell of _canvasCells.values()) {
+					const short = shortFromUrl(cell.url);
+					if (short && _adaptive.has(short)) cell.lastFrame = -1;
 				}
 				if (dropped) {
 					diag('log', '[skottie-worker] re-queueing', dropped, 'adaptive anims');
@@ -661,6 +927,7 @@ self.onmessage = async (e) => {
 				try { entry.animation.delete(); } catch {}
 				_anims.delete(url);
 				_lastRectByUrl.delete(url);
+				freeFrameCache(url); // release any rasterized ImageBitmaps for this url
 				// Tell main thread we've actually let this URL go so it
 				// can mirror by clearing the cached `_loadedUrls` entry.
 				// Multiple cells often share a URL; we only want this
@@ -675,9 +942,15 @@ self.onmessage = async (e) => {
 		}
 		// ── Inline-canvas path ──────────────────────────────────────────
 		case 'register-canvas-cell': {
+			const rasterized = !!msg.rasterized;
 			let ctx = null;
-			// bitmaprenderer = zero-copy sink for transferFromImageBitmap.
-			try { ctx = msg.canvas.getContext('bitmaprenderer'); } catch { /* transfer failed */ }
+			// Rasterized cells receive frames via drawImage(ImageBitmap) → 2d.
+			// Live cells receive zero-copy transferFromImageBitmap → bitmaprenderer.
+			try {
+				ctx = msg.canvas.getContext(rasterized ? '2d' : 'bitmaprenderer');
+				// High-quality downscale from the supersampled atlas slot.
+				if (rasterized && ctx) ctx.imageSmoothingQuality = 'high';
+			} catch { /* transfer failed */ }
 			// If the animation is ALREADY built when this cell mounts, it's a
 			// re-entry (the user scrolled this section back into view) — the
 			// animation is mid-cycle and stable, so there are no settling
@@ -686,6 +959,7 @@ self.onmessage = async (e) => {
 			const _built = _anims.has(msg.url) && (_anims.get(msg.url).duration > 0);
 			_canvasCells.set(msg.id, {
 				ctx,
+				rasterized,
 				off: msg.canvas,
 				url: msg.url,
 				paused: !!msg.paused,

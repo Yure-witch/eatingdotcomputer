@@ -36,42 +36,49 @@ function paint(color, ink) {
 	color[2] = ink[2];
 }
 
-function tintColorProp(c, ink) {
+function tintColorProp(c, ink, whiteOnly) {
 	if (!c || !c.k) return;
 	if (Array.isArray(c.k) && typeof c.k[0] === 'number') {
-		if (isWhite(c.k)) paint(c.k, ink);
+		if (!whiteOnly || isWhite(c.k)) paint(c.k, ink);
 		return;
 	}
 	if (Array.isArray(c.k)) {
 		for (const kf of c.k) {
-			if (Array.isArray(kf?.s) && isWhite(kf.s)) paint(kf.s, ink);
-			if (Array.isArray(kf?.e) && isWhite(kf.e)) paint(kf.e, ink);
+			if (Array.isArray(kf?.s) && (!whiteOnly || isWhite(kf.s))) paint(kf.s, ink);
+			if (Array.isArray(kf?.e) && (!whiteOnly || isWhite(kf.e))) paint(kf.e, ink);
 		}
 	}
 }
 
-function tintShapes(shapes, ink) {
+function tintShapes(shapes, ink, whiteOnly) {
 	if (!Array.isArray(shapes)) return;
 	for (const s of shapes) {
 		if (!s) continue;
-		if (s.ty === 'gr' && Array.isArray(s.it)) tintShapes(s.it, ink);
-		else if (s.ty === 'fl' || s.ty === 'st') tintColorProp(s.c, ink);
+		if (s.ty === 'gr' && Array.isArray(s.it)) tintShapes(s.it, ink, whiteOnly);
+		else if (s.ty === 'fl' || s.ty === 'st') tintColorProp(s.c, ink, whiteOnly);
 	}
 }
 
-function tintLayers(layers, ink) {
+function tintLayers(layers, ink, whiteOnly) {
 	if (!Array.isArray(layers)) return;
 	for (const l of layers) {
-		if (l && Array.isArray(l.shapes)) tintShapes(l.shapes, ink);
+		if (l && Array.isArray(l.shapes)) tintShapes(l.shapes, ink, whiteOnly);
 	}
 }
 
-export function tintLottieAdaptive(lottie, ink) {
+// `whiteOnly` (default false) tints EVERY fill/stroke to `ink`. Telegram
+// `text_color` packs are monochrome and meant to render entirely in the
+// text colour, but not all of them ship the pure-white sentinel — some have
+// a black (or otherwise coloured) base, which a white-only pass leaves
+// untouched (→ black emotes on a dark theme). Since this is only ever called
+// for confirmed adaptive packs, tinting all fills is correct. Pass
+// whiteOnly:true to restore the conservative white-sentinel-only behaviour.
+export function tintLottieAdaptive(lottie, ink, whiteOnly = false) {
 	if (!lottie || !Array.isArray(ink) || ink.length < 3) return lottie;
-	tintLayers(lottie.layers, ink);
+	tintLayers(lottie.layers, ink, whiteOnly);
 	if (Array.isArray(lottie.assets)) {
 		for (const a of lottie.assets) {
-			if (a && Array.isArray(a.layers)) tintLayers(a.layers, ink);
+			if (a && Array.isArray(a.layers)) tintLayers(a.layers, ink, whiteOnly);
 		}
 	}
 	return lottie;
