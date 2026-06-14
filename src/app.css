@@ -307,9 +307,28 @@ main {
 	   Every modifier below keeps wght=400 / GRAD=0 / opsz=20 and only
 	   varies FILL or px size. */
 	font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 20;
+	/* Smooth fill transition. Material Symbols expose FILL as a
+	   variable-font axis (0 = outline, 1 = filled), so animating
+	   `font-variation-settings` morphs the outlined glyph into its
+	   filled counterpart instead of swapping sprites. Color
+	   transitions ride along so icons that change tint in tandem
+	   with their state (active tab, pressed button, etc.) animate
+	   in lockstep. */
+	transition: font-variation-settings 450ms ease, color 450ms ease;
 	user-select: none;
 }
 .msi-fill { font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 20; }
+/* Match the transition on the .msi-fill class explicitly — Safari
+   in particular won't always interpolate font-variation-settings
+   from one class's value to another's unless both sides declare
+   the same transition. */
+.msi-fill { transition: font-variation-settings 450ms ease, color 450ms ease; }
+
+/* Respect motion-reduced preferences — skip the morph so the icon
+   swap is instant for users who've asked for less motion. */
+@media (prefers-reduced-motion: reduce) {
+	.msi, .msi-fill { transition: none; }
+}
 .msi-20 { font-size: 20px; }
 .msi-18 { font-size: 18px; }
 .msi-24 { font-size: 24px; }

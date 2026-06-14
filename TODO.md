@@ -18,6 +18,7 @@ Items roughly ordered by priority. See `NORTH_STAR.md` for the big picture.
 ---
 
 ## Chat & Messaging
+- [ ] **Gate read receipts on green presence** — read receipts must only be applied while the user is `active` (green). If the user is `idle` (yellow) or offline, suppress the lastRead write entirely. When they next become green and the message is still on-screen / in viewport, queue the read-receipt write then. Bug today: receipts fire while a tab is backgrounded, so the sender sees "read" before the recipient has actually looked at it.
 - [ ] **Mentions (@username)** — parse @name in message content, highlight in bubbles, notify mentioned user
 - [ ] **Unread notifications bell** — icon in top-right showing count badge; reactions, replies, @mentions overlay
 - [ ] **Message action bar** — hover/tap to reveal Reply, React, Star, Thread + quick-react emoji

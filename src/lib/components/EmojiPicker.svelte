@@ -46,6 +46,65 @@
 	let longPress  = $state(null); // { item, x, y } | null
 	let lpTimer    = null;
 	let lpFired    = false;  // suppresses the click that follows a long press
+	let lpPopEl    = $state(null);
+	let pickerEl   = $state(null);
+	// Position state: 'above' = popover's bottom edge 5 px above
+	// cell's top; 'below' = popover's top edge 5 px below cell's
+	// bottom. Default to 'above'; the post-mount effect flips to
+	// 'below' if there isn't room above the cell.
+	let lpPlacement = $state('above');
+	// Horizontal nudge applied AFTER measurement so the popover
+	// stays inside the picker even if cellCenterX is near an edge.
+	// 0 = no nudge needed; negative pushes left, positive pushes
+	// right. Applied as a translateX offset on top of the centering
+	// transform.
+	let lpNudgeX = $state(0);
+
+	// First-paint positioning is fully synchronous via the inline
+	// style + CSS transforms (no measurement needed). This effect
+	// runs after the popover mounts to:
+	//   - flip vertical to 'below' if the popover would extend
+	//     above the viewport or above the picker top,
+	//   - nudge horizontal so the popover stays inside the picker's
+	//     left / right bounds.
+	$effect(() => {
+		if (!longPress || !lpPopEl) return;
+		// Reset before measuring so the inline transform is the
+		// "pristine" centered-on-cell version; otherwise a stale
+		// nudge from a previous open would skew the rect.
+		lpPlacement = 'above';
+		lpNudgeX = 0;
+		requestAnimationFrame(() => {
+			if (!lpPopEl || !longPress) return;
+			const r = lpPopEl.getBoundingClientRect();
+			if (!r.width || !r.height) return;
+			const pickerRect = pickerEl?.getBoundingClientRect();
+			const margin = 6;
+			const vh = window.innerHeight;
+
+			// Vertical: prefer above. With placement='above' the
+			// popover's bottom edge sits at cellTop - 5, so its top
+			// edge is at cellTop - 5 - r.height. Flip below if that
+			// would push above the viewport or the picker's top.
+			const aboveTopEdge = longPress.cellTop - 5 - r.height;
+			const minTop = Math.max(margin, pickerRect ? pickerRect.top + margin : margin);
+			if (aboveTopEdge < minTop) {
+				lpPlacement = 'below';
+				// If 'below' also won't fit, leave it — the popover
+				// will hang off the bottom; user can scroll.
+			}
+
+			// Horizontal: clamp left edge into the picker.
+			if (pickerRect) {
+				const leftEdge = r.left;
+				const rightEdge = r.right;
+				const leftBound = pickerRect.left + margin;
+				const rightBound = pickerRect.right - margin;
+				if (leftEdge < leftBound) lpNudgeX = leftBound - leftEdge;
+				else if (rightEdge > rightBound) lpNudgeX = rightBound - rightEdge;
+			}
+		});
+	});
 	let lpX0 = 0, lpY0 = 0;
 	let showDir    = $state(false); // directional popover: false=left-facing, true=right-facing
 	let dualLeft   = $state(undefined); // undefined=not yet picked, '1F3FB'–'1F3FF'=tone selected
@@ -195,12 +254,25 @@
 	function startLp(e, item) {
 		if (!item?.t?.length) return;
 		lpX0 = e.clientX; lpY0 = e.clientY;
-		const el = e.currentTarget;
+		const targetEl = e.currentTarget;
 		lpTimer = setTimeout(() => {
-			const rect = el.getBoundingClientRect();
+			// Anchor on the cell's bounding rect, not the mouse — the
+			// popover hangs above the long-pressed cell with its
+			// BOTTOM edge sitting 5 px above the cell's TOP. If
+			// there's no room above (cellTop near viewport top), the
+			// position effect below flips it underneath the cell
+			// instead. Horizontal anchor is the cell's center,
+			// clamped to the picker bounds so the popover always
+			// sits over the picker chrome.
+			const r = targetEl.getBoundingClientRect();
 			lpFired = true;
 			showDir = false;
-			longPress = { item, x: rect.left + rect.width / 2, y: rect.top };
+			longPress = {
+				item,
+				cellTop: r.top,
+				cellBottom: r.bottom,
+				cellCenterX: r.left + r.width / 2
+			};
 			lpTimer = null;
 		}, 250);
 	}
@@ -218,8 +290,14 @@
 		if (!item?.t?.length) return;
 		e.preventDefault();
 		showDir = false;
-		const rect = e.currentTarget.getBoundingClientRect();
-		longPress = { item, x: rect.left + rect.width / 2, y: rect.top };
+		// Anchor on the cell's bounding rect for right-clicks too.
+		const r = e.currentTarget.getBoundingClientRect();
+		longPress = {
+			item,
+			cellTop: r.top,
+			cellBottom: r.bottom,
+			cellCenterX: r.left + r.width / 2
+		};
 	}
 
 	// When a variant popover opens, pre-populate dualLeft/dualRight/showDir from saved per-emoji selections.
@@ -610,9 +688,147 @@
 		});
 	});
 
+	// ── Inline flow model ──────────────────────────────────────────
+	// Popular (-2) and Recent (-1) are "standalone" — they aggregate
+	// across categories so they don't belong in the inline scroll.
+	// Every Unicode group (0..N-1) flows in a single virtualized
+	// container with section headers; clicking a tab snaps to that
+	// section's offset, and scroll position updates the highlighted
+	// tab to whichever section is currently in view. No auto-advance
+	// — the user navigates by scrolling like they would a single
+	// long page.
+	const isStandaloneGroup = (g) => g < 0;
+
+	// Resolve every group's items once (cheap; same memoisation
+	// pattern as `resolvedGroupItems`). Each section knows its
+	// starting cell index inside the flat `flowingItems` array so
+	// virtualization math + scroll-to-tab can index directly.
+	let flowingSections = $derived.by(() => {
+		if (!data) return [];
+		const t = skinTone, g = gender, ds = dualSelections, dirs = dirSelections;
+		const sections = [];
+		let cellOffset = 0;
+		for (let i = 0; i < data.groups.length; i++) {
+			const grp = data.groups[i];
+			const items = grp.items.map((item) => ({ item, e: resolveEmoji(item, t, g, ds, dirs) }));
+			sections.push({
+				groupIdx: i,
+				name: grp.name,
+				icon: grp.icon,
+				items,
+				cellStart: cellOffset
+			});
+			cellOffset += items.length;
+		}
+		return sections;
+	});
+
+	// Grid geometry — must match the CSS layout below (the grid
+	// declares `grid-template-columns: repeat(9, 36px)`). The
+	// previous values were a guess — they produced section pxStart
+	// offsets that didn't line up with the actual rendered rows, so
+	// the scroll-derived active tab pointed to the wrong group.
+	const CELL_PX = 36;
+	const COLS = 9;
+	const HEADER_PX = 28;        // height of `.section-label` row
+	const BUFFER_ROWS = 4;
+	let gridH = $state(280);
+	let gridScrollTop = $state(0);
+
+	function measureGrid() {
+		if (!gridEl) return;
+		gridH = gridEl.clientHeight;
+	}
+
+	// Hardcoded — the CSS pins the grid at 9 columns regardless of
+	// container width. If we ever switch to auto-fill, derive from
+	// `gridEl.clientWidth / CELL_PX` again.
+	const cellsPerRow = COLS;
+
+	// Build per-section row geometry: rows in section, the starting
+	// pixel offset from the top of the flowing list, and the
+	// section's total px height (header + grid). The tab strip
+	// scrolls to `pxStart` to land at a section's top.
+	const flowingGeometry = $derived.by(() => {
+		const out = [];
+		let py = 0;
+		for (const s of flowingSections) {
+			const rows = Math.ceil(s.items.length / cellsPerRow);
+			const px = HEADER_PX + rows * CELL_PX;
+			out.push({ groupIdx: s.groupIdx, pxStart: py, pxEnd: py + px });
+			py += px;
+		}
+		return out;
+	});
+
+	// Scroll-derived active-group sync. Driven from the scroll event
+	// directly instead of as a $effect — the effect approach was
+	// racy on reverse scroll because the reactive re-run order
+	// (activeGroup ↔ gridScrollTop) sometimes left
+	// `_suppressActiveSync` true across a tick, so scrolling
+	// backwards left the highlighted tab stuck on the section the
+	// user was leaving.
+	let _suppressActiveSync = false;
+	function syncActiveFromScroll() {
+		if (isStandaloneGroup(activeGroup) || query.trim() || !flowingGeometry.length) return;
+		if (_suppressActiveSync) return;
+		const top = gridScrollTop + 4;
+		// Walk forward, remember the LAST section whose pxStart is
+		// ≤ top. Handles every direction + past-end + on-boundary
+		// in one pass; no `top < pxEnd` strict check to fall through.
+		let foundIdx = flowingGeometry[0].groupIdx;
+		for (const g of flowingGeometry) {
+			if (g.pxStart <= top) foundIdx = g.groupIdx;
+			else break;
+		}
+		if (foundIdx !== activeGroup) {
+			_suppressActiveSync = true;
+			activeGroup = foundIdx;
+			queueMicrotask(() => { _suppressActiveSync = false; });
+		}
+	}
+
+	function onGridScroll(e) {
+		gridScrollTop = e.target.scrollTop;
+		syncActiveFromScroll();
+	}
+
+	// Tab click handler. Standalone tabs (Popular / Recent) just
+	// switch the activeGroup so the standalone branch renders.
+	// Flowing tabs scroll the unified container to that section's
+	// offset; we set `activeGroup` first (suppressing the scroll
+	// reset effect) so the tab highlight is instant.
+	function pickTab(g) {
+		if (isStandaloneGroup(g)) {
+			activeGroup = g;
+			return;
+		}
+		_suppressActiveSync = true;
+		activeGroup = g;
+		queueMicrotask(() => {
+			const target = flowingGeometry.find((x) => x.groupIdx === g);
+			if (target && gridEl) gridEl.scrollTo({ top: target.pxStart, behavior: 'instant' });
+		});
+	}
+
 	$effect(() => {
 		void activeGroup; void query;
-		gridEl?.scrollTo(0, 0);
+		// Only reset scroll on tab changes that aren't part of the
+		// flow (standalone ↔ flowing transitions, or search toggles).
+		// Flowing-to-flowing tab clicks are handled by pickTab().
+		if (isStandaloneGroup(activeGroup) || query.trim()) {
+			gridEl?.scrollTo(0, 0);
+			gridScrollTop = 0;
+		}
+	});
+
+	// Window measurement on mount + on resize.
+	$effect(() => {
+		if (!gridEl) return;
+		measureGrid();
+		const ro = new ResizeObserver(measureGrid);
+		ro.observe(gridEl);
+		return () => ro.disconnect();
 	});
 
 	// ── Semantic search effect ────────────────────────────────────────────────
@@ -642,7 +858,7 @@
 
 <svelte:window onkeydown={(e) => { if (e.key === 'Escape' && longPress) { longPress = null; e.stopPropagation(); } }} />
 
-<div class="picker">
+<div class="picker emoji-picker" bind:this={pickerEl}>
 	<!-- Search -->
 	<div class="search-row">
 		<span class="search-icon">🔍</span>
@@ -692,20 +908,20 @@
 	{#if !query.trim()}
 		<div class="tabs" role="tablist">
 			<button role="tab" class="tab tab-text" class:active={activeGroup === -2} title="Most used"
-				onclick={() => { activeGroup = -2; }}>#</button>
+				onclick={() => pickTab(-2)}>#</button>
 			<button role="tab" class="tab tab-text" class:active={activeGroup === -1} title="Recently used"
-				onclick={() => { activeGroup = -1; }}>🕐</button>
+				onclick={() => pickTab(-1)}>🕐</button>
 			{#if data}
 				{#each data.groups as g, i}
 					<button role="tab" class="tab" class:active={activeGroup === i} title={g.name}
-						onclick={() => { activeGroup = i; }}>{g.icon || '•'}</button>
+						onclick={() => pickTab(i)}>{g.icon || '•'}</button>
 				{/each}
 			{/if}
 		</div>
 	{/if}
 
 	<!-- Emoji grid -->
-	<div bind:this={gridEl} class="grid-wrap">
+	<div bind:this={gridEl} class="grid-wrap" onscroll={onGridScroll}>
 		{#if loading}
 			<div class="state-msg">Loading…</div>
 		{:else if searchResults !== null}
@@ -783,22 +999,43 @@
 					{/each}
 				</div>
 			{/if}
-		{:else if resolvedGroupItems.length}
-			<div class="grid" class:noto={fontStyle === 'noto'}>
-				{#each resolvedGroupItems as { item, e } (item.cp)}
-					<button class="cell" class:has-variants={item.t?.length} title={item.n}
-						onpointerdown={(ev) => startLp(ev, item)}
-						onpointermove={moveLp}
-						onpointerup={cancelLp}
-						onpointerleave={cancelLp}
-						oncontextmenu={(ev) => openVariants(ev, item)}
-						onmouseenter={() => preview = { e: resolveEmoji(item, skinTone, gender), n: resolvedName(item), sc: resolvedShortcode(item) }}
-						onmouseleave={() => preview = null}
-						onclick={() => { if (lpFired) { lpFired = false; return; } pickItem(item); }}>
-						{e}
-					</button>
-				{/each}
-			</div>
+		{:else if flowingSections.length}
+			<!-- Flowing list. Every Unicode group is in one scroll
+			     container; section headers separate them. Each section
+			     mounts fully when its pixel band intersects the
+			     viewport (+/- one viewport height of buffer), otherwise
+			     it renders as a fixed-height placeholder so the overall
+			     scroll geometry matches the un-virtualized layout. -->
+			{#each flowingSections as section, sIdx (section.groupIdx)}
+				{@const geo = flowingGeometry[sIdx]}
+				{@const visTop = gridScrollTop - gridH}
+				{@const visBot = gridScrollTop + gridH * 2}
+				{@const isVisible = geo.pxEnd >= visTop && geo.pxStart <= visBot}
+				{#if isVisible}
+					<div class="section-block">
+						<div class="section-label">{section.name}</div>
+						<div class="grid" class:noto={fontStyle === 'noto'}>
+							{#each section.items as { item, e } (item.cp)}
+								<button class="cell" class:has-variants={item.t?.length} title={item.n}
+									onpointerdown={(ev) => startLp(ev, item)}
+									onpointermove={moveLp}
+									onpointerup={cancelLp}
+									onpointerleave={cancelLp}
+									oncontextmenu={(ev) => openVariants(ev, item)}
+									onmouseenter={() => preview = { e: resolveEmoji(item, skinTone, gender), n: resolvedName(item), sc: resolvedShortcode(item) }}
+									onmouseleave={() => preview = null}
+									onclick={() => { if (lpFired) { lpFired = false; return; } pickItem(item); }}>
+									{e}
+								</button>
+							{/each}
+						</div>
+					</div>
+				{:else}
+					<!-- Placeholder reserves the same vertical band so
+					     the scrollbar tracks the full list height. -->
+					<div class="section-block section-placeholder" style:height="{geo.pxEnd - geo.pxStart}px"></div>
+				{/if}
+			{/each}
 		{/if}
 	</div>
 
@@ -828,7 +1065,8 @@
 		{@const TONES = ['1F3FB','1F3FC','1F3FD','1F3FE','1F3FF']}
 		{@const dualResult = getDualEmoji(matrix, dualLeft, dualRight)}
 		<div class="lp-pop lp-dual" class:noto={fontStyle === 'noto'}
-			style="left:{longPress.x}px;top:{longPress.y}px">
+			bind:this={lpPopEl}
+			style:left="{longPress.cellCenterX}px" style:top="{lpPlacement === 'below' ? longPress.cellBottom + 5 : longPress.cellTop - 5}px" style:transform="{lpPlacement === 'below' ? `translate(calc(-50% + ${lpNudgeX}px), 0)` : `translate(calc(-50% + ${lpNudgeX}px), -100%)`}">
 
 			<!-- Left-tone row: each button shows left half colored, right half gray silhouette -->
 			<div class="dual-row">
@@ -884,7 +1122,8 @@
 		{@const nonDir = longPress.item.t.filter(v => !v.cp.includes('27A1'))}
 		{@const dirRight = longPress.item.t.filter(v => v.cp.includes('27A1'))}
 		<div class="lp-pop lp-dir" class:noto={fontStyle === 'noto'}
-			style="left:{longPress.x}px;top:{longPress.y}px">
+			bind:this={lpPopEl}
+			style:left="{longPress.cellCenterX}px" style:top="{lpPlacement === 'below' ? longPress.cellBottom + 5 : longPress.cellTop - 5}px" style:transform="{lpPlacement === 'below' ? `translate(calc(-50% + ${lpNudgeX}px), 0)` : `translate(calc(-50% + ${lpNudgeX}px), -100%)`}">
 			<div class="lp-dir-header">
 				<button class="lp-dir-tab" class:active={!showDir}
 					onclick={(e) => { e.stopPropagation(); showDir = false; }}>←</button>
@@ -922,7 +1161,8 @@
 		<!-- Grouped rows: each row is one base codepoint family (neutral / woman / man, etc.) -->
 		{@const groups = buildMultibaseGroups(longPress.item)}
 		<div class="lp-pop lp-multibase" class:noto={fontStyle === 'noto'}
-			style="left:{longPress.x}px;top:{longPress.y}px">
+			bind:this={lpPopEl}
+			style:left="{longPress.cellCenterX}px" style:top="{lpPlacement === 'below' ? longPress.cellBottom + 5 : longPress.cellTop - 5}px" style:transform="{lpPlacement === 'below' ? `translate(calc(-50% + ${lpNudgeX}px), 0)` : `translate(calc(-50% + ${lpNudgeX}px), -100%)`}">
 			{#each groups as group, gi}
 				{#if gi > 0}<div class="lp-row-sep"></div>{/if}
 				{#each group as entry}
@@ -940,7 +1180,11 @@
 	{:else}
 		<!-- Simple variant grid (skin tones only, G1/G3 emoji) -->
 		<div class="lp-pop" class:noto={fontStyle === 'noto'}
-			style="left:{longPress.x}px;top:{longPress.y}px;grid-template-columns:repeat({variantCols(longPress.item)},36px)">
+			bind:this={lpPopEl}
+			style:left="{longPress.cellCenterX}px"
+			style:top="{lpPlacement === 'below' ? longPress.cellBottom + 5 : longPress.cellTop - 5}px"
+			style:transform="{lpPlacement === 'below' ? `translate(calc(-50% + ${lpNudgeX}px), 0)` : `translate(calc(-50% + ${lpNudgeX}px), -100%)`}"
+			style:grid-template-columns="repeat({variantCols(longPress.item)},36px)">
 			<button class="cell lp-cell"
 				onclick={() => pickVariant(null, longPress.item)}
 				onmouseenter={() => preview = { e: longPress.item.e, n: longPress.item.n, sc: variantShortcode(null, longPress.item) }}
@@ -961,17 +1205,20 @@
 
 <style>
 	.picker {
+		/* When mounted standalone (legacy direct usage), the picker
+		   still carries its own background + size. When mounted
+		   INSIDE ExpressionPicker the parent's `:global(.emoji-picker)`
+		   reset overrides width / height / radius / shadow so the
+		   inner panel blends seamlessly into the ExpressionPicker
+		   shell — no double border, no double rounded corners. */
 		width: 340px;
 		height: 380px;
-		background: var(--paper);
-		border-radius: 12px;
-		border: 1px solid #e0dbd4;
-		box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+		background: var(--md-sys-color-surface, var(--paper));
+		color: var(--md-sys-color-on-surface, var(--ink));
 		display: flex;
 		flex-direction: column;
 		overflow: hidden;
 		font-size: 0.82rem;
-		color: #333;
 	}
 
 	/* ── Search ── */
@@ -1039,7 +1286,7 @@
 		align-items: center;
 		gap: 0.3rem;
 		background: none;
-		border: 1.5px solid #e0dbd4;
+		border: 1.5px solid var(--md-sys-color-outline-variant, var(--border));
 		border-radius: 8px;
 		padding: 0.2rem 0.5rem;
 		font-size: 0.72rem;
@@ -1086,6 +1333,11 @@
 	.grid-wrap {
 		flex: 1;
 		overflow-y: scroll;
+		/* Stops the scroll from chaining to the parent page once the
+		   user reaches the top / bottom of the picker (i.e. scrolling
+		   past the last emoji category no longer scrolls the chat /
+		   profile page behind it). */
+		overscroll-behavior: contain;
 		scrollbar-width: thin;
 		scrollbar-color: #ddd transparent;
 		padding: 0.3rem 0.25rem;
@@ -1128,7 +1380,12 @@
 		width: 3px;
 		height: 3px;
 		border-radius: 50%;
-		background: #c0bab2;
+		/* Variant-available dot. Reads as M3 secondary so it picks up
+		   the user's theme accent — same family the long-press
+		   popover's active tab uses, so the cue and the affordance
+		   it announces share a visual language. */
+		background: var(--md-sys-color-secondary, var(--muted-fg));
+		opacity: 0.6;
 	}
 
 	.state-msg {
@@ -1142,6 +1399,20 @@
 		color: #b8a898; text-transform: uppercase;
 		padding: 0.5rem 0.75rem 0.2rem;
 	}
+	/* Section header for the flowing inline list — one row per
+	   Unicode group (Smileys, People, …). Sticky-top would clip the
+	   first section's icon as you scroll into the next; not worth
+	   the extra layer-cost. */
+	.section-block { display: block; }
+	.section-label {
+		font-size: 0.68rem; font-weight: 600; letter-spacing: 0.06em;
+		color: var(--md-sys-color-on-surface-variant, #b8a898);
+		text-transform: uppercase;
+		height: 28px;
+		padding: 0.5rem 0.75rem 0.2rem;
+		box-sizing: border-box;
+	}
+	.section-placeholder { background: transparent; }
 
 	/* ── Preview bar ── */
 	.preview-bar {
@@ -1169,9 +1440,22 @@
 
 	.lp-pop {
 		position: fixed;
-		transform: translate(-50%, calc(-100% - 10px));
-		background: var(--paper);
-		border: 1px solid #e0dbd4;
+		/* The `top`/`left` inline styles (set by the position
+		   effect) are already the popover's actual top-left corner —
+		   no transform needed. The effect computes them from the
+		   long-pressed cell's bounding rect: by default the popover's
+		   bottom edge sits 5 px above the cell's top edge; if that
+		   would push it off-screen / off the picker it flips so the
+		   top edge sits 5 px below the cell's bottom. Horizontal is
+		   the cell's center, clamped to the picker's left/right
+		   bounds so the popover always sits over the picker chrome. */
+		/* M3 design tokens — surface-container-high reads as "raised
+		   above the picker" against the surrounding surface, and
+		   outline-variant gives a subtle stroke that follows the
+		   user's chosen theme. */
+		background: var(--md-sys-color-surface-container-high, var(--paper));
+		color: var(--md-sys-color-on-surface, var(--ink));
+		border: 1px solid var(--md-sys-color-outline-variant, var(--border));
 		border-radius: 12px;
 		box-shadow: 0 4px 24px rgba(0, 0, 0, 0.18);
 		padding: 4px;
@@ -1180,8 +1464,9 @@
 		gap: 0;
 		max-height: 300px;
 		overflow-y: auto;
+		overscroll-behavior: contain;
 		scrollbar-width: thin;
-		scrollbar-color: #ddd transparent;
+		scrollbar-color: var(--md-sys-color-outline-variant, var(--border)) transparent;
 	}
 
 	.lp-pop.noto .lp-cell {
@@ -1245,7 +1530,7 @@
 		align-items: center;
 		justify-content: center;
 		border-radius: 8px;
-		border: 1.5px solid #e0dbd4;
+		border: 1.5px solid var(--md-sys-color-outline-variant, var(--border));
 		background: none;
 		cursor: pointer;
 		padding: 0;
@@ -1260,7 +1545,7 @@
 		align-items: center;
 		justify-content: center;
 		border-radius: 8px;
-		border: 1.5px dashed #ddd;
+		border: 1.5px dashed var(--md-sys-color-outline-variant, var(--border));
 	}
 .dual-foot-glyph {
 		font-size: 1.75rem;
@@ -1297,7 +1582,7 @@
 	.lp-dir-tab {
 		flex: 1;
 		background: none;
-		border: 1.5px solid #e0dbd4;
+		border: 1.5px solid var(--md-sys-color-outline-variant, var(--border));
 		border-radius: 6px;
 		font-size: 0.9rem;
 		height: 26px;
@@ -1308,6 +1593,14 @@
 		align-items: center;
 		justify-content: center;
 	}
-	.lp-dir-tab:hover { background: var(--surface-2); color: #444; }
-	.lp-dir-tab.active { background: var(--surface-2); border-color: #999; color: #222; font-weight: 700; }
+	.lp-dir-tab:hover { background: var(--surface-2); color: var(--md-sys-color-on-surface, var(--ink)); }
+	.lp-dir-tab.active {
+		/* "Active" reads as M3 secondary-container — the same chip
+		   treatment used by tabs across the rest of the picker so
+		   the long-press affordance feels native to the system. */
+		background: var(--md-sys-color-secondary-container, var(--surface-2));
+		border-color: var(--md-sys-color-secondary, var(--muted-fg));
+		color: var(--md-sys-color-on-secondary-container, var(--ink));
+		font-weight: 700;
+	}
 </style>

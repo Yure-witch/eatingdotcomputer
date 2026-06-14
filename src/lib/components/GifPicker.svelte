@@ -107,7 +107,7 @@
 	.gif-search-input::placeholder { color: var(--muted-fg); }
 
 	.gif-grid-wrap {
-		flex: 1; overflow-y: auto; padding: 0.4rem; min-height: 0;
+		flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 0.4rem; min-height: 0;
 		scrollbar-width: thin;
 	}
 	.gif-grid {

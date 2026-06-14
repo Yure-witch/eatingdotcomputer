@@ -1577,6 +1577,14 @@
 		const finalText = fontPrefix + readable;
 		if (finalText !== sel.toString()) {
 			e.clipboardData.setData('text/plain', finalText);
+			// Also carry the raw markup (the same [tg:]/[tgc:]/[ce:]/[ek:]
+			// tokens + PUA effect chars that the compose box copies). This
+			// is the high-fidelity channel `onCePaste` reads FIRST, so
+			// copying an animated/custom emote out of a chat bubble and
+			// pasting it into ANY FormattedInput in the app reconstructs it
+			// exactly. text/plain stays the readable fallback for external
+			// apps / plain inputs.
+			e.clipboardData.setData('text/x-eating-markup', markup);
 			e.preventDefault();
 		}
 	}
@@ -1970,7 +1978,29 @@
 	}
 	afterNavigate(focusFromUrl);
 
+	// True only when this tab is genuinely being looked at right now:
+	// foreground (not a background tab) AND the window has OS focus.
+	// This is the "green / active on this page" gate for read receipts —
+	// a backgrounded or unfocused tab must NOT auto-acknowledge messages,
+	// otherwise the sender sees "read" before the recipient actually
+	// looked. See memory/project_read_receipts_gating.md.
+	function isViewingActively() {
+		return typeof document !== 'undefined'
+			&& document.visibilityState === 'visible'
+			&& document.hasFocus();
+	}
+	// Set when markRead() was called while NOT actively viewing. We flush
+	// the deferred receipt the moment the tab returns to the foreground.
+	let _readPending = false;
+
 	function markRead() {
+		if (!isViewingActively()) {
+			// Defer: there's unseen activity, but we won't acknowledge it
+			// until the user genuinely returns to this page.
+			_readPending = true;
+			return;
+		}
+		_readPending = false;
 		const uid = data.currentUser.id;
 		const now = Date.now();
 		set(ref(db, `lastRead/${uid}/${convId}`), now);
@@ -1986,6 +2016,12 @@
 		set(ref(db, `convReads/${convId}/${uid}`), now).catch((e) => {
 			console.warn('[read-receipt] convReads write blocked:', e?.message ?? e);
 		});
+	}
+
+	// On returning to the tab (foreground + focus), flush any read
+	// receipt we deferred while the user was away/idle.
+	function flushPendingRead() {
+		if (_readPending && isViewingActively()) markRead();
 	}
 
 	function clearTyping() {
@@ -2203,6 +2239,8 @@
 		Promise.all([loadTelegramEmoji(), loadCustomPacks()]).then(() => { mountTgStickers(); });
 		document.addEventListener('selectionchange', onCeSelect);
 		document.addEventListener('selectionchange', onMsgListSelectionChange);
+		document.addEventListener('visibilitychange', flushPendingRead);
+		window.addEventListener('focus', flushPendingRead);
 		if (heartsCanvas) {
 			heartsCanvas.width = window.innerWidth;
 			heartsCanvas.height = window.innerHeight;
@@ -2584,6 +2622,8 @@
 		if (heartsAnimId) cancelAnimationFrame(heartsAnimId);
 		document.removeEventListener('selectionchange', onCeSelect);
 		document.removeEventListener('selectionchange', onMsgListSelectionChange);
+		document.removeEventListener('visibilitychange', flushPendingRead);
+		window.removeEventListener('focus', flushPendingRead);
 		_tgObserver?.disconnect();
 		while (_tgHeldSlots > 0) { _tgYieldPlay(); _tgHeldSlots--; }
 	});
@@ -4375,16 +4415,14 @@
 		vertical-align: -0.25em;
 		object-fit: contain;
 		cursor: default;
-		border-radius: 2px;
 	}
 	:global(.ek-img-ce.ek-selected) {
 		outline: 2px solid #4a9eff;
-		border-radius: 3px;
 		box-shadow: 0 0 0 3px rgba(74, 158, 255, 0.25);
 	}
 	:global(.ce-img) { height: 1.2em; width: 1.2em; vertical-align: -0.25em; object-fit: contain; }
 	:global(.ce-img-ce) { cursor: default; }
-	:global(.ce-img-ce.ek-selected) { outline: 2px solid #4a9eff; border-radius: 3px; box-shadow: 0 0 0 3px rgba(74,158,255,0.25); }
+	:global(.ce-img-ce.ek-selected) { outline: 2px solid #4a9eff; box-shadow: 0 0 0 3px rgba(74,158,255,0.25); }
 	/* Telegram animated emoji */
 	:global(.tg-img) { height: 1.3em; width: 1.3em; vertical-align: -0.3em; object-fit: contain; }
 	:global(.tg-img-ce) { cursor: default; }

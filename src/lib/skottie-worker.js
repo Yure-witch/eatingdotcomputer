@@ -35,13 +35,6 @@ let _kit = null;
 let _canvas = null; // OffscreenCanvas
 let _surface = null;
 
-// Set by the proxy's `init` message. When `true` we try to create a
-// WebGPU surface first; on any failure we transparently fall back to
-// the WebGL path so the same worker code handles both engines.
-let _preferWebGPU = false;
-let _gpuDevCtx = null;     // CanvasKit WebGPUDeviceContext
-let _gpuCanvasCtx = null;  // CanvasKit WebGPUCanvasContext
-
 // WebGL surface options. `preserveDrawingBuffer: 1` keeps the backbuffer
 // alive between compositor frames — without it, WebGL clears after
 // every composite, leaving the canvas momentarily blank between worker
@@ -53,9 +46,120 @@ let _gpuCanvasCtx = null;  // CanvasKit WebGPUCanvasContext
 const _surfaceOpts = { preserveDrawingBuffer: 1 };
 const _anims = new Map();   // url -> { animation, refcount, duration, fps, totalFrames }
 const _pending = new Map(); // url -> { dataPromise, refcount }
-const _cells = new Map();   // id  -> per-cell state
+const _cells = new Map();   // id  -> per-cell state (LEGACY overlay path)
 let _sheetImage = null;
 let _imagePaint = null;
+
+// ── Inline-canvas path (no overlay; canvases flow with the DOM) ──────────
+// Each cell transfers its own inline <canvas> to us as an OffscreenCanvas
+// (a `bitmaprenderer` context). Per animation frame we render the cell's
+// current frame into a small per-size WebGL scratch surface, then hand the
+// result to the cell with transferToImageBitmap() → transferFromImageBitmap().
+// That handoff is a ZERO-COPY GPU operation — no glReadPixels, no
+// drawImage-from-WebGL readback, no CPU round-trip. Readback was the source
+// of both the framerate hit and the transition flicker (a partial/raced
+// read shows a torn or blank frame). Because each cell owns its own DOM
+// canvas, the browser scrolls them natively (no position math, no overlay)
+// and there's no cross-cell coherence requirement — so cells can be spread
+// across multiple worker shards for parallel building. Before an animation
+// is built the SpriteSticker's CSS thumb covers the cell, so we only ever
+// deal with built animations here.
+const _canvasCells = new Map(); // id -> { ctx, off, url, paused, loop, paintIndex, w, h, visible, startTime, paintCount, firstPainted }
+// One reusable WebGL scratch surface per pixel size (cells are square and
+// nearly all the same size, so this is usually a single entry). The scratch
+// MUST match the cell's pixel size exactly: transferToImageBitmap() grabs
+// the WHOLE scratch canvas, so any size mismatch would mis-scale the cell.
+const _scratchByPx = new Map(); // px -> { canvas, surface }
+function ensureScratchForPx(px) {
+	let s = _scratchByPx.get(px);
+	if (s) return s;
+	if (!_kit) return null;
+	const canvas = new OffscreenCanvas(px, px);
+	const surface = _kit.MakeWebGLCanvasSurface(canvas, undefined, _surfaceOpts);
+	if (!surface) { diag('warn', '[skottie-worker] scratch surface failed for px', px); return null; }
+	s = { canvas, surface };
+	_scratchByPx.set(px, s);
+	return s;
+}
+
+// Render all visible, built canvas-cells. Driven by a 'tick' message the
+// proxy posts once per animation frame (it carries `now`; no DOM reads).
+function renderCanvasCells(now) {
+	if (!_kit || !_canvasCells.size) return;
+	const firstPaints = [];
+	for (const [id, cell] of _canvasCells) {
+		if (!cell.visible || !cell.ctx) continue;
+		const entry = _anims.get(cell.url);
+		if (!entry || entry.duration <= 0) continue; // not built yet → thumb still covers it
+
+		// Compute the target frame FIRST so we can bail before doing any GPU
+		// work if it hasn't advanced since last tick. Paused/static cells
+		// (very common in custom packs) then render exactly once; animations
+		// slower than the 32 fps tick skip the ticks where their frame index
+		// is unchanged. Each skipped cell saves a clear + seek + render +
+		// flush + two bitmap transfers — the dominant per-frame worker cost.
+		let t;
+		if (cell.paused) {
+			t = cell.paintIndex != null ? Math.min(cell.paintIndex / entry.totalFrames, 1) : 1;
+		} else {
+			// Share one timeline per URL so re-mounted cells rejoin the
+			// cycle in progress instead of snapping back to frame 0.
+			if (entry.startTime == null) entry.startTime = now;
+			if (!cell.startTime) cell.startTime = entry.startTime;
+			const elapsed = (now - cell.startTime) / 1000;
+			t = cell.loop
+				? (elapsed % entry.duration) / entry.duration
+				: Math.min(1, elapsed / entry.duration);
+		}
+		const frame = Math.min(entry.totalFrames - 1, Math.floor(t * entry.totalFrames));
+		if (cell.firstPainted && frame === cell.lastFrame) continue; // nothing new to draw
+
+		const s = ensureScratchForPx(cell.w);
+		if (!s) continue;
+		const sk = s.surface.getCanvas();
+		sk.clear(_kit.TRANSPARENT);
+		const rect = _kit.LTRBRect(0, 0, cell.w, cell.h);
+		entry.animation.seek(frame / entry.totalFrames);
+		entry.animation.render(sk, rect);
+		s.surface.flush();
+
+		// Zero-copy GPU handoff into the cell's own canvas. Only count the
+		// paint (which is what hides the CSS thumb) when the transfer
+		// actually lands — if it throws, the thumb stays put rather than
+		// uncovering a blank canvas.
+		let ok = false;
+		try {
+			const bmp = s.canvas.transferToImageBitmap();
+			cell.ctx.transferFromImageBitmap(bmp);
+			ok = true;
+		} catch { /* cell canvas detached mid-frame */ }
+		if (!ok) continue;
+		cell.lastFrame = frame;
+
+		cell.paintCount = (cell.paintCount || 0) + 1;
+		// Hold the CSS thumb until the animation is SOLIDLY rendering, then
+		// hand off — mirrors the committed overlay renderer's behaviour.
+		// Handing off after just 1–2 paints exposed the canvas while its
+		// first frames were still settling, which read as a flicker the
+		// instant a sticker started animating. 12 frames (~0.4 s at the
+		// 32 fps tick) is enough for the loop to be visibly going before we
+		// drop the placeholder. Adaptive packs (tinted silhouettes) hand
+		// off on paint 1 — their CSS backdrop is a pre-baked match, so
+		// there's nothing to settle and holding just delays them.
+		if (!cell.firstPainted) {
+			const short = shortFromUrl(cell.url);
+			const isAdaptive = short && _adaptive.has(short);
+			// Re-entry (prebuilt) and adaptive packs hand off immediately;
+			// only a first-time build holds to hide the settling frames.
+			const handoffAt = (cell.prebuilt || isAdaptive) ? 1 : 12;
+			if (cell.paintCount >= handoffAt) {
+				cell.firstPainted = true;
+				firstPaints.push(id);
+			}
+		}
+	}
+	if (firstPaints.length) self.postMessage({ type: 'first-paints', ids: firstPaints });
+}
 
 // Adaptive-pack state, pushed once at boot by the main-thread proxy via
 // 'set-adaptive'. _adaptive holds the short_names of Telegram packs
@@ -89,54 +193,6 @@ async function loadKit() {
 		locateFile: (file) => `/canvaskit/${file}`
 	});
 	return _kit;
-}
-
-// Stage 1 (async, one-shot): grab the WebGPU device + canvas context.
-// Done lazily so the WebGL path pays no cost. If anything fails or
-// WebGPU isn't supported, we permanently flip _preferWebGPU = false
-// and subsequent surface creates use the WebGL path.
-async function ensureGpuContext() {
-	if (!_preferWebGPU) return false;
-	if (_gpuDevCtx && _gpuCanvasCtx) return true;
-	if (!self.navigator?.gpu) {
-		diag('warn', '[skottie-worker] navigator.gpu missing — falling back to WebGL');
-		_preferWebGPU = false;
-		return false;
-	}
-	try {
-		if (!_gpuDevCtx) {
-			const adapter = await self.navigator.gpu.requestAdapter();
-			if (!adapter) throw new Error('no GPU adapter');
-			const device = await adapter.requestDevice();
-			_gpuDevCtx = _kit.MakeGPUDeviceContext(device);
-			if (!_gpuDevCtx) throw new Error('MakeGPUDeviceContext returned null');
-		}
-		if (!_gpuCanvasCtx) {
-			_gpuCanvasCtx = _kit.MakeGPUCanvasContext(_gpuDevCtx, _canvas);
-			if (!_gpuCanvasCtx) throw new Error('MakeGPUCanvasContext returned null');
-		}
-		diag('log', '[skottie-worker] WebGPU context ready');
-		return true;
-	} catch (e) {
-		diag('warn', '[skottie-worker] WebGPU init failed —', String(e?.message || e), '— falling back to WebGL');
-		_gpuCanvasCtx = null;
-		_gpuDevCtx = null;
-		_preferWebGPU = false;
-		return false;
-	}
-}
-
-// Stage 2 (sync): create a surface using whichever backend is set up.
-// `MakeGPUCanvasSurface` is sync after the device/context are cached,
-// so we can call this from the render self-heal as well.
-function createSurfaceSync() {
-	if (!_kit || !_canvas) return null;
-	if (_preferWebGPU && _gpuCanvasCtx) {
-		const surface = _kit.MakeGPUCanvasSurface(_gpuCanvasCtx, null);
-		if (surface) return surface;
-		diag('warn', '[skottie-worker] MakeGPUCanvasSurface returned null — falling back to WebGL');
-	}
-	return _kit.MakeWebGLCanvasSurface(_canvas, undefined, _surfaceOpts);
 }
 
 // Worker-local Lottie JSON cache. Independent from the main thread's
@@ -300,7 +356,7 @@ function renderFrame(msg) {
 	// "transparent for 30 seconds" pattern: the surface dies once, no
 	// later resize fires, and we never recover.
 	if (!_surface && _canvas && _canvas.width >= 2 && _canvas.height >= 2) {
-		_surface = createSurfaceSync();
+		_surface = _kit.MakeWebGLCanvasSurface(_canvas, undefined, _surfaceOpts);
 		if (_surface) {
 			diag('log', '[skottie-worker] surface self-heal succeeded at', _canvas.width, 'x', _canvas.height);
 			for (const c of _cells.values()) { c.firstPainted = false; c.paintCount = 0; }
@@ -309,12 +365,23 @@ function renderFrame(msg) {
 		}
 	}
 	if (!_surface) return null;
-	const { now, viewRect, canvasRect, cellRects, dpr } = msg;
+	const { now, viewRect, canvasRect, cellRects, dpr, scrolled } = msg;
 	_lastViewRect = viewRect;
 
 	const sk = _surface.getCanvas();
 	let drewAny = false;
 	const firstPaints = [];
+
+	// The canvas is pinned to the scroll viewport, so when the content
+	// scrolls every cell moves to a new spot on the surface. The per-tile
+	// clear below only wipes where each cell LANDS — the pixels it
+	// vacated would persist (preserveDrawingBuffer keeps them) and smear
+	// into a ghost trail. On any scrolled frame, wipe the whole surface
+	// up front and let the loop repaint every in-view cell fresh.
+	if (scrolled) {
+		sk.clear(_kit.TRANSPARENT);
+		drewAny = true; // force a flush so the wipe lands even if no cell draws
+	}
 
 	for (const cr of cellRects) {
 		const cell = _cells.get(cr.id);
@@ -347,7 +414,20 @@ function renderFrame(msg) {
 		const hasAnim = !!(entry && entry.duration > 0);
 		const shouldAnimate = hasAnim && inViewport;
 		if (justEntered && shouldAnimate && !cell.animationStarted) {
-			cell.startTime = now;
+			// Keep the animation cycle continuous across cell
+			// instances. Section virtualization unmounts and re-
+			// mounts cells with fresh per-cell state when sections
+			// scroll out of and back into the band. Without this,
+			// each new cell would set `startTime = now`, render at
+			// frame 0 next paint, and snap back to the start of
+			// the loop — visible as a "the sticker jumped" flash
+			// even when the animation entry itself stayed resident
+			// in `_anims`. Storing startTime on the animation
+			// entry (one slot per URL) means every cell that
+			// renders this URL shares one timeline; rejoining the
+			// cycle in progress is what the user expected.
+			if (entry.startTime == null) entry.startTime = now;
+			cell.startTime = entry.startTime;
 			cell.animationStarted = true;
 		}
 
@@ -432,16 +512,17 @@ self.onmessage = async (e) => {
 	switch (msg.type) {
 		case 'init': {
 			_canvas = msg.canvas;
-			_preferWebGPU = !!msg.preferWebGPU;
-			diag('log', '[skottie-worker] init: canvas size', _canvas.width, 'x', _canvas.height, 'preferWebGPU:', _preferWebGPU);
+			diag('log', '[skottie-worker] init: canvas size', _canvas.width, 'x', _canvas.height);
 			try {
 				await loadKit();
-				// Bring up the WebGPU device + canvas context now (if
-				// requested) so the first `resize` can synchronously
-				// allocate a surface without the user perceiving the
-				// init latency. Falls back to WebGL on failure.
-				if (_preferWebGPU) await ensureGpuContext();
 				diag('log', '[skottie-worker] CanvasKit loaded — surface deferred until first resize');
+				// Surface intentionally NOT created here. We get
+				// `init` during prewarm BEFORE the picker has a host
+				// element, so the canvas is still at the default
+				// 300×150 buffer and there's no point allocating GPU
+				// resources at that size — they'd just get nuked
+				// when the real resize lands. First 'resize' creates
+				// it at the right size.
 				self.postMessage({ type: 'ready' });
 			} catch (err) {
 				diag('error', '[skottie-worker] init exception:', String(err?.message || err));
@@ -458,9 +539,9 @@ self.onmessage = async (e) => {
 			_canvas.height = height;
 			const hadSurface = !!_surface;
 			try { _surface?.delete(); } catch {}
-			_surface = createSurfaceSync();
+			_surface = _kit.MakeWebGLCanvasSurface(_canvas, undefined, _surfaceOpts);
 			if (!_surface) {
-				diag('warn', '[skottie-worker] resize: surface creation returned null (', width, 'x', height, ') — will self-heal on next render');
+				diag('warn', '[skottie-worker] resize: MakeWebGLCanvasSurface returned null (', width, 'x', height, ') — will self-heal on next render');
 			} else {
 				diag('log', hadSurface ? '[skottie-worker] resize OK ->' : '[skottie-worker] first surface OK ->', width, 'x', height);
 			}
@@ -478,7 +559,12 @@ self.onmessage = async (e) => {
 				paintIndex: msg.paintIndex ?? null,
 				loop: msg.loop !== false,
 				thumbInfo: msg.thumbInfo || null,
-				visible: true,
+				// Trust the proxy's `visible` value. Off-viewport cells
+				// arrive with visible=false; the render loop's
+				// `if (!cell.visible) continue;` skips them entirely
+				// (no rect, no clipRect, no Skottie seek) until a
+				// later set-visible flips the flag on.
+				visible: !!msg.visible,
 				firstPainted: false,
 				wasOnScreen: false,
 				animationStarted: false,
@@ -587,6 +673,51 @@ self.onmessage = async (e) => {
 			renderFrame(msg);
 			break;
 		}
+		// ── Inline-canvas path ──────────────────────────────────────────
+		case 'register-canvas-cell': {
+			let ctx = null;
+			// bitmaprenderer = zero-copy sink for transferFromImageBitmap.
+			try { ctx = msg.canvas.getContext('bitmaprenderer'); } catch { /* transfer failed */ }
+			// If the animation is ALREADY built when this cell mounts, it's a
+			// re-entry (the user scrolled this section back into view) — the
+			// animation is mid-cycle and stable, so there are no settling
+			// frames to hide and we can hand the placeholder off on paint 1.
+			// Only a first-time build needs the multi-frame hold.
+			const _built = _anims.has(msg.url) && (_anims.get(msg.url).duration > 0);
+			_canvasCells.set(msg.id, {
+				ctx,
+				off: msg.canvas,
+				url: msg.url,
+				paused: !!msg.paused,
+				loop: msg.loop !== false,
+				paintIndex: msg.paintIndex ?? null,
+				w: msg.w,
+				h: msg.h,
+				visible: !!msg.visible,
+				prebuilt: _built,
+				startTime: 0,
+				paintCount: 0,
+				firstPainted: false,
+				lastFrame: -1
+			});
+			break;
+		}
+		case 'unregister-canvas-cell': {
+			_canvasCells.delete(msg.id);
+			break;
+		}
+		case 'set-canvas-visible': {
+			const c = _canvasCells.get(msg.id);
+			// Leave the last-drawn frame in place when hiding — the cell
+			// is off-screen so it's invisible anyway, and keeping it means
+			// instant content (no blank flash) when it scrolls back in.
+			if (c) c.visible = !!msg.visible;
+			break;
+		}
+		case 'tick': {
+			renderCanvasCells(msg.now);
+			break;
+		}
 		case 'clear': {
 			// Wipe the surface and reset every cell's firstPainted/etc.
 			// so they re-draw cleanly on the next render. Used on tab
@@ -612,27 +743,6 @@ self.onmessage = async (e) => {
 			if (_pending.size) {
 				diag('log', '[skottie-worker] clear: dropping', _pending.size, 'pending builds');
 				_pending.clear();
-			}
-			// AGGRESSIVE: free every built animation's GPU resources
-			// too. Without this, each Skottie animation in `_anims`
-			// keeps pinning textures/buffers in the GPU surface, and
-			// switching tabs on iOS WebGPU piles them up until the
-			// per-page budget is exceeded → the renderer (and tab)
-			// crashes. Cells re-queue on next viewport visibility;
-			// the rebuild cost is acceptable because the JSON is
-			// already HTTP-cached. We tell main about each released
-			// URL so its `_loadedUrls` mirror stays accurate.
-			if (_anims.size) {
-				diag('log', '[skottie-worker] clear: freeing', _anims.size, 'built animations to recover GPU memory');
-				const releasedUrls = [];
-				for (const [url, entry] of _anims) {
-					try { entry.animation.delete(); } catch {}
-					releasedUrls.push(url);
-				}
-				_anims.clear();
-				for (const url of releasedUrls) {
-					self.postMessage({ type: 'anim-released', url });
-				}
 			}
 			// Drop stale rect cache so the priority queue doesn't
 			// keep treating old-tab URLs as "in viewport" via their

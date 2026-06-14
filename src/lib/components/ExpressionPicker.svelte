@@ -65,10 +65,19 @@
 		try { localStorage.setItem(TAB_KEY, tab); } catch {}
 	});
 
-	// Emotes tab used to have Uploaded / Library sub-tabs (the latter
-	// surfacing the static Telegram packs). Telegram packs in their
-	// entirety now live in the Animated tab so Emotes is uploads-only
-	// — no sub-tab state needed.
+	// Emotes tab has two sources: the class's uploaded custom emotes
+	// (R2-backed PNGs / GIFs / WebPs) and the static Telegram packs
+	// (CrazyEmoji / MadEmoji2 / HeartEmoji) — packs whose artwork
+	// has no frame-to-frame motion, so they belong with non-animated
+	// emotes rather than under Animated. A sub-tab persists each
+	// section's own search / scroll chrome so they don't fight inside
+	// the 320 px mobile panel.
+	const EMOTES_SUB_KEY = 'exprEmotesSub';
+	const _savedSub = typeof localStorage !== 'undefined' ? localStorage.getItem(EMOTES_SUB_KEY) : null;
+	let emotesSub = $state(_savedSub === 'library' ? 'library' : 'uploaded');
+	$effect(() => {
+		try { localStorage.setItem(EMOTES_SUB_KEY, emotesSub); } catch {}
+	});
 
 	// Reactions tab only handles reactions; pass a no-op for emoji
 	// insertion. CustomEmojiPanel hides the unused side via `mode`.
@@ -126,18 +135,24 @@
 		{:else if tab === 'gifs' && !inline}
 			<GifPicker onSelect={onSelectGif} />
 		{:else if tab === 'emotes'}
-			<!-- Emotes is now strictly uploaded class emotes (the
-			     custom .webp / .gif uploads instructors and students
-			     post to R2). Any Telegram pack — animated or static —
-			     lives in the Animated tab so this tab can't surprise
-			     users with motion they expected to see one tab over. -->
-			<CustomEmojiPanel mode="emoji" onInsertEmoji={onInsertCustomEmoji} onInsertReaction={_noop} {isInstructor} />
+			<!-- Two sources, two sub-tabs. Uploaded = class custom
+			     emotes (R2). Library = the static Telegram packs
+			     (CrazyEmoji / MadEmoji2 / HeartEmoji) which don't
+			     animate, so they belong here next to the rest of the
+			     non-animated emotes rather than under Animated. -->
+			<nav class="expr-subtabs" aria-label="Emote source">
+				<button class="expr-subtab" class:active={emotesSub === 'uploaded'} onclick={() => (emotesSub = 'uploaded')}>Uploaded</button>
+				<button class="expr-subtab" class:active={emotesSub === 'library'} onclick={() => (emotesSub = 'library')}>Library</button>
+			</nav>
+			{#if emotesSub === 'uploaded'}
+				<CustomEmojiPanel mode="emoji" onInsertEmoji={onInsertCustomEmoji} onInsertReaction={_noop} {isInstructor} />
+			{:else}
+				<TelegramEmojiPanel onInsert={onInsertTgEmoji} packFilter="static" />
+			{/if}
 		{:else if tab === 'animated'}
-			<!-- Every Telegram pack (animated + nominally-static) — the
-			     panel decides per-cell whether to play or freeze via
-			     LottieSticker's `paused` check. Consolidating here
-			     means the Emotes tab stays uploads-only. -->
-			<TelegramEmojiPanel onInsert={onInsertTgEmoji} packFilter="all" />
+			<!-- Animated stickers only — static packs live in the
+			     Emotes tab's Library sub-tab. -->
+			<TelegramEmojiPanel onInsert={onInsertTgEmoji} packFilter="animated" />
 		{:else if tab === 'reactions' && !inline}
 			<CustomEmojiPanel mode="reactions" onInsertEmoji={_noop} onInsertReaction={onInsertReaction} {isInstructor} />
 		{/if}
@@ -261,9 +276,16 @@
 	.expr-body :global(.kitchen-panel),
 	.expr-body :global(.gif-picker),
 	.expr-body :global(.custom-emoji-panel) {
+		/* Reset each inner picker's standalone chrome so it reads as
+		   the body of the ExpressionPicker shell, not a card-within-
+		   a-card. width/height let the picker fill the body; the
+		   visual chrome (border, radius, shadow, background) is
+		   owned by the outer .expr-panel. */
 		width: 100% !important;
 		height: 100% !important;
+		border: none !important;
 		border-radius: 0 !important;
 		box-shadow: none !important;
+		background: transparent !important;
 	}
 </style>

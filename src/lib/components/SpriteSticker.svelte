@@ -19,10 +19,13 @@
 	// Resolve the right Skottie stage module based on engine. Both
 	// modules export the identical API, so dispatch is just module
 	// selection — every call site below uses `stage.<fn>` and the right
-	// implementation runs underneath. `skottie-webgpu` uses the same
-	// worker pool as `skottie-worker` but with a WebGPU surface
-	// preference set via `setPreferWebGPU`.
+	// implementation runs underneath.
 	function skModule(eng) {
+		// `skottie-webgpu` is now an alias for `skottie-worker` — the
+		// WebGPU-specific code path was reverted after CanvasKit's
+		// WebGPU canvas surface caused per-tile flicker / disappearing
+		// elements on the picker. Mapping both labels to SkWorker keeps
+		// the engine toggle UI working without re-introducing the bug.
 		return (eng === 'skottie-worker' || eng === 'skottie-webgpu') ? SkWorker : SkMain;
 	}
 
@@ -84,6 +87,12 @@
 	let skottieCellId = null;
 	let skottieUrl = null;
 	let skottieAnimQueued = false; // we've called loadAnimation for this cell's URL
+	// True when this cell registered through the NEW inline-canvas path
+	// (mod.registerCanvasCell) — its own <canvas> was transferred to the
+	// worker, which blits frames straight into it. The canvas flows with
+	// the DOM, so there's no overlay and no scroll-position math. False =
+	// legacy shared-overlay path (main-thread 'skottie' engine only).
+	let skottieCanvasPath = false;
 	// Remember which Skottie module owns the current cell so teardown
 	// hits the right one even after an engine swap mid-flight.
 	let skottieMod = null;
@@ -195,16 +204,66 @@
 		const eng = activeEngine;
 		const mod = skModule(eng);
 		skottieMod = mod;
-		// Tell the worker proxy whether to boot with a WebGPU or WebGL
-		// surface. Only takes effect on the first ensureStage(); a
-		// later engine swap between skottie-worker ↔ skottie-webgpu
-		// won't switch the underlying surface backend without a reload.
-		if (mod === SkWorker && typeof mod.setPreferWebGPU === 'function') {
-			mod.setPreferWebGPU(eng === 'skottie-webgpu');
-		}
 		await mod.ensureStage();
 		if (!mounted || activeEngine !== eng) return;
 
+		// If the worker already has this animation built (because a
+		// previous cell instance — likely from a section the user
+		// scrolled past in this picker session — left the entry
+		// resident in `_anims`), skip the CSS-thumb warmup entirely.
+		// The default behaviour holds the thumb backdrop over the
+		// canvas until paint #15 (~470ms at 32 fps) to guarantee the
+		// compositor has visibly taken over before exposing it. That
+		// guard is necessary the first time a sticker mounts — the
+		// JSON might still be building. But once the animation is
+		// built, paint #1 already shows the real animation frame, and
+		// holding the thumb over it for 470ms is what reads as a
+		// "flash on certain items" every time the user scrolls back
+		// into a section.
+		// NEW inline-canvas path (worker engine): transfer this cell's
+		// own <canvas> to the worker, which blits animation frames into
+		// it. The canvas flows in the DOM, so the browser scrolls it
+		// natively — no overlay, no per-frame rect math, no scroll lag.
+		if (typeof mod.registerCanvasCell === 'function' && canvas) {
+			// Keep the CSS placeholder (the sprite/SVG thumb) showing the
+			// whole time until the worker confirms a real paint into this
+			// canvas (onFirstPaint). Do NOT hide it preemptively just
+			// because the animation is built — the canvas is still blank
+			// until the first blit lands, and hiding the thumb early is
+			// exactly the "flash / disappears then re-appears" artifact.
+			painted = false;
+			let off;
+			try {
+				off = canvas.transferControlToOffscreen();
+			} catch (e) {
+				// Canvas already had a context (e.g. rlottie ran on it
+				// before an engine swap). The {#key engine} wrapper
+				// recreates the element on swap so this normally can't
+				// happen; if it does, bail rather than throw.
+				console.warn('[sprite] transferControlToOffscreen failed', e);
+				return;
+			}
+			skottieCanvasPath = true;
+			skottieCellId = mod.registerCanvasCell({
+				url: u,
+				canvas: off,
+				w: px,
+				h: px,
+				paused,
+				loop,
+				visible: !!(eager || visible),
+				// Fires after the worker's confirmed paints of this cell —
+				// the canvas now holds the animation, so the CSS thumb
+				// backdrop can drop out.
+				onFirstPaint: () => { if (mounted) painted = true; }
+			});
+			if (paused) return;
+			if (eager || visible) await queueSkottieAnimation();
+			return;
+		}
+
+		// LEGACY shared-overlay path (main-thread 'skottie' engine).
+		if (mod.isAnimationLoaded?.(u)) painted = true;
 		// Register the cell (thumb only — animation is queued lazily
 		// when the IO observer fires `visible = true`, so off-screen
 		// cells don't request a load until they actually need it).
@@ -220,6 +279,17 @@
 			paused,
 			loop,
 			thumbInfo,
+			// Initial visibility passed straight from the live IO
+			// state. Eager cells (tab icons) are always-visible by
+			// design; for everyone else this is `true` only if the
+			// IntersectionObserver already fired during the
+			// `ensureStage` await above and reported the cell
+			// in-viewport. Off-viewport cells in warmed sections
+			// register as invisible and the worker skips them in
+			// every render loop until a later IO transition flips
+			// the flag — so the perf cost of section-level warming
+			// is bounded to the few rows actually on screen.
+			visible: !!(eager || visible),
 			// Fires after the worker's 3rd confirmed paint of this
 			// cell — canvas has visibly taken over, so the CSS
 			// backdrop can drop out.
@@ -227,27 +297,17 @@
 			// Worker's surface was wiped (tab switch, resize). Bring
 			// the backdrop back to cover the cell while the canvas
 			// rebuilds; next 3-paint cycle will hide it again.
-			onSurfaceLost: () => {
-				if (!mounted) return;
-				painted = false;
-				// Worker may have freed our animation (mobile tab
-				// switch triggers an aggressive _anims clear to
-				// stop GPU memory from accumulating). Reset our
-				// "already queued" flag so the next visibility
-				// transition re-acquires; if we're currently
-				// visible, re-queue right now so playback resumes.
-				skottieAnimQueued = false;
-				if (visible) queueSkottieAnimation();
-			}
+			onSurfaceLost: () => { if (mounted) painted = false; }
 		});
-		mod.setCellVisible(skottieCellId, true);
 
 		// Static packs (MadEmoji etc) have no animation.
 		if (paused) return;
 
 		// Eager cells (tab icons) queue their animation immediately —
-		// they're always-visible. Everything else waits for IO.
-		if (eager) await queueSkottieAnimation();
+		// they're always-visible. Cells whose IO already reported
+		// in-viewport (because the await above yielded) also queue
+		// straight away. Everything else waits for an IO transition.
+		if (eager || visible) await queueSkottieAnimation();
 	}
 
 	// Queue the animation load with the stage. The stage may not
@@ -296,12 +356,30 @@
 	}
 	function teardown_skottie() {
 		const mod = skottieMod || SkMain;
-		if (skottieCellId != null) mod.unregisterCell(skottieCellId);
-		if (skottieUrl) mod.releaseAnimation(skottieUrl);
+		if (skottieCellId != null) {
+			if (skottieCanvasPath) mod.unregisterCanvasCell?.(skottieCellId);
+			else mod.unregisterCell(skottieCellId);
+		}
+		// Only release the URL if its animation hasn't actually built
+		// yet (still in `_pending` on the worker). That cancels work
+		// the worker hasn't finished — fine, the user moved on. But
+		// for a BUILT animation in `_anims`, calling release() drops
+		// the refcount and the worker `entry.animation.delete()`s it,
+		// taking 30–60ms to rebuild from the JSON the next time the
+		// section scrolls back into view. During that rebuild window
+		// the cell falls back to its thumb sprite — that's the
+		// "specific items flash on scroll" the user keeps hitting.
+		// Section virtualization in the TG picker mounts/unmounts
+		// thousands of cells as the user scrolls; without this guard
+		// each round-trip nukes the whole pack's Skottie cache.
+		if (skottieUrl && !mod.isAnimationLoaded?.(skottieUrl)) {
+			mod.releaseAnimation(skottieUrl);
+		}
 		skottieCellId = null;
 		skottieUrl = null;
 		skottieAnimQueued = false;
 		skottieMod = null;
+		skottieCanvasPath = false;
 	}
 
 	// ──────────────────────────────────────────────────────────────────
@@ -333,22 +411,36 @@
 			visible = entries[0].isIntersecting;
 			if (visible && !wasVisible) {
 				if (activeEngine === 'rlottie' && !eager) ensureLoaded();
-				if (isSkottieEngine(activeEngine)) queueSkottieAnimation();
-			} else if (!visible && wasVisible && isSkottieEngine(activeEngine)) {
-				// Cell just left the viewport. On desktop we only cancel
-				// PENDING builds (already-loaded animations keep their
-				// GPU resources so the cell snaps back instantly on
-				// re-entry). On mobile we release EVERYTHING — each
-				// resident Skottie animation pins a chunk of GPU memory
-				// and iOS WebGPU kills the renderer once it overruns
-				// its per-page budget. Re-acquire is cheap (HTTP cache)
-				// when the cell scrolls back into view.
-				const mod = skottieMod || skModule(activeEngine);
-				const _coarse = window.matchMedia?.('(pointer: coarse)').matches;
-				if (skottieAnimQueued && skottieUrl) {
-					if (_coarse || !mod.isAnimationLoaded(skottieUrl)) {
-						releaseSkottieAnimation();
+				if (isSkottieEngine(activeEngine)) {
+					// Cell just entered the viewport. Tell the worker
+					// to start rect-checking + drawing it, then queue
+					// the animation. If the cell's `ensureStage` await
+					// hasn't returned yet, skottieCellId is still null
+					// and the setCellVisible call is a no-op — the
+					// register path captures the live `visible` state
+					// when it does run.
+					const mod = skottieMod || skModule(activeEngine);
+					if (skottieCellId != null) {
+						if (skottieCanvasPath) mod.setCanvasCellVisible(skottieCellId, true);
+						else mod.setCellVisible(skottieCellId, true);
 					}
+					queueSkottieAnimation();
+				}
+			} else if (!visible && wasVisible && isSkottieEngine(activeEngine)) {
+				// Cell just left the viewport. Mark invisible to the
+				// worker so the render loop stops getRect-ing it and
+				// drawing its tile — the actual perf win of the
+				// viewport-driven visibility scheme. Also cancel
+				// pending builds so the queue's bandwidth goes to
+				// cells the user is actually looking at; already-built
+				// animations stay loaded for instant re-entry.
+				const mod = skottieMod || skModule(activeEngine);
+				if (skottieCellId != null) {
+					if (skottieCanvasPath) mod.setCanvasCellVisible(skottieCellId, false);
+					else mod.setCellVisible(skottieCellId, false);
+				}
+				if (skottieAnimQueued && skottieUrl && !mod.isAnimationLoaded(skottieUrl)) {
+					releaseSkottieAnimation();
 				}
 			}
 			updatePlay();
@@ -407,11 +499,18 @@
 			<img class="tg-thumb" class:hidden={painted} src={thumbUrl}
 				alt="" decoding="async" loading="eager" />
 		{/if}
-		<!-- The canvas is the rlottie engine's render target. Skottie draws
-		     into its own shared full-viewport WebGL canvas at z-index 9999
-		     and uses the cell's bounding-rect for placement, so this
-		     canvas is just inert in that mode. -->
-		<canvas bind:this={canvas} class="tg-canvas" width={px} height={px}></canvas>
+		<!-- Per-cell render target. In the worker ('skottie-worker')
+		     engine this canvas is transferControlToOffscreen()'d to the
+		     render worker, which blits animation frames straight into it —
+		     it flows with the DOM so scrolling is native (no lag). In
+		     rlottie mode it's drawn locally via a 2D context. The
+		     {#key engine} wrapper recreates the element on an engine swap
+		     so a canvas that was transferred (and can't get a 2D context,
+		     or be transferred twice) is replaced by a fresh one for the
+		     new engine. -->
+		{#key engine}
+			<canvas bind:this={canvas} class="tg-canvas" width={px} height={px}></canvas>
+		{/key}
 	</span>
 {/if}
 
@@ -431,11 +530,18 @@
 		width: 100%;
 		height: 100%;
 	}
-	/* CSS backdrop sits underneath the canvas. */
-	.tg-thumb { z-index: 0; }
-	/* Canvas sits on top, transparent by default — its pixels (drawn
-	   by rlottie per-cell, or covered by the worker's stage canvas in
-	   Skottie mode) appear over the backdrop. */
+	/* Placeholder sits ON TOP of the per-cell canvas and covers it until
+	   the animation is solidly rendering (`painted`). This is what keeps
+	   the start-of-animation flicker hidden: the canvas's first, still-
+	   settling frames render UNDERNEATH the static thumb, and only once
+	   the worker confirms the handoff does the thumb fade away to reveal a
+	   smoothly-looping animation. (In the legacy overlay engine the shared
+	   stage canvas draws at z-index 9999, above both of these, so this
+	   ordering doesn't affect it.) */
 	.tg-canvas { z-index: 1; background: transparent; }
-	.tg-thumb.hidden { display: none; }
+	.tg-thumb { z-index: 2; transition: opacity 0.14s ease; }
+	/* Fade out instead of display:none so the reveal is a smooth cross-
+	   fade rather than a hard pop. pointer-events:none lets clicks reach
+	   the cell once it's transparent. */
+	.tg-thumb.hidden { opacity: 0; pointer-events: none; }
 </style>
