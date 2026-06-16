@@ -66,8 +66,9 @@
 	let active = $state('Effects');
 	// Scrollable containers, passed to each LottieSticker as IntersectionObserver root
 	// so off-screen cells/tabs actually pause instead of always being "visible".
+	let gridOuterEl = $state(null);  // .tg-grid-outer — non-scrolling, viewport-sized; Skottie canvas mounts here so it stays pinned to the visible area
 	let gridWrapEl = $state(null);
-	let gridEl = $state(null);  // .tg-grid — Skottie stage canvas mounts inside this so it scrolls with content
+	let gridEl = $state(null);  // .tg-grid — scroll content
 	let tabsEl = $state(null);
 	let panelEl = $state(null);
 	// Virtualization — render LottieStickers only for cells in viewport + buffer.
@@ -221,18 +222,78 @@
 		// would defeat the point.
 		if (!_isStaticOnly) {
 			if (fx.length) head.push({ key: 'Effects', label: 'Effects', icon: '✨' });
-			if (sorted['Custom']?.length) head.push({ key: 'Custom', label: 'Custom', icon: '🎨' });
+			// The 🎨 "Custom" aggregate tab is gone — in flow/scroll mode
+			// every custom pack already renders as its own labelled section
+			// in the continuous scroller, so the aggregate was duplicate
+			// navigation. (sorted['Custom'] is still built above in case
+			// other code references it, just no longer surfaced as a tab.)
 			for (const c of CAT_ORDER) {
 				if (sorted[c.key]?.length) head.push({ key: c.key, label: c.key, icon: c.icon });
 			}
 		}
 		headCats = head;
 		packCats = packTabsLocal;
-		if (!byCat[active]) active = head[0]?.key ?? packTabsLocal[0]?.key ?? '';
+		// Reset `active` if it isn't a tab that exists in THIS mode — not just
+		// if its data is missing. `byCat['Effects']` is always built, so the
+		// old `!byCat[active]` check left the default active='Effects' in
+		// place even in static-only (Library) mode where Effects is hidden,
+		// making the Library open on the animated Effects grid. Validate
+		// against the actual visible tab keys instead.
+		const _validTabs = new Set([...head.map((c) => c.key), ...packTabsLocal.map((c) => c.key)]);
+		if (!_validTabs.has(active)) active = head[0]?.key ?? packTabsLocal[0]?.key ?? '';
 		loading = false;
 	});
 
 	const items = $derived(byCat[active] ?? []);
+
+	// Categories that render as a SINGLE grid even in flow mode.
+	// `Effects` is whole-message effects (different concept from the
+	// per-emoji picker); `Custom` is an aggregate of every per-pack
+	// section underneath it, so showing it both as its own block AND
+	// repeated in each pack's block would be duplicate noise.
+	const STANDALONE_TG_CATS = new Set(['Effects', 'Custom']);
+	const isStandalone = (key) => STANDALONE_TG_CATS.has(key);
+
+	// Flow mode = every non-standalone head category + every pack tab,
+	// rendered as labelled sections inside one continuous scroller.
+	// Click on a head/pack tab snaps the scroller to that section's
+	// top; user scroll inside the scroller updates the highlighted tab
+	// to whichever section is currently nearest the top edge.
+	const flowingCats = $derived([
+		...headCats.filter((c) => !isStandalone(c.key)),
+		...packCats.map((c) => ({ key: c.key, label: c.label, icon: null, pack: c.pack }))
+	]);
+	const flowingSections = $derived(
+		flowingCats.map((c) => ({
+			key: c.key,
+			label: c.label ?? c.key,
+			items: byCat[c.key] ?? []
+		}))
+	);
+
+	// Per-section pixel geometry — used by (1) the scroll → active-tab
+	// sync (walk-forward "last pxStart ≤ scrollTop" lookup) and (2)
+	// the tab → scroll snap (scrollTo target.pxStart). HEADER_PX must
+	// match the rendered `.tg-section-label` height in CSS or the
+	// scrollbar geometry drifts from where the labels actually land.
+	const HEADER_PX = 26;
+	const flowingGeometry = $derived.by(() => {
+		const out = [];
+		let py = 0;
+		const cpr = Math.max(1, cellsPerRow);
+		for (const s of flowingSections) {
+			const rows = Math.ceil(s.items.length / cpr);
+			const h = HEADER_PX + rows * CELL_PX;
+			out.push({ key: s.key, pxStart: py, pxEnd: py + h });
+			py += h;
+		}
+		return out;
+	});
+
+	// Suppress the scroll-derived active sync while a programmatic
+	// scroll is in flight (goToTab → scrollTo). Released on the next
+	// microtask so the user's next genuine scroll is observed.
+	let _programmaticActive = false;
 
 	onDestroy(() => {
 		// Release the picker's grid wrapper as the Skottie host so the
@@ -248,23 +309,47 @@
 		headCats.find((c) => c.key === active) || packCats.find((c) => c.key === active) || null
 	);
 
-	// Wire the Skottie stage canvas into the grid the moment .tg-grid
-	// is bound. We can't do this in onMount because `loading` is still
-	// true at that point and the .tg-grid element doesn't exist yet.
+	// Wire the Skottie stage canvas to a NON-SCROLLING, viewport-sized
+	// host (gridOuterEl), with gridWrapEl as the scroll viewport whose
+	// scroll events drive cell repositioning.
+	//
+	// Why a separate outer host and not gridWrapEl itself: the worker
+	// appends the canvas as `position:absolute; top:0` inside the host.
+	// If the host IS the scroller (gridWrapEl, overflow:auto), that
+	// abspos canvas is positioned from the scroll-content origin, so it
+	// scrolls UP and out of view the moment you scroll down — and
+	// nothing renders. gridOuterEl wraps the scroller but does NOT
+	// scroll, so an abspos canvas inside it stays pinned to the visible
+	// viewport; cells scroll underneath it, and the worker's
+	// `cell.getBoundingClientRect() − canvas.getBoundingClientRect()`
+	// math keeps every sprite at the right on-screen position.
+	//
+	// gridOuterEl is viewport-sized (~360 px), so the WebGL backbuffer
+	// is ~3 MB total across shards instead of the ~70 MB it would be if
+	// sized to the ~8000 px flow content (gridEl) — that giant
+	// backbuffer is what browsers tile for compositing, and the tile
+	// boundaries are where the flicker came from.
 	$effect(() => {
-		if (gridEl && gridWrapEl) setSkottieHosts(gridEl, gridWrapEl);
+		if (gridOuterEl && gridWrapEl) setSkottieHosts(gridOuterEl, gridWrapEl);
 	});
 
-	// Tab change side-effects. We still listen reactively to `active` so
-	// programmatic tab changes (e.g. the fallback in onMount that picks
-	// the first available category) trigger them too, but the actual
-	// canvas clear is fired SYNCHRONOUSLY inside `goToTab` below — see
-	// the comment there for why timing matters.
+	// Reset search on tab change. Standalone tabs (Effects / Custom)
+	// and active search both reset scroll to top — they switch the
+	// render branch entirely, so previous scroll position is
+	// meaningless. Programmatic tab changes from `goToTab` to a
+	// flowing section own the scroll themselves (they scrollTo the
+	// section's pxStart), so they skip both branches here.
 	$effect(() => {
 		active;
 		search = '';
-		if (gridWrapEl) gridWrapEl.scrollTop = 0;
-		scrollTop = 0;
+	});
+	$effect(() => {
+		void active; void search;
+		if (_programmaticActive) return;
+		if (isStandalone(active) || search.trim()) {
+			if (gridWrapEl) gridWrapEl.scrollTop = 0;
+			scrollTop = 0;
+		}
 	});
 
 	// Switch tabs. We clear the Skottie canvases BEFORE updating
@@ -276,9 +361,66 @@
 	// thought we'd wiped it. With the clear posted first the surface is
 	// blank before any new cells get a chance to register on it.
 	function goToTab(key) {
-		if (key === active) return;
-		clearSkottieCanvases();
+		if (key === active && isStandalone(key)) return;
+		const wasStandalone = isStandalone(active);
+		const toStandalone = isStandalone(key);
+		// Standalone destination: clear the canvases (we're swapping
+		// render branches) and just set active.
+		if (toStandalone) {
+			clearSkottieCanvases();
+			active = key;
+			return;
+		}
+		// Flowing destination. Suppress the scroll-derived active sync
+		// while we move scrollTop, otherwise the snap reads its own
+		// transient position back out as a user gesture.
+		_programmaticActive = true;
+		if (wasStandalone) {
+			// Coming from standalone (Effects/Custom): need to clear
+			// the previous-branch canvas first, then mount the flow
+			// branch via `active`, then scrollTo on the next tick
+			// once the flow's {#each} has produced real geometry.
+			clearSkottieCanvases();
+			active = key;
+			queueMicrotask(() => {
+				const target = flowingGeometry.find((g) => g.key === key);
+				if (target && gridWrapEl) {
+					gridWrapEl.scrollTo({ top: target.pxStart, behavior: 'instant' });
+					scrollTop = target.pxStart;
+				}
+				queueMicrotask(() => { _programmaticActive = false; });
+			});
+			return;
+		}
+		// Flow → flow: section is already mounted, just glide there.
 		active = key;
+		const target = flowingGeometry.find((g) => g.key === key);
+		if (target && gridWrapEl) {
+			gridWrapEl.scrollTo({ top: target.pxStart, behavior: 'smooth' });
+		}
+		queueMicrotask(() => { _programmaticActive = false; });
+	}
+
+	// Scroll-derived active-tab sync. Runs only when the flow render
+	// is the active branch (not standalone, not in a search). Walks
+	// the geometry forward and remembers the LAST section whose
+	// pxStart ≤ scrollTop; that's the section currently nearest the
+	// top edge, regardless of scroll direction.
+	function syncActiveFromScroll() {
+		if (isStandalone(active) || search.trim()) return;
+		if (_programmaticActive) return;
+		if (!flowingGeometry.length) return;
+		const top = scrollTop + 4;
+		let foundKey = flowingGeometry[0].key;
+		for (const g of flowingGeometry) {
+			if (g.pxStart <= top) foundKey = g.key;
+			else break;
+		}
+		if (foundKey !== active) {
+			_programmaticActive = true;
+			active = foundKey;
+			queueMicrotask(() => { _programmaticActive = false; });
+		}
 	}
 
 	// Virtualization math — `gridWrapEl.clientWidth` includes the wrap's
@@ -293,9 +435,37 @@
 		gridH = gridWrapEl.clientHeight;
 		gridW = gridWrapEl.clientWidth;
 	}
-	function onGridScroll(e) { scrollTop = e.target.scrollTop; }
+	function onGridScroll(e) {
+		scrollTop = e.target.scrollTop;
+		syncActiveFromScroll();
+	}
 	onMount(() => { measureGrid(); });
 	$effect(() => { active; queueMicrotask(measureGrid); });
+
+	// Keep the active tab on-screen in the horizontal strip. When vertical
+	// scrolling (or a click) changes `active`, nudge `.tg-tabs` just enough
+	// to bring the highlighted tab fully into view — important once there
+	// are many custom-pack tabs that overflow the strip. Scrolls ONLY the
+	// strip horizontally (rect math), never the page or the grid.
+	$effect(() => {
+		active;
+		if (!tabsEl) return;
+		tick().then(() => {
+			if (!tabsEl) return;
+			const el = tabsEl.querySelector('.tg-tab.active');
+			if (!el) return;
+			const barRect = tabsEl.getBoundingClientRect();
+			const elRect = el.getBoundingClientRect();
+			const left = elRect.left - barRect.left + tabsEl.scrollLeft;
+			const right = left + elRect.width;
+			const PAD = 16;
+			if (left < tabsEl.scrollLeft + PAD) {
+				tabsEl.scrollTo({ left: Math.max(0, left - PAD), behavior: 'smooth' });
+			} else if (right > tabsEl.scrollLeft + tabsEl.clientWidth - PAD) {
+				tabsEl.scrollTo({ left: right - tabsEl.clientWidth + PAD, behavior: 'smooth' });
+			}
+		});
+	});
 	const visibleStart = $derived(
 		Math.max(0, (Math.floor(scrollTop / CELL_PX) - BUFFER_ROWS) * cellsPerRow)
 	);
@@ -305,10 +475,29 @@
 
 	// Filter custom items — CLDR name + keywords only count for packs where the
 	// user has explicitly opted in via the per-pack toggle (default OFF).
+	// In flow mode, an active search spans EVERY flowing category's items
+	// (Smileys + People + Animals + every pack) collapsed into one flat
+	// result list. Standalone tabs (Effects, Custom) and a non-search
+	// active tab keep their existing single-category scope.
+	const _searchPool = $derived.by(() => {
+		const q = search.trim();
+		if (!q || isStandalone(active)) return items;
+		const seen = new Set();
+		const out = [];
+		for (const s of flowingSections) {
+			for (const it of s.items) {
+				const key = it.custom ? `c:${it.id}` : `u:${it.cp}`;
+				if (seen.has(key)) continue;
+				seen.add(key);
+				out.push(it);
+			}
+		}
+		return out;
+	});
 	const filteredItems = $derived.by(() => {
 		const q = search.trim().toLowerCase();
 		if (!q) return items;
-		return items.filter((it) => {
+		return _searchPool.filter((it) => {
 			if (it.custom) {
 				const useCldr = cldrEnabled[it.short] === true;
 				if (useCldr && (it.name || '').toLowerCase().includes(q)) return true;
@@ -344,7 +533,12 @@
 		{/each}
 	</div>
 
-	{#if activeCat?.pack}
+	{#if activeCat?.pack && isStandalone(active)}
+		<!-- Pack header (with its emoji-name-search opt-in toggle) is
+		     only meaningful when the picker is parked on one specific
+		     pack tab as its own standalone view. In flow mode the
+		     section labels already name each pack inline and the user
+		     can search across everything via the search row below. -->
 		<div class="tg-pack-header">
 			<span class="tg-pack-title">{activeCat.label} <span class="tg-pack-count">· {items.length}</span></span>
 			<label class="tg-cldr-toggle" title="Include the underlying emoji's CLDR name + keywords in search (e.g. 😀 → 'grinning, happy, smile').">
@@ -354,7 +548,7 @@
 			</label>
 		</div>
 	{/if}
-	{#if active === 'Custom' || activeCat?.pack}
+	{#if active !== 'Effects'}
 		<div class="tg-mode-row">
 			<span class="tg-mode-label">Send as:</span>
 			<button class="tg-mode-btn" class:active={customMode === 'animated'} onclick={() => (customMode = 'animated')}>Animated</button>
@@ -366,10 +560,16 @@
 			{#if search}<button class="tg-search-clear" onclick={() => (search = '')} title="Clear">×</button>{/if}
 		</div>
 	{/if}
+	<!-- Non-scrolling host for the Skottie canvas (see setSkottieHosts
+	     $effect). The canvas mounts here as position:absolute and stays
+	     pinned to the viewport while .tg-grid-wrap scrolls inside it. -->
+	<div class="tg-grid-outer" bind:this={gridOuterEl}>
 	<div class="tg-grid-wrap" bind:this={gridWrapEl} onscroll={onGridScroll}>
 		{#if loading}
 			<div class="tg-loading"><span class="tg-spinner"></span>Loading…</div>
-		{:else}
+		{:else if isStandalone(active) || search.trim()}
+			<!-- Standalone view: Effects, Custom, or active search.
+			     Single flat grid, index-virtualized against scrollTop. -->
 			<div class="tg-grid" bind:this={gridEl}>
 				{#each filteredItems as it, i (it.custom ? `c:${it.id}` : it.cp + ':' + i)}
 					<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
@@ -393,7 +593,74 @@
 					<div class="tg-empty">no matches for "{search}"</div>
 				{/if}
 			</div>
+		{:else}
+			<!-- Flow view: a fixed-height container with sections pinned
+			     at their pxStart via `position: absolute`. The grid's
+			     total height is locked at the last section's pxEnd, so
+			     virtualization (mount / unmount of individual sections)
+			     never changes the grid's clientHeight. That's the only
+			     reliable way to stop the `ResizeObserver` on `gridEl`
+			     from firing during scroll — every observer fire posts
+			     a `resize` to the Skottie worker, which destroys and
+			     recreates the WebGL surface, which forces every cell
+			     into a 15-paint CSS-thumb warmup. With sections pinned
+			     absolutely, the container height is a stable function
+			     of `flowingGeometry` (which only changes when the
+			     section list or cells-per-row changes, not when
+			     visibility flips). -->
+			{@const totalHeight = flowingGeometry.length ? flowingGeometry[flowingGeometry.length - 1].pxEnd : 0}
+			{@const _cpr = Math.max(1, cellsPerRow)}
+			{@const _cellVisTop = scrollTop - CELL_PX * 2}
+			{@const _cellVisBot = scrollTop + gridH + CELL_PX * 2}
+			<div class="tg-grid tg-grid-flow" bind:this={gridEl} style:height="{totalHeight}px">
+				{#each flowingSections as section, sIdx (section.key)}
+					{@const geo = flowingGeometry[sIdx]}
+					{@const sectionVisible = geo
+						&& geo.pxEnd >= scrollTop - 100
+						&& geo.pxStart <= scrollTop + gridH + 100}
+					{#if sectionVisible}
+						<div class="tg-section" style:top="{geo.pxStart}px" style:height="{geo.pxEnd - geo.pxStart}px">
+							<div class="tg-section-label">{section.label}</div>
+							<div class="tg-section-grid">
+								{#each section.items as it, i (it.custom ? `${section.key}:c:${it.id}` : `${section.key}:${it.cp}:${i}`)}
+									<!-- Cell-level virtualization. Compute each
+									     cell's absolute pixel band from
+									     `geo.pxStart + HEADER_PX + row * CELL_PX`,
+									     mount the LottieSticker only if that band
+									     intersects the visible viewport (± two
+									     rows of buffer for pre-fetch). Off-viewport
+									     cells render as bare 36×36 div slots so
+									     the flex-wrap layout inside the section
+									     still lays them out at their correct row /
+									     column, but the Skottie worker only sees
+									     the ~visible-row × cellsPerRow cells, not
+									     every cell in every in-band section. -->
+									{@const _cellAbsY = geo.pxStart + HEADER_PX + Math.floor(i / _cpr) * CELL_PX}
+									{@const _cellLive = _cellAbsY + CELL_PX > _cellVisTop && _cellAbsY < _cellVisBot}
+									<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+									<div class="tg-cell"
+										title={it.custom
+											? `${it.name || it.alt}  ${it.alt}  ·  ${it.packTitle}${it.kw?.length ? '\n' + it.kw.slice(0, 6).join(', ') : ''}`
+											: it.e}
+										onclick={() => onInsert(it.custom ? { ...it, mode: customMode } : it)}>
+										{#if _cellLive}
+											{#if it.custom}
+												<LottieSticker short={it.short} id={it.id} size={24} mode="visible"
+													root={gridWrapEl} title={it.alt} />
+											{:else}
+												<LottieSticker cp={it.cp} flag={it.flag} size={24} mode="visible"
+													root={gridWrapEl} title={it.e} />
+											{/if}
+										{/if}
+									</div>
+								{/each}
+							</div>
+						</div>
+					{/if}
+				{/each}
+			</div>
 		{/if}
+	</div>
 	</div>
 	<div class="tg-foot">
 		<button class="tg-engine-toggle"
@@ -402,10 +669,14 @@
 				e === 'rlottie' ? 'skottie'
 				: e === 'skottie' ? 'skottie-worker'
 				: e === 'skottie-worker' ? 'skottie-webgpu'
+				: e === 'skottie-webgpu' ? 'webgpu-rasterized'
+				: e === 'webgpu-rasterized' ? 'cpu-rasterized'
 				: 'rlottie'
 			)}>
 			Engine: <strong>{
-				$engineMode === 'skottie-webgpu' ? 'WebGPU'
+				$engineMode === 'cpu-rasterized' ? 'Rasterized (CPU)'
+				: $engineMode === 'webgpu-rasterized' ? 'Rasterized'
+				: $engineMode === 'skottie-webgpu' ? 'WebGPU'
 				: $engineMode === 'skottie-worker' ? 'WorkerGPU'
 				: $engineMode === 'skottie' ? 'GPU'
 				: 'CPU'
@@ -446,7 +717,17 @@
 			width: 44px !important;
 			height: 44px !important;
 		}
-		.tg-foot { display: none; }
+		/* Keep the footer on mobile so the render-engine toggle is
+		   reachable in the iOS PWA (no hover/devtools there) — but compact
+		   it: drop the status text and make the toggle a tappable chip so
+		   it costs only one slim row. */
+		.tg-foot { padding: 0.25rem 0.5rem; }
+		.tg-foot-status { display: none; }
+		.tg-engine-toggle {
+			padding: 0.35rem 0.6rem !important;
+			font-size: 0.72rem !important;
+			min-height: 1.9rem;
+		}
 		/* Compact the tab strip + mode row a touch so the grid gets
 		   more of the panel. */
 		.tg-tab, .tg-tab-pack { padding: 0.3rem 0.5rem !important; }
@@ -473,11 +754,66 @@
 	   some browsers. `overflow-y: clip` is the same scroll behaviour
 	   as `auto` for clipping purposes; we still scroll via the inner
 	   grid's scrollable content. */
-	.tg-grid-wrap { flex: 1; overflow-y: auto; overflow-x: clip; padding: 0.3rem 0.25rem; min-height: 0; contain: paint; isolation: isolate; }
+	/* Non-scrolling, viewport-sized host for the Skottie canvas. It
+	   takes the flex slot in the panel column; the scroller (.tg-grid-wrap)
+	   fills it. position:relative anchors the absolutely-positioned
+	   canvas the worker mounts here so it stays pinned to the viewport
+	   instead of scrolling away with the content. */
+	.tg-grid-outer {
+		flex: 1; min-height: 0;
+		position: relative;
+		display: flex; flex-direction: column;
+	}
+	.tg-grid-wrap {
+		flex: 1; min-height: 0;
+		overflow-y: auto; overflow-x: clip;
+		/* Reserve gutter so clientWidth doesn't drop when the
+		   scrollbar appears — otherwise cellsPerRow recomputes
+		   (e.g. 9 → 8) the first time content overflows, which
+		   re-runs `flowingGeometry`, changes section pxStarts,
+		   shifts the absolute-positioned sections, and looks like
+		   a layout pop on first scroll. */
+		scrollbar-gutter: stable;
+		padding: 0.3rem 0.25rem;
+		contain: paint; isolation: isolate;
+	}
 	.tg-grid-wrap::-webkit-scrollbar { width: 4px; }
 	.tg-grid-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 	/* Match the regular EmojiPicker: 36×36 cells, no gap, light hover. */
 	.tg-grid { display: flex; flex-wrap: wrap; gap: 0; }
+	/* Flow variant: explicit-height container, sections pinned at
+	   their precomputed pxStart. Container height is locked at
+	   `flowingGeometry`'s last pxEnd, so the ResizeObserver on
+	   `gridEl` never fires from section virtualization. The Skottie
+	   stage's surface stays alive across the entire scroll. */
+	.tg-grid-flow {
+		display: block;
+		position: relative;
+		flex-wrap: initial;
+	}
+	.tg-grid-flow .tg-section {
+		position: absolute;
+		left: 0;
+		right: 0;
+		display: flex;
+		flex-direction: column;
+	}
+	.tg-grid-flow .tg-section-label {
+		flex: 0 0 26px;
+		height: 26px;
+		padding: 0.45rem 0.35rem 0.1rem;
+		box-sizing: border-box;
+		font-size: 0.62rem;
+		font-weight: 700;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--md-sys-color-on-surface-variant, var(--muted-fg));
+	}
+	.tg-grid-flow .tg-section-grid {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0;
+	}
 	.tg-cell { width: 36px; height: 36px; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.12s; }
 	.tg-cell:hover { background: var(--surface-2); }
 

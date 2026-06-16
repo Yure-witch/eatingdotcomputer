@@ -1,0 +1,244 @@
+// CPU rasterised atlas — the no-WebGL sibling of the worker's Skottie atlas,
+// for iOS (and any device where the Skia/WebGL-in-worker engine is unsafe).
+//
+// Pipeline, all WebGL-free:
+//   1. Frames are rasterised by the rlottie WASM pool (off the main thread,
+//      via lottie-spritesheet's `acquire`) — the same renderer Telegram uses.
+//   2. Each animation's frames are packed ONCE into a shared 2D atlas canvas
+//      (a grid of slots), then the source ImageBitmaps are released. One
+//      atlas texture per page instead of one per frame.
+//   3. Playback is a single rAF that blits the current frame's atlas slot
+//      into each visible cell's inline 2D canvas.
+//
+// Mirrors the worker atlas's model (slot allocator + LRU, visible-first
+// rasterise priority, per-cell frame-skip) so behaviour matches across
+// engines. Exposes the same API surface SpriteSticker drives for the worker
+// canvas path (registerCanvasCell / setCanvasCellVisible / unregisterCanvasCell
+// + ensureStage/loadAnimation/isAnimationLoaded no-ops) so it's a drop-in
+// `skModule`. The only difference: the cell canvas is the live DOM element
+// (a 2D context), NOT a transferControlToOffscreen handle.
+
+import { acquire, release, prewarm as prewarmRlottie } from './lottie-spritesheet.js';
+import { fetchLottie, isAdaptivePack, customShortFromUrl } from './telegram-emoji-store.js';
+
+// Mobile-scale atlas: native res, tiny pages. 1024² × 6 ≈ 24 MB.
+const ATLAS_DIM = 1024;
+const MAX_ATLAS_PAGES = 6;
+
+const _cells = new Map();          // id -> cell state
+let _nextId = 1;
+const _frameCache = new Map();     // url@px -> { atlas, slots:[{page,x,y}], N, duration }
+const _frameJobs = new Set();      // url@px currently rasterising
+const _rasterPending = new Map();  // url@px -> { url, px } (visible-first queue)
+let _rasterBusy = false;
+const _atlasByPx = new Map();      // px -> atlas
+let _running = false;
+
+// ── Atlas pages + slot allocator (2D canvases) ──────────────────────────
+function makeCanvas(dim) {
+	if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(dim, dim);
+	const c = document.createElement('canvas');
+	c.width = dim; c.height = dim;
+	return c;
+}
+function getAtlas(px) {
+	let a = _atlasByPx.get(px);
+	if (a) return a;
+	a = { px, cols: Math.max(1, Math.floor(ATLAS_DIM / px)), pages: [], free: [], lru: new Map() };
+	_atlasByPx.set(px, a);
+	addAtlasPage(a);
+	return a;
+}
+function addAtlasPage(a) {
+	if (a.pages.length >= MAX_ATLAS_PAGES) return false;
+	const canvas = makeCanvas(ATLAS_DIM);
+	const ctx = canvas.getContext('2d');
+	const page = a.pages.length;
+	a.pages.push({ canvas, ctx });
+	for (let r = 0; r < a.cols; r++)
+		for (let c = 0; c < a.cols; c++)
+			a.free.push({ page, x: c * a.px, y: r * a.px });
+	return true;
+}
+function atlasAllocSlots(a, n) {
+	while (a.free.length < n) {
+		if (addAtlasPage(a)) continue;
+		const oldest = a.lru.keys().next();
+		if (oldest.done) break;
+		const oldKey = oldest.value;
+		const old = a.lru.get(oldKey);
+		a.lru.delete(oldKey);
+		_frameCache.delete(oldKey);
+		for (const s of old.slots) a.free.push(s);
+	}
+	if (a.free.length < n) return null;
+	const slots = [];
+	for (let i = 0; i < n; i++) slots.push(a.free.pop());
+	return slots;
+}
+function freeFrameCache(url) {
+	const suffix = url + '@';
+	for (const [key, cache] of _frameCache) {
+		if (!key.startsWith(suffix)) continue;
+		for (const s of cache.slots) cache.atlas.free.push(s);
+		cache.atlas.lru.delete(key);
+		_frameCache.delete(key);
+	}
+}
+
+// ── Visible-first rasterise pump ────────────────────────────────────────
+function scheduleRasterize(url, px) {
+	const key = url + '@' + px;
+	if (_frameCache.has(key) || _frameJobs.has(key) || _rasterPending.has(key)) return;
+	_rasterPending.set(key, { url, px });
+	pumpRaster();
+}
+function visibleKeys() {
+	const set = new Set();
+	for (const c of _cells.values()) if (c.visible) set.add(c.url + '@' + c.w);
+	return set;
+}
+async function pumpRaster() {
+	if (_rasterBusy) return;
+	_rasterBusy = true;
+	try {
+		while (_rasterPending.size) {
+			const vis = visibleKeys();
+			for (const key of [..._rasterPending.keys()]) {
+				if (!vis.has(key)) _rasterPending.delete(key); // scrolled off → abandon
+			}
+			if (!_rasterPending.size) break;
+			const [key, job] = _rasterPending.entries().next().value;
+			_rasterPending.delete(key);
+			_frameJobs.add(key);
+			try { await doRasterize(job.url, job.px, key); }
+			catch (e) { console.warn('[cpu-atlas] rasterise failed', e); }
+			_frameJobs.delete(key);
+		}
+	} finally {
+		_rasterBusy = false;
+	}
+}
+async function doRasterize(url, px, key) {
+	if (_frameCache.has(key)) return;
+	const data = await fetchLottie(url);   // adaptive packs are tinted here
+	if (!data) return;
+	let entry;
+	try { entry = await acquire(url, data); } catch { return; }
+	// Wait for every frame to settle, then we own a full set to pack.
+	try { if (entry.pending) await entry.pending; } catch {}
+	const frames = entry.frames || [];
+	const N = Math.max(1, entry.totalFrames || frames.length || 1);
+	const atlas = getAtlas(px);
+	const slots = atlasAllocSlots(atlas, N);
+	if (!slots) { release(url); return; } // atlas full — thumb stays up
+	for (let i = 0; i < N; i++) {
+		const bm = frames[i] || frames[0];
+		const slot = slots[i];
+		const ctx = atlas.pages[slot.page].ctx;
+		ctx.clearRect(slot.x, slot.y, px, px);
+		if (bm) {
+			try { ctx.drawImage(bm, 0, 0, bm.width, bm.height, slot.x, slot.y, px, px); } catch {}
+		}
+	}
+	release(url); // pixels are copied into the atlas — free the rlottie bitmaps
+	const cacheEntry = { atlas, slots, N, duration: entry.duration || 1 };
+	_frameCache.set(key, cacheEntry);
+	atlas.lru.set(key, cacheEntry);
+}
+
+// ── Single-rAF playback ─────────────────────────────────────────────────
+function startLoop() {
+	if (_running || typeof requestAnimationFrame === 'undefined') return;
+	_running = true;
+	const tick = (now) => {
+		if (!_running) return;
+		renderCells(now);
+		requestAnimationFrame(tick);
+	};
+	requestAnimationFrame(tick);
+}
+function renderCells(now) {
+	const firstPaints = [];
+	for (const [, cell] of _cells) {
+		if (!cell.visible || !cell.ctx) continue;
+		const ckey = cell.url + '@' + cell.w;
+		const cache = _frameCache.get(ckey);
+		if (!cache) { scheduleRasterize(cell.url, cell.w); continue; }
+		// Touch LRU so on-screen emojis are never evicted.
+		cache.atlas.lru.delete(ckey);
+		cache.atlas.lru.set(ckey, cache);
+
+		let fi;
+		if (cell.paused) {
+			fi = cell.paintIndex != null ? Math.min(cache.N - 1, cell.paintIndex) : cache.N - 1;
+		} else {
+			if (!cell.startTime) cell.startTime = now;
+			const elapsed = (now - cell.startTime) / 1000;
+			const t = cell.loop
+				? (elapsed % cache.duration) / cache.duration
+				: Math.min(0.999999, elapsed / cache.duration);
+			fi = Math.min(cache.N - 1, Math.floor(t * cache.N));
+		}
+		if (cell.firstPainted && fi === cell.lastFrame) continue;
+		const slot = cache.slots[fi];
+		const page = cache.atlas.pages[slot.page].canvas;
+		try {
+			cell.ctx.clearRect(0, 0, cell.w, cell.h);
+			cell.ctx.drawImage(page, slot.x, slot.y, cell.w, cell.h, 0, 0, cell.w, cell.h);
+		} catch { continue; }
+		cell.lastFrame = fi;
+		if (!cell.firstPainted) { cell.firstPainted = true; if (cell.onFirstPaint) firstPaints.push(cell); }
+	}
+	for (const cell of firstPaints) { try { cell.onFirstPaint(); } catch {} }
+}
+
+// ── Public API (matches the worker canvas-cell module) ──────────────────
+// `canvas` is the live DOM <canvas> element (NOT transferControlToOffscreen).
+export function registerCanvasCell({ url, canvas, w, h, paused = false, loop = true, paintIndex = null, visible = false, onFirstPaint = null }) {
+	let ctx = null;
+	try { ctx = canvas.getContext('2d'); } catch { /* element gone */ }
+	const id = _nextId++;
+	_cells.set(id, {
+		ctx, url, w, h, paused, loop, paintIndex, visible,
+		onFirstPaint, startTime: 0, lastFrame: -1, firstPainted: false
+	});
+	prewarmRlottie();
+	startLoop();
+	return id;
+}
+export function setCanvasCellVisible(id, v) {
+	const c = _cells.get(id);
+	if (c) c.visible = !!v;
+}
+export function unregisterCanvasCell(id) {
+	_cells.delete(id);
+}
+
+// Frees baked atlas frames for adaptive packs so they re-rasterise in the new
+// ink after a theme switch (the live --ink is baked in at rasterise time).
+export function dropAdaptiveFrames() {
+	const urls = new Set();
+	for (const key of _frameCache.keys()) {
+		const url = key.slice(0, key.lastIndexOf('@'));
+		const short = customShortFromUrl(url);
+		if (short && isAdaptivePack(short)) urls.add(url);
+	}
+	for (const url of urls) freeFrameCache(url);
+	for (const cell of _cells.values()) {
+		const short = customShortFromUrl(cell.url);
+		if (short && isAdaptivePack(short)) cell.lastFrame = -1;
+	}
+}
+
+// ── API parity no-ops (the worker module needs these; here they're free) ─
+export function ensureStage() { return Promise.resolve(); }
+export function loadAnimation() { /* rasterised on demand by renderCells */ }
+export function releaseAnimation() { /* refcount handled inside doRasterize */ }
+export function isAnimationLoaded(url) {
+	const suffix = url + '@';
+	for (const key of _frameCache.keys()) if (key.startsWith(suffix)) return true;
+	return false;
+}
+export function setHost() { /* no overlay canvas in this engine */ }
+export function clearCanvas() { /* nothing to wipe — cells own their canvases */ }

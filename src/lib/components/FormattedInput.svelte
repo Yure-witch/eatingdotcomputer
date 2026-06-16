@@ -267,6 +267,16 @@
 			const span = document.createElement('span');
 			span.className = `tfx tfx-${fx}`;
 			span.dataset.fx = fx;
+			// flip mirrors the coordinate space — atomic so the caret can't
+			// enter (where arrows/selection reverse). scaleX(-1) sits on an
+			// inner wrapper so the atomic box keeps a normal caret hit-box.
+			if (fx === 'flip') {
+				span.setAttribute('contenteditable', 'false');
+				const inner = document.createElement('span');
+				inner.className = 'tfx-flip-inner';
+				inner.appendChild(innerNode);
+				innerNode = inner;
+			}
 			if (delay) span.style.animationDelay = delay;
 			span.appendChild(innerNode);
 			innerNode = span;
@@ -282,6 +292,20 @@
 		function pushText(text, fxStack) {
 			if (!text) return;
 			if (!fxStack.length) { nodes.push(document.createTextNode(text)); return; }
+			// `flip` mirrors each EMOJI grapheme in place; letters keep flow.
+			if (fxStack.includes('flip') && _segmenter) {
+				const noFlip = fxStack.filter(f => f !== 'flip');
+				const gs = [..._segmenter.segment(text)].map(g => g.segment);
+				gs.forEach((g, i) => {
+					const isEmoji = !/^\s+$/.test(g) && _isEmojiSeg(g);
+					const stack = isEmoji ? fxStack : noFlip;
+					if (/^\s+$/.test(g) || !stack.length) { nodes.push(document.createTextNode(g)); return; }
+					nodes.push(makeFxNode(stack, g, `${((globalWi + i) * 0.06).toFixed(2)}s`));
+				});
+				globalWi += gs.filter(g => !/^\s+$/.test(g)).length;
+				return;
+			}
+			// `ripple` renders per-grapheme.
 			if (fxStack.includes('ripple') && _segmenter) {
 				const gs = [..._segmenter.segment(text)].map(g => g.segment);
 				gs.forEach((g, i) => {
@@ -667,7 +691,28 @@
 
 	function onCePaste(e) {
 		e.preventDefault();
-		const markup = e.clipboardData.getData('text/x-eating-markup');
+		// Three-tier paste source resolution. (1) Our own clipboard
+		// MIME — set by onCeCopy on any FormattedInput, carries the raw
+		// markup with EK / CE / TG / TGC tokens and PUA text-effect
+		// chars in order. (2) `text/html` — fallback for content
+		// copied from outside a FormattedInput (e.g. a chat message
+		// bubble, where the user selects a span that includes inline
+		// <img data-ek/data-ce/data-tg> elements). We parse it into a
+		// detached DOM and run the same serializer, so the same
+		// tokenization rules apply uniformly. (3) `text/plain` — last
+		// resort. Lossy by definition; emote IMG/SPAN nodes vanish.
+		let markup = e.clipboardData.getData('text/x-eating-markup');
+		if (!markup) {
+			const html = e.clipboardData.getData('text/html');
+			if (html) {
+				const parsed = new DOMParser().parseFromString(html, 'text/html');
+				const fromHtml = serializeCe(parsed.body);
+				// Only treat html as markup if it actually carries a
+				// token; otherwise prefer the plain-text path to avoid
+				// pulling in stray styling from arbitrary HTML sources.
+				if (/\[(ek|ce|tg|tgc):/.test(fromHtml)) markup = fromHtml;
+			}
+		}
 		const plain = markup || e.clipboardData.getData('text/plain') || '';
 		if (!plain) return;
 		pushUndo();
@@ -896,7 +941,15 @@
 	   visual chrome here. */
 	.fi-expr-pop {
 		z-index: 50;
-		filter: drop-shadow(0 4px 18px rgba(0,0,0,0.14));
+		/* Plain box-shadow instead of filter: drop-shadow. `filter`
+		   creates a transformed containing block, which would turn
+		   any `position: fixed` descendant (e.g. the EmojiPicker's
+		   long-press variant popover) into `position: absolute`
+		   relative to this wrapper — so a popover anchored at
+		   viewport coordinates from getBoundingClientRect() lands
+		   in the wrong spot and tracks scroll oddly. box-shadow has
+		   the same visual weight for an opaque, rounded container. */
+		box-shadow: 0 4px 18px rgba(0,0,0,0.14);
 	}
 
 	.fi-backdrop { position: fixed; inset: 0; z-index: 40; }

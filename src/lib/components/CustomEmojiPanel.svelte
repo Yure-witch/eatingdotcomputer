@@ -2,6 +2,36 @@
 	import { onMount } from 'svelte';
 	import { invalidateCustomEmojiCache, addToCustomEmojiCache, removeFromCustomEmojiCache } from '$lib/custom-emoji-store.js';
 
+	// Virtualization geometry. The grid is `grid-template-columns:
+	// repeat(auto-fill, 56px)` with `gap: 6px`, so each cell occupies
+	// 62×62 px including its gap row. We size the spacer from the
+	// total item count and only mount the cells inside the visible
+	// window (+/- a buffer) to keep DOM small when an instructor has
+	// uploaded hundreds of emotes / reactions.
+	const CELL_PX = 62;
+	const BUFFER_ROWS = 4;
+	let gridWrapEl = $state(null);
+	let reactionsGridWrapEl = $state(null);
+	let scrollTopE = $state(0);
+	let scrollTopR = $state(0);
+	let gridWE = $state(360);
+	let gridHE = $state(280);
+	let gridWR = $state(360);
+	let gridHR = $state(280);
+
+	function onEmojiScroll(e) { scrollTopE = e.target.scrollTop; }
+	function onReactionScroll(e) { scrollTopR = e.target.scrollTop; }
+	function measureEmoji() {
+		if (!gridWrapEl) return;
+		gridHE = gridWrapEl.clientHeight;
+		gridWE = gridWrapEl.clientWidth;
+	}
+	function measureReactions() {
+		if (!reactionsGridWrapEl) return;
+		gridHR = reactionsGridWrapEl.clientHeight;
+		gridWR = reactionsGridWrapEl.clientWidth;
+	}
+
 	let { onInsertEmoji, onInsertReaction, isInstructor = false, mode = 'both' } = $props();
 
 	// `mode` constrains which side of the panel the parent wants:
@@ -187,6 +217,27 @@
 	onMount(() => {
 		if (mode !== 'reactions') loadEmoji();
 		if (mode !== 'emoji') loadReactions();
+		// Initial measurement; ResizeObserver below keeps it fresh as
+		// the popover resizes (e.g. inline mode docking on mobile).
+		queueMicrotask(() => { measureEmoji(); measureReactions(); });
+	});
+
+	// Re-measure when the grid wrappers come into existence (mode
+	// swap) or on window resize. The grid's own scroll listener
+	// keeps `scrollTop` current.
+	$effect(() => {
+		if (!gridWrapEl) return;
+		measureEmoji();
+		const ro = new ResizeObserver(measureEmoji);
+		ro.observe(gridWrapEl);
+		return () => ro.disconnect();
+	});
+	$effect(() => {
+		if (!reactionsGridWrapEl) return;
+		measureReactions();
+		const ro = new ResizeObserver(measureReactions);
+		ro.observe(reactionsGridWrapEl);
+		return () => ro.disconnect();
 	});
 </script>
 
@@ -234,7 +285,7 @@
 			</button>
 			{#if emojiUploadError}<div class="ce-error">{emojiUploadError}</div>{/if}
 		</div>
-		<div class="ce-grid-wrap">
+		<div class="ce-grid-wrap" bind:this={gridWrapEl} onscroll={onEmojiScroll}>
 			{#if emojiLoading}
 				<div class="ce-loading"><span class="ce-spinner"></span>Loading…</div>
 			{:else if emojiError}
@@ -242,13 +293,22 @@
 			{:else if emojiList.length === 0}
 				<div class="ce-empty">No custom emoji yet.</div>
 			{:else}
+				{@const cellsPerRowE = Math.max(1, Math.floor(gridWE / CELL_PX))}
+				{@const visStartE = Math.max(0, (Math.floor(scrollTopE / CELL_PX) - BUFFER_ROWS) * cellsPerRowE)}
+				{@const visEndE = visStartE + (Math.ceil(gridHE / CELL_PX) + BUFFER_ROWS * 2) * cellsPerRowE}
 				<div class="ce-emoji-grid">
-					{#each emojiList as e}
-						<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-						<div class="ce-emoji-item" title=":${e.shortcode}:" onclick={() => onInsertEmoji({ shortcode: e.shortcode, url: e.url })}>
-							<img src={e.url} alt={':' + e.shortcode + ':'} width="56" height="56" loading="lazy" />
-							{#if isInstructor}<button class="ce-delete-btn" title="Remove" onclick={(ev) => { ev.stopPropagation(); deleteEmoji(e.id); }}>x</button>{/if}
-						</div>
+					{#each emojiList as e, i (e.id)}
+						{#if i >= visStartE && i < visEndE}
+							<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+							<div class="ce-emoji-item" title=":${e.shortcode}:" onclick={() => onInsertEmoji({ shortcode: e.shortcode, url: e.url })}>
+								<img src={e.url} alt={':' + e.shortcode + ':'} width="56" height="56" loading="lazy" />
+								{#if isInstructor}<button class="ce-delete-btn" title="Remove" onclick={(ev) => { ev.stopPropagation(); deleteEmoji(e.id); }}>x</button>{/if}
+							</div>
+						{:else}
+							<!-- Reserved-space placeholder so the grid's overall
+							     scroll height matches the un-virtualized layout. -->
+							<div class="ce-emoji-item ce-emoji-spacer" aria-hidden="true"></div>
+						{/if}
 					{/each}
 				</div>
 			{/if}
@@ -346,7 +406,7 @@
 	.ce-tab:hover { color: var(--ink, var(--ink)); background: var(--surface-2); }
 	.ce-tab.active { color: var(--ink, var(--ink)); background: var(--paper, var(--paper)); border-bottom: 2px solid var(--ink, var(--ink)); margin-bottom: -1.5px; }
 
-	.ce-upload-section { padding: 0.5rem 0.65rem 0.4rem; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 0.3rem; flex-shrink: 0; max-height: 55%; overflow-y: auto; }
+	.ce-upload-section { padding: 0.5rem 0.65rem 0.4rem; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 0.3rem; flex-shrink: 0; max-height: 55%; overflow-y: auto; overscroll-behavior: contain; }
 
 	.ce-mode-toggle { display: flex; gap: 0.3rem; }
 	.ce-mode-btn { flex: 1; padding: 0.22rem 0; border: 1.5px solid var(--border); border-radius: 6px; background: var(--paper); color: #8a8078; font-family: inherit; font-size: 0.75rem; cursor: pointer; transition: all 0.13s; }
@@ -382,7 +442,7 @@
 	.ce-bg-swatch-label { font-size: 0.7rem; color: var(--muted-fg); font-family: monospace; }
 	.ce-error { font-size: 0.72rem; color: var(--danger); }
 
-	.ce-grid-wrap { flex: 1; overflow-y: auto; padding: 0.5rem 0.65rem; min-height: 0; }
+	.ce-grid-wrap { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 0.5rem 0.65rem; min-height: 0; }
 	.ce-grid-wrap::-webkit-scrollbar { width: 4px; }
 	.ce-grid-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 
@@ -398,6 +458,15 @@
 	.ce-emoji-item { position: relative; width: 64px; height: 64px; border-radius: 10px; border: 1.5px solid #e0d9cc; background: var(--paper); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: border-color 0.13s, transform 0.1s; overflow: hidden; }
 	.ce-emoji-item:hover { border-color: var(--ink, var(--ink)); transform: scale(1.06); }
 	.ce-emoji-item img { width: 56px; height: 56px; object-fit: contain; display: block; }
+	/* Virtualization placeholder: holds the grid slot so the
+	   overall scroll height matches the unvirtualized layout, but
+	   skips the border + image so off-screen cells are basically
+	   free. */
+	.ce-emoji-spacer {
+		border-color: transparent !important;
+		background: transparent !important;
+		cursor: default !important;
+	}
 
 	.ce-reaction-grid { display: flex; flex-wrap: wrap; gap: 0.35rem; }
 	.ce-reaction-item { position: relative; border-radius: 8px; border: 1.5px solid #e0d9cc; background: var(--paper); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: border-color 0.13s, transform 0.1s; overflow: hidden; height: 80px; }

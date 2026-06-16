@@ -848,6 +848,7 @@
 		flex: 1;
 		overflow-y: auto;
 		overflow-x: hidden;
+		overscroll-behavior: contain;
 		padding: 0.75rem;
 		min-height: 0;
 		display: flex;
@@ -1104,6 +1105,7 @@
 		grid-template-columns: repeat(10, 1fr);
 		gap: 1px;
 		overflow-y: auto;
+		overscroll-behavior: contain;
 		padding: 0 0.35rem 0.4rem;
 		flex: 1;
 	}

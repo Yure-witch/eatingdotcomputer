@@ -18,6 +18,7 @@
 		prewarmAnimations as prewarmSkottieWorkerAnims,
 		pushAdaptiveToShards
 	} from '$lib/skottie-stage-worker.js';
+	import { dropAdaptiveFrames as dropCpuAtlasAdaptive } from '$lib/cpu-atlas.js';
 	import { initTheme, onThemeChanged } from '$lib/theme-store.js';
 
 	let { children } = $props();
@@ -34,7 +35,10 @@
 		// fetchLottie cache for adaptive URLs so they re-parse fresh.
 		onThemeChanged(() => {
 			const changed = refreshAdaptiveInk();
-			if (changed) pushAdaptiveToShards();
+			if (changed) {
+				pushAdaptiveToShards();   // worker (Skia) atlas re-bakes adaptive
+				dropCpuAtlasAdaptive();   // CPU atlas re-bakes adaptive in new ink
+			}
 		});
 
 		// Warm the Telegram emoji sprite sheet immediately on app boot.

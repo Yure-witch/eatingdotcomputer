@@ -28,12 +28,14 @@ import { loadCustomPacks, getAdaptivePackList, getAdaptiveInk } from './telegram
 // looks like N=2 — at N=4 the per-worker context-switch + message-
 // passing overhead starts eating the parallelism gain.
 
-// One worker per logical CPU, capped at 4. Past 4 the per-worker
-// CanvasKit WASM (~10 MB), the message-passing overhead, and GPU
-// context contention start eating the parallelism gain. On an 8-core
-// M1 / typical modern desktop this gives us 4 workers, on dual-core
-// it gives 2, and we floor at 2 so users with a really conservative
-// `hardwareConcurrency` report still get the multi-shard win.
+// One worker per logical CPU, capped at 4. With the inline-canvas path
+// each cell owns its OWN DOM canvas (fed zero-copy via transferToImageBitmap),
+// so there is NO shared surface and NO cross-shard coherence requirement —
+// the old "collapse to 1 shard" fix was only needed for the shared overlay,
+// which is gone. Spreading cells across shards parallelises the expensive
+// MakeManagedAnimation builds (30–60 ms each), which is exactly what makes
+// the initial placeholder→animation transition feel snappy instead of
+// laggy. Cells hash to a shard by URL so a popular emoji builds once.
 const NUM_WORKERS = Math.min(
 	4,
 	Math.max(
@@ -50,6 +52,11 @@ let _lastScrollPos = 0;
 let _lastScrollTime = 0;
 let _scrollVelocityPxMs = 0;
 let _lastRenderTime = 0;
+// Scroll position at the last render frame. When it differs from the
+// current scrollTop the content has moved under the viewport-pinned
+// canvas, so the worker must FULL-clear the surface this frame (not
+// just per-tile) or vacated cells leave a ghost trail.
+let _lastRenderScrollTop = 0;
 const SCROLL_SLOW_RENDER_EVERY = 3;
 const FAST_PX_PER_MS = 1.5;
 const SCROLL_SETTLE_MS = 110;
@@ -100,6 +107,13 @@ const shards = [];
 const _cells = new Map();
 const _loadedUrls = new Set();
 const _shardOfUrl = new Map(); // url -> shard idx (cache)
+
+// Inline-canvas path: id -> { onFirstPaint, url }. The pixels live in the
+// worker (it owns each cell's transferred OffscreenCanvas); the proxy
+// just keeps the first-paint callback so it can fade the CSS thumb out.
+const _canvasCells = new Map();
+let _nextCanvasCellId = 1;
+let _lastCanvasTick = 0; // throttle the worker tick to TARGET_FPS_INTERVAL_MS
 
 let _ready = null;
 let _running = false;
@@ -197,40 +211,22 @@ function ensureShardCanvases() {
 
 function repositionCanvases() {
 	if (!shards.length) return;
-	if (_scrollContent) {
-		const cs = getComputedStyle(_scrollContent);
-		if (cs.position === 'static') _scrollContent.style.position = 'relative';
-		// Capture CSS dims up front so we can apply them synchronously
-		// alongside the position styles — otherwise, between the
-		// cssText reset and resizeCanvases applying new dims via the
-		// pending-CSS mechanism, the canvas falls back to its
-		// backbuffer's intrinsic device-pixel size (huge under dpr>1).
-		const w = _scrollContent.clientWidth;
-		const h = _scrollContent.clientHeight;
-		for (const sh of shards) {
-			if (sh.canvas.parentNode !== _scrollContent) _scrollContent.appendChild(sh.canvas);
-			sh.canvas.style.cssText =
-				`position:absolute;top:0;left:0;width:${w}px;height:${h}px;display:block;pointer-events:none;background:transparent;z-index:9999;`;
-			// Force a fresh resize cycle. The canvas's CSS just got
-			// wiped + reset; the backbuffer is probably also stale
-			// from a previous picker session. Zeroing lastSent makes
-			// resizeCanvases unconditionally re-post the resize even
-			// if the worker target dims happen to match what we sent
-			// last time.
-			sh.lastSentW = 0;
-			sh.lastSentH = 0;
-		}
-		if (_resizeObserver) _resizeObserver.disconnect();
-		_resizeObserver = new ResizeObserver(resizeCanvases);
-		_resizeObserver.observe(_scrollContent);
-	} else {
-		for (const sh of shards) {
-			if (sh.canvas.parentNode) sh.canvas.parentNode.removeChild(sh.canvas);
-			sh.canvas.style.cssText = 'display:none;';
-		}
-		if (_resizeObserver) { _resizeObserver.disconnect(); _resizeObserver = null; }
+	// This module now renders exclusively through the inline-canvas path
+	// (registerCanvasCell — each cell owns its own DOM canvas). The legacy
+	// shared OVERLAY canvas is never drawn into here, so we deliberately
+	// keep it OFF the DOM. Previously it was appended over the grid at
+	// z-index 9999 and given a ResizeObserver; when the picker opened, the
+	// observer fired, the worker recreated that overlay's WebGL surface,
+	// and for one frame the (transparent-but-recreating) overlay covered
+	// every cell — the "everything blinks out once at the start" artifact.
+	// An off-DOM canvas can't cover anything. The worker still holds the
+	// transferred OffscreenCanvas (handed over at init) but only uses its
+	// separate scratch atlas; this overlay just sits inert.
+	for (const sh of shards) {
+		if (sh.canvas.parentNode) sh.canvas.parentNode.removeChild(sh.canvas);
+		sh.canvas.style.cssText = 'display:none;';
 	}
-	resizeCanvases();
+	if (_resizeObserver) { _resizeObserver.disconnect(); _resizeObserver = null; }
 }
 
 function resizeCanvases() {
@@ -323,15 +319,6 @@ export function setHost(scrollContent, scrollViewport) {
 	if (shards.length) repositionCanvases();
 }
 
-// Whether the worker pool should boot with a WebGPU surface. Read at
-// first ensureStage(); switching at runtime requires a page reload
-// because tearing down + recreating the workers + their OffscreenCanvas
-// transfers is more disruption than it's worth for an opt-in mode.
-let _preferWebGPU = false;
-export function setPreferWebGPU(prefer) {
-	_preferWebGPU = !!prefer;
-}
-
 export function ensureStage() {
 	if (_ready) return _ready;
 	_ready = (async () => {
@@ -346,7 +333,7 @@ export function ensureStage() {
 				{ type: 'module' }
 			);
 			sh.worker.addEventListener('message', (e) => onShardMessage(i, e));
-			sh.worker.postMessage({ type: 'init', canvas: offscreen, preferWebGPU: _preferWebGPU }, [offscreen]);
+			sh.worker.postMessage({ type: 'init', canvas: offscreen }, [offscreen]);
 			await new Promise((resolve, reject) => {
 				const handler = (e) => {
 					if (e.data.type === 'ready') {
@@ -382,14 +369,19 @@ export function ensureStage() {
 function onShardMessage(shardIdx, e) {
 	const msg = e.data;
 	if (msg.type === 'first-paints') {
-		// Worker confirms each of these cells has had 3 confirmed
-		// canvas paints — safe to fade out the CSS backdrop.
+		// Worker confirms each of these cells has had its confirmed
+		// canvas paints — safe to fade out the CSS backdrop. IDs may
+		// belong to either the legacy overlay cells (_cells) or the
+		// inline-canvas cells (_canvasCells); the two id spaces are
+		// disjoint so a lookup miss in one just falls through.
 		for (const id of msg.ids) {
 			const c = _cells.get(id);
 			if (c && !c.firstPainted) {
 				c.firstPainted = true;
 				c.onFirstPaint?.();
 			}
+			const cc = _canvasCells.get(id);
+			if (cc) cc.onFirstPaint?.();
 		}
 	} else if (msg.type === 'surface-recreated') {
 		// Backbuffer was just wiped + re-created (resize). Reset
@@ -468,7 +460,15 @@ export function isAnimationLoaded(url) {
 
 export function registerCell({
 	url, getRect, paused = false, paintIndex = null,
-	loop = true, onFirstPaint = null, onSurfaceLost = null, thumbInfo = null
+	loop = true, onFirstPaint = null, onSurfaceLost = null, thumbInfo = null,
+	// Default to INVISIBLE. Callers that know the cell is in the
+	// viewport at register time (eager tab icons, or a SpriteSticker
+	// whose IO observer has already fired) should pass `visible: true`
+	// explicitly. The previous default-true behaviour meant every
+	// mounted cell — including ones in warmed-but-offscreen sections —
+	// got rect-checked every frame by the render loop, which thrashed
+	// layout and starved the actually-visible cells of paint budget.
+	visible = false
 }) {
 	const shardIdx = shardOf(url);
 	// Bring this shard's canvas to the top of the scroll content's
@@ -481,13 +481,14 @@ export function registerCell({
 	const id = _nextCellId++;
 	_cells.set(id, {
 		url, getRect, paused, paintIndex, loop, onFirstPaint, onSurfaceLost, thumbInfo,
-		visible: true,
+		visible: !!visible,
 		firstPainted: false,
 		shardIdx
 	});
 	postToShard(shardIdx, {
 		type: 'register-cell',
-		id, url, paused, paintIndex, loop, thumbInfo
+		id, url, paused, paintIndex, loop, thumbInfo,
+		visible: !!visible
 	});
 	// First cell with a sheet URL kicks off the one-time main-thread
 	// fetch and the per-shard sheet push. Subsequent calls are no-ops
@@ -508,6 +509,44 @@ export function unregisterCell(id) {
 	if (!c) return;
 	_cells.delete(id);
 	postToShard(c.shardIdx, { type: 'unregister-cell', id });
+}
+
+// ── Inline-canvas path API ───────────────────────────────────────────────
+// The presence of these exports is what SpriteSticker feature-detects to
+// choose the no-lag per-cell path over the legacy overlay. `canvas` is an
+// OffscreenCanvas the caller produced via transferControlToOffscreen() on
+// its inline <canvas>; we transfer it to the single render worker, which
+// owns it for the rest of the cell's life and blits animation frames into
+// it. IDs are offset into a disjoint range so they never collide with the
+// overlay path's _cells ids when first-paint acks come back.
+export function registerCanvasCell({
+	url, canvas, w, h, paused = false, paintIndex = null,
+	loop = true, visible = false, rasterized = false, onFirstPaint = null
+}) {
+	const id = 1_000_000_000 + (_nextCanvasCellId++);
+	// Route to the shard that owns this URL — same shard builds AND renders
+	// it, so the cached animation (and rasterized frame cache) is shared with
+	// any other cell of the same emoji and builds spread across the pool.
+	const shardIdx = shardOf(url);
+	_canvasCells.set(id, { onFirstPaint, url, shardIdx });
+	postToShard(shardIdx, {
+		type: 'register-canvas-cell',
+		id, url, w, h, paused, paintIndex, loop, visible, rasterized, canvas
+	}, [canvas]);
+	return id;
+}
+
+export function setCanvasCellVisible(id, v) {
+	const c = _canvasCells.get(id);
+	if (!c) return;
+	postToShard(c.shardIdx, { type: 'set-canvas-visible', id, visible: !!v });
+}
+
+export function unregisterCanvasCell(id) {
+	const c = _canvasCells.get(id);
+	if (!c) return;
+	_canvasCells.delete(id);
+	postToShard(c.shardIdx, { type: 'unregister-canvas-cell', id });
 }
 
 // Wipe all shard canvases and reset every cell so they re-draw on the
@@ -548,7 +587,30 @@ function startLoop() {
 	_running = true;
 	const tick = (now) => {
 		if (!_running) return;
-		sendRenderFrame(now);
+		// Legacy overlay path. Skip ENTIRELY unless overlay cells exist —
+		// for the inline-canvas (worker) engine it's dead code, yet it did
+		// forced layout reads (resizeCanvases -> clientWidth/Height,
+		// getBoundingClientRect) every frame ON THE MAIN THREAD. Running it
+		// for nothing was a per-frame main-thread reflow -> UI jank, the
+		// exact lag the worker/offscreen design exists to avoid.
+		if (_cells.size) sendRenderFrame(now);
+		// Inline-canvas path: hand the worker a timestamp. All rendering +
+		// blitting happens off-thread; no DOM reads here. Cap the tick at
+		// ~32 fps (matching the legacy WorkerGPU cadence) — sticker
+		// animations are 30–60 fps source, so a higher rate just doubles
+		// the worker's render+readback load and, if a frame overruns
+		// 16 ms, backs the loop up and DROPS effective fps. Throttling
+		// keeps each frame inside budget so it stays smooth.
+		// Tick every frame (~60 fps). The worker's per-cell frame-skip means
+		// each animation only redraws when its frame index advances, so a
+		// 30 fps source redraws ~30x/s and a 60 fps source ~60x/s, each as
+		// smooth as its source allows, with no global cap flattening the fast
+		// ones. Rasterized playback is a cheap atlas blit at this rate.
+		if (_canvasCells.size) {
+			// Each shard renders only the canvas-cells it owns (no-op if it
+			// owns none), so a broadcast tick is correct and cheap.
+			postToAllShards({ type: 'tick', now });
+		}
 		requestAnimationFrame(tick);
 	};
 	requestAnimationFrame(tick);
@@ -556,15 +618,26 @@ function startLoop() {
 
 function sendRenderFrame(now) {
 	if (!shards.length) return;
-	if (_isScrolling) {
-		if (_scrollVelocityPxMs > FAST_PX_PER_MS) return;
-		_scrollFrameCount++;
-		if (_scrollFrameCount % SCROLL_SLOW_RENDER_EVERY !== 0) return;
-	} else {
+	// While scrolling we must render EVERY frame. The canvas is pinned
+	// to the viewport (it no longer scrolls with the content), so any
+	// frame we skip leaves every sprite frozen at its previous on-screen
+	// position while the page scrolls on underneath — the cells visibly
+	// lag behind and then snap. The old every-3rd-frame / skip-fast-scroll
+	// throttle was only safe back when the canvas scrolled with content
+	// and the compositor moved it for free. When idle (not scrolling) we
+	// still cap at ~30fps to save battery on continuous animation.
+	if (!_isScrolling) {
 		if (now - _lastRenderTime < TARGET_FPS_INTERVAL_MS) return;
 	}
 	_lastRenderTime = now;
 	resizeCanvases();
+
+	// Did the content scroll under the (viewport-pinned) canvas since the
+	// last render? If so the worker must wipe the whole surface this
+	// frame so cells don't smear a trail at their vacated positions.
+	const scrollTopNow = _scrollViewport ? _scrollViewport.scrollTop : 0;
+	const scrolled = scrollTopNow !== _lastRenderScrollTop;
+	_lastRenderScrollTop = scrollTopNow;
 
 	const dpr = window.devicePixelRatio || 1;
 	// Each shard's canvas has the same rect (they're stacked + sized
@@ -599,10 +672,15 @@ function sendRenderFrame(now) {
 	};
 
 	for (let i = 0; i < NUM_WORKERS; i++) {
-		if (buckets[i].length === 0) continue;
+		// Normally skip shards with nothing to draw. But when scrolled,
+		// a shard that just emptied (its last cells scrolled off) still
+		// holds their stale pixels — post an empty render so it gets the
+		// full-surface clear too.
+		if (buckets[i].length === 0 && !scrolled) continue;
 		shards[i].worker?.postMessage({
 			type: 'render',
 			now,
+			scrolled,
 			viewRect: viewRectMsg,
 			canvasRect: canvasRectMsg,
 			cellRects: buckets[i],

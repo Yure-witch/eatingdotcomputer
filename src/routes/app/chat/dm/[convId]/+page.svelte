@@ -20,7 +20,7 @@
 		loadCustomPacks, getCachedCustomPacks, tgcUrl, tgcToToken, tgcEntry, isStaticPack, STATIC_FRAME_INDEX } from '$lib/telegram-emoji-store.js';
 	import { tryPlay as _tgTryPlay, yieldPlay as _tgYieldPlay } from '$lib/lottie-throttle.js';
 	import { tgStaticFrame, tgcStaticFrame, TG_PLACEHOLDER } from '$lib/tg-frame.js';
-	import { mountStaticEmotes } from '$lib/emote-mount.js';
+	import { mountStaticEmotes, ensureSelectableEmoteShell } from '$lib/emote-mount.js';
 	import FileTypeIcon from '$lib/components/FileTypeIcon.svelte';
 	import ProfileHover from '$lib/components/ProfileHover.svelte';
 	import Avatar from '$lib/components/Avatar.svelte';
@@ -30,6 +30,7 @@
 	import { getCustomEmojiMap, getCachedCustomEmojiMap } from '$lib/custom-emoji-store.js';
 	import {
 		SCREEN_FXS, EXPRESSIVE_FXS, TEXT_FXS, FX_TO_CHAR, CHAR_TO_FX, FX_CLOSE_CHAR, FX_OPEN_CHARS,
+		SZ_OPEN, SZ_VEND,
 		TEXT_COLORS, WDTH_FX_MAP, WDTH_STEPS, WGHT_FX_MAP, WGHT_STEPS, SZ_FX_MAP, SZ_STEPS,
 		JUMBO_SIZES, EMOJI_RE_G,
 		escapeHtml, nestedFxHtml, ekTokenToUrl, normalizeLegacyMarkup, unicodeToReadable, stripMarkup,
@@ -118,12 +119,14 @@
 	// message confirmed delivered to their eyes — not every message
 	// in the run.
 	const otherSeenAt = $derived(Number(convReads[otherUser.id] ?? 0));
-	const lastSeenOwnMsgId = $derived.by(() => {
-		const uid = data.currentUser.id;
+	// The last message the other user has read — ANY message, not just our
+	// own — so the marker tracks where they actually are in the thread. Their
+	// avatar renders there, position:absolute, so it never changes a
+	// message's height (no reflow / scroll-jank).
+	const lastSeenMsgId = $derived.by(() => {
+		if (!otherSeenAt) return null;
 		let id = null;
-		for (const m of messages) {
-			if (m.userId === uid && m.createdAt <= otherSeenAt) id = m.id;
-		}
+		for (const m of messages) if ((m.createdAt || 0) <= otherSeenAt) id = m.id;
 		return id;
 	});
 
@@ -141,6 +144,13 @@
 	let pickerMsgId = $state(null);
 	let pickerPos = $state({ x: 0, y: 0 });
 	let showComposePicker = $state(false);
+	// Hide the mobile BottomNav while the picker is docked (they share the
+	// bottom area). Cross-component signal via a body class.
+	$effect(() => {
+		if (typeof document === 'undefined') return;
+		document.body.classList.toggle('expr-picker-open', showComposePicker);
+		return () => document.body.classList.remove('expr-picker-open');
+	});
 	let showKitchen = $state(false);
 	let showCustomEmoji = $state(false);
 	let showTgEmoji = $state(false);
@@ -518,8 +528,13 @@
 					// yielded an empty string.
 					result += node.dataset.tg;
 				} else if (node.dataset?.fx) {
-					const fxStack = node.dataset.fx.split(' ').filter(fx => FX_TO_CHAR[fx]);
-					result += fxStack.map(fx => FX_TO_CHAR[fx]).join('') + serializeCe(node) + FX_CLOSE_CHAR.repeat(fxStack.length);
+					// continuous size → sentinel-encoded value; other fx → PUA char
+					let open = '', close = 0;
+					for (const fx of node.dataset.fx.split(' ')) {
+						if (fx.startsWith('sz-')) { open += SZ_OPEN + fx.slice(3) + SZ_VEND; close++; }
+						else if (FX_TO_CHAR[fx]) { open += FX_TO_CHAR[fx]; close++; }
+					}
+					result += open + serializeCe(node) + FX_CLOSE_CHAR.repeat(close);
 				} else if (node.tagName === 'BR') {
 					result += '\n';
 				} else if (node.classList?.contains('e-tip-pop')) {
@@ -586,6 +601,17 @@
 			const span = document.createElement('span');
 			span.className = `tfx tfx-${fx}`;
 			span.dataset.fx = fx;
+			// flip mirrors the coordinate space — atomic so the caret can't
+			// enter (where arrows/selection reverse). scaleX(-1) goes on an
+			// inner wrapper so this atomic box keeps a normal hit-box (else
+			// clicking left of a flipped emote lands the caret on its right).
+			if (fx === 'flip') {
+				span.setAttribute('contenteditable', 'false');
+				const inner = document.createElement('span');
+				inner.className = 'tfx-flip-inner';
+				inner.appendChild(innerNode);
+				innerNode = inner;
+			}
 			if (delay) span.style.animationDelay = delay;
 			span.appendChild(innerNode);
 			innerNode = span;
@@ -725,9 +751,25 @@
 				span.appendChild(node); node = span;
 			}
 			for (let i = animFx.length - 1; i >= 0; i--) {
+				const fx = animFx[i];
 				const span = document.createElement('span');
-				span.className = `tfx tfx-${animFx[i]}`;
-				span.dataset.fx = animFx[i];
+				span.className = `tfx tfx-${fx}`;
+				span.dataset.fx = fx;
+				// Size/weight/width need an inline style so an inline-sized EMOTE
+				// scales in the compose (not just the sent bubble).
+				if (fx.startsWith('sz-')) span.style.fontSize = (parseFloat(fx.replace('sz-', '')) / 100 * 0.9).toFixed(2) + 'rem';
+				else if (fx.startsWith('wght-')) span.style.fontWeight = fx.replace('wght-', '');
+				else if (fx.startsWith('wdth-')) span.style.fontStretch = fx.replace('wdth-', '') + '%';
+				// `flip` mirrors the span's coordinate space; make it atomic so
+				// the caret can't land inside (where arrows/selection reverse).
+				// scaleX(-1) lives on an inner wrapper so the atomic box stays
+				// un-mirrored for caret hit-testing (see app.css .tfx-flip-inner).
+				if (fx === 'flip') {
+					span.setAttribute('contenteditable', 'false');
+					const inner = document.createElement('span');
+					inner.className = 'tfx-flip-inner';
+					inner.appendChild(node); node = inner;
+				}
 				if (delay) span.style.animationDelay = delay;
 				span.appendChild(node); node = span;
 			}
@@ -737,6 +779,20 @@
 		function pushText(text, fxStack) {
 			if (!text) return;
 			if (!fxStack.length) { nodes.push(document.createTextNode(text)); return; }
+			// `flip` mirrors each EMOJI grapheme in place; letters keep flow.
+			if (fxStack.includes('flip')) {
+				const noFlip = fxStack.filter(f => f !== 'flip');
+				const gs = [..._segmenter.segment(text)].map(g => g.segment);
+				gs.forEach((g, i) => {
+					const isEmoji = !/^\s+$/.test(g) && _isEmojiSeg(g);
+					const stack = isEmoji ? fxStack : noFlip;
+					if (/^\s+$/.test(g) || !stack.length) { nodes.push(document.createTextNode(g)); return; }
+					nodes.push(makeFxNode(stack, g, `${((globalWi + i) * 0.06).toFixed(2)}s`));
+				});
+				globalWi += gs.filter(g => !/^\s+$/.test(g)).length;
+				return;
+			}
+			// `ripple` is per-grapheme.
 			if (fxStack.includes('ripple')) {
 				const gs = [..._segmenter.segment(text)].map(g => g.segment);
 				gs.forEach((g, i) => {
@@ -1055,29 +1111,58 @@
 	// Lottie SVG mounted inside; the SVG has pointer-events: none and the
 	// span has no text, so browsers don't paint the selection highlight
 	// on it natively even though the range mathematically includes it.
-	// Walk visible spans on every selectionchange, toggle a .tg-selected
-	// class on the ones whose box intersects the selection, and let CSS
-	// overlay a translucent highlight on top of the Lottie via ::after.
-	function onMsgListSelectionChange() {
-		if (!listEl) return;
+	// Highlight every emote ELEMENT (EK/CE images, Telegram + custom emoji
+	// spans, flag imgs) whose box intersects the selection — inline-block
+	// elements get no native ::selection tint, so we toggle `.emote-sel` and
+	// let CSS draw it. Shared by the compose box + message list (plain emoji
+	// highlight natively as text).
+	function highlightEmotesInSel(container) {
+		if (!container) return;
+		const els = container.querySelectorAll('.ek-img, .ek-img-ce, .ce-img, .ce-img-ce, .tg-emoji, .tg-emoji-img, .tfx-flip');
 		const sel = window.getSelection();
-		const clearAll = () => {
-			for (const span of listEl.querySelectorAll('.tg-emoji.tg-selected'))
-				span.classList.remove('tg-selected');
-		};
-		if (!sel || sel.isCollapsed || !sel.rangeCount) { clearAll(); return; }
-		const range = sel.getRangeAt(0);
-		if (!listEl.contains(range.commonAncestorContainer)) { clearAll(); return; }
-		for (const span of listEl.querySelectorAll('.tg-emoji')) {
-			const r = document.createRange();
-			r.selectNode(span);
-			const intersects = range.compareBoundaryPoints(Range.START_TO_END, r) > 0
-				&& range.compareBoundaryPoints(Range.END_TO_START, r) < 0;
-			span.classList.toggle('tg-selected', intersects);
+		if (!sel || sel.isCollapsed || !sel.rangeCount || !container.contains(sel.getRangeAt(0).commonAncestorContainer)) {
+			for (const el of els) el.classList.remove('emote-sel');
+			return;
 		}
+		const range = sel.getRangeAt(0);
+		for (const el of els) {
+			// Flip wrapper draws the highlight — don't double up on the inner emote.
+			const flipWrap = el.closest('.tfx-flip');
+			if (flipWrap && flipWrap !== el) { el.classList.remove('emote-sel'); continue; }
+			const r = document.createRange();
+			r.selectNode(el);
+			const hit = range.compareBoundaryPoints(Range.START_TO_END, r) > 0
+				&& range.compareBoundaryPoints(Range.END_TO_START, r) < 0;
+			el.classList.toggle('emote-sel', hit);
+		}
+	}
+	function onMsgListSelectionChange() {
+		highlightEmotesInSel(listEl);
+	}
+
+	// Whether the current compose selection is fully flipped (drives the
+	// Flip checkbox's checked state).
+	let selHasFlip = $state(false);
+	// Whether the selection contains an emote — the Flip toggle only shows then.
+	let selHasEmote = $state(false);
+	function computeSelHasFlip() {
+		const sel = window.getSelection();
+		if (!sel || sel.isCollapsed || !inputEl || !inputEl.contains(sel.anchorNode)) { selHasFlip = false; return; }
+		const range = sel.getRangeAt(0);
+		const a = cePlainOffset(inputEl, range.startContainer, range.startOffset);
+		const b = cePlainOffset(inputEl, range.endContainer, range.endOffset);
+		if (a >= b) { selHasFlip = false; return; }
+		let p = 0, any = false, all = true;
+		for (const seg of markupToSegments(serializeCe(inputEl))) {
+			const e = p + seg.text.length;
+			if (e > a && p < b) { any = true; if (!seg.fxStack.includes('flip')) { all = false; break; } }
+			p = e;
+		}
+		selHasFlip = any && all;
 	}
 
 	function onCeSelect() {
+		computeSelHasFlip();
 		const sel = window.getSelection();
 		// Show the bar on non-collapsed selection in the compose. Don't
 		// auto-HIDE when the selection collapses — users want the menu
@@ -1094,20 +1179,68 @@
 				end: cePlainOffset(inputEl, range.endContainer, range.endOffset)
 			};
 		}
-		// Update visual highlight on EK/CE images within the selection
-		if (!inputEl) return;
-		for (const img of inputEl.querySelectorAll('.ek-img-ce, .ce-img-ce')) img.classList.remove('ek-selected');
-		if (!sel || sel.isCollapsed || !sel.rangeCount) return;
-		const range = sel.getRangeAt(0);
-		if (!inputEl.contains(range.commonAncestorContainer)) return;
-		for (const img of inputEl.querySelectorAll('.ek-img-ce, .ce-img-ce')) {
-			const r = document.createRange();
-			r.selectNode(img);
-			if (range.compareBoundaryPoints(Range.START_TO_END, r) > 0 &&
-				range.compareBoundaryPoints(Range.END_TO_START, r) < 0) {
-				img.classList.add('ek-selected');
-			}
+		// Highlight every selected emote element (EK/CE images, Telegram +
+		// custom emoji spans, flags) — same helper the message list uses.
+		highlightEmotesInSel(inputEl);
+		// Flip toggle is for emotes AND emoji — show when the selection has
+		// either (an emote element highlighted, or an emoji in the text).
+		selHasEmote = !!inputEl?.querySelector('.emote-sel')
+			|| /\p{Extended_Pictographic}|\p{Regional_Indicator}/u.test(window.getSelection()?.toString() || '');
+	}
+
+	// Clicking a ce=false emote SPAN (TG/custom) doesn't reliably place the
+	// caret before/after it like a replaced <img> (EK/CE) — at a line start you
+	// couldn't get the caret to its LEFT. Resolve it from which half was clicked.
+	let _ceDownX = 0, _ceDownY = 0;
+	// Put the caret just LEFT of an atomic emote. Line breaks are a "\n" in a
+	// text node (not a <br>); a parent-level "before the element" boundary
+	// renders on the line ABOVE. Land at the END of the preceding text node —
+	// after the "\n", on the emote's own line. Shared by click + ArrowLeft.
+	function setCaretBeforeUnit(unit) {
+		if (!unit) return;
+		const range = document.createRange();
+		// Skip + clean up empty text nodes left by prior edits — the usual cause
+		// of "works at first, breaks after manipulation".
+		let prev = unit.previousSibling;
+		while (prev && prev.nodeType === Node.TEXT_NODE && prev.textContent.length === 0) {
+			const dead = prev; prev = prev.previousSibling; dead.remove();
 		}
+		if (prev && prev.nodeType === Node.TEXT_NODE) {
+			// Land at the end of the preceding text (after any "\n") — the logical
+			// spot left of the emote. Backspace from here still deletes the "\n".
+			// (Dropped the zero-width anchor that used to fix the caret painting —
+			// it interfered with Enter/Backspace and left stray characters.)
+			range.setStart(prev, prev.textContent.length);
+		} else {
+			range.setStartBefore(unit);
+		}
+		range.collapse(true);
+		const sel = window.getSelection();
+		sel.removeAllRanges();
+		sel.addRange(range);
+	}
+	function placeCaretFromEmoteClick(e) {
+		if (!inputEl) return false;
+		// Only TG/custom emote SPANS need this; EK/CE <img> work natively.
+		let unit = e.target?.closest?.('.tg-emoji, .tg-sel-base, .tg-emoji-img');
+		if (!unit || !inputEl.contains(unit)) return false;
+		unit = unit.closest('.tg-emoji') || unit;
+		const flip = unit.closest('.tfx-flip');
+		if (flip) unit = flip;
+		const rect = unit.getBoundingClientRect();
+		if (!rect.width) return false;
+		const before = e.clientX < rect.left + rect.width / 2;
+		if (before) {
+			setCaretBeforeUnit(unit);
+		} else {
+			const range = document.createRange();
+			range.setStartAfter(unit);
+			range.collapse(true);
+			const sel = window.getSelection();
+			sel.removeAllRanges();
+			sel.addRange(range);
+		}
+		return true;
 	}
 
 	function applyTextFx(name) {
@@ -1124,8 +1257,10 @@
 		const segs = markupToSegments(markup);
 
 		const isColorFx = name.startsWith('color-') || name === 'rainbow';
-		const isFormatFx = name === 'bold' || name === 'italic' || name === 'underline' || name === 'strike' || isColorFx;
-		const isFmtFx = (fx) => fx === 'bold' || fx === 'italic' || fx === 'underline' || fx === 'strike' || fx === 'rainbow' || fx.startsWith('color-') || fx.startsWith('wdth-') || fx.startsWith('wght-') || fx.startsWith('sz-');
+		// `flip` is a stackable static-transform format — coexists with
+		// colour/weight AND animations (shake etc.), never replaced by them.
+		const isFormatFx = name === 'bold' || name === 'italic' || name === 'underline' || name === 'strike' || name === 'flip' || isColorFx;
+		const isFmtFx = (fx) => fx === 'bold' || fx === 'italic' || fx === 'underline' || fx === 'strike' || fx === 'flip' || fx === 'rainbow' || fx.startsWith('color-') || fx.startsWith('wdth-') || fx.startsWith('wght-') || fx.startsWith('sz-');
 
 		// Check if every selected segment already has this effect → toggle off
 		let p0 = 0, allHaveIt = true;
@@ -1258,13 +1393,75 @@
 	function applyInlineWeight(val) { applyInlineTypo(val, WGHT_STEPS, 400, WGHT_FX_MAP, 'wght-'); }
 	function applyInlineSize(val) { applyInlineTypo(val, SZ_STEPS, 1.0, SZ_FX_MAP, 'sz-'); }
 
+	// Smooth size dragging — wrap the selection once in a `.sz-live` span and
+	// scale it with a continuous font-size (CSS transition eases it); commit the
+	// stepped inline size on release. Falls back to stepped if wrapping fails.
+	let _szLive = null;
+	function applyLiveSize(val) {
+		if (!_savedCeSel || !inputEl) return;
+		if (!_szLive) {
+			try {
+				const sp = findDomPos(inputEl, _savedCeSel.start);
+				const ep = findDomPos(inputEl, _savedCeSel.end);
+				const r = document.createRange();
+				r.setStart(sp.node, sp.offset);
+				r.setEnd(ep.node, ep.offset);
+				const span = document.createElement('span');
+				span.className = 'sz-live';
+				span.appendChild(r.extractContents());
+				// Strip existing inline sizes inside so re-sizing replaces them.
+				for (const old of span.querySelectorAll('[data-fx^="sz-"], .sz-live')) {
+					while (old.firstChild) old.parentNode.insertBefore(old.firstChild, old);
+					old.remove();
+				}
+				r.insertNode(span);
+				_szLive = span;
+				mountStaticEmotes(inputEl);
+			} catch { _szLive = null; }
+		}
+		if (_szLive) _szLive.style.fontSize = val !== 1.0 ? `${(val * 0.9).toFixed(3)}rem` : '';
+		else applyInlineSize(val);
+	}
+	function _unwrapLive() {
+		if (!_szLive) return;
+		const parent = _szLive.parentNode;
+		while (_szLive.firstChild) parent.insertBefore(_szLive.firstChild, _szLive);
+		parent.removeChild(_szLive);
+		_szLive = null;
+	}
+	function commitLiveSize(val) {
+		if (!_szLive) return;
+		if (val !== 1.0) {
+			const N = Math.round(val * 100);
+			_szLive.className = `tfx tfx-sz-${N}`;
+			_szLive.dataset.fx = `sz-${N}`;
+			_szLive.style.fontSize = `${(N / 100 * 0.9).toFixed(3)}rem`;
+			_szLive = null;
+		} else {
+			_unwrapLive();
+		}
+		input = serializeCe(inputEl);
+		detectedCodeLang = detectCode(input);
+	}
+
 	function onCeCopy(e) {
 		const sel = window.getSelection();
 		if (!sel || sel.isCollapsed || !inputEl) return;
 		const range = sel.getRangeAt(0);
 		if (!inputEl.contains(range.commonAncestorContainer)) return;
+		// Lone emote selects the base <img> inside the .tg-emoji span — expand to
+		// the span so the data-tg token isn't lost.
+		let cloneRange = range;
+		const _ancEl = range.commonAncestorContainer.nodeType === Node.TEXT_NODE
+			? range.commonAncestorContainer.parentElement
+			: range.commonAncestorContainer;
+		const _emoteAnc = _ancEl?.closest?.('.tg-emoji');
+		if (_emoteAnc && inputEl.contains(_emoteAnc)) {
+			cloneRange = document.createRange();
+			cloneRange.selectNode(_emoteAnc);
+		}
 		const tempDiv = document.createElement('div');
-		tempDiv.appendChild(range.cloneContents());
+		tempDiv.appendChild(cloneRange.cloneContents());
 
 		const outerFxStack = [];
 		let cur = range.commonAncestorContainer;
@@ -1289,7 +1486,9 @@
 
 		e.preventDefault();
 		e.clipboardData.setData('text/plain', finalReadable);
-		e.clipboardData.setData('text/x-eating-markup', rawMarkup);
+		// Include the whole-message size/weight/width prefix in the markup too —
+		// onCePaste reads x-eating-markup first, so "sent large" pastes back large.
+		e.clipboardData.setData('text/x-eating-markup', fontPrefix + rawMarkup);
 	}
 
 	function matchPastedImage(clipboardData) {
@@ -1335,6 +1534,7 @@
 					} else {
 						for (const node of nodes) inputEl.appendChild(node);
 					}
+					if (inputEl) mountStaticEmotes(inputEl);
 					input = serializeCe(inputEl);
 					detectedCodeLang = detectCode(input);
 					return;
@@ -1364,14 +1564,24 @@
 		let pastedText = rawMarkup || e.clipboardData.getData('text/plain');
 		if (!pastedText || !inputEl) return;
 
-		if (!rawMarkup) {
+		// A leading size/weight/width prefix becomes INLINE formatting wrapping the
+		// pasted content (the editable kind the highlight slider changes), NOT a
+		// whole-message size. Snap to the nearest inline step.
+		{
+			let openFx = '', closeN = 0;
+			const nearestFx = (val, steps, dflt, map) => {
+				const step = steps.reduce((a, b) => Math.abs(b - val) < Math.abs(a - val) ? b : a);
+				return step !== dflt ? (map[step] ?? null) : null;
+			};
+			const addFx = (fx) => { if (fx && FX_TO_CHAR[fx]) { openFx += FX_TO_CHAR[fx]; closeN++; } };
 			const szM = pastedText.match(/^\[sz:([\d.]+)\]/);
-			if (szM) { messageFontSize = Math.min(20, Math.max(0.55, parseFloat(szM[1]))); pastedText = pastedText.slice(szM[0].length); }
+			if (szM) { addFx(nearestFx(parseFloat(szM[1]), SZ_STEPS, 1.0, SZ_FX_MAP)); pastedText = pastedText.slice(szM[0].length); }
 			const wghtM = pastedText.match(/^\[wght:(\d+)\]/);
-			if (wghtM) { messageFontWeight = Math.min(700, Math.max(100, parseInt(wghtM[1]))); pastedText = pastedText.slice(wghtM[0].length); }
+			if (wghtM) { addFx(nearestFx(parseInt(wghtM[1]), WGHT_STEPS, 400, WGHT_FX_MAP)); pastedText = pastedText.slice(wghtM[0].length); }
 			const wdthM = pastedText.match(/^\[wdth:(\d+)\]/);
-			if (wdthM) { messageFontStretch = Math.min(150, Math.max(25, parseInt(wdthM[1]))); pastedText = pastedText.slice(wdthM[0].length); }
+			if (wdthM) { addFx(nearestFx(parseInt(wdthM[1]), WDTH_STEPS, 100, WDTH_FX_MAP)); pastedText = pastedText.slice(wdthM[0].length); }
 			if (!pastedText) return;
+			if (closeN) pastedText = openFx + pastedText + FX_CLOSE_CHAR.repeat(closeN);
 		}
 
 		// When pasted text contains any image-token (EK/CE/TG/TGC), use direct DOM
@@ -1401,6 +1611,8 @@
 				window.getSelection()?.removeAllRanges();
 				window.getSelection()?.addRange(r);
 			}
+			// Pasted TG/TGC tokens are empty <span>s until a player is mounted.
+			if (inputEl) mountStaticEmotes(inputEl);
 			input = serializeCe(inputEl);
 			detectedCodeLang = detectCode(input);
 			return;
@@ -1480,8 +1692,21 @@
 			cur = cur.parentElement;
 		}
 
+		// A lone/jumbo emote selects the (replaced) base <img> INSIDE the
+		// .tg-emoji span, so cloneContents would lose the data-tg token. Expand
+		// the range to the whole span when the selection sits within one emote.
+		let cloneRange = range;
+		const _ancEl = range.commonAncestorContainer.nodeType === Node.TEXT_NODE
+			? range.commonAncestorContainer.parentElement
+			: range.commonAncestorContainer;
+		const _emoteAnc = _ancEl?.closest?.('.tg-emoji');
+		if (_emoteAnc && listEl.contains(_emoteAnc)) {
+			cloneRange = document.createRange();
+			cloneRange.selectNode(_emoteAnc);
+		}
+
 		const tempDiv = document.createElement('div');
-		tempDiv.appendChild(range.cloneContents());
+		tempDiv.appendChild(cloneRange.cloneContents());
 		for (const pop of tempDiv.querySelectorAll('.e-tip-pop')) pop.remove();
 		let markup = serializeCe(tempDiv);
 
@@ -1518,6 +1743,13 @@
 		const finalText = fontPrefix + readable;
 		if (finalText !== sel.toString()) {
 			e.clipboardData.setData('text/plain', finalText);
+			// High-fidelity channel so animated/custom emotes copied from a
+			// DM bubble paste exactly into any FormattedInput in the app
+			// (onCePaste reads text/x-eating-markup first). text/plain is
+			// the readable fallback for external apps / plain inputs. Prefix
+			// carries the whole-message size/weight/width so "sent large" pastes
+			// back large.
+			e.clipboardData.setData('text/x-eating-markup', fontPrefix + markup);
 			e.preventDefault();
 		}
 	}
@@ -1539,6 +1771,12 @@
 			}
 			_szPendingFont = 1.0;
 			messageFontSize = 1.0;
+			// Applies INLINE size to the WHOLE message — same mechanism as the
+			// highlight slider on a selection. "Select" all the text so the commit
+			// on release targets everything.
+			const _szMarkup = inputEl ? serializeCe(inputEl) : '';
+			_savedCeSel = { start: 0, end: markupToSegments(_szMarkup).reduce((s, seg) => s + seg.text.length, 0) };
+			_lastInlineTypo = {};
 			// Contain layout during drag: font-size changes stay local, don't reflow ancestors
 			if (inputEl) inputEl.style.contain = 'layout';
 		}, 380);
@@ -1571,7 +1809,9 @@
 		cancelAnimationFrame(_szRafId);
 		_szRafId = requestAnimationFrame(() => {
 			if (!sizeSliderActive || !inputEl) return;
-			inputEl.style.fontSize = _szPendingFont !== 1.0 ? `${(_szPendingFont * 0.9).toFixed(2)}rem` : '';
+			// Live, continuous, value-for-value scale of the whole content via the
+			// same .sz-live wrapper the slider uses. Committed on release.
+			applyLiveSize(_szPendingFont);
 		});
 	}
 
@@ -1579,9 +1819,12 @@
 		cancelAnimationFrame(_szRafId);
 		_szArmed = false;
 		sizeSliderActive = false;
-		// Remove containment before committing final size so the bar can properly resize
 		if (inputEl) { inputEl.style.contain = ''; inputEl.style.fontSize = ''; }
-		messageFontSize = (_szPendingFont > 0.92 && _szPendingFont < 1.08) ? 1.0 : _szPendingFont;
+		// Bake the exact continuous size into the content (.sz-live wrapper).
+		commitLiveSize(_szPendingFont);
+		messageFontSize = 1.0;
+		_savedCeSel = null;
+		window.getSelection()?.removeAllRanges();
 	}
 
 	function onSendCancel() {
@@ -1590,7 +1833,9 @@
 		_szArmed = false;
 		sizeSliderActive = false;
 		if (inputEl) { inputEl.style.contain = ''; inputEl.style.fontSize = ''; }
+		_unwrapLive();
 		messageFontSize = 1.0;
+		_savedCeSel = null;
 	}
 
 	let _cancelFpsLoop = () => {};
@@ -1776,9 +2021,82 @@
 		requestAnimationFrame(tick);
 	}
 
+	// Focus the compose unless the expression picker is open on touch — avoids
+	// popping the iOS keyboard while tapping emotes.
+	function _focusCompose() {
+		if (showComposePicker && window.matchMedia?.('(pointer: coarse)')?.matches) return;
+		inputEl?.focus();
+	}
+
+	// ⌫ key in the docked picker. The mobile picker keeps the compose
+	// unfocused (so the iOS keyboard stays down), which means there's no
+	// real caret to delete from — so this deletes the last unit at the end
+	// of the compose (where inserts land). When a live, non-collapsed
+	// selection IS present (desktop popover), it deletes that instead.
+	function composeBackspace() {
+		if (!inputEl) { input = Array.from(input).slice(0, -1).join(''); return; }
+		const sel = window.getSelection();
+		if (sel && sel.rangeCount && !sel.isCollapsed && inputEl.contains(sel.anchorNode)) {
+			sel.getRangeAt(0).deleteContents();
+		} else if (!_deleteLastUnit(inputEl)) {
+			return; // nothing to delete
+		}
+		input = serializeCe(inputEl);
+		_clearHtmlCache();
+	}
+
+	// True if a node is one atomic, non-editable unit (emote / image / EK /
+	// CE / flipped-fx box) — deleting it means removing the WHOLE node, never
+	// descending into its inner base+overlay children. This is the bit the
+	// first cut got wrong: a .tg-emoji span holds an invisible selection base
+	// AND an animation overlay, so a deepest-leaf walk only caught a piece.
+	function _isAtomicUnit(el) {
+		if (el.nodeType !== Node.ELEMENT_NODE) return false;
+		if (el.tagName === 'IMG') return true;
+		if (el.getAttribute('contenteditable') === 'false') return true;
+		const c = el.classList;
+		return !!c && (c.contains('tg-emoji') || c.contains('tg-emoji-img')
+			|| c.contains('ek-img') || c.contains('ek-img-ce')
+			|| c.contains('ce-img') || c.contains('ce-img-ce'));
+	}
+
+	// Delete exactly one unit from the END of `container`, recursing into
+	// editable fx wrappers (bold/italic/size/…) so a trailing char inside a
+	// styled run is trimmed rather than the whole run. Returns false when the
+	// container is empty. Works top-down from lastChild so atomic emotes are
+	// removed whole regardless of how many inner nodes they wrap.
+	function _deleteLastUnit(container) {
+		const last = container.lastChild;
+		if (!last) return false;
+		if (last.nodeType === Node.TEXT_NODE) {
+			const arr = Array.from(last.data); // by code point — keeps emoji whole
+			arr.pop();
+			if (arr.length) last.data = arr.join('');
+			else last.remove();
+			return true;
+		}
+		if (last.nodeType === Node.ELEMENT_NODE) {
+			if (last.tagName === 'BR') { last.remove(); return true; }
+			if (_isAtomicUnit(last)) {
+				const prev = last.previousSibling;
+				last.remove();
+				// Drop the ZWSP line-start anchor that sat in front of it.
+				if (prev && prev.nodeType === Node.TEXT_NODE && prev.data === '​') prev.remove();
+				return true;
+			}
+			// Editable wrapper with mixed content — trim inside it, then prune
+			// the wrapper if it emptied out.
+			const did = _deleteLastUnit(last);
+			if (last.childNodes.length === 0) last.remove();
+			return did;
+		}
+		last.remove();
+		return true;
+	}
+
 	function insertEmoji(emoji) {
 		if (!inputEl) { input += emoji; return; }
-		inputEl.focus();
+		_focusCompose();
 		const sel = window.getSelection();
 		const textNode = document.createTextNode(emoji);
 		if (sel && sel.rangeCount > 0 && inputEl.contains(sel.anchorNode)) {
@@ -1800,11 +2118,36 @@
 		input = serializeCe(inputEl);
 	}
 
+	// A contenteditable=false emote sitting directly after a <br> begins a
+	// wrapped line with no caret position to its LEFT — you can't click or
+	// arrow in front of it to delete the break and pull it back up a line
+	// (worse when flipped, since scaleX(-1) mirrors the hit-box). Drop a
+	// zero-width-space text node in as that missing left-anchor. ZWSP is
+	// counted identically by serializeCe + cePlainOffset (same convention as
+	// the code-block anchors), so fx offsets stay aligned. Idempotent — only
+	// fires for an emote unit that directly follows a <br>.
+	function anchorLineStartEmotes(el) {
+		if (!el) return;
+		const SEL = '.ek-img, .ek-img-ce, .ce-img, .ce-img-ce, .tg-emoji, .tg-emoji-img';
+		for (const em of el.querySelectorAll(SEL)) {
+			let unit = em;
+			while (unit.parentNode && unit.parentNode !== el
+				&& unit.parentNode.nodeType === Node.ELEMENT_NODE
+				&& unit.parentNode.classList?.contains('tfx')) {
+				unit = unit.parentNode;
+			}
+			const prev = unit.previousSibling;
+			if (prev && prev.nodeType === Node.ELEMENT_NODE && prev.tagName === 'BR') {
+				unit.parentNode.insertBefore(document.createTextNode('​'), unit);
+			}
+		}
+	}
+
 	function insertEkToken(token) {
 		const m = token.match(/^\[ek:([a-z0-9]+):([0-9a-f-]+):([0-9a-f-]+)\]$/i);
 		if (!m) return;
 		if (!inputEl) { input += token; return; }
-		inputEl.focus();
+		_focusCompose();
 		const img = document.createElement('img');
 		img.src = ekTokenToUrl(m[1], m[2], m[3]);
 		img.dataset.ek = token;
@@ -1828,6 +2171,7 @@
 			sel?.removeAllRanges();
 			sel?.addRange(range);
 		}
+		anchorLineStartEmotes(inputEl);
 		input = serializeCe(inputEl);
 	}
 
@@ -1896,7 +2240,43 @@
 	}
 	afterNavigate(focusFromUrl);
 
+	// Last real interaction on THIS chat page. Seeded to mount time —
+	// navigating here is itself an active action.
+	let _lastInputAt = Date.now();
+	const ACTIVE_WINDOW_MS = 60_000;
+
+	// True only when the user is genuinely reading right now: the tab is
+	// foreground + focused AND they've interacted within the active window.
+	// A focused-but-idle tab is exactly the "online but didn't actually read
+	// it" false positive, so a real interaction is required too.
+	// See memory/project_read_receipts_gating.md.
+	function isViewingActively() {
+		return typeof document !== 'undefined'
+			&& document.visibilityState === 'visible'
+			&& document.hasFocus()
+			&& (Date.now() - _lastInputAt) < ACTIVE_WINDOW_MS;
+	}
+	// Set when markRead() was called while NOT actively viewing. We flush the
+	// deferred receipt the moment the user is active on the page again.
+	let _readPending = false;
+
+	// Any real interaction marks the user active and flushes a deferred
+	// receipt — making a receipt mean "active on the page since the message
+	// arrived" rather than merely "tab was open".
+	function onChatActivity(e) {
+		if (e && e.isTrusted === false) return;
+		_lastInputAt = Date.now();
+		if (_readPending) flushPendingRead();
+	}
+
 	function markRead() {
+		if (!isViewingActively()) {
+			// Defer: there's unseen activity, but we won't acknowledge it
+			// until the user genuinely returns to this page.
+			_readPending = true;
+			return;
+		}
+		_readPending = false;
 		const uid = data.currentUser.id;
 		const now = Date.now();
 		set(ref(db, `lastRead/${uid}/${data.convId}`), now);
@@ -1907,6 +2287,12 @@
 		set(ref(db, `convReads/${data.convId}/${uid}`), now).catch((e) => {
 			console.warn('[read-receipt] convReads write blocked:', e?.message ?? e);
 		});
+	}
+
+	// On returning to the tab (foreground + focus), flush any read
+	// receipt we deferred while the user was away/idle.
+	function flushPendingRead() {
+		if (_readPending && isViewingActively()) markRead();
 	}
 
 	function clearTyping() {
@@ -1943,7 +2329,7 @@
 
 	async function saveEdit() {
 		const msgId = editingMsgId;
-		const content = editContent.trim();
+		const content = editContent.replace(/​/g, '').trim();
 		if (!content || !msgId) { editingMsgId = null; return; }
 		editingMsgId = null;
 		messages = messages.map((m) => m.id === msgId ? { ...m, content, edited: true } : m);
@@ -2121,6 +2507,12 @@
 		Promise.all([loadTelegramEmoji(), loadCustomPacks()]).then(() => { mountTgStickers(); });
 		document.addEventListener('selectionchange', onCeSelect);
 		document.addEventListener('selectionchange', onMsgListSelectionChange);
+		document.addEventListener('visibilitychange', flushPendingRead);
+		window.addEventListener('focus', flushPendingRead);
+		_lastInputAt = Date.now();
+		for (const ev of ['pointerdown', 'keydown', 'wheel', 'touchstart', 'mousemove']) {
+			document.addEventListener(ev, onChatActivity, { passive: true });
+		}
 		if (heartsCanvas) {
 			heartsCanvas.width = window.innerWidth;
 			heartsCanvas.height = window.innerHeight;
@@ -2225,6 +2617,7 @@
 		} else {
 			inputEl.appendChild(img);
 		}
+		anchorLineStartEmotes(inputEl);
 		input = serializeCe(inputEl);
 		onInput();
 	}
@@ -2305,11 +2698,12 @@
 		} else if (inputEl) {
 			inputEl.appendChild(node);
 		}
+		anchorLineStartEmotes(inputEl);
 		input = serializeCe(inputEl);
 		onInput();
 		_clearHtmlCache();
 		if (inputEl) mountStaticEmotes(inputEl);
-		inputEl?.focus();
+		_focusCompose();
 	}
 
 	// Mount live Lottie players into rendered .tg-emoji spans — SAME setup as the
@@ -2355,8 +2749,12 @@
 		const data = await fetchLottie(url);
 		if (!data || !span.isConnected) return;
 		const frozen = !!(span.dataset.tgPack && isStaticPack(span.dataset.tgPack));
+		// Mount into the selectable shell's overlay (hidden <img> base makes the
+		// emote a replaced element so it selects/caret like EK), not the span.
+		const overlay = ensureSelectableEmoteShell(span);
+		overlay.replaceChildren();
 		const anim = lottie.loadAnimation({
-			container: span, renderer: 'svg', loop: !frozen, autoplay: false,
+			container: overlay, renderer: 'svg', loop: !frozen, autoplay: false,
 			animationData: data, rendererSettings: { progressiveLoad: true }
 		});
 		// Same as picker — disable subframe interpolation to suppress lottie-web's
@@ -2484,18 +2882,24 @@
 		if (heartsAnimId) cancelAnimationFrame(heartsAnimId);
 		document.removeEventListener('selectionchange', onCeSelect);
 		document.removeEventListener('selectionchange', onMsgListSelectionChange);
+		document.removeEventListener('visibilitychange', flushPendingRead);
+		window.removeEventListener('focus', flushPendingRead);
+		for (const ev of ['pointerdown', 'keydown', 'wheel', 'touchstart', 'mousemove']) {
+			document.removeEventListener(ev, onChatActivity);
+		}
 		_tgObserver?.disconnect();
 		while (_tgHeldSlots > 0) { _tgYieldPlay(); _tgHeldSlots--; }
 	});
 
 	async function send() {
-		const content = input.trim();
+		// Strip zero-width caret anchors (compose-box editing artifacts).
+		const content = input.replace(/​/g, '').trim();
 		const attSnap = pendingAttachment ? { ...pendingAttachment } : null;
 		if (!content && !attSnap) return;
 		clearTyping();
 		const replySnap = replyingTo ? { ...replyingTo } : null;
 		const fxSnap = messageEffect;
-		const hasInlineSz = /[\uE140-\uE145]/.test(content);
+		const hasInlineSz = /[\uE140-\uE150]/.test(content);
 		const hasInlineWght = /[\uE130-\uE135]/.test(content);
 		const hasInlineWdth = /[\uE120-\uE124]/.test(content);
 		const szSnap = (messageFontSize !== 1.0 && !hasInlineSz) ? messageFontSize : undefined;
@@ -2629,29 +3033,40 @@
 		} catch { fileViewer = { filename, url, content: 'Failed to load file.', lang: 'plaintext' }; }
 	}
 
-	// Returns the outermost node to jump past for atomic EK/CE navigation.
-	// If node is an EK/CE img, climbs up through single-child FX span parents.
-	// If node is an FX span wrapping only an EK/CE, dives in and returns node itself.
+	// Any atomic emote element: EK/CE/flag <img> or a Telegram/custom emoji
+	// <span> (TG/TGC and flipped emotes render as spans).
+	function _isAtomicEmote(el) {
+		return el && el.nodeType === Node.ELEMENT_NODE && (
+			(el.tagName === 'IMG' && (el.dataset.ek || el.dataset.ce || el.dataset.tg)) ||
+			(el.tagName === 'SPAN' && (el.dataset.tg || el.classList?.contains('tg-emoji') ||
+				el.classList?.contains('tfx-flip')))
+		);
+	}
+	// Outermost node to jump past for atomic emote navigation, so each emote
+	// (incl. one wrapped in fx spans like flip/bold) moves as a single
+	// "letter". The dive case now handles TG/custom spans too — previously
+	// only EK/CE imgs, so flipped TG emotes broke arrow navigation.
 	function getEkOutermost(node) {
 		if (!node || node.nodeType !== Node.ELEMENT_NODE) return null;
-		if ((node.tagName === 'IMG' && (node.dataset.ek || node.dataset.ce || node.dataset.tg)) || (node.tagName === 'SPAN' && node.dataset.tg)) {
-			// Climb up through single-child FX spans that contain only this img/span
+		// fx wrappers carry data-fx; the flip transform sits on a transparent
+		// .tfx-flip-inner span (no data-fx) — treat both as climbable/divable.
+		const _passThru = (n) => n && n.nodeType === Node.ELEMENT_NODE &&
+			(n.dataset?.fx || n.classList?.contains('tfx-flip-inner'));
+		if (_isAtomicEmote(node)) {
 			let outer = node;
 			while (outer.parentNode && outer.parentNode !== inputEl &&
-			       outer.parentNode.nodeType === Node.ELEMENT_NODE &&
-			       outer.parentNode.dataset?.fx &&
+			       _passThru(outer.parentNode) &&
 			       outer.parentNode.childNodes.length === 1) {
 				outer = outer.parentNode;
 			}
 			return outer;
 		}
 		if (node.dataset?.fx) {
-			// Dive into single-child FX span chain to find an EK/CE img
 			let child = node;
 			while (child.childNodes.length === 1 && child.firstChild?.nodeType === Node.ELEMENT_NODE) {
 				child = child.firstChild;
-				if (child.tagName === 'IMG' && (child.dataset.ek || child.dataset.ce)) return node; // node is the outermost
-				if (!child.dataset?.fx) break;
+				if (_isAtomicEmote(child)) return node; // node is the outermost wrapper
+				if (!_passThru(child)) break;
 			}
 		}
 		return null;
@@ -2693,6 +3108,29 @@
 		// preempts navigation keys when its popover is open, so this
 		// handler doesn't need to coordinate with it explicitly.
 		if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey) { e.preventDefault(); inputEl?.focus(); send(); return; }
+
+		// Shift+Enter: insert exactly ONE newline. Next to atomic emote spans the
+		// browser inserts a DOUBLE "\n" (blank line between emotes), so do it
+		// ourselves for a single, predictable line break.
+		if (e.key === 'Enter' && e.shiftKey && !e.metaKey && !e.ctrlKey) {
+			const sel = window.getSelection();
+			if (sel?.rangeCount && inputEl?.contains(sel.anchorNode)) {
+				e.preventDefault();
+				if (undoStack.length >= 50) undoStack.shift();
+				undoStack.push(input); redoStack.length = 0;
+				const range = sel.getRangeAt(0);
+				range.deleteContents();
+				const nl = document.createTextNode('\n');
+				range.insertNode(nl);
+				const nr = document.createRange();
+				nr.setStartAfter(nl); nr.collapse(true);
+				sel.removeAllRanges(); sel.addRange(nr);
+				input = serializeCe(inputEl);
+				detectedCodeLang = detectCode(input);
+				onInput();
+				return;
+			}
+		}
 
 		// Colon autocomplete: typing ':' closes the shortcode query
 		if (e.key === ':' && ceSuggestions.length > 0 && !e.metaKey && !e.ctrlKey) {
@@ -2773,6 +3211,32 @@
 					detectedCodeLang = detectCode(input);
 					return;
 				}
+				// Caret just before a line-start emote (right after a "\n", possibly
+				// plus our zero-width anchor): one backspace removes the whole line
+				// break so the emote pulls up a line.
+				const _c = r.startContainer, _o = r.startOffset;
+				let _ns = _c.nodeType === Node.TEXT_NODE ? _c.nextSibling : null;
+				while (_ns && _ns.nodeType === Node.TEXT_NODE && _ns.textContent.length === 0) _ns = _ns.nextSibling;
+				if (_c.nodeType === Node.TEXT_NODE && _o === _c.textContent.length && getEkOutermost(_ns)) {
+					const _m = _c.textContent.slice(0, _o).match(/\n​*$/);
+					if (_m) {
+						e.preventDefault();
+						if (undoStack.length >= 50) undoStack.shift();
+						undoStack.push(input); redoStack.length = 0;
+						const _emote = _ns;
+						_c.deleteData(_o - _m[0].length, _m[0].length);
+						const nr = document.createRange();
+						if (_c.textContent.length > 0) {
+							nr.setStart(_c, _c.textContent.length);
+						} else {
+							_c.remove();
+							nr.setStartBefore(_emote);
+						}
+						nr.collapse(true);
+						sel.removeAllRanges(); sel.addRange(nr);
+						input = serializeCe(inputEl); detectedCodeLang = detectCode(input); return;
+					}
+				}
 				const prev = r.startContainer.nodeType === Node.TEXT_NODE
 					? (r.startOffset === 0 ? r.startContainer.previousSibling : null)
 					: (r.startOffset > 0 ? r.startContainer.childNodes[r.startOffset - 1] : null);
@@ -2798,10 +3262,16 @@
 				const outer = getEkOutermost(adj);
 				if (outer) {
 					e.preventDefault();
-					const nr = document.createRange();
-					if (goRight) nr.setStartAfter(outer); else nr.setStartBefore(outer);
-					nr.collapse(true);
-					sel.removeAllRanges(); sel.addRange(nr); return;
+					if (goRight) {
+						const nr = document.createRange();
+						nr.setStartAfter(outer); nr.collapse(true);
+						sel.removeAllRanges(); sel.addRange(nr);
+					} else {
+						// End of preceding text node, not the parent boundary —
+						// else a line-start emote sends the caret up a line.
+						setCaretBeforeUnit(outer);
+					}
+					return;
 				}
 			}
 		}
@@ -3103,15 +3573,13 @@
 					{/each}
 				</div>
 			{/if}
-			{#if isMine && msg.id === lastSeenOwnMsgId}
-				<div class="seen-row" title="Seen by {otherUser.name}">
-					<!-- Double-check icon makes the receipt readable
-					     even before the avatar has hashed in. -->
-					<span class="msi msi-14 msi-fill seen-check">done_all</span>
-					<span class="seen-avatars">
-						<span class="seen-avatar-slot">
-							<Avatar name={otherUser.name} uid={otherUser.id} avatarKind={otherUser.avatarKind ?? 'gen'} avatarValue={otherUser.avatarValue ?? null} size={18} />
-						</span>
+			{#if msg.id === lastSeenMsgId}
+				<!-- Other user's read marker — absolutely positioned at the
+				     row's bottom-right so it overlays without changing the
+				     message height (no reflow / scroll-jank). -->
+				<div class="read-row" title="Seen by {otherUser.name}">
+					<span class="read-dot">
+						<Avatar name={otherUser.name} uid={otherUser.id} avatarKind={otherUser.avatarKind ?? 'gen'} avatarValue={otherUser.avatarValue ?? null} size={16} />
 					</span>
 				</div>
 			{/if}
@@ -3178,7 +3646,7 @@
 {/if}
 
 
-<div class="input-area" class:kb-open={keyboardOpen} bind:clientHeight={inputAreaHeight} style:--input-area-h="{inputAreaHeight}px">
+<div class="input-area" class:kb-open={keyboardOpen} class:picker-open={showComposePicker} bind:clientHeight={inputAreaHeight} style:--input-area-h="{inputAreaHeight}px">
 	{#if replyingTo}
 		<div class="reply-bar">
 			<div class="reply-bar-content">
@@ -3248,9 +3716,10 @@
 		<div class="text-typo-bar" onfocusin={() => { showTextFxBar = true; }}>
 			<div class="typo-inline-row">
 				<span class="typo-inline-label">Size</span>
-				<input class="typo-inline-range" type="range" min="0.55" max="5" step="0.05"
+				<input class="typo-inline-range" type="range" min="0.5" max="7" step="0.05"
 					bind:value={messageFontSize}
-					oninput={() => { if (_savedCeSel) { applyInlineSize(messageFontSize); showTextFxBar = true; } }} />
+					oninput={() => { if (_savedCeSel) { applyLiveSize(messageFontSize); showTextFxBar = true; } }}
+					onchange={() => { if (_savedCeSel) commitLiveSize(messageFontSize); }} />
 				{#if messageFontSize !== 1.0}<button class="typo-inline-reset" onmousedown={(e) => { e.preventDefault(); messageFontSize = 1.0; _lastInlineTypo['sz-'] = null; if (_savedCeSel) applyInlineSize(1.0); }}>↺</button>{/if}
 			</div>
 			<div class="typo-inline-row">
@@ -3287,6 +3756,14 @@
 				<span class="layer-toggle-track"><span class="layer-toggle-knob"></span></span>
 				Per word
 			</button>
+			<!-- Flip: only shown when the selection contains emote(s); mirrors
+			     each selected emote individually (scaleX(-1)), never text. -->
+			{#if selHasEmote}
+				<button class="text-fx-layer-toggle" class:text-fx-layer-on={selHasFlip} onmousedown={(e) => { e.preventDefault(); applyTextFx('flip'); selHasFlip = !selHasFlip; }} title="Mirror each selected emoji / emote">
+					<span class="layer-toggle-track"><span class="layer-toggle-knob"></span></span>
+					Flip
+				</button>
+			{/if}
 			<span class="text-fx-divider"></span>
 			{#each TEXT_FXS as fx}
 				<button class="text-fx-btn" onmousedown={(e) => { e.preventDefault(); applyTextFx(fx.name); }}>
@@ -3311,10 +3788,14 @@
 				aria-multiline="true"
 				aria-label="Message {otherUser.name}"
 			contenteditable={!uploading}
+			inputmode={showComposePicker ? 'none' : null}
 			bind:this={inputEl}
 			oninput={onCeInput}
 			onkeydown={onKeydown}
+			onmousedown={(e) => { _ceDownX = e.clientX; _ceDownY = e.clientY; }}
 			onclick={(e) => {
+				const moved = Math.hypot(e.clientX - _ceDownX, e.clientY - _ceDownY) > 4;
+				if (!moved && placeCaretFromEmoteClick(e)) { onCeSelect(); return; }
 				const langBtn = e.target.closest?.('.ce-code-lang-btn');
 				if (langBtn) {
 					e.preventDefault();
@@ -3363,7 +3844,7 @@
 				</label>
 				<div class="compose-picker-wrap">
 					<button class="btn-fmt btn-fmt-expr" class:active={showComposePicker} title="Expressions"
-						onmousedown={(e) => { e.preventDefault(); showComposePicker = !showComposePicker; }}>
+						onmousedown={(e) => { e.preventDefault(); showComposePicker = !showComposePicker; if (showComposePicker) inputEl?.blur(); }}>
 						<span class="msi msi-18" class:msi-fill={showComposePicker}>mood</span>
 					</button>
 					{#if showComposePicker}
@@ -3378,6 +3859,8 @@
 								onInsertReaction={onReactionInsert}
 								onInsertTgEmoji={onTgEmojiInsert}
 								isInstructor={data.currentUser.role === 'instructor'}
+								onClose={() => { showComposePicker = false; _clearHtmlCache(); }}
+								onBackspace={composeBackspace}
 							/>
 						</div>
 					{/if}
@@ -3905,29 +4388,23 @@
 	/* Reactions */
 	.reactions { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.2rem; }
 
-	/* Read-receipt pill. iMessage-style "Seen" under the most recent
-	   of my messages the other user has read past — right-aligned
-	   because the whole .mine bubble run is right-aligned. */
-	.seen-row {
+	/* Read marker — the other user's avatar at the last message they've
+	   read. Absolutely positioned at the row's bottom-right so it overlays
+	   the message and never changes its height (no reflow / scroll-jank). */
+	.read-row {
+		position: absolute;
+		right: 4px;
+		bottom: -7px;
 		display: inline-flex;
 		align-items: center;
-		gap: 0.35rem;
-		margin-top: 0.3rem;
-		align-self: flex-end;
-		font-size: 0.72rem;
-		font-weight: 500;
-		color: var(--md-sys-color-on-surface-variant, var(--muted-fg));
+		pointer-events: none;
+		z-index: 3;
 	}
-	.message.mine .seen-row { margin-left: auto; }
-	.seen-check { color: var(--md-sys-color-primary, var(--accent)); }
-	.seen-avatars { display: inline-flex; align-items: center; }
-	.seen-avatar-slot {
+	.read-dot {
 		display: inline-flex;
-		margin-left: -6px;
+		border-radius: 50%;
 		box-shadow: 0 0 0 1.5px var(--paper);
-		border-radius: 6px;
 	}
-	.seen-avatar-slot:first-child { margin-left: 0; }
 	.reaction-chip {
 		position: relative;
 		display: flex; align-items: center; gap: 0.22rem;
@@ -4054,7 +4531,11 @@
 		outline: none; max-height: 120px; overflow-y: auto;
 		line-height: 1.45; white-space: pre-wrap; word-break: break-word;
 		min-height: calc(1.45em + 0.95rem); scrollbar-width: none;
+		/* eases the live whole-message resize from the send-button drag */
+		transition: font-size 0.09s ease-out;
 	}
+	/* live-scaled wrapper while dragging the highlight size slider */
+	:global(.sz-live) { transition: font-size 0.09s ease-out; }
 	.compose-ce::-webkit-scrollbar { display: none; }
 	.compose-ce:empty::before {
 		content: attr(data-placeholder);
@@ -4087,14 +4568,42 @@
 	.compose-picker-backdrop { position: fixed; inset: 0; z-index: 49; }
 	.compose-picker-pop { position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 50; }
 	@media (max-width: 640px) {
+		/* Mobile: dock at the very bottom (keyboard suppressed via inputmode=none),
+		   lift the input bar above. --picker-h drives BOTH the sheet height and
+		   the lift so the bar sits flush on the keyboard with no dead gap; the
+		   panel inside is forced to height:100% (ExpressionPicker) to fill it.
+		   The lift is a MARGIN (not padding) so the bar's bottom edge pins to
+		   the picker top and grows UPWARD as it gets taller. The bar's own
+		   safe-area bottom padding is dropped — the picker now owns the safe
+		   area, so that pad would re-open the gap. */
+		.input-area { --picker-h: min(58vh, 22rem); }
+		.input-area.picker-open { margin-bottom: calc(var(--picker-h) + env(safe-area-inset-bottom, 0px)); }
+		.input-area.picker-open .input-bar { padding-bottom: 0.5rem; }
 		.compose-picker-pop {
 			position: fixed;
-			left: 0; right: 0;
-			bottom: calc(var(--input-area-h, 56px) + env(safe-area-inset-bottom, 0px));
+			left: 0; right: 0; bottom: 0;
 			width: 100vw;
+			height: calc(var(--picker-h) + env(safe-area-inset-bottom, 0px));
+			padding-bottom: env(safe-area-inset-bottom, 0px);
+			background: var(--paper);
 			z-index: 60;
 		}
+		/* Faux caret — with the iOS keyboard suppressed the compose loses its
+		   native cursor; draw a blinking bar at the insertion point (the end,
+		   where the docked picker appends). */
+		.input-area.picker-open .compose-ce::after {
+			content: '';
+			display: inline-block;
+			width: 2px;
+			height: 1.15em;
+			margin-left: 1px;
+			vertical-align: text-bottom;
+			background: var(--accent);
+			border-radius: 1px;
+			animation: faux-caret-blink 1.06s steps(1, start) infinite;
+		}
 	}
+	@keyframes faux-caret-blink { 0%, 50% { opacity: 1; } 50.01%, 100% { opacity: 0; } }
 
 	/* Inline Emoji Kitchen images */
 	:global(.ek-img) {
@@ -4110,16 +4619,18 @@
 		vertical-align: -0.25em;
 		object-fit: contain;
 		cursor: default;
-		border-radius: 2px;
-	}
-	:global(.ek-img-ce.ek-selected) {
-		outline: 2px solid #4a9eff;
-		border-radius: 3px;
-		box-shadow: 0 0 0 3px rgba(74, 158, 255, 0.25);
 	}
 	:global(.ce-img) { height: 1.2em; width: 1.2em; vertical-align: -0.25em; object-fit: contain; }
 	:global(.ce-img-ce) { cursor: default; }
-	:global(.ce-img-ce.ek-selected) { outline: 2px solid #4a9eff; border-radius: 3px; box-shadow: 0 0 0 3px rgba(74,158,255,0.25); }
+	/* Unified selection highlight for emote IMAGES (EK/CE/flags), compose +
+	   bubbles. .emote-sel is toggled by highlightEmotesInSel. */
+	:global(.ek-img.emote-sel), :global(.ek-img-ce.emote-sel),
+	:global(.ce-img.emote-sel), :global(.ce-img-ce.emote-sel),
+	:global(.tg-emoji-img.emote-sel), :global(.tfx-flip.emote-sel) {
+		outline: 2px solid color-mix(in srgb, var(--accent) 75%, transparent);
+		background: color-mix(in srgb, var(--accent) 30%, transparent);
+		border-radius: 4px;
+	}
 	/* Telegram animated emoji */
 	:global(.tg-img) { height: 1.3em; width: 1.3em; vertical-align: -0.3em; object-fit: contain; }
 	:global(.tg-img-ce) { cursor: default; }
@@ -4128,7 +4639,7 @@
 	   ::after sits above the Lottie SVG via z-index so the highlight is
 	   visible even when the animation is fully painted. pointer-events
 	   off so it doesn't swallow clicks meant for the .tg-fx underlay. */
-	:global(.tg-emoji.tg-selected::after) {
+	:global(.tg-emoji.emote-sel::after) {
 		content: '';
 		position: absolute;
 		inset: -1px;
@@ -4140,7 +4651,9 @@
 	:global(.tg-emoji.tg-fx) { cursor: pointer; }
 	/* Let the parent span catch the click — SVG/canvas inside default to capturing
 	   pointer events only on painted pixels, so transparent corners would miss. */
-	:global(.tg-emoji svg), :global(.tg-emoji canvas) { pointer-events: none; }
+	/* user-select:none so the selection skips the non-text player and crosses
+	   the span (else it stalls at the emote and never highlights — see app.css). */
+	:global(.tg-emoji svg), :global(.tg-emoji canvas) { pointer-events: none; -webkit-user-select: none; user-select: none; }
 	:global(.tg-emoji svg), :global(.tg-emoji canvas) { width: 100%; height: 100%; display: block; }
 	:global(.tg-emoji-img) { width: 100%; height: 100%; object-fit: contain; display: block; }
 	:global(.tg-interaction) { animation: tgFadeOut 0.6s ease-out 5.0s both; }
@@ -4425,70 +4938,102 @@
 	.ce-sugg-sc { color: var(--ink); font-family: inherit; font-size: 0.78rem; white-space: nowrap; }
 
 	/* Text fx bar */
+	/* ── Highlight (selection) menu — one elevated, rounded premium panel ── */
 	.text-typo-bar {
-		display: flex; gap: 0.5rem; padding: 0.35rem 1.5rem;
-		border-top: 1px solid var(--border); background: var(--surface-2);
-		flex-wrap: wrap;
+		display: flex; gap: 0.55rem 1.25rem; padding: 0.75rem 1.1rem 0.55rem;
+		background: var(--surface-2);
+		border-top: 1px solid var(--border);
+		border-radius: 18px 18px 0 0;
+		box-shadow: 0 -8px 26px -16px rgba(0,0,0,0.28);
+		flex-wrap: wrap; align-items: center;
 	}
 	.typo-inline-row {
-		display: flex; align-items: center; gap: 0.35rem; flex: 1; min-width: 100px;
+		display: flex; align-items: center; gap: 0.6rem; flex: 1 1 150px; min-width: 140px;
 	}
 	.typo-inline-label {
-		font-size: 0.65rem; font-weight: 600; color: var(--muted-fg);
-		text-transform: uppercase; letter-spacing: 0.03em; width: 2.5rem; flex-shrink: 0;
+		font-size: 0.6rem; font-weight: 700; color: var(--muted-fg);
+		text-transform: uppercase; letter-spacing: 0.07em; width: 2.7rem; flex-shrink: 0;
 	}
 	.typo-inline-range {
-		flex: 1; height: 3px; accent-color: var(--ink, var(--ink)); cursor: pointer;
+		flex: 1; height: 6px; -webkit-appearance: none; appearance: none;
+		background: color-mix(in srgb, var(--ink) 16%, transparent);
+		border-radius: 999px; cursor: pointer; outline: none; accent-color: var(--ink);
+	}
+	.typo-inline-range::-webkit-slider-thumb {
+		-webkit-appearance: none; appearance: none;
+		width: 18px; height: 18px; border-radius: 50%;
+		background: var(--ink); border: 2.5px solid var(--paper);
+		box-shadow: 0 1px 5px rgba(0,0,0,0.3); cursor: grab; transition: transform 0.1s ease;
+	}
+	.typo-inline-range::-webkit-slider-thumb:active { transform: scale(1.18); cursor: grabbing; }
+	.typo-inline-range::-moz-range-thumb {
+		width: 18px; height: 18px; border-radius: 50%;
+		background: var(--ink); border: 2.5px solid var(--paper);
+		box-shadow: 0 1px 5px rgba(0,0,0,0.3); cursor: grab;
+	}
+	.typo-inline-range::-moz-range-track {
+		height: 6px; border-radius: 999px;
+		background: color-mix(in srgb, var(--ink) 16%, transparent);
 	}
 	.typo-inline-reset {
-		background: none; border: none; color: var(--muted-fg); font-size: 0.7rem;
-		cursor: pointer; padding: 0 0.15rem; line-height: 1; flex-shrink: 0;
-		transition: color 0.1s;
+		background: none; border: none; color: var(--muted-fg); font-size: 0.95rem;
+		cursor: pointer; padding: 0 0.2rem; line-height: 1; flex-shrink: 0;
+		transition: color 0.12s, transform 0.2s;
 	}
-	.typo-inline-reset:hover { color: var(--ink); }
+	.typo-inline-reset:hover { color: var(--ink); transform: rotate(-40deg); }
 	.typo-default-btn {
-		padding: 0.15rem 0.5rem; border: 1px solid var(--border); border-radius: 5px;
-		background: none; font-family: inherit; font-size: 0.62rem; font-weight: 600;
+		padding: 0.34rem 0.75rem; border: 1px solid var(--border); border-radius: 999px;
+		background: var(--paper); font-family: inherit; font-size: 0.62rem; font-weight: 700;
 		color: var(--muted-fg); cursor: pointer; white-space: nowrap; flex-shrink: 0;
-		transition: background 0.1s, color 0.1s;
+		text-transform: uppercase; letter-spacing: 0.05em;
+		transition: background 0.12s, color 0.12s, border-color 0.12s;
 	}
-	.typo-default-btn:hover { background: var(--surface-2); color: var(--ink); }
+	.typo-default-btn:hover { background: var(--ink); color: var(--paper); border-color: var(--ink); }
 	.text-fx-bar {
-		display: flex; align-items: center; gap: 0.3rem;
-		padding: 0.35rem 1.5rem; background: var(--paper); border-top: 1px solid var(--border);
+		display: flex; align-items: center; gap: 0.45rem;
+		padding: 0.45rem 1.1rem 0.6rem; background: var(--surface-2);
 		flex-wrap: wrap;
 	}
 	.text-fx-layer-toggle {
 		display: flex; align-items: center; gap: 0.4rem; flex-shrink: 0;
-		background: none; border: none; padding: 0; cursor: pointer;
+		background: none; border: none; padding: 0.2rem 0.1rem; cursor: pointer;
 		font-size: 0.72rem; font-weight: 600; color: var(--muted-fg); font-family: inherit;
 		transition: color 0.15s;
 	}
 	.text-fx-layer-toggle:hover { color: var(--ink); }
 	.text-fx-layer-on { color: var(--ink) !important; }
 	.layer-toggle-track {
-		position: relative; width: 2rem; height: 1.1rem; flex-shrink: 0;
-		background: var(--border); border-radius: 999px;
+		position: relative; width: 2rem; height: 1.15rem; flex-shrink: 0;
+		background: color-mix(in srgb, var(--ink) 18%, transparent); border-radius: 999px;
 		transition: background 0.2s;
 	}
-	.text-fx-layer-on .layer-toggle-track { background: var(--ink); }
+	.text-fx-layer-on .layer-toggle-track { background: var(--accent); }
 	.layer-toggle-knob {
-		position: absolute; top: 0.15rem; left: 0.15rem;
-		width: 0.8rem; height: 0.8rem;
+		position: absolute; top: 0.17rem; left: 0.17rem;
+		width: 0.81rem; height: 0.81rem;
 		background: white; border-radius: 50%;
-		transition: transform 0.2s;
-		box-shadow: 0 1px 2px rgba(0,0,0,0.18);
+		transition: transform 0.2s cubic-bezier(0.3,1.4,0.5,1);
+		box-shadow: 0 1px 3px rgba(0,0,0,0.22);
 	}
-	.text-fx-layer-on .layer-toggle-knob { transform: translateX(0.9rem); }
-	.text-fx-divider { width: 1px; height: 1.1rem; background: var(--border); flex-shrink: 0; margin: 0 0.1rem; }
+	.text-fx-layer-on .layer-toggle-knob { transform: translateX(0.85rem); }
+	.text-fx-divider { width: 1px; height: 1.3rem; background: var(--border); flex-shrink: 0; margin: 0 0.25rem; }
 	.text-fx-btn {
-		padding: 0.18rem 0.5rem; background: var(--surface-2); border: 1.5px solid var(--border);
-		border-radius: 5px; font-size: 0.76rem; font-weight: 600; color: var(--ink); font-family: 'Google Sans Flex', 'Space Grotesk', sans-serif; font-optical-sizing: auto;
-		cursor: pointer; transition: background 0.1s;
+		padding: 0.34rem 0.8rem; background: var(--paper); border: 1px solid var(--border);
+		border-radius: 999px; font-size: 0.78rem; font-weight: 600; color: var(--ink);
+		font-family: 'Google Sans Flex', 'Space Grotesk', sans-serif; font-optical-sizing: auto;
+		cursor: pointer; transition: background 0.12s, color 0.12s, border-color 0.12s, transform 0.12s;
 	}
-	.text-fx-btn:hover { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+	.text-fx-btn:hover { background: var(--ink); color: var(--paper); border-color: var(--ink); transform: translateY(-1px); }
+	.text-fx-btn:active { transform: translateY(0); }
 	.text-fx-bar :global(.tfx) { animation-iteration-count: infinite !important; }
-	.text-fx-close { margin-left: auto; background: none; border: none; font-size: 0.78rem; color: var(--muted-fg); cursor: pointer; padding: 0.1rem 0.25rem; line-height: 1; }
+	.text-fx-close {
+		margin-left: auto; background: var(--paper); border: 1px solid var(--border);
+		width: 1.75rem; height: 1.75rem; border-radius: 50%; flex-shrink: 0;
+		display: flex; align-items: center; justify-content: center;
+		font-size: 0.78rem; color: var(--muted-fg); cursor: pointer; line-height: 1;
+		transition: background 0.12s, color 0.12s, border-color 0.12s;
+	}
+	.text-fx-close:hover { background: var(--danger); color: var(--on-danger); border-color: var(--danger); }
 	.preview-screen-label { font-size: 0.9rem; color: var(--ink); }
 
 	/* Bubble entry animations */
@@ -4528,6 +5073,19 @@
 		.typing-indicator { padding: 0.2rem 0.875rem 0; }
 		textarea { font-size: 1rem; }
 		.compose-ce { font-size: 1rem; }
+
+		/* Highlight menu: roomier, touch-friendly layout on phones */
+		.text-typo-bar { padding: 0.85rem 0.95rem 0.6rem; gap: 0.5rem 1rem; }
+		.typo-inline-row { flex: 1 1 100%; min-width: 0; }
+		.typo-inline-label { width: 3rem; font-size: 0.64rem; }
+		.typo-inline-range { height: 8px; }
+		.typo-inline-range::-webkit-slider-thumb { width: 24px; height: 24px; }
+		.typo-inline-range::-moz-range-thumb { width: 24px; height: 24px; }
+		.typo-default-btn { padding: 0.45rem 0.9rem; font-size: 0.66rem; }
+		.text-fx-bar { gap: 0.5rem; padding: 0.55rem 0.95rem 0.7rem; }
+		.text-fx-btn { padding: 0.45rem 0.85rem; font-size: 0.82rem; }
+		.text-fx-layer-toggle { font-size: 0.76rem; }
+		.text-fx-close { width: 2.1rem; height: 2.1rem; }
 	}
 
 	/* Noto Color Emoji: bubble needs an explicit override since it has its own font-family */

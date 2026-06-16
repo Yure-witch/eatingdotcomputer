@@ -41,7 +41,14 @@
 		// just want emoji + emotes + animated stickers, not GIF
 		// uploads or reaction-image attachments. Default `false` so
 		// chat usage is unchanged.
-		inline = false
+		inline = false,
+		// Optional close handler — when provided, a ✕ button is pinned to the
+		// top-left corner of the panel (visible in every category).
+		onClose = null,
+		// Optional backspace handler — when provided, a ⌫ button sits at the
+		// bottom-right of the (bottom) category strip and deletes the last
+		// character / emote in the compose. Used by the docked mobile picker.
+		onBackspace = null
 	} = $props();
 
 	// Top-level tab. Persisted so reopening the picker lands on the
@@ -65,10 +72,19 @@
 		try { localStorage.setItem(TAB_KEY, tab); } catch {}
 	});
 
-	// Emotes tab used to have Uploaded / Library sub-tabs (the latter
-	// surfacing the static Telegram packs). Telegram packs in their
-	// entirety now live in the Animated tab so Emotes is uploads-only
-	// — no sub-tab state needed.
+	// Emotes tab has two sources: the class's uploaded custom emotes
+	// (R2-backed PNGs / GIFs / WebPs) and the static Telegram packs
+	// (CrazyEmoji / MadEmoji2 / HeartEmoji) — packs whose artwork
+	// has no frame-to-frame motion, so they belong with non-animated
+	// emotes rather than under Animated. A sub-tab persists each
+	// section's own search / scroll chrome so they don't fight inside
+	// the 320 px mobile panel.
+	const EMOTES_SUB_KEY = 'exprEmotesSub';
+	const _savedSub = typeof localStorage !== 'undefined' ? localStorage.getItem(EMOTES_SUB_KEY) : null;
+	let emotesSub = $state(_savedSub === 'library' ? 'library' : 'uploaded');
+	$effect(() => {
+		try { localStorage.setItem(EMOTES_SUB_KEY, emotesSub); } catch {}
+	});
 
 	// Reactions tab only handles reactions; pass a no-op for emoji
 	// insertion. CustomEmojiPanel hides the unused side via `mode`.
@@ -84,7 +100,15 @@
 		     EmojiPicker's own localStorage keys). -->
 		<EmojiPicker onSelect={onSelectEmoji} />
 	{:else}
-	<nav class="expr-tabs" aria-label="Expression categories">
+		{#if onClose}
+			<!-- Pinned to the panel's top-left corner (absolute), so it sits
+			     in the same spot for every category. The grid below gets a
+			     little top padding so the first row clears it. -->
+			<button class="expr-close-fixed" onmousedown={(e) => { e.preventDefault(); onClose(); }} title="Close" aria-label="Close picker">
+				<span class="msi msi-20">close</span>
+			</button>
+		{/if}
+		<nav class="expr-tabs" aria-label="Expression categories">
 		<button class="expr-tab" class:active={tab === 'emoji'} onclick={() => (tab = 'emoji')} title="Emoji">
 			<span class="msi msi-20" class:msi-fill={tab === 'emoji'}>mood</span>
 		</button>
@@ -116,6 +140,14 @@
 				<span class="msi msi-20" class:msi-fill={tab === 'reactions'}>favorite</span>
 			</button>
 		{/if}
+		{#if onBackspace}
+			<!-- Backspace lives at the right end of the (bottom) category
+			     strip — bottom-right corner of the picker, like a native
+			     emoji keyboard's delete key. -->
+			<button class="expr-tab expr-tab-back" onmousedown={(e) => { e.preventDefault(); onBackspace(); }} title="Delete" aria-label="Delete">
+				<span class="msi msi-20">backspace</span>
+			</button>
+		{/if}
 	</nav>
 
 	<div class="expr-body">
@@ -126,18 +158,24 @@
 		{:else if tab === 'gifs' && !inline}
 			<GifPicker onSelect={onSelectGif} />
 		{:else if tab === 'emotes'}
-			<!-- Emotes is now strictly uploaded class emotes (the
-			     custom .webp / .gif uploads instructors and students
-			     post to R2). Any Telegram pack — animated or static —
-			     lives in the Animated tab so this tab can't surprise
-			     users with motion they expected to see one tab over. -->
-			<CustomEmojiPanel mode="emoji" onInsertEmoji={onInsertCustomEmoji} onInsertReaction={_noop} {isInstructor} />
+			<!-- Two sources, two sub-tabs. Uploaded = class custom
+			     emotes (R2). Library = the static Telegram packs
+			     (CrazyEmoji / MadEmoji2 / HeartEmoji) which don't
+			     animate, so they belong here next to the rest of the
+			     non-animated emotes rather than under Animated. -->
+			<nav class="expr-subtabs" aria-label="Emote source">
+				<button class="expr-subtab" class:active={emotesSub === 'uploaded'} onclick={() => (emotesSub = 'uploaded')}>Uploaded</button>
+				<button class="expr-subtab" class:active={emotesSub === 'library'} onclick={() => (emotesSub = 'library')}>Library</button>
+			</nav>
+			{#if emotesSub === 'uploaded'}
+				<CustomEmojiPanel mode="emoji" onInsertEmoji={onInsertCustomEmoji} onInsertReaction={_noop} {isInstructor} />
+			{:else}
+				<TelegramEmojiPanel onInsert={onInsertTgEmoji} packFilter="static" />
+			{/if}
 		{:else if tab === 'animated'}
-			<!-- Every Telegram pack (animated + nominally-static) — the
-			     panel decides per-cell whether to play or freeze via
-			     LottieSticker's `paused` check. Consolidating here
-			     means the Emotes tab stays uploads-only. -->
-			<TelegramEmojiPanel onInsert={onInsertTgEmoji} packFilter="all" />
+			<!-- Animated stickers only — static packs live in the
+			     Emotes tab's Library sub-tab. -->
+			<TelegramEmojiPanel onInsert={onInsertTgEmoji} packFilter="animated" />
 		{:else if tab === 'reactions' && !inline}
 			<CustomEmojiPanel mode="reactions" onInsertEmoji={_noop} onInsertReaction={onInsertReaction} {isInstructor} />
 		{/if}
@@ -156,13 +194,45 @@
 		border-radius: 12px;
 		box-shadow: 0 4px 24px rgba(0,0,0,0.13), 0 1.5px 4px rgba(0,0,0,0.07);
 		overflow: hidden;
+		position: relative;
 		font-family: 'Google Sans Flex', 'Space Grotesk', sans-serif;
 		font-size: 0.85rem;
 	}
+
+	/* Category strip docks to the bottom (native-keyboard layout); the
+	   body fills the space above it. Flex `order` keeps the markup
+	   order intact while flipping the visual stack. */
+	.expr-tabs { order: 2; }
+	.expr-body { order: 1; }
+
+	/* Close pinned to the panel's top-left corner — same spot in every
+	   category. Round chip with a paper backing so it stays legible
+	   over the emoji grid it floats above. */
+	.expr-close-fixed {
+		position: absolute;
+		top: 0.4rem;
+		left: 0.4rem;
+		z-index: 5;
+		width: 1.9rem;
+		height: 1.9rem;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0;
+		border: 1px solid var(--border);
+		border-radius: 999px;
+		background: var(--paper);
+		color: var(--muted-fg);
+		cursor: pointer;
+		box-shadow: 0 1px 4px rgba(0,0,0,0.12);
+	}
+	.expr-close-fixed:hover { color: var(--ink); }
 	@media (max-width: 640px) {
 		.expr-panel {
 			width: 100%;
-			height: 320px;
+			/* Fill the docked sheet exactly — its height is driven by the
+			   chat page's --picker-h so the bar above stays flush. */
+			height: 100%;
 			border-radius: 14px 14px 0 0;
 			box-shadow: 0 -4px 24px rgba(0,0,0,0.18);
 		}
@@ -174,7 +244,8 @@
 	.expr-tabs {
 		display: flex;
 		gap: 1px;
-		border-bottom: 1.5px solid var(--border);
+		/* Strip is at the bottom now — divider goes on top. */
+		border-top: 1.5px solid var(--border);
 		background: var(--md-sys-color-surface-container, var(--surface-2));
 		flex-shrink: 0;
 	}
@@ -201,6 +272,10 @@
 		color: var(--md-sys-color-on-secondary-container, var(--ink));
 		border-bottom-color: var(--md-sys-color-secondary, var(--accent));
 	}
+	/* Backspace flows at the right end of the bottom strip — compact,
+	   not stretched, faintly tinted so it reads as a key not a tab. */
+	.expr-tab-back { flex: 0 0 auto; color: var(--muted-fg); padding: 0.5rem 0.85rem; }
+	.expr-tab-back:hover { color: var(--ink); }
 	/* Neutral darkening overlay — same M3 state-layer pattern the
 	   sidebar uses, so chromatic active never gets out-competed. */
 	.expr-tab:hover:not(.active) {
@@ -261,9 +336,16 @@
 	.expr-body :global(.kitchen-panel),
 	.expr-body :global(.gif-picker),
 	.expr-body :global(.custom-emoji-panel) {
+		/* Reset each inner picker's standalone chrome so it reads as
+		   the body of the ExpressionPicker shell, not a card-within-
+		   a-card. width/height let the picker fill the body; the
+		   visual chrome (border, radius, shadow, background) is
+		   owned by the outer .expr-panel. */
 		width: 100% !important;
 		height: 100% !important;
+		border: none !important;
 		border-radius: 0 !important;
 		box-shadow: none !important;
+		background: transparent !important;
 	}
 </style>

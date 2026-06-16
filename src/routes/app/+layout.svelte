@@ -657,10 +657,25 @@
 			document.addEventListener(ev, onAnyInput, { passive: true, capture: true });
 		}
 		// Idle-flag tick. Runs alongside presenceTick so my own
-		// _myStatusIsIdle stays in sync — the boolean only matters for
-		// detecting the wake transition above.
+		// _myStatusIsIdle stays in sync — the boolean drives the
+		// wake-from-idle transition above. We also force a presence
+		// re-derivation here (presenceTick++) so my OWN dot flips to
+		// yellow within 30s of crossing IDLE_THRESHOLD instead of
+		// waiting up to a full minute for the slower presenceTick.
+		// The 30s cadence means the green→yellow flip lands at ~4:00–4:30
+		// of inactivity rather than 4:00–5:00.
 		idleTickTimer = setInterval(() => {
+			const wasIdle = _myStatusIsIdle;
 			_myStatusIsIdle = (Date.now() - _lastInputAt) > IDLE_THRESHOLD;
+			// Re-evaluate on every tick (cheap counter bump) so the dot
+			// tracks the threshold promptly; the transition itself is the
+			// moment that visually matters, but a steady re-check also
+			// keeps other users' idle/offline states fresh between the
+			// 60s presenceTick beats.
+			presenceTick++;
+			if (_myStatusIsIdle !== wasIdle) {
+				console.info('[ec:presence] self status →', _myStatusIsIdle ? 'idle (yellow)' : 'active (green)');
+			}
 		}, 30_000);
 
 		// All presence — normalize both old (flat) and new (per-device) formats.

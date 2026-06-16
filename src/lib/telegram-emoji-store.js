@@ -129,7 +129,7 @@ export function spriteKeyForCustom(short, id) { return `tgc:${short}:${id}`; }
 //   fork) instead of WebGL. Targets browsers with WebGPU enabled —
 //   notably iOS 18+ where WebGL OffscreenCanvas is buggy.
 const ENGINE_KEY = 'tgEngine';
-const VALID_ENGINES = new Set(['rlottie', 'skottie', 'skottie-worker', 'skottie-webgpu']);
+const VALID_ENGINES = new Set(['rlottie', 'skottie', 'skottie-worker', 'skottie-webgpu', 'webgpu-rasterized', 'cpu-rasterized']);
 
 // iOS Safari (including iPadOS in mobile mode) silently breaks on the
 // OffscreenCanvas + WebGL combo the WorkerGPU engine uses — frames
@@ -148,20 +148,29 @@ const _initialEngine = (() => {
 	const isCoarsePointer = typeof window !== 'undefined'
 		&& window.matchMedia?.('(pointer: coarse)').matches;
 	const v = localStorage.getItem(ENGINE_KEY);
-	// Touch-device migration: any Skia-backed engine (skottie /
-	// skottie-worker / skottie-webgpu) reliably crashes iOS Safari +
-	// iOS PWAs in the Telegram picker once a couple dozen animations
-	// are alive. Force rlottie on coarse-pointer devices regardless
-	// of what's saved, so anyone whose engine was set to a Skottie
-	// variant by the previous default isn't stuck in a crash loop.
-	// rlottie is CPU-bound, so memory is the device's RAM (not a
-	// hard GPU texture budget) and degrades gracefully under load.
-	if (isCoarsePointer) return 'rlottie';
+	if (isCoarsePointer) {
+		// iOS Safari / iOS PWAs reliably crash on ANY Skia/WebGL engine in
+		// the picker once a couple dozen animations are alive — WebGL in a
+		// worker is the unstable bit. `cpu-rasterized` avoids WebGL entirely:
+		// rlottie WASM (off-thread) bakes frames into a 2D atlas that's
+		// blitted on a single rAF — the cheap atlas playback without WebGL.
+		if (isIOS()) return (v === 'rlottie') ? 'rlottie' : 'cpu-rasterized';
+		// Other touch devices (Android, etc.): prefer the RASTERIZED engine.
+		// Unlike the old live engine it keeps no live WebGL animations alive
+		// — it bakes frames through one transient WebGL surface, then plays
+		// back from small 2D atlases (the worker auto-shrinks the atlas on
+		// low-RAM devices). Respect an explicit rlottie choice, but migrate
+		// any saved LIVE-Skottie variant (which can still overwhelm a mobile
+		// GPU) onto the lighter rasterized path.
+		if (v === 'rlottie') return 'rlottie';
+		return 'webgpu-rasterized';
+	}
 	if (v && VALID_ENGINES.has(v)) return v;
-	// Desktop / mouse → skottie-webgpu (massive perf win on capable
-	// browsers; auto-falls-back to WebGL inside the worker if
-	// WebGPU isn't supported).
-	return 'skottie-webgpu';
+	// Desktop / mouse → webgpu-rasterized: the worker pre-rasterises each
+	// animation's frames to a cached atlas ONCE, then plays back by blitting
+	// (no per-frame Skottie render/flush). Scales to many animated cells far
+	// better than live per-frame rendering.
+	return 'webgpu-rasterized';
 })();
 export const engineMode = writable(_initialEngine);
 if (typeof window !== 'undefined') {
