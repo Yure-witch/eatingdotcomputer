@@ -72,15 +72,58 @@ function pausePlay(span) {
 }
 
 // ─── Static-frame helpers ────────────────────────────────────────
+// 1×1 transparent GIF. Used as an invisible, full-size <img> base inside
+// every emote span. An <img> is a REPLACED element, so the caret, mouse, and
+// text selection treat the emote as one atomic unit — exactly like an
+// Emoji-Kitchen image. A <span> wrapping only an SVG/canvas does NOT get this
+// (you couldn't select it or put the caret beside it, especially inside a
+// contenteditable). The visible static-frame / animation rides in a sibling
+// overlay layered on top that is itself non-interactive + un-selectable.
+const _TRANSPARENT_GIF = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+
+function ensureSelBase(span) {
+	let base = span.querySelector(':scope > img.tg-sel-base');
+	if (!base) {
+		base = document.createElement('img');
+		base.className = 'tg-sel-base';
+		base.src = _TRANSPARENT_GIF;
+		base.alt = '';
+		span.insertBefore(base, span.firstChild);
+	}
+	return base;
+}
+function ensureOverlay(span) {
+	let ov = span.querySelector(':scope > .tg-anim-overlay');
+	if (!ov) {
+		ov = document.createElement('span');
+		ov.className = 'tg-anim-overlay';
+		span.appendChild(ov);
+	}
+	return ov;
+}
+
+/**
+ * Give an emote span the selectable-base + animation-overlay shell so it
+ * behaves like a replaced <img> for caret/selection. Returns the overlay node
+ * to mount the player into. Shared by this module AND the chat pages' own
+ * Lottie pipeline so message bubbles and the compose box behave identically.
+ */
+export function ensureSelectableEmoteShell(span) {
+	ensureSelBase(span);
+	return ensureOverlay(span);
+}
+
 function placeImg(span, src) {
 	if (!span?.isConnected || !src) return;
 	if (_anims.has(span)) return; // a player already replaced us
+	ensureSelBase(span);
+	const ov = ensureOverlay(span);
 	const img = document.createElement('img');
 	img.className = 'tg-emoji-img';
 	img.src = src;
 	img.alt = '';
 	img.loading = 'lazy';
-	span.replaceChildren(img);
+	ov.replaceChildren(img);
 }
 
 async function attachAnim(span, url, frozen) {
@@ -88,12 +131,14 @@ async function attachAnim(span, url, frozen) {
 	const data = await fetchLottie(url);
 	if (!data || !span.isConnected) return;
 	if (_anims.has(span)) return;
-	// Clear the static-frame img so the lottie SVG gets the box to
-	// itself. Browsers handle the swap without a flash because both
-	// sit in the same `.tg-emoji` square (1.4em × 1.4em).
-	span.replaceChildren();
+	ensureSelBase(span);
+	// Mount the lottie SVG into the overlay (on top of the invisible selectable
+	// base), NOT the span itself — the base must survive so selection/caret keep
+	// treating the emote atomically.
+	const ov = ensureOverlay(span);
+	ov.replaceChildren();
 	const anim = lottie.loadAnimation({
-		container: span,
+		container: ov,
 		renderer: 'svg',
 		loop: !frozen,
 		autoplay: false,

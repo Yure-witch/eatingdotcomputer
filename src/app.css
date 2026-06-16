@@ -374,6 +374,47 @@ main {
 	display: block;
 	pointer-events: none;
 }
+/* The animated player (SVG / canvas) is non-text content the text selection
+   can't traverse — un-selectable so the selection jumps over it. The selectable
+   replaced base (below) is what actually carries the selection/caret. */
+.tg-emoji svg,
+.tg-emoji canvas {
+	-webkit-user-select: none;
+	user-select: none;
+}
+/* Invisible full-size <img> base: a REPLACED element so the caret / mouse /
+   selection treat the whole emote atomically, exactly like an Emoji-Kitchen
+   <img>. This is what fixes "can't select / can't put the caret beside a
+   Telegram emote" — a <span>+SVG alone isn't selectable in a contenteditable. */
+.tg-emoji .tg-sel-base {
+	width: 100%;
+	height: 100%;
+	display: block;
+	/* Must receive the mouse (the overlay above is pointer-events:none and
+	   falls through to here) so drag-selection + click-to-place-caret hit it. */
+	pointer-events: auto;
+}
+/* The visible static-frame / animation, layered on top of the base and made
+   completely non-interactive so mouse + selection fall through to the base. */
+.tg-emoji .tg-anim-overlay {
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+	-webkit-user-select: none;
+	user-select: none;
+}
+.tg-emoji .tg-anim-overlay svg,
+.tg-emoji .tg-anim-overlay img {
+	width: 100%;
+	height: 100%;
+	object-fit: contain;
+	display: block;
+}
+/* The flip transform lives on an inner wrapper, NOT the contenteditable=false
+   .tfx-flip span — putting scaleX(-1) on the atomic span itself mirrors its
+   hit-box, so clicking the LEFT of a flipped emote placed the caret on its
+   right (and you couldn't get in front of it on a new line). */
+.tfx-flip-inner { display: inline-block; transform: scaleX(-1); }
 .tg-img {
 	height: 1.4em;
 	width: 1.4em;
@@ -393,6 +434,13 @@ main {
 .tfx-italic { font-style: italic; }
 .tfx-underline { text-decoration-line: underline; text-underline-offset: 2px; }
 .tfx-strike { text-decoration-line: line-through; }
+/* Horizontal flip — mirrors each grapheme / emote individually (the
+   renderers split per-grapheme when `flip` is active). Works for text,
+   emoji, and emote <img>/<span> alike since it's just a transform on the
+   per-unit wrapper. */
+/* Transform moved to .tfx-flip-inner (see above) so the atomic ce=false
+   .tfx-flip span keeps an un-mirrored hit-box for caret placement. */
+.tfx-flip { display: inline-block; }
 
 @keyframes tfx-shake { 0%,100% { transform: translate(0,0); } 25% { transform: translate(-1px,1px); } 50% { transform: translate(1px,-1px); } 75% { transform: translate(-1px,-1px); } }
 .tfx-shake { animation: tfx-shake 0.35s ease-in-out infinite; }

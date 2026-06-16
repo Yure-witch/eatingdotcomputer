@@ -267,6 +267,16 @@
 			const span = document.createElement('span');
 			span.className = `tfx tfx-${fx}`;
 			span.dataset.fx = fx;
+			// flip mirrors the coordinate space — atomic so the caret can't
+			// enter (where arrows/selection reverse). scaleX(-1) sits on an
+			// inner wrapper so the atomic box keeps a normal caret hit-box.
+			if (fx === 'flip') {
+				span.setAttribute('contenteditable', 'false');
+				const inner = document.createElement('span');
+				inner.className = 'tfx-flip-inner';
+				inner.appendChild(innerNode);
+				innerNode = inner;
+			}
 			if (delay) span.style.animationDelay = delay;
 			span.appendChild(innerNode);
 			innerNode = span;
@@ -282,6 +292,20 @@
 		function pushText(text, fxStack) {
 			if (!text) return;
 			if (!fxStack.length) { nodes.push(document.createTextNode(text)); return; }
+			// `flip` mirrors each EMOJI grapheme in place; letters keep flow.
+			if (fxStack.includes('flip') && _segmenter) {
+				const noFlip = fxStack.filter(f => f !== 'flip');
+				const gs = [..._segmenter.segment(text)].map(g => g.segment);
+				gs.forEach((g, i) => {
+					const isEmoji = !/^\s+$/.test(g) && _isEmojiSeg(g);
+					const stack = isEmoji ? fxStack : noFlip;
+					if (/^\s+$/.test(g) || !stack.length) { nodes.push(document.createTextNode(g)); return; }
+					nodes.push(makeFxNode(stack, g, `${((globalWi + i) * 0.06).toFixed(2)}s`));
+				});
+				globalWi += gs.filter(g => !/^\s+$/.test(g)).length;
+				return;
+			}
+			// `ripple` renders per-grapheme.
 			if (fxStack.includes('ripple') && _segmenter) {
 				const gs = [..._segmenter.segment(text)].map(g => g.segment);
 				gs.forEach((g, i) => {

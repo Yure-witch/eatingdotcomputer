@@ -29,7 +29,7 @@ export const TEXT_FXS = [
 
 export const FX_TO_CHAR = {};
 [
-	[0xE107, 'bold'], [0xE108, 'italic'], [0xE109, 'rainbow'],
+	[0xE107, 'bold'], [0xE108, 'italic'], [0xE109, 'rainbow'], [0xE10A, 'flip'],
 	[0xE110, 'color-red'], [0xE111, 'color-orange'], [0xE112, 'color-yellow'],
 	[0xE113, 'color-green'], [0xE114, 'color-teal'], [0xE115, 'color-blue'],
 	[0xE116, 'color-purple'], [0xE117, 'color-pink'],
@@ -38,15 +38,23 @@ export const FX_TO_CHAR = {};
 	[0xE104, 'jitter'], [0xE105, 'big'], [0xE106, 'small'],
 	[0xE120, 'wdth-25'], [0xE121, 'wdth-50'], [0xE122, 'wdth-75'], [0xE123, 'wdth-125'], [0xE124, 'wdth-150'],
 	[0xE130, 'wght-100'], [0xE131, 'wght-200'], [0xE132, 'wght-300'], [0xE133, 'wght-500'], [0xE134, 'wght-600'], [0xE135, 'wght-700'],
-	[0xE140, 'sz-60'], [0xE141, 'sz-80'], [0xE142, 'sz-125'], [0xE143, 'sz-175'], [0xE144, 'sz-300'], [0xE145, 'sz-500']
+	// Inline size: the original 6 chars keep their exact codepoints (so messages
+	// already sent stay valid), and finer gradations fill the free E146–E14F slots.
+	[0xE140, 'sz-60'], [0xE141, 'sz-80'], [0xE142, 'sz-125'], [0xE143, 'sz-175'], [0xE144, 'sz-300'], [0xE145, 'sz-500'],
+	[0xE146, 'sz-50'], [0xE147, 'sz-70'], [0xE148, 'sz-90'], [0xE149, 'sz-110'], [0xE14A, 'sz-140'],
+	[0xE14B, 'sz-150'], [0xE14C, 'sz-200'], [0xE14D, 'sz-250'], [0xE14E, 'sz-400'], [0xE14F, 'sz-700']
 ].forEach(([cp, name]) => FX_TO_CHAR[name] = String.fromCodePoint(cp));
 
 export const WDTH_FX_MAP = { 25: 'wdth-25', 50: 'wdth-50', 75: 'wdth-75', 125: 'wdth-125', 150: 'wdth-150' };
 export const WDTH_STEPS = [25, 50, 75, 100, 125, 150];
 export const WGHT_FX_MAP = { 100: 'wght-100', 200: 'wght-200', 300: 'wght-300', 500: 'wght-500', 600: 'wght-600', 700: 'wght-700' };
 export const WGHT_STEPS = [100, 200, 300, 400, 500, 600, 700];
-export const SZ_FX_MAP = { 0.6: 'sz-60', 0.8: 'sz-80', 1.25: 'sz-125', 1.75: 'sz-175', 3.0: 'sz-300', 5.0: 'sz-500' };
-export const SZ_STEPS = [0.6, 0.8, 1.0, 1.25, 1.75, 3.0, 5.0];
+export const SZ_FX_MAP = {
+	0.5: 'sz-50', 0.6: 'sz-60', 0.7: 'sz-70', 0.8: 'sz-80', 0.9: 'sz-90',
+	1.1: 'sz-110', 1.25: 'sz-125', 1.4: 'sz-140', 1.5: 'sz-150', 1.75: 'sz-175',
+	2.0: 'sz-200', 2.5: 'sz-250', 3.0: 'sz-300', 4.0: 'sz-400', 5.0: 'sz-500', 7.0: 'sz-700'
+};
+export const SZ_STEPS = [0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.25, 1.4, 1.5, 1.75, 2.0, 2.5, 3.0, 4.0, 5.0, 7.0];
 
 export const TEXT_COLORS = [
 	{ name: 'color-red',    hex: '#e74c3c' },
@@ -62,6 +70,11 @@ export const TEXT_COLORS = [
 export const CHAR_TO_FX = Object.fromEntries(Object.entries(FX_TO_CHAR).map(([k, v]) => [v, k]));
 export const FX_CLOSE_CHAR = String.fromCodePoint(0xE1FF);
 export const FX_OPEN_CHARS = new Set(Object.values(FX_TO_CHAR));
+// CONTINUOUS inline size: `SZ_OPEN <percent digits> SZ_VEND … FX_CLOSE_CHAR`.
+// Lets size be value-for-value (e.g. sz-137 = 1.37×) instead of fixed steps.
+// The old fixed-step PUA chars (E140–E14F) still decode for already-sent msgs.
+export const SZ_OPEN = String.fromCodePoint(0xE150);
+export const SZ_VEND = String.fromCodePoint(0xE151);
 
 export const JUMBO_SIZES = ['2.8rem', '2.2rem', '1.8rem'];
 
@@ -97,7 +110,11 @@ export function nestedFxHtml(fxStack, innerHtml, delay = null) {
 	for (let i = animStack.length - 1; i >= 0; i--) {
 		const fx = animStack[i];
 		const style = delay ? ` style="animation-delay:${delay}"` : '';
-		html = `<span class="tfx tfx-${fx}" data-fx="${fx}"${style}>${html}</span>`;
+		// flip's scaleX(-1) lives on an inner wrapper (.tfx-flip-inner) so the
+		// transform doesn't ride on the same element that selection/caret
+		// hit-testing keys off of — keeps parity with the compose box.
+		const inner = fx === 'flip' ? `<span class="tfx-flip-inner">${html}</span>` : html;
+		html = `<span class="tfx tfx-${fx}" data-fx="${fx}"${style}>${inner}</span>`;
 	}
 	return html;
 }
@@ -120,8 +137,13 @@ export function normalizeLegacyMarkup(text) {
 
 export function unicodeToReadable(markup) {
 	let result = '', stack = [];
-	for (const ch of markup) {
-		if (FX_OPEN_CHARS.has(ch)) { result += `[${CHAR_TO_FX[ch]}]`; stack.push(CHAR_TO_FX[ch]); }
+	for (let i = 0; i < markup.length; i++) {
+		const ch = markup[i];
+		if (ch === SZ_OPEN) {
+			let j = i + 1, num = '';
+			while (j < markup.length && markup[j] !== SZ_VEND) { num += markup[j]; j++; }
+			result += `[sz:${num}]`; stack.push('sz'); i = j;
+		} else if (FX_OPEN_CHARS.has(ch)) { result += `[${CHAR_TO_FX[ch]}]`; stack.push(CHAR_TO_FX[ch]); }
 		else if (ch === FX_CLOSE_CHAR) { const fx = stack.pop(); if (fx) result += `[/${fx}]`; }
 		else result += ch;
 	}
@@ -132,7 +154,9 @@ export function stripMarkup(text) {
 	const withoutEk = text.replace(/\[ek:[a-z0-9]+:[0-9a-f-]+:[0-9a-f-]+\]/gi, '').replace(/\[ce:[a-zA-Z0-9_-]{1,32}\]/gi, '').replace(/\[tg:[0-9a-f-]+\]/gi, '').replace(/\[tgc:[A-Za-z0-9_]+:\d+\]/g, '');
 	const normalized = normalizeLegacyMarkup(withoutEk);
 	let result = '';
-	for (const ch of normalized) {
+	for (let i = 0; i < normalized.length; i++) {
+		const ch = normalized[i];
+		if (ch === SZ_OPEN) { while (i < normalized.length && normalized[i] !== SZ_VEND) i++; continue; }
 		if (!FX_OPEN_CHARS.has(ch) && ch !== FX_CLOSE_CHAR) result += ch;
 	}
 	return result;
@@ -141,18 +165,26 @@ export function stripMarkup(text) {
 export function markupToSegments(markup) {
 	const segs = [];
 	let stack = [], textBuf = '';
-	for (const ch of markup) {
-		if (FX_OPEN_CHARS.has(ch)) {
-			if (textBuf) { segs.push({ text: textBuf, fxStack: [...stack] }); textBuf = ''; }
+	const flush = () => { if (textBuf) { segs.push({ text: textBuf, fxStack: [...stack] }); textBuf = ''; } };
+	for (let i = 0; i < markup.length; i++) {
+		const ch = markup[i];
+		if (ch === SZ_OPEN) {
+			flush();
+			let j = i + 1, num = '';
+			while (j < markup.length && markup[j] !== SZ_VEND) { num += markup[j]; j++; }
+			stack.push('sz-' + num);
+			i = j; // at SZ_VEND; loop ++ steps past it
+		} else if (FX_OPEN_CHARS.has(ch)) {
+			flush();
 			stack.push(CHAR_TO_FX[ch]);
 		} else if (ch === FX_CLOSE_CHAR) {
-			if (textBuf) { segs.push({ text: textBuf, fxStack: [...stack] }); textBuf = ''; }
+			flush();
 			stack.pop();
 		} else {
 			textBuf += ch;
 		}
 	}
-	if (textBuf) segs.push({ text: textBuf, fxStack: [...stack] });
+	flush();
 	return segs;
 }
 
@@ -162,7 +194,12 @@ export function segmentsToMarkup(segs) {
 		let common = 0;
 		while (common < prevStack.length && common < seg.fxStack.length && prevStack[common] === seg.fxStack[common]) common++;
 		for (let i = prevStack.length; i > common; i--) result += FX_CLOSE_CHAR;
-		for (let i = common; i < seg.fxStack.length; i++) result += FX_TO_CHAR[seg.fxStack[i]];
+		for (let i = common; i < seg.fxStack.length; i++) {
+			const fx = seg.fxStack[i];
+			// continuous size → sentinel-encoded value; everything else → PUA char
+			if (fx.startsWith('sz-')) result += SZ_OPEN + fx.slice(3) + SZ_VEND;
+			else result += FX_TO_CHAR[fx] ?? '';
+		}
 		result += seg.text;
 		prevStack = seg.fxStack;
 	}
@@ -178,6 +215,9 @@ export const EMOJI_RE_G = /\p{Extended_Pictographic}/u;
 
 export function jumboEmojiCount(content) {
 	if (!_segmenter) return 0;
+	// Zero-width caret anchors used by the compose box are not real content —
+	// strip them so a lone emote still counts as jumbo.
+	content = content.replace(/​/g, '');
 	let ekCount = 0;
 	let ceCount = 0;
 	let tgCount = 0;
@@ -324,6 +364,23 @@ export function createContentRenderer({ hljs = null, codeIcons = {}, getCeMap = 
 		function renderText(chunk, fxStack) {
 			if (!chunk) return '';
 			if (!fxStack.length) return _wrapEmoji(chunk);
+			// `flip` mirrors each EMOJI grapheme in place (emotes are mirrored
+			// in the emote branch). Plain letters keep their normal flow — so
+			// we split per-grapheme and only flip the emoji ones.
+			if (fxStack.includes('flip') && _segmenter) {
+				const noFlip = fxStack.filter(f => f !== 'flip');
+				const graphemes = [..._segmenter.segment(chunk)].map(g => g.segment);
+				const out = graphemes.map((g, i) => {
+					if (/^\s+$/.test(g)) return escapeHtml(g);
+					const isEmoji = _isEmojiSeg(g);
+					const stack = isEmoji ? fxStack : noFlip;
+					const inner = isEmoji ? _wrapEmoji(g) : escapeHtml(g);
+					return stack.length ? nestedFxHtml(stack, inner, `${((globalWi + i) * 0.06).toFixed(2)}s`) : inner;
+				}).join('');
+				globalWi += graphemes.filter(g => !/^\s+$/.test(g)).length;
+				return out;
+			}
+			// `ripple` applies per-grapheme.
 			if (_segmenter && fxStack.includes('ripple')) {
 				const graphemes = [..._segmenter.segment(chunk)].map(g => g.segment);
 				const html = graphemes.map((g, i) =>
