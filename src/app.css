@@ -473,3 +473,52 @@ main {
 	50%      { text-shadow: 0 0 14px color-mix(in srgb, currentColor 90%, transparent); }
 }
 .tfx-glow { animation: tfx-glow 1.6s ease-in-out infinite; }
+
+/* ── Premium mobile tap targets ───────────────────────────────────────
+   Touch screens get larger, comfier, rounder buttons across the whole app.
+   `min-height`/`min-width` only GROW buttons that are too small (never cap),
+   and the radius/font bumps add a more premium feel. The app has no shared
+   button system (each page styles its own scoped .btn-*), so `!important` is
+   needed to win over those Svelte-scoped rules. Sized by role so dense icon
+   rows (compose toolbar, message actions) stay compact enough not to overflow.
+   ──────────────────────────────────────────────────────────────────── */
+@media (max-width: 640px) {
+	/* Primary / text-label action buttons — biggest + roundest */
+	.btn,
+	.btn-primary, .btn-secondary, .btn-ghost, .btn-delete, .btn-print,
+	.btn-install, .btn-submit-inline, .btn-add-item, .btn-edit-plan,
+	.btn-edit-submission, .btn-effect, .btn-send {
+		min-height: 48px !important;
+		padding-block: 0.72rem !important;
+		font-size: 1rem !important;
+		border-radius: 14px !important;
+	}
+
+	/* Sidebar / bottom nav items */
+	.nav-item {
+		min-height: 52px !important;
+		font-size: 1.02rem !important;
+		border-radius: 14px !important;
+	}
+
+	/* Standalone icon buttons — comfy square targets */
+	.btn-icon, .mobile-menu-btn, .mobile-close-btn, .collapse-btn,
+	.toast-close, .code-copy-btn {
+		min-width: 46px !important;
+		min-height: 46px !important;
+		border-radius: 12px !important;
+	}
+
+	/* Dense icon rows (compose toolbar, message hover actions) — grow, but
+	   stay modest so a row of them doesn't overflow a narrow screen. */
+	.btn-fmt, .action-btn {
+		min-width: 40px !important;
+		min-height: 40px !important;
+		border-radius: 11px !important;
+	}
+}
+
+/* Hide the mobile bottom nav while the chat expression picker is docked — it
+   occupies the same bottom area, so they'd overlap. Toggled by a `body` class
+   from the chat page (cross-component signal). */
+body.expr-picker-open .bottom-nav { display: none !important; }

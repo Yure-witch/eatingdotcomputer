@@ -144,6 +144,13 @@
 	let pickerMsgId = $state(null);
 	let pickerPos = $state({ x: 0, y: 0 });
 	let showComposePicker = $state(false);
+	// Hide the mobile BottomNav while the picker is docked (they share the
+	// bottom area). Cross-component signal via a body class.
+	$effect(() => {
+		if (typeof document === 'undefined') return;
+		document.body.classList.toggle('expr-picker-open', showComposePicker);
+		return () => document.body.classList.remove('expr-picker-open');
+	});
 	let showKitchen = $state(false);
 	let showCustomEmoji = $state(false);
 	let showTgEmoji = $state(false);
@@ -2014,9 +2021,82 @@
 		requestAnimationFrame(tick);
 	}
 
+	// Focus the compose unless the expression picker is open on touch — avoids
+	// popping the iOS keyboard while tapping emotes.
+	function _focusCompose() {
+		if (showComposePicker && window.matchMedia?.('(pointer: coarse)')?.matches) return;
+		inputEl?.focus();
+	}
+
+	// ⌫ key in the docked picker. The mobile picker keeps the compose
+	// unfocused (so the iOS keyboard stays down), which means there's no
+	// real caret to delete from — so this deletes the last unit at the end
+	// of the compose (where inserts land). When a live, non-collapsed
+	// selection IS present (desktop popover), it deletes that instead.
+	function composeBackspace() {
+		if (!inputEl) { input = Array.from(input).slice(0, -1).join(''); return; }
+		const sel = window.getSelection();
+		if (sel && sel.rangeCount && !sel.isCollapsed && inputEl.contains(sel.anchorNode)) {
+			sel.getRangeAt(0).deleteContents();
+		} else if (!_deleteLastUnit(inputEl)) {
+			return; // nothing to delete
+		}
+		input = serializeCe(inputEl);
+		_clearHtmlCache();
+	}
+
+	// True if a node is one atomic, non-editable unit (emote / image / EK /
+	// CE / flipped-fx box) — deleting it means removing the WHOLE node, never
+	// descending into its inner base+overlay children. This is the bit the
+	// first cut got wrong: a .tg-emoji span holds an invisible selection base
+	// AND an animation overlay, so a deepest-leaf walk only caught a piece.
+	function _isAtomicUnit(el) {
+		if (el.nodeType !== Node.ELEMENT_NODE) return false;
+		if (el.tagName === 'IMG') return true;
+		if (el.getAttribute('contenteditable') === 'false') return true;
+		const c = el.classList;
+		return !!c && (c.contains('tg-emoji') || c.contains('tg-emoji-img')
+			|| c.contains('ek-img') || c.contains('ek-img-ce')
+			|| c.contains('ce-img') || c.contains('ce-img-ce'));
+	}
+
+	// Delete exactly one unit from the END of `container`, recursing into
+	// editable fx wrappers (bold/italic/size/…) so a trailing char inside a
+	// styled run is trimmed rather than the whole run. Returns false when the
+	// container is empty. Works top-down from lastChild so atomic emotes are
+	// removed whole regardless of how many inner nodes they wrap.
+	function _deleteLastUnit(container) {
+		const last = container.lastChild;
+		if (!last) return false;
+		if (last.nodeType === Node.TEXT_NODE) {
+			const arr = Array.from(last.data); // by code point — keeps emoji whole
+			arr.pop();
+			if (arr.length) last.data = arr.join('');
+			else last.remove();
+			return true;
+		}
+		if (last.nodeType === Node.ELEMENT_NODE) {
+			if (last.tagName === 'BR') { last.remove(); return true; }
+			if (_isAtomicUnit(last)) {
+				const prev = last.previousSibling;
+				last.remove();
+				// Drop the ZWSP line-start anchor that sat in front of it.
+				if (prev && prev.nodeType === Node.TEXT_NODE && prev.data === '​') prev.remove();
+				return true;
+			}
+			// Editable wrapper with mixed content — trim inside it, then prune
+			// the wrapper if it emptied out.
+			const did = _deleteLastUnit(last);
+			if (last.childNodes.length === 0) last.remove();
+			return did;
+		}
+		last.remove();
+		return true;
+	}
+
 	function insertEmoji(emoji) {
 		if (!inputEl) { input += emoji; return; }
-		inputEl.focus();
+		_focusCompose();
 		const sel = window.getSelection();
 		const textNode = document.createTextNode(emoji);
 		if (sel && sel.rangeCount > 0 && inputEl.contains(sel.anchorNode)) {
@@ -2067,7 +2147,7 @@
 		const m = token.match(/^\[ek:([a-z0-9]+):([0-9a-f-]+):([0-9a-f-]+)\]$/i);
 		if (!m) return;
 		if (!inputEl) { input += token; return; }
-		inputEl.focus();
+		_focusCompose();
 		const img = document.createElement('img');
 		img.src = ekTokenToUrl(m[1], m[2], m[3]);
 		img.dataset.ek = token;
@@ -2623,7 +2703,7 @@
 		onInput();
 		_clearHtmlCache();
 		if (inputEl) mountStaticEmotes(inputEl);
-		inputEl?.focus();
+		_focusCompose();
 	}
 
 	// Mount live Lottie players into rendered .tg-emoji spans — SAME setup as the
@@ -3566,7 +3646,7 @@
 {/if}
 
 
-<div class="input-area" class:kb-open={keyboardOpen} bind:clientHeight={inputAreaHeight} style:--input-area-h="{inputAreaHeight}px">
+<div class="input-area" class:kb-open={keyboardOpen} class:picker-open={showComposePicker} bind:clientHeight={inputAreaHeight} style:--input-area-h="{inputAreaHeight}px">
 	{#if replyingTo}
 		<div class="reply-bar">
 			<div class="reply-bar-content">
@@ -3708,6 +3788,7 @@
 				aria-multiline="true"
 				aria-label="Message {otherUser.name}"
 			contenteditable={!uploading}
+			inputmode={showComposePicker ? 'none' : null}
 			bind:this={inputEl}
 			oninput={onCeInput}
 			onkeydown={onKeydown}
@@ -3763,7 +3844,7 @@
 				</label>
 				<div class="compose-picker-wrap">
 					<button class="btn-fmt btn-fmt-expr" class:active={showComposePicker} title="Expressions"
-						onmousedown={(e) => { e.preventDefault(); showComposePicker = !showComposePicker; }}>
+						onmousedown={(e) => { e.preventDefault(); showComposePicker = !showComposePicker; if (showComposePicker) inputEl?.blur(); }}>
 						<span class="msi msi-18" class:msi-fill={showComposePicker}>mood</span>
 					</button>
 					{#if showComposePicker}
@@ -3778,6 +3859,8 @@
 								onInsertReaction={onReactionInsert}
 								onInsertTgEmoji={onTgEmojiInsert}
 								isInstructor={data.currentUser.role === 'instructor'}
+								onClose={() => { showComposePicker = false; _clearHtmlCache(); }}
+								onBackspace={composeBackspace}
 							/>
 						</div>
 					{/if}
@@ -4485,14 +4568,42 @@
 	.compose-picker-backdrop { position: fixed; inset: 0; z-index: 49; }
 	.compose-picker-pop { position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 50; }
 	@media (max-width: 640px) {
+		/* Mobile: dock at the very bottom (keyboard suppressed via inputmode=none),
+		   lift the input bar above. --picker-h drives BOTH the sheet height and
+		   the lift so the bar sits flush on the keyboard with no dead gap; the
+		   panel inside is forced to height:100% (ExpressionPicker) to fill it.
+		   The lift is a MARGIN (not padding) so the bar's bottom edge pins to
+		   the picker top and grows UPWARD as it gets taller. The bar's own
+		   safe-area bottom padding is dropped — the picker now owns the safe
+		   area, so that pad would re-open the gap. */
+		.input-area { --picker-h: min(58vh, 22rem); }
+		.input-area.picker-open { margin-bottom: calc(var(--picker-h) + env(safe-area-inset-bottom, 0px)); }
+		.input-area.picker-open .input-bar { padding-bottom: 0.5rem; }
 		.compose-picker-pop {
 			position: fixed;
-			left: 0; right: 0;
-			bottom: calc(var(--input-area-h, 56px) + env(safe-area-inset-bottom, 0px));
+			left: 0; right: 0; bottom: 0;
 			width: 100vw;
+			height: calc(var(--picker-h) + env(safe-area-inset-bottom, 0px));
+			padding-bottom: env(safe-area-inset-bottom, 0px);
+			background: var(--paper);
 			z-index: 60;
 		}
+		/* Faux caret — with the iOS keyboard suppressed the compose loses its
+		   native cursor; draw a blinking bar at the insertion point (the end,
+		   where the docked picker appends). */
+		.input-area.picker-open .compose-ce::after {
+			content: '';
+			display: inline-block;
+			width: 2px;
+			height: 1.15em;
+			margin-left: 1px;
+			vertical-align: text-bottom;
+			background: var(--accent);
+			border-radius: 1px;
+			animation: faux-caret-blink 1.06s steps(1, start) infinite;
+		}
 	}
+	@keyframes faux-caret-blink { 0%, 50% { opacity: 1; } 50.01%, 100% { opacity: 0; } }
 
 	/* Inline Emoji Kitchen images */
 	:global(.ek-img) {
@@ -4827,70 +4938,102 @@
 	.ce-sugg-sc { color: var(--ink); font-family: inherit; font-size: 0.78rem; white-space: nowrap; }
 
 	/* Text fx bar */
+	/* ── Highlight (selection) menu — one elevated, rounded premium panel ── */
 	.text-typo-bar {
-		display: flex; gap: 0.5rem; padding: 0.35rem 1.5rem;
-		border-top: 1px solid var(--border); background: var(--surface-2);
-		flex-wrap: wrap;
+		display: flex; gap: 0.55rem 1.25rem; padding: 0.75rem 1.1rem 0.55rem;
+		background: var(--surface-2);
+		border-top: 1px solid var(--border);
+		border-radius: 18px 18px 0 0;
+		box-shadow: 0 -8px 26px -16px rgba(0,0,0,0.28);
+		flex-wrap: wrap; align-items: center;
 	}
 	.typo-inline-row {
-		display: flex; align-items: center; gap: 0.35rem; flex: 1; min-width: 100px;
+		display: flex; align-items: center; gap: 0.6rem; flex: 1 1 150px; min-width: 140px;
 	}
 	.typo-inline-label {
-		font-size: 0.65rem; font-weight: 600; color: var(--muted-fg);
-		text-transform: uppercase; letter-spacing: 0.03em; width: 2.5rem; flex-shrink: 0;
+		font-size: 0.6rem; font-weight: 700; color: var(--muted-fg);
+		text-transform: uppercase; letter-spacing: 0.07em; width: 2.7rem; flex-shrink: 0;
 	}
 	.typo-inline-range {
-		flex: 1; height: 3px; accent-color: var(--ink, var(--ink)); cursor: pointer;
+		flex: 1; height: 6px; -webkit-appearance: none; appearance: none;
+		background: color-mix(in srgb, var(--ink) 16%, transparent);
+		border-radius: 999px; cursor: pointer; outline: none; accent-color: var(--ink);
+	}
+	.typo-inline-range::-webkit-slider-thumb {
+		-webkit-appearance: none; appearance: none;
+		width: 18px; height: 18px; border-radius: 50%;
+		background: var(--ink); border: 2.5px solid var(--paper);
+		box-shadow: 0 1px 5px rgba(0,0,0,0.3); cursor: grab; transition: transform 0.1s ease;
+	}
+	.typo-inline-range::-webkit-slider-thumb:active { transform: scale(1.18); cursor: grabbing; }
+	.typo-inline-range::-moz-range-thumb {
+		width: 18px; height: 18px; border-radius: 50%;
+		background: var(--ink); border: 2.5px solid var(--paper);
+		box-shadow: 0 1px 5px rgba(0,0,0,0.3); cursor: grab;
+	}
+	.typo-inline-range::-moz-range-track {
+		height: 6px; border-radius: 999px;
+		background: color-mix(in srgb, var(--ink) 16%, transparent);
 	}
 	.typo-inline-reset {
-		background: none; border: none; color: var(--muted-fg); font-size: 0.7rem;
-		cursor: pointer; padding: 0 0.15rem; line-height: 1; flex-shrink: 0;
-		transition: color 0.1s;
+		background: none; border: none; color: var(--muted-fg); font-size: 0.95rem;
+		cursor: pointer; padding: 0 0.2rem; line-height: 1; flex-shrink: 0;
+		transition: color 0.12s, transform 0.2s;
 	}
-	.typo-inline-reset:hover { color: var(--ink); }
+	.typo-inline-reset:hover { color: var(--ink); transform: rotate(-40deg); }
 	.typo-default-btn {
-		padding: 0.15rem 0.5rem; border: 1px solid var(--border); border-radius: 5px;
-		background: none; font-family: inherit; font-size: 0.62rem; font-weight: 600;
+		padding: 0.34rem 0.75rem; border: 1px solid var(--border); border-radius: 999px;
+		background: var(--paper); font-family: inherit; font-size: 0.62rem; font-weight: 700;
 		color: var(--muted-fg); cursor: pointer; white-space: nowrap; flex-shrink: 0;
-		transition: background 0.1s, color 0.1s;
+		text-transform: uppercase; letter-spacing: 0.05em;
+		transition: background 0.12s, color 0.12s, border-color 0.12s;
 	}
-	.typo-default-btn:hover { background: var(--surface-2); color: var(--ink); }
+	.typo-default-btn:hover { background: var(--ink); color: var(--paper); border-color: var(--ink); }
 	.text-fx-bar {
-		display: flex; align-items: center; gap: 0.3rem;
-		padding: 0.35rem 1.5rem; background: var(--paper); border-top: 1px solid var(--border);
+		display: flex; align-items: center; gap: 0.45rem;
+		padding: 0.45rem 1.1rem 0.6rem; background: var(--surface-2);
 		flex-wrap: wrap;
 	}
 	.text-fx-layer-toggle {
 		display: flex; align-items: center; gap: 0.4rem; flex-shrink: 0;
-		background: none; border: none; padding: 0; cursor: pointer;
+		background: none; border: none; padding: 0.2rem 0.1rem; cursor: pointer;
 		font-size: 0.72rem; font-weight: 600; color: var(--muted-fg); font-family: inherit;
 		transition: color 0.15s;
 	}
 	.text-fx-layer-toggle:hover { color: var(--ink); }
 	.text-fx-layer-on { color: var(--ink) !important; }
 	.layer-toggle-track {
-		position: relative; width: 2rem; height: 1.1rem; flex-shrink: 0;
-		background: var(--border); border-radius: 999px;
+		position: relative; width: 2rem; height: 1.15rem; flex-shrink: 0;
+		background: color-mix(in srgb, var(--ink) 18%, transparent); border-radius: 999px;
 		transition: background 0.2s;
 	}
-	.text-fx-layer-on .layer-toggle-track { background: var(--ink); }
+	.text-fx-layer-on .layer-toggle-track { background: var(--accent); }
 	.layer-toggle-knob {
-		position: absolute; top: 0.15rem; left: 0.15rem;
-		width: 0.8rem; height: 0.8rem;
+		position: absolute; top: 0.17rem; left: 0.17rem;
+		width: 0.81rem; height: 0.81rem;
 		background: white; border-radius: 50%;
-		transition: transform 0.2s;
-		box-shadow: 0 1px 2px rgba(0,0,0,0.18);
+		transition: transform 0.2s cubic-bezier(0.3,1.4,0.5,1);
+		box-shadow: 0 1px 3px rgba(0,0,0,0.22);
 	}
-	.text-fx-layer-on .layer-toggle-knob { transform: translateX(0.9rem); }
-	.text-fx-divider { width: 1px; height: 1.1rem; background: var(--border); flex-shrink: 0; margin: 0 0.1rem; }
+	.text-fx-layer-on .layer-toggle-knob { transform: translateX(0.85rem); }
+	.text-fx-divider { width: 1px; height: 1.3rem; background: var(--border); flex-shrink: 0; margin: 0 0.25rem; }
 	.text-fx-btn {
-		padding: 0.18rem 0.5rem; background: var(--surface-2); border: 1.5px solid var(--border);
-		border-radius: 5px; font-size: 0.76rem; font-weight: 600; color: var(--ink); font-family: 'Google Sans Flex', 'Space Grotesk', sans-serif; font-optical-sizing: auto;
-		cursor: pointer; transition: background 0.1s;
+		padding: 0.34rem 0.8rem; background: var(--paper); border: 1px solid var(--border);
+		border-radius: 999px; font-size: 0.78rem; font-weight: 600; color: var(--ink);
+		font-family: 'Google Sans Flex', 'Space Grotesk', sans-serif; font-optical-sizing: auto;
+		cursor: pointer; transition: background 0.12s, color 0.12s, border-color 0.12s, transform 0.12s;
 	}
-	.text-fx-btn:hover { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+	.text-fx-btn:hover { background: var(--ink); color: var(--paper); border-color: var(--ink); transform: translateY(-1px); }
+	.text-fx-btn:active { transform: translateY(0); }
 	.text-fx-bar :global(.tfx) { animation-iteration-count: infinite !important; }
-	.text-fx-close { margin-left: auto; background: none; border: none; font-size: 0.78rem; color: var(--muted-fg); cursor: pointer; padding: 0.1rem 0.25rem; line-height: 1; }
+	.text-fx-close {
+		margin-left: auto; background: var(--paper); border: 1px solid var(--border);
+		width: 1.75rem; height: 1.75rem; border-radius: 50%; flex-shrink: 0;
+		display: flex; align-items: center; justify-content: center;
+		font-size: 0.78rem; color: var(--muted-fg); cursor: pointer; line-height: 1;
+		transition: background 0.12s, color 0.12s, border-color 0.12s;
+	}
+	.text-fx-close:hover { background: var(--danger); color: var(--on-danger); border-color: var(--danger); }
 	.preview-screen-label { font-size: 0.9rem; color: var(--ink); }
 
 	/* Bubble entry animations */
@@ -4930,6 +5073,19 @@
 		.typing-indicator { padding: 0.2rem 0.875rem 0; }
 		textarea { font-size: 1rem; }
 		.compose-ce { font-size: 1rem; }
+
+		/* Highlight menu: roomier, touch-friendly layout on phones */
+		.text-typo-bar { padding: 0.85rem 0.95rem 0.6rem; gap: 0.5rem 1rem; }
+		.typo-inline-row { flex: 1 1 100%; min-width: 0; }
+		.typo-inline-label { width: 3rem; font-size: 0.64rem; }
+		.typo-inline-range { height: 8px; }
+		.typo-inline-range::-webkit-slider-thumb { width: 24px; height: 24px; }
+		.typo-inline-range::-moz-range-thumb { width: 24px; height: 24px; }
+		.typo-default-btn { padding: 0.45rem 0.9rem; font-size: 0.66rem; }
+		.text-fx-bar { gap: 0.5rem; padding: 0.55rem 0.95rem 0.7rem; }
+		.text-fx-btn { padding: 0.45rem 0.85rem; font-size: 0.82rem; }
+		.text-fx-layer-toggle { font-size: 0.76rem; }
+		.text-fx-close { width: 2.1rem; height: 2.1rem; }
 	}
 
 	/* Noto Color Emoji: bubble needs an explicit override since it has its own font-family */

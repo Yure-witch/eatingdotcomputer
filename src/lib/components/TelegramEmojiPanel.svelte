@@ -717,7 +717,17 @@
 			width: 44px !important;
 			height: 44px !important;
 		}
-		.tg-foot { display: none; }
+		/* Keep the footer on mobile so the render-engine toggle is
+		   reachable in the iOS PWA (no hover/devtools there) — but compact
+		   it: drop the status text and make the toggle a tappable chip so
+		   it costs only one slim row. */
+		.tg-foot { padding: 0.25rem 0.5rem; }
+		.tg-foot-status { display: none; }
+		.tg-engine-toggle {
+			padding: 0.35rem 0.6rem !important;
+			font-size: 0.72rem !important;
+			min-height: 1.9rem;
+		}
 		/* Compact the tab strip + mode row a touch so the grid gets
 		   more of the panel. */
 		.tg-tab, .tg-tab-pack { padding: 0.3rem 0.5rem !important; }
