@@ -78,18 +78,27 @@
 	// is a conversation (it renders the live page via {@render children()}; we
 	// don't preload conversations as section Comps).
 	const _onConvMobile = $derived(_isMobile && _isConvRoute($page.url.pathname));
+	// The conversation is ALWAYS panel 0 (just inactive/empty when you're not in a
+	// chat). Keeping the slot permanent means leaving a chat never removes a panel
+	// or shifts every other panel's index — which is what forced the late "settle"
+	// hard-snap that fought your swipe (snap-back to Orbit, lagging nav highlight,
+	// nav bar re-staggering). Now conv → menu → home → orbit is one fixed index set.
 	const PANELS = $derived([
-		...(_onConvMobile ? [{ conv: true }] : []),
+		{ conv: true },
 		{ route: '/app/chat', chatMenu: true },
 		{ route: '/app', Comp: HomePanel },
 		{ route: '/app/orbit', Comp: OrbitPanel },
 		{ route: '/app/playground', Comp: LabPanel },
 		...(data.currentUser?.role === 'instructor' ? [{ route: '/app/manage', Comp: ManagePanel }] : [])
 	]);
+	// The conv panel is only reachable/active while you're in a conversation OR
+	// navigating into one (so the entry slide to panel 0 isn't clamped back).
+	const _convActiveOrEntering = $derived(
+		_onConvMobile || (_isMobile && !!$navigating && _isConvRoute($navigating.to?.url?.pathname ?? ''))
+	);
 	function _panelIndexFor(path) {
-		// A conversation is the conv panel (index 0) when present.
-		if (_isConvRoute(path)) return PANELS[0]?.conv ? 0 : -1;
-		for (let i = 0; i < PANELS.length; i++) {
+		if (_isConvRoute(path)) return 0; // conversation is always panel 0
+		for (let i = 1; i < PANELS.length; i++) {
 			const r = PANELS[i].route;
 			if (!r) continue;
 			// '/app' and the chat MENU are EXACT matches — so Home doesn't catch
@@ -201,10 +210,10 @@
 		// Quick flick → commit one panel in the flick direction even on a SHORT
 		// drag, so a fast little swipe navigates (responsive) instead of the native
 		// snap rubber-banding back (which flashes the next panel then returns). A
-		// slow drag-release still keeps the native nearest-snap. Restricted to the
-		// section/menu pager (not while a conversation panel is present) so it can't
-		// fight the conv add/remove repositioning.
-		if (_pgHoriz && Math.abs(_pgVelX) > 0.35 && pagerEl && !_onConvMobile) {
+		// slow drag-release still keeps the native nearest-snap. Works everywhere on
+		// the pager now (including flicking OUT of a conversation) — the permanent
+		// conv panel means there's no index shift to fight.
+		if (_pgHoriz && Math.abs(_pgVelX) > 0.35 && pagerEl) {
 			const w = pagerEl.clientWidth || 1;
 			const dir = _pgVelX < 0 ? 1 : -1; // finger moving left → next panel (scrollLeft +)
 			const cur = Math.round(pagerEl.scrollLeft / w); // where the scroll actually is now
@@ -276,7 +285,11 @@
 		});
 	});
 	function panelShouldMount(i) {
-		return Math.abs(i - pagerIndex) <= 1 || panelSeen.has(PANELS[i].route);
+		// Mount panels adjacent to the COMMITTED route AND to the LIVE scroll
+		// position — during a deferred-commit multi-swipe the route lags, so without
+		// the live check a panel you're swiping toward could still be a skeleton.
+		const liveIdx = Math.round(_pagerFraction);
+		return Math.abs(i - pagerIndex) <= 1 || Math.abs(i - liveIdx) <= 1 || panelSeen.has(PANELS[i].route);
 	}
 
 	// Sync the track to the current section ONLY for a real mismatch — an
@@ -307,59 +320,22 @@
 		}
 	});
 
-	// Keep the right panel in view when the conversation panel is added/removed
-	// at the FRONT of the track. Entering a conversation prepends a panel (every
-	// section shifts one slot right); leaving removes it (everything shifts left).
-	// The browser preserves the pixel scroll offset across that, so without a
-	// correction the track would suddenly show the WRONG panel (e.g. Home where
-	// the menu should be). We snap scrollLeft to `pagerIndex * width` the instant
-	// the panel set flips — synchronously in the same flush, before paint, so the
-	// transition is seamless. This is what makes conv ⇄ menu one native pipeline.
-	let _hadConvPanel = false;
-	$effect(() => {
-		const has = _onConvMobile;
-		const el = pagerEl;
-		untrack(() => {
-			if (!el) { _hadConvPanel = has; return; }
-			if (has === _hadConvPanel) return;
-			_hadConvPanel = has;
-			_hardSnapPager();
-		});
-	});
-	// Force the track to the current panel with NO animation, defeating the
-	// browser's scroll-anchoring + snap engine — both of which otherwise leave us
-	// parked on the wrong panel when the conv panel is inserted/removed at the
-	// front (the menu shows where the conversation should be, or a tap on the same
-	// chat "does nothing" because the track never leaves the menu). We kill snap,
-	// pin scrollLeft, then re-assert across the next two frames before restoring
-	// snap so nothing can nudge it back.
+	// (The conv panel is permanent now, so there's no add/remove index shift to
+	// compensate for — the old hard-snap that did so is gone. `_hardSnapRAF` is
+	// kept only so _cancelProgrammaticScroll's cancel call stays valid.)
 	let _hardSnapRAF = 0;
-	function _hardSnapPager() {
-		const el = pagerEl;
-		if (!el) return;
-		const w = el.clientWidth || window.innerWidth || 1;
-		const target = Math.max(0, pagerIndex) * w;
-		_pagerProg = true;
-		// Brief commit-suppression covers the window after _pagerProg clears where a
-		// late scroll-anchoring event could still fire and bounce us off the panel.
-		_suppressCommits(150);
-		const prevSnap = el.style.scrollSnapType;
-		el.style.scrollSnapType = 'none';
-		el.scrollLeft = target;
-		cancelAnimationFrame(_hardSnapRAF);
-		_hardSnapRAF = requestAnimationFrame(() => {
-			el.scrollLeft = target;
-			_hardSnapRAF = requestAnimationFrame(() => {
-				el.scrollLeft = target;
-				el.style.scrollSnapType = prevSnap;
-				_pagerProg = false;
-			});
-		});
-	}
 	function onPagerScroll() {
 		if (!pagerEl) return;
 		_lastScrollAt = performance.now();
 		const w = pagerEl.clientWidth || 1;
+		// Left-edge clamp: the conv panel (index 0) is only reachable while a chat
+		// is active/being entered. Otherwise the menu (index 1) is the leftmost
+		// panel, so pin the left edge there — you can't scroll into the empty conv
+		// slot. Edge-only (never fights a forward swipe), skipped during
+		// programmatic scrolls.
+		if (!_pagerProg && !_convActiveOrEntering && pagerEl.scrollLeft < w) {
+			pagerEl.scrollLeft = w;
+		}
 		// (No live scrollLeft clamp — it fought deliberate multi-panel drags and
 		// yanked you back on release. Panel skipping is prevented instead by native
 		// scroll-snap-stop + deferring nav commits until the gesture ends, so panel
@@ -586,21 +562,18 @@
 		_suppressCommits(400);
 		e.preventDefault();
 		const goingToConv = _isConvRoute(href);
-		if (goingToConv) _setEagerChatTitle(href);
-		// Are we visually on the menu but with the route STILL on a conversation —
-		// i.e. the swipe-out navigation hasn't committed yet? Then tapping another
-		// (or the SAME) conversation won't flip _onConvMobile, so the auto hard-snap
-		// that normally pulls the track to the conv panel never fires: we'd change
-		// route but stay stuck on the menu ("tap does nothing", or "loading then
-		// back to the menu"). For the same chat, goto() is even a no-op. Detect it
-		// and force the track back to the conversation panel ourselves.
-		const staleConv = goingToConv && _isConvRoute($page.url.pathname);
-		goto(href);
-		// Conv panel is already mounted at index 0 — slide the track to it with the
-		// same eased motion the nav-icon taps use (instead of an instant jump), so
-		// reopening a chat feels like the rest of the pager. (For a *different*
-		// chat the loading overlay covers this; for the same chat you see the slide.)
-		if (staleConv) _fastScrollTo(0);
+		if (goingToConv) {
+			_setEagerChatTitle(href);
+			goto(href);
+			// The conversation panel is the permanent index 0 — just slide the track
+			// to it (eased, like the rest of the pager). Activates as soon as the
+			// route commits; the loading overlay covers the gap. Works the same
+			// whether we came from the menu or are re-opening from a stale conv route,
+			// with no index shift to fight.
+			_fastScrollTo(0, 260);
+		} else {
+			goto(href);
+		}
 	}
 
 	let sidebarCollapsed = $state(false);
@@ -1783,7 +1756,10 @@
 			{#each PANELS as panel, i (panel.route ?? 'conv')}
 				<section class="pager-panel" class:current={i === pagerIndex} class:conv={panel.conv}>
 					{#if panel.conv}
-						{@render children()}
+						<!-- Permanent panel 0. Renders the live conversation only while in
+						     one; otherwise empty (you can't reach it — see the left-edge
+						     clamp in onPagerScroll). -->
+						{#if _onConvMobile}{@render children()}{/if}
 					{:else if panel.chatMenu}
 						<div class="chat-menu-panel" ontouchstart={onMenuTouchStart} ontouchend={onMenuTouchEnd}>
 							<div class="chat-menu-title">{data.currentClass?.name ?? 'Chat'}</div>
