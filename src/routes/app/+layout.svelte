@@ -286,9 +286,18 @@
 	// to the previous panel (the "snaps back to the previous tab" glitch).
 	$effect(() => {
 		const idx = pagerIndex;
+		const navving = !!$navigating; // track: re-run when a navigation starts/ends
 		if (idx < 0 || !pagerEl) return;
 		const w = pagerEl.clientWidth;
 		if (!w) return;
+		// NEVER correct while a navigation is in flight. `pagerIndex` reflects the
+		// COMMITTED route, which lags behind our flick/swipe until the goto resolves
+		// — and on prod that server load takes long enough that this would yank the
+		// track back to the old panel (you'd see it scroll to the new one, then snap
+		// back). The gesture already put the track where it belongs; once the nav
+		// commits, idx matches and there's nothing to correct. Also stand down during
+		// the brief suppression window after a flick / programmatic snap.
+		if (navving || performance.now() < _suppressCommitUntil) return;
 		const target = idx * w;
 		const userScrolledRecently = performance.now() - _lastScrollAt < 250;
 		if (!userScrolledRecently && Math.abs(pagerEl.scrollLeft - target) > w * 0.5) {

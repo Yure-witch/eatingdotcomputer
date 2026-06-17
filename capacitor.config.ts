@@ -15,12 +15,11 @@ const config: CapacitorConfig = {
 	appName: 'eating.computer',
 	webDir: 'capacitor-shell',
 	server: {
-		// ⚠️ DEV TESTING — pointed at the local dev server so the native app
-		// runs our in-progress code (haptics, native keyboard, feel pass).
-		// REVERT to 'https://www.eating.computer' (cleartext:false) before
-		// archiving for the App Store. Phone + Mac must be on the same WiFi.
-		url: 'http://192.168.86.135:4173',
-		cleartext: true,
+		// PRODUCTION — the native shell loads the live deployment. To go back to
+		// local dev testing, swap url to 'http://192.168.86.135:4173' and set
+		// cleartext: true (phone + Mac on the same WiFi).
+		url: 'https://www.eating.computer',
+		cleartext: false,
 		allowNavigation: ['192.168.86.135', 'www.eating.computer', 'eating.computer']
 	},
 	ios: {
