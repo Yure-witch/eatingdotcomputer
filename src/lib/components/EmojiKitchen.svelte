@@ -25,8 +25,9 @@
 
 <script>
 	import { onMount, onDestroy } from 'svelte';
+	import PickerStickyBtn from './PickerStickyBtn.svelte';
 
-	let { onInsert } = $props();
+	let { onInsert, onClose = null } = $props();
 
 	// Scrollable content container — bound so the IntersectionObserver can
 	// use it as its root (each tab renders inside this element).
@@ -548,7 +549,13 @@
 	     open. The chip is icon-only (Material Symbols magnifying
 	     glass) to keep it visually distinct from the word-labeled
 	     ranking tabs that follow. -->
-	<div class="kitchen-tabs">
+	<div class="kitchen-tabs-bar">
+		{#if onClose}
+			<PickerStickyBtn square onclick={onClose} title="Close" label="Close picker">
+				<span class="msi msi-20">close</span>
+			</PickerStickyBtn>
+		{/if}
+		<div class="kitchen-tabs">
 		<button class="kitchen-tab icon-tab" class:active={mode === 'search'}  onclick={() => setMode('search')}  title="Search mixes &amp; emoji" aria-label="Search">
 			<span class="msi msi-18" class:msi-fill={mode === 'search'}>search</span>
 		</button>
@@ -566,6 +573,7 @@
 		<button class="kitchen-tab" class:active={mode === 'mix'}      onclick={() => setMode('mix')}>Mix</button>
 		<button class="kitchen-tab" class:active={mode === 'browse'}   onclick={() => setMode('browse')}>Browse</button>
 		<button class="kitchen-tab settings-tab" class:active={mode === 'settings'} onclick={() => setMode('settings')} title="Tab settings">⚙️</button>
+		</div>
 	</div>
 
 	<!-- Content area -->
@@ -808,13 +816,21 @@
 	   Uploaded / Library sub-tabs. Horizontally scrollable so the
 	   Mix / Browse / Search / Settings chips don't get cramped when
 	   optional ranking tabs (Gboard / Emojimix / Funbox) are enabled. */
-	.kitchen-tabs {
+	.kitchen-tabs-bar {
 		display: flex;
-		gap: 0.25rem;
+		align-items: center;
+		gap: 0.4rem;
 		padding: 0.35rem 0.5rem;
 		border-bottom: 1px solid var(--border);
 		background: var(--md-sys-color-surface-container, var(--surface-2));
 		flex-shrink: 0;
+	}
+	.kitchen-tabs {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		align-items: center;
+		gap: 0.25rem;
 		overflow-x: auto;
 		scrollbar-width: none;
 	}

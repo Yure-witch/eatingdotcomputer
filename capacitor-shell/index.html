@@ -1,0 +1,38 @@
+<!doctype html>
+<!--
+  Offline fallback bundle for the native shell. Normally the app loads the
+  live site via capacitor.config.ts `server.url`; this page only appears if
+  that URL can't be reached (no network on first launch, etc.).
+-->
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+		<title>eating.computer</title>
+		<style>
+			html, body {
+				margin: 0; height: 100%;
+				background: #faf7ef; color: #2b2620;
+				font-family: -apple-system, system-ui, sans-serif;
+				display: grid; place-items: center; text-align: center;
+			}
+			.wrap { padding: 2rem; }
+			h1 { font-size: 1.4rem; font-weight: 600; margin: 0 0 0.4rem; }
+			p { color: #8a8175; margin: 0; font-size: 0.95rem; }
+			.dot { animation: pulse 1.2s ease-in-out infinite; }
+			@keyframes pulse { 0%,100% { opacity: 0.3; } 50% { opacity: 1; } }
+		</style>
+	</head>
+	<body>
+		<div class="wrap">
+			<h1>eating.computer</h1>
+			<p>Connecting<span class="dot">…</span></p>
+		</div>
+		<script>
+			// Retry the live site once the network is back.
+			function retry() { location.replace('https://eating.computer'); }
+			window.addEventListener('online', retry);
+			setTimeout(retry, 2500);
+		</script>
+	</body>
+</html>

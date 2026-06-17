@@ -20,20 +20,50 @@
 	} from '$lib/skottie-stage-worker.js';
 	import { dropAdaptiveFrames as dropCpuAtlasAdaptive } from '$lib/cpu-atlas.js';
 	import { initTheme, onThemeChanged } from '$lib/theme-store.js';
+	import { dev } from '$app/environment';
+	import { initNativeShell, isNativeApp, updateStatusBarTheme } from '$lib/native.js';
+	import GetAppBanner from '$lib/components/GetAppBanner.svelte';
 
 	let { children } = $props();
 
 	onMount(() => {
+		// Native shell setup (no-op on web/PWA) — wires the OS keyboard so
+		// the compose coordinates with the real keyboard instead of the web
+		// suppression hacks.
+		initNativeShell();
+
+		// Service worker: register on web/PWA, but NEVER inside the native
+		// shell — a cache-first SW serves stale chunks into the WKWebView and
+		// black-screens it. In the native app we instead tear down any SW that
+		// a previous session (or the live site) left registered, and drop its
+		// caches, so the web view always loads fresh from the network.
+		if ('serviceWorker' in navigator) {
+			if (isNativeApp()) {
+				navigator.serviceWorker.getRegistrations()
+					.then((regs) => regs.forEach((r) => r.unregister()))
+					.catch(() => {});
+				if (typeof caches !== 'undefined') {
+					caches.keys().then((keys) => keys.forEach((k) => caches.delete(k))).catch(() => {});
+				}
+			} else {
+				navigator.serviceWorker
+					.register('/service-worker.js', { type: dev ? 'module' : 'classic' })
+					.catch(() => {});
+			}
+		}
+
 		// Apply the saved Material 3 theme as early as possible. Runs
 		// in onMount so it happens client-side only — the hex fallbacks
 		// in app.css cover SSR + the brief pre-hydration paint.
 		initTheme();
+		updateStatusBarTheme(); // match the native status-bar icons to the initial theme
 
 		// Whenever the theme changes, the adaptive emoji pipeline needs
 		// to know — re-read `--ink` into the worker pool so future
 		// builds tint to the new color, and drop the main-thread
 		// fetchLottie cache for adaptive URLs so they re-parse fresh.
 		onThemeChanged(() => {
+			updateStatusBarTheme(); // keep clock/battery legible against the themed notch
 			const changed = refreshAdaptiveInk();
 			if (changed) {
 				pushAdaptiveToShards();   // worker (Skia) atlas re-bakes adaptive
@@ -170,6 +200,8 @@
 </svelte:head>
 
 {@render children()}
+
+<GetAppBanner />
 
 {#if $updated}
 	<div class="update-banner">

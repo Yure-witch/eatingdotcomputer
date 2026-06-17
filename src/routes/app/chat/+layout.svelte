@@ -4,8 +4,18 @@
 	import { auth } from '$lib/firebase.js';
 	import { signInWithCustomToken } from 'firebase/auth';
 	import { preload as preloadEK } from '$lib/components/EmojiKitchen.svelte';
+	import ConvSkeleton from '$lib/components/ConvSkeleton.svelte';
 
 	let { data, children } = $props();
+
+	// Mark individual conversations (channel/DM) so the mobile bottom nav hides
+	// and the chat reclaims its 56px strip. The menu list (/app/chat) is the
+	// pager on mobile, so it keeps the nav.
+	$effect(() => {
+		if (typeof document === 'undefined') return;
+		const isConv = /^\/app\/chat\/(channel|dm)\//.test($page.url.pathname);
+		document.documentElement.classList.toggle('in-conversation', isConv);
+	});
 
 	let firebaseReady = $state(false);
 	let firebaseError = $state(false);
@@ -81,12 +91,17 @@
 		stopRetryLoop();
 		if (typeof document === 'undefined') return;
 		document.documentElement.classList.remove('in-chat');
+		document.documentElement.classList.remove('in-conversation');
 	});
 </script>
 
 <div class="chat-wrap">
 	{#if !firebaseReady}
-		<div class="chat-loading">Connecting…</div>
+		<!-- Mobile: keep showing the conversation skeleton (same as the tap
+		     transition) so it goes template → fully-rendered chat with no
+		     "Connecting…" flash in between. Desktop keeps the text. -->
+		<ConvSkeleton />
+		<div class="chat-loading connecting-text">Connecting…</div>
 	{:else if firebaseError}
 		<div class="chat-loading error">
 			Chat unavailable — couldn't connect to real-time service.
@@ -123,7 +138,7 @@
 			/* Subtract the AppHeader (52px on mobile too — its mobile
 			   media query keeps the same height) AND the bottom nav
 			   (56 px) AND any safe-area inset. */
-			height: calc(100dvh - 52px - 56px - env(safe-area-inset-bottom, 0px));
+			height: calc(100dvh - 52px - var(--native-top-inset, 0px) - 56px - env(safe-area-inset-bottom, 0px));
 			margin-top: 52px;
 		}
 		/* When the bottom nav hides for the on-screen keyboard
@@ -131,13 +146,27 @@
 		   it was occupying so the compose docks right above the
 		   keyboard instead of leaving 56 px of empty space. */
 		:global(html.kb-open) .chat-wrap {
-			height: calc(100dvh - 52px);
+			height: calc(100dvh - 52px - var(--native-top-inset, 0px));
+		}
+		/* Same reclaim when the expression picker is open: the bottom nav is
+		   hidden (body.expr-picker-open), so without this the chat keeps a
+		   56 px reservation for it and the picker ends up with a big strip of
+		   empty space below the docked sheet. */
+		:global(body.expr-picker-open) .chat-wrap {
+			height: calc(100dvh - 52px - var(--native-top-inset, 0px));
+		}
+		/* In an individual conversation the bottom nav is hidden, so reclaim the
+		   FULL bottom strip (the input bar owns the safe-area via its own
+		   padding-bottom). Same height as the kb-open / picker-open cases so
+		   there's never a conflicting safe-area gap when those engage. */
+		:global(html.in-conversation) .chat-wrap {
+			height: calc(100dvh - 52px - var(--native-top-inset, 0px));
 		}
 	}
 
 	@media (min-width: 641px) {
 		.chat-wrap {
-			height: calc(100dvh - 52px);
+			height: calc(100dvh - 52px - var(--native-top-inset, 0px));
 		}
 	}
 
@@ -154,6 +183,10 @@
 		padding: 2rem;
 	}
 	.chat-loading.error { color: var(--danger); }
+	/* On mobile the skeleton stands in for the "Connecting…" text. */
+	@media (max-width: 640px) {
+		.connecting-text { display: none; }
+	}
 
 	.auto-retry {
 		display: inline-flex;

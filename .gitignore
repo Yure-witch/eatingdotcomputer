@@ -44,3 +44,16 @@ vite.config.ts.timestamp-*
 # (just emoji-pair → URL) is what gets shipped to the client.
 /emoji_kitchen_v6.textproto
 *.textproto
+
+# Capacitor native iOS — generated CocoaPods + Xcode build artifacts. The
+# ios/ project itself can be committed or regenerated via `npx cap add ios`;
+# these heavy/per-machine bits never should be.
+/ios/App/Pods/
+/ios/App/Podfile.lock
+/ios/App/output/
+/ios/DerivedData/
+/ios/capacitor-cordova-ios-plugins/
+**/xcuserdata/
+
+# Stray Web Inspector timeline recordings
+*-recording.json

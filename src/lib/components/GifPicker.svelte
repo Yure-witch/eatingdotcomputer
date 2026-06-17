@@ -1,7 +1,8 @@
 <script>
 	import { onMount } from 'svelte';
+	import PickerStickyBtn from './PickerStickyBtn.svelte';
 
-	let { onSelect } = $props();
+	let { onSelect, onClose = null } = $props();
 
 	let query = $state('');
 	let results = $state([]);
@@ -56,6 +57,11 @@
 
 <div class="gif-picker">
 	<div class="gif-search-bar">
+		{#if onClose}
+			<PickerStickyBtn square onclick={onClose} title="Close" label="Close picker">
+				<span class="msi msi-20">close</span>
+			</PickerStickyBtn>
+		{/if}
 		<input
 			class="gif-search-input"
 			type="text"
@@ -95,8 +101,11 @@
 		font-family: 'Google Sans Flex', 'Space Grotesk', sans-serif; font-size: 0.85rem;
 	}
 	.gif-search-bar {
+		display: flex; align-items: center; gap: 0.4rem;
 		padding: 0.5rem 0.65rem; border-bottom: 1.5px solid var(--border); flex-shrink: 0;
+		--picker-bar-bg: var(--paper);
 	}
+	.gif-search-bar .gif-search-input { flex: 1; }
 	.gif-search-input {
 		width: 100%; box-sizing: border-box; padding: 0.35rem 0.6rem;
 		border: 1.5px solid var(--border); border-radius: 8px; background: var(--paper);

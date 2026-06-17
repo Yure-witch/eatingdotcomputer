@@ -11,23 +11,32 @@ export async function load({ params, parent }) {
 
 	const db = getDb();
 	const PAGE_SIZE = 40;
-	const result = db ? await db.execute({
-		sql: `SELECT * FROM (
-		        SELECT id, user_id, user_name, user_role, content, created_at,
-		               attachment_url, attachment_filename, attachment_mimetype, attachment_size,
-		               fx, font_size, font_weight, font_stretch, no_split, is_edited, mentions
-		        FROM chat_messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT ?
-		      ) sub ORDER BY created_at ASC`,
-		args: [convId, PAGE_SIZE]
-	}) : { rows: [] };
+	const EMPTY = { rows: [] };
 
-	const reactionsResult = db ? await db.execute({
-		sql: `SELECT mr.message_id, mr.emoji, mr.user_id
-		      FROM message_reactions mr
-		      JOIN chat_messages cm ON mr.message_id = cm.id
-		      WHERE cm.conversation_id = ?`,
-		args: [convId]
-	}) : { rows: [] };
+	// All queries CONCURRENTLY — serial Turso round-trips were stacking the
+	// latency you feel when opening a DM.
+	const [result, reactionsResult, starredResult] = db ? await Promise.all([
+		db.execute({
+			sql: `SELECT * FROM (
+			        SELECT id, user_id, user_name, user_role, content, created_at,
+			               attachment_url, attachment_filename, attachment_mimetype, attachment_size,
+			               fx, font_size, font_weight, font_stretch, no_split, is_edited, mentions
+			        FROM chat_messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT ?
+			      ) sub ORDER BY created_at ASC`,
+			args: [convId, PAGE_SIZE]
+		}),
+		db.execute({
+			sql: `SELECT mr.message_id, mr.emoji, mr.user_id
+			      FROM message_reactions mr
+			      JOIN chat_messages cm ON mr.message_id = cm.id
+			      WHERE cm.conversation_id = ?`,
+			args: [convId]
+		}),
+		currentUser ? db.execute({
+			sql: 'SELECT message_id FROM starred_messages WHERE user_id = ?',
+			args: [currentUser.id]
+		}) : Promise.resolve(EMPTY)
+	]) : [EMPTY, EMPTY, EMPTY];
 
 	const initialReactions = {};
 	for (const r of reactionsResult.rows) {
@@ -37,10 +46,6 @@ export async function load({ params, parent }) {
 		initialReactions[mid][e][uid] = true;
 	}
 
-	const starredResult = db && currentUser ? await db.execute({
-		sql: 'SELECT message_id FROM starred_messages WHERE user_id = ?',
-		args: [currentUser.id]
-	}) : { rows: [] };
 	const starredMessageIds = starredResult.rows.map((r) => String(r.message_id));
 
 	return {

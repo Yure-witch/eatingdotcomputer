@@ -5,33 +5,40 @@ export async function load({ params, parent }) {
 	const { currentUser } = await parent();
 	const { channelId } = params;
 	const db = getDb();
+	const PAGE_SIZE = 40;
+	const EMPTY = { rows: [] };
 
-	if (db) {
-		const conv = await db.execute({
+	// Run all queries CONCURRENTLY instead of awaiting one after another — each
+	// is a separate Turso round-trip, so serial waits stacked the latency you
+	// feel when opening a chat. The 404 check is evaluated after they resolve.
+	const [conv, result, reactionsResult, starredResult] = db ? await Promise.all([
+		db.execute({
 			sql: "SELECT id FROM conversations WHERE id = ? AND type = 'channel'",
 			args: [channelId]
-		});
-		if (!conv.rows.length) error(404, 'Channel not found');
-	}
+		}),
+		db.execute({
+			sql: `SELECT * FROM (
+			        SELECT id, conversation_id, user_id, user_name, user_role, content, created_at,
+			               attachment_url, attachment_filename, attachment_mimetype, attachment_size,
+			               fx, font_size, font_weight, font_stretch, no_split, is_edited, mentions
+			        FROM chat_messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT ?
+			      ) sub ORDER BY created_at ASC`,
+			args: [channelId, PAGE_SIZE]
+		}),
+		db.execute({
+			sql: `SELECT mr.message_id, mr.emoji, mr.user_id
+			      FROM message_reactions mr
+			      JOIN chat_messages cm ON mr.message_id = cm.id
+			      WHERE cm.conversation_id = ?`,
+			args: [channelId]
+		}),
+		currentUser ? db.execute({
+			sql: 'SELECT message_id FROM starred_messages WHERE user_id = ?',
+			args: [currentUser.id]
+		}) : Promise.resolve(EMPTY)
+	]) : [EMPTY, EMPTY, EMPTY, EMPTY];
 
-	const PAGE_SIZE = 40;
-	const result = db ? await db.execute({
-		sql: `SELECT * FROM (
-		        SELECT id, conversation_id, user_id, user_name, user_role, content, created_at,
-		               attachment_url, attachment_filename, attachment_mimetype, attachment_size,
-		               fx, font_size, font_weight, font_stretch, no_split, is_edited, mentions
-		        FROM chat_messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT ?
-		      ) sub ORDER BY created_at ASC`,
-		args: [channelId, PAGE_SIZE]
-	}) : { rows: [] };
-
-	const reactionsResult = db ? await db.execute({
-		sql: `SELECT mr.message_id, mr.emoji, mr.user_id
-		      FROM message_reactions mr
-		      JOIN chat_messages cm ON mr.message_id = cm.id
-		      WHERE cm.conversation_id = ?`,
-		args: [channelId]
-	}) : { rows: [] };
+	if (db && !conv.rows.length) error(404, 'Channel not found');
 
 	const initialReactions = {};
 	for (const r of reactionsResult.rows) {
@@ -41,10 +48,6 @@ export async function load({ params, parent }) {
 		initialReactions[mid][e][uid] = true;
 	}
 
-	const starredResult = db && currentUser ? await db.execute({
-		sql: 'SELECT message_id FROM starred_messages WHERE user_id = ?',
-		args: [currentUser.id]
-	}) : { rows: [] };
 	const starredMessageIds = starredResult.rows.map((r) => String(r.message_id));
 
 	return {

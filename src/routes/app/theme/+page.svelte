@@ -35,8 +35,12 @@
 
 	@media (max-width: 640px) {
 		.theme-page {
-			padding: 1.25rem 0.75rem;
-			padding-bottom: calc(56px + env(safe-area-inset-bottom, 0px) + 1.25rem);
+			/* Clear the fixed AppHeader — its REAL measured height
+			   (--header-h, set by AppHeader's ResizeObserver, inclusive
+			   of the notch inset on native). The previous flat 1.25rem
+			   dropped this clearance, so the top bar covered the picker. */
+			padding: calc(var(--header-h, 52px) + 1rem) 0.75rem
+			         calc(56px + env(safe-area-inset-bottom, 0px) + 1.25rem);
 		}
 	}
 </style>

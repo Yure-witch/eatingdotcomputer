@@ -137,19 +137,29 @@
 
 	<!-- Core controls ------------------------------------------------------- -->
 	<div class="controls">
+		<!-- Light/dark mode as an icon on the left of Seed. -->
+		<button
+			class="mode-icon"
+			onclick={() => setDark(!$themeStore.dark)}
+			title={$themeStore.dark ? 'Switch to light mode' : 'Switch to dark mode'}
+			aria-label="Toggle dark mode"
+		>
+			{#if $themeStore.dark}
+				<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+					<circle cx="12" cy="12" r="4"/>
+					<path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+				</svg>
+			{:else}
+				<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+					<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+				</svg>
+			{/if}
+		</button>
+
 		<label class="custom-seed">
 			<span>Seed</span>
 			<input type="color" value={$themeStore.seed} oninput={onSeedInput} />
 			<code>{$themeStore.seed}</code>
-		</label>
-
-		<label class="mode-toggle">
-			<input
-				type="checkbox"
-				checked={$themeStore.dark}
-				onchange={(e) => setDark(e.target.checked)}
-			/>
-			<span>Dark mode</span>
 		</label>
 
 		<label class="select-label">
@@ -567,6 +577,21 @@
 		color: var(--md-sys-color-on-surface-variant, #6f655a);
 	}
 	.mode-toggle { cursor: pointer; color: var(--ink); }
+	.mode-icon {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 38px;
+		height: 38px;
+		flex-shrink: 0;
+		border: 1px solid var(--md-sys-color-outline-variant, rgba(0,0,0,0.12));
+		border-radius: 9px;
+		background: var(--md-sys-color-surface, var(--paper));
+		color: var(--ink);
+		cursor: pointer;
+		transition: background 140ms ease;
+	}
+	.mode-icon:hover { background: var(--md-sys-color-surface-variant, rgba(0,0,0,0.05)); }
 
 	/* Secondary mode segmented control */
 	.secondary-row {

@@ -42,6 +42,9 @@
 				<a href="/app/profile/{user.id}" class="dropdown-item" onclick={() => menuOpen = false}>
 					Profile
 				</a>
+				<a href="/app/theme" class="dropdown-item" onclick={() => menuOpen = false}>
+					Customize theme
+				</a>
 				<form method="POST" action="/app?/signout" style="display:contents">
 					<button type="submit" class="dropdown-item dropdown-item-btn">Sign out</button>
 				</form>
@@ -67,6 +70,11 @@
 	   <Avatar size={28}> reads identically. */
 	.user-first-name {
 		font-size: 0.82rem; font-weight: 500; color: var(--muted-fg);
+	}
+	/* Mobile: the name overflows the narrow header — show just the avatar
+	   circle (to the right of the notification bell). */
+	@media (max-width: 640px) {
+		.user-first-name { display: none; }
 	}
 
 	.user-dropdown {

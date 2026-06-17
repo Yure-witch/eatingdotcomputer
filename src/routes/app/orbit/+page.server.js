@@ -76,7 +76,18 @@ export async function load({ locals, parent }) {
 		};
 	}));
 
-	// ── Files ──
+	// ── Files / Collection (secondary) ── Returned as an UN-AWAITED promise
+	// so SvelteKit streams it: the roadmap above renders immediately on
+	// navigation instead of blocking on these 4 extra Turso round-trips. The
+	// page fills the Files sections in (behind a loading state) when it lands.
+	const collection = loadCollection(db, classId, userId);
+
+	return { weeks, currentPlanId, role: session.user.role, userId, classId, collection };
+}
+
+// Secondary "Collection" data — chat-shared links, uploaded files, and the
+// user's starred messages. Streamed (see above) so it never blocks the page.
+async function loadCollection(db, classId, userId) {
 	let links = [], uploadedFiles = [], starredMessages = [];
 	if (db) {
 		const msgResult = await db.execute({
@@ -136,7 +147,7 @@ export async function load({ locals, parent }) {
 		}));
 	}
 
-	return { weeks, currentPlanId, role: session.user.role, userId, classId, links, uploadedFiles, starredMessages };
+	return { links, uploadedFiles, starredMessages };
 }
 
 // Re-export the same form actions from the assignments page

@@ -9,7 +9,6 @@
 	 */
 	import EmojiPicker from './EmojiPicker.svelte';
 	import EmojiKitchen from './EmojiKitchen.svelte';
-	import GifPicker from './GifPicker.svelte';
 	import CustomEmojiPanel from './CustomEmojiPanel.svelte';
 	import TelegramEmojiPanel from './TelegramEmojiPanel.svelte';
 
@@ -57,18 +56,13 @@
 	// those, fall back to emoji so the picker doesn't open on an
 	// invisible tab.
 	const TAB_KEY = 'exprTab';
-	const VALID_TABS = new Set(['emoji', 'kitchen', 'gifs', 'emotes', 'animated', 'reactions']);
-	const INLINE_HIDDEN_TABS = new Set(['gifs', 'reactions']);
+	// GIFs + reaction images now live in their own MediaPicker, so this picker
+	// only has emoji / kitchen / emotes / animated. A stale saved 'gifs' or
+	// 'reactions' falls back to emoji.
+	const VALID_TABS = new Set(['emoji', 'kitchen', 'emotes', 'animated']);
 	const _saved = typeof localStorage !== 'undefined' ? localStorage.getItem(TAB_KEY) : null;
-	const _initialTab = VALID_TABS.has(_saved)
-		? (inline && INLINE_HIDDEN_TABS.has(_saved) ? 'emoji' : _saved)
-		: 'emoji';
-	let tab = $state(_initialTab);
+	let tab = $state(VALID_TABS.has(_saved) ? _saved : 'emoji');
 	$effect(() => {
-		// Don't persist inline-only fallbacks; the chat usage owns the
-		// shared exprTab key, so an inline switch shouldn't change
-		// what compose opens on next time.
-		if (inline && INLINE_HIDDEN_TABS.has(tab)) return;
 		try { localStorage.setItem(TAB_KEY, tab); } catch {}
 	});
 
@@ -98,16 +92,8 @@
 		     through ExpressionPicker means recents + skin-tone +
 		     popular-tab state are shared with the compose picker (via
 		     EmojiPicker's own localStorage keys). -->
-		<EmojiPicker onSelect={onSelectEmoji} />
+		<EmojiPicker onSelect={onSelectEmoji} {onClose} />
 	{:else}
-		{#if onClose}
-			<!-- Pinned to the panel's top-left corner (absolute), so it sits
-			     in the same spot for every category. The grid below gets a
-			     little top padding so the first row clears it. -->
-			<button class="expr-close-fixed" onmousedown={(e) => { e.preventDefault(); onClose(); }} title="Close" aria-label="Close picker">
-				<span class="msi msi-20">close</span>
-			</button>
-		{/if}
 		<nav class="expr-tabs" aria-label="Expression categories">
 		<button class="expr-tab" class:active={tab === 'emoji'} onclick={() => (tab = 'emoji')} title="Emoji">
 			<span class="msi msi-20" class:msi-fill={tab === 'emoji'}>mood</span>
@@ -115,31 +101,12 @@
 		<button class="expr-tab" class:active={tab === 'kitchen'} onclick={() => (tab = 'kitchen')} title="Emoji Kitchen">
 			<span class="msi msi-20" class:msi-fill={tab === 'kitchen'}>blender</span>
 		</button>
-		{#if !inline}
-			<!-- GIFs and Reactions are hidden in inline mode (assignment
-			     text fields, etc.) — they always insert full-size
-			     attachments which don't make sense outside a chat
-			     compose. -->
-			<button class="expr-tab" class:active={tab === 'gifs'} onclick={() => (tab = 'gifs')} title="GIFs">
-				<!-- `gif` is letters in a tight bounding box, so the glyph
-				     renders ~60% the optical size of icons at the same px
-				     value. Bumping font-size to ~30px makes the letters
-				     match the visual weight of `mood`, `blender`, etc.
-				     Variation axes still come from the .msi class. -->
-				<span class="msi gif-glyph" class:msi-fill={tab === 'gifs'}>gif</span>
-			</button>
-		{/if}
 		<button class="expr-tab" class:active={tab === 'emotes'} onclick={() => (tab = 'emotes')} title="Custom emotes">
 			<span class="msi msi-20" class:msi-fill={tab === 'emotes'}>sentiment_very_satisfied</span>
 		</button>
 		<button class="expr-tab" class:active={tab === 'animated'} onclick={() => (tab = 'animated')} title="Animated stickers">
 			<span class="msi msi-20" class:msi-fill={tab === 'animated'}>animated_images</span>
 		</button>
-		{#if !inline}
-			<button class="expr-tab" class:active={tab === 'reactions'} onclick={() => (tab = 'reactions')} title="Reactions">
-				<span class="msi msi-20" class:msi-fill={tab === 'reactions'}>favorite</span>
-			</button>
-		{/if}
 		{#if onBackspace}
 			<!-- Backspace lives at the right end of the (bottom) category
 			     strip — bottom-right corner of the picker, like a native
@@ -152,11 +119,9 @@
 
 	<div class="expr-body">
 		{#if tab === 'emoji'}
-			<EmojiPicker onSelect={onSelectEmoji} />
+			<EmojiPicker onSelect={onSelectEmoji} {onClose} />
 		{:else if tab === 'kitchen'}
-			<EmojiKitchen onInsert={onInsertKitchen} />
-		{:else if tab === 'gifs' && !inline}
-			<GifPicker onSelect={onSelectGif} />
+			<EmojiKitchen onInsert={onInsertKitchen} {onClose} />
 		{:else if tab === 'emotes'}
 			<!-- Two sources, two sub-tabs. Uploaded = class custom
 			     emotes (R2). Library = the static Telegram packs
@@ -168,16 +133,14 @@
 				<button class="expr-subtab" class:active={emotesSub === 'library'} onclick={() => (emotesSub = 'library')}>Library</button>
 			</nav>
 			{#if emotesSub === 'uploaded'}
-				<CustomEmojiPanel mode="emoji" onInsertEmoji={onInsertCustomEmoji} onInsertReaction={_noop} {isInstructor} />
+				<CustomEmojiPanel mode="emoji" onInsertEmoji={onInsertCustomEmoji} onInsertReaction={_noop} {isInstructor} {onClose} />
 			{:else}
-				<TelegramEmojiPanel onInsert={onInsertTgEmoji} packFilter="static" />
+				<TelegramEmojiPanel onInsert={onInsertTgEmoji} packFilter="static" {onClose} />
 			{/if}
 		{:else if tab === 'animated'}
 			<!-- Animated stickers only — static packs live in the
 			     Emotes tab's Library sub-tab. -->
-			<TelegramEmojiPanel onInsert={onInsertTgEmoji} packFilter="animated" />
-		{:else if tab === 'reactions' && !inline}
-			<CustomEmojiPanel mode="reactions" onInsertEmoji={_noop} onInsertReaction={onInsertReaction} {isInstructor} />
+			<TelegramEmojiPanel onInsert={onInsertTgEmoji} packFilter="animated" {onClose} />
 		{/if}
 	</div>
 	{/if}
@@ -200,33 +163,10 @@
 	}
 
 	/* Category strip docks to the bottom (native-keyboard layout); the
-	   body fills the space above it. Flex `order` keeps the markup
-	   order intact while flipping the visual stack. */
-	.expr-tabs { order: 2; }
+	   body fills the space above it. */
 	.expr-body { order: 1; }
+	.expr-tabs { order: 2; }
 
-	/* Close pinned to the panel's top-left corner — same spot in every
-	   category. Round chip with a paper backing so it stays legible
-	   over the emoji grid it floats above. */
-	.expr-close-fixed {
-		position: absolute;
-		top: 0.4rem;
-		left: 0.4rem;
-		z-index: 5;
-		width: 1.9rem;
-		height: 1.9rem;
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		padding: 0;
-		border: 1px solid var(--border);
-		border-radius: 999px;
-		background: var(--paper);
-		color: var(--muted-fg);
-		cursor: pointer;
-		box-shadow: 0 1px 4px rgba(0,0,0,0.12);
-	}
-	.expr-close-fixed:hover { color: var(--ink); }
 	@media (max-width: 640px) {
 		.expr-panel {
 			width: 100%;
@@ -236,6 +176,27 @@
 			border-radius: 14px 14px 0 0;
 			box-shadow: 0 -4px 24px rgba(0,0,0,0.18);
 		}
+		/* Taller bottom section strip with soft, pill-shaped buttons (no hard
+		   bottom-underline highlight). The buttons fill down to ~5px above the
+		   sheet's safe-area edge. */
+		.expr-tabs {
+			gap: 0.35rem;
+			/* The strip's grey background runs to the very bottom of the screen;
+			   the safe-area inset is padding INSIDE it so the buttons clear the
+			   home indicator while the grey fills behind it. */
+			padding: 0.35rem 0.5rem calc(0.35rem + env(safe-area-inset-bottom, 0px));
+			border-top: none;
+			align-items: stretch;
+		}
+		.expr-tab {
+			padding: 0;
+			min-height: 3.7rem;
+			border-radius: 16px;
+			border-bottom: none;
+		}
+		.expr-tab.active { border-bottom-color: transparent; }
+		.expr-tab .msi { font-size: 24px; }
+		.expr-tab-back { padding: 0 0.6rem; min-height: 3.7rem; border-radius: 16px; }
 	}
 
 	/* Picker chrome — neutral `surface-container` background to match
@@ -257,9 +218,6 @@
 		padding: 0.5rem;
 		border: none;
 		background: transparent;
-		/* Full-ink icons for high contrast — the active state is signalled
-		   by the filled glyph variant + the secondary-container pill +
-		   secondary underline, not by dimming the inactive tabs. */
 		color: var(--ink);
 		font: inherit;
 		font-size: 0.78rem;
@@ -272,10 +230,11 @@
 		color: var(--md-sys-color-on-secondary-container, var(--ink));
 		border-bottom-color: var(--md-sys-color-secondary, var(--accent));
 	}
-	/* Backspace flows at the right end of the bottom strip — compact,
-	   not stretched, faintly tinted so it reads as a key not a tab. */
 	.expr-tab-back { flex: 0 0 auto; color: var(--muted-fg); padding: 0.5rem 0.85rem; }
 	.expr-tab-back:hover { color: var(--ink); }
+	.expr-tab:hover:not(.active) {
+		background: color-mix(in srgb, var(--md-sys-color-on-surface, var(--ink)) 7%, transparent);
+	}
 	/* Neutral darkening overlay — same M3 state-layer pattern the
 	   sidebar uses, so chromatic active never gets out-competed. */
 	.expr-tab:hover:not(.active) {

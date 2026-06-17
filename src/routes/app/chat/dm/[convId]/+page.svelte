@@ -1,5 +1,6 @@
 <script>
-	import { onMount, onDestroy, tick, getContext } from 'svelte';
+	import { onMount, onDestroy, tick, getContext, mount, unmount } from 'svelte';
+	import SpriteSticker from '$lib/components/SpriteSticker.svelte';
 	import { pageTitle, pageTitleHref } from '$lib/page-title-store.js';
 	import { profileLink } from '$lib/profile-link.js';
 	import { afterNavigate } from '$app/navigation';
@@ -14,6 +15,9 @@
 	import TelegramEmojiPanel from '$lib/components/TelegramEmojiPanel.svelte';
 	import GifPicker from '$lib/components/GifPicker.svelte';
 	import ExpressionPicker from '$lib/components/ExpressionPicker.svelte';
+	import MediaPicker from '$lib/components/MediaPicker.svelte';
+	import { haptic } from '$lib/native.js';
+	import { decodeReactionKey } from '$lib/reaction-key.js';
 	import MentionAutocomplete from '$lib/components/MentionAutocomplete.svelte';
 	import lottie from 'lottie-web';
 	import { loadTelegramEmoji, getCachedTgEmoji, tgEntry, tgAnimatedUrl, tgFlagUrl, tgAnimationUrl, fetchLottie, cpToToken,
@@ -34,7 +38,7 @@
 		TEXT_COLORS, WDTH_FX_MAP, WDTH_STEPS, WGHT_FX_MAP, WGHT_STEPS, SZ_FX_MAP, SZ_STEPS,
 		JUMBO_SIZES, EMOJI_RE_G,
 		escapeHtml, nestedFxHtml, ekTokenToUrl, normalizeLegacyMarkup, unicodeToReadable, stripMarkup,
-		markupToSegments, segmentsToMarkup, jumboEmojiCount, jumboEmojiCountM, bubbleFontSize,
+		stripFormatting, markupToSegments, segmentsToMarkup, jumboEmojiCount, jumboEmojiCountM, bubbleFontSize,
 		createContentRenderer, clearJumboCache
 	} from '$lib/message-render.js';
 	import hljs from 'highlight.js/lib/core';
@@ -144,11 +148,14 @@
 	let pickerMsgId = $state(null);
 	let pickerPos = $state({ x: 0, y: 0 });
 	let showComposePicker = $state(false);
-	// Hide the mobile BottomNav while the picker is docked (they share the
+	// Separate GIFs + Reaction Images picker (own entrypoint to the right).
+	let showMediaPicker = $state(false);
+	const _anyComposePicker = $derived(showComposePicker || showMediaPicker);
+	// Hide the mobile BottomNav while either picker is docked (they share the
 	// bottom area). Cross-component signal via a body class.
 	$effect(() => {
 		if (typeof document === 'undefined') return;
-		document.body.classList.toggle('expr-picker-open', showComposePicker);
+		document.body.classList.toggle('expr-picker-open', _anyComposePicker);
 		return () => document.body.classList.remove('expr-picker-open');
 	});
 	let showKitchen = $state(false);
@@ -1761,13 +1768,22 @@
 			sizeSliderActive = true;
 			if (sendWrapEl) {
 				const rect = sendWrapEl.getBoundingClientRect();
-				_szUpPx = Math.min(200, Math.max(20, _szInitY - 8));
-				_panelTopY = _szInitY - _szUpPx;
-				panelFixedTop = _panelTopY;
-				panelFixedLeft = rect.left;
-				panelFixedRight = window.innerWidth - rect.right;
-				panelHeight = window.innerHeight - 3 - _panelTopY;
-				downRange = Math.max(20, window.innerHeight - 3 - _szInitY);
+				// Center the slider on the touch point — reaches HALF px up
+				// (smaller) and HALF px down (bigger), clamped above the keyboard
+				// (resize:'none' overlays it) and the top margin.
+				const kbH = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--kb-height')) || 0;
+				const bottomY = window.innerHeight - 8 - kbH;
+				const HALF = 130;
+				_szUpPx = Math.max(20, Math.min(HALF, _szInitY - 8));
+				const downPx = Math.max(20, Math.min(HALF, bottomY - _szInitY));
+				_panelTopY = _szInitY - _szUpPx;               // viewport Y (drag math)
+				// Panel is position:absolute inside .send-wrap so it rides with
+				// the input bar (keyboard transform) instead of fighting it.
+				panelFixedTop = _panelTopY - rect.top;
+				panelFixedLeft = 0;
+				panelFixedRight = 0;
+				panelHeight = _szUpPx + downPx;
+				downRange = downPx;
 			}
 			_szPendingFont = 1.0;
 			messageFontSize = 1.0;
@@ -2182,11 +2198,10 @@
 	let userScrolledUp = false;
 
 	function scrollToBottom() {
-		tick().then(() => {
-			if (!listEl) return;
-			listEl.scrollTop = listEl.scrollHeight;
-			userScrolledUp = false;
-		});
+		// Re-pin to the true bottom across late layout shifts (emotes, fonts,
+		// images) so the first paint isn't a few px short of the bottom.
+		const go = () => { if (listEl) { listEl.scrollTop = listEl.scrollHeight; userScrolledUp = false; } };
+		tick().then(() => { go(); requestAnimationFrame(go); setTimeout(go, 60); });
 	}
 
 	// Called from image onload — scrolls only if user hasn't manually scrolled up
@@ -2368,6 +2383,7 @@
 	async function toggleReaction(msgId, emoji) {
 		const uid = data.currentUser.id;
 		const alreadyReacted = !!reactions[msgId]?.[emoji]?.[uid];
+		haptic(alreadyReacted ? 'selection' : 'light'); // native react tick
 
 		// Snapshot scroll position before the optimistic update adds/removes DOM height
 		const scrollHeightBefore = listEl?.scrollHeight ?? 0;
@@ -2501,9 +2517,13 @@
 				if (block) { block.removeAttribute('data-truncated'); showMore.remove(); }
 			}
 		});
-		loadEmojiNames().then(m => { emojiNames = m; _clearHtmlCache(); clearJumboCache(); messages = [...messages]; });
 		initSemanticSearch();
-		getCustomEmojiMap().then(m => { _ceMap = m; _clearHtmlCache(); messages = [...messages]; });
+		// Load emoji names + custom-emote map together → ONE re-render instead
+		// of two racing `[...messages]` passes. Cuts first-paint contention.
+		Promise.all([loadEmojiNames(), getCustomEmojiMap()]).then(([names, ce]) => {
+			emojiNames = names; _ceMap = ce;
+			_clearHtmlCache(); clearJumboCache(); messages = [...messages];
+		});
 		Promise.all([loadTelegramEmoji(), loadCustomPacks()]).then(() => { mountTgStickers(); });
 		document.addEventListener('selectionchange', onCeSelect);
 		document.addEventListener('selectionchange', onMsgListSelectionChange);
@@ -2567,7 +2587,16 @@
 
 		reactionsRef = ref(db, `dms/${data.convId}/reactions`);
 		onValue(reactionsRef, (snap) => {
-			const fbReactions = snap.exists() ? snap.val() : {};
+			const fbRaw = snap.exists() ? snap.val() : {};
+			// Decode escaped Firebase keys back to raw reaction tokens so rich
+			// emote reactions ([tg:…], [tgc:…], [ce:…], [ek:…]) render. Plain
+			// emoji keys are unchanged by the round-trip.
+			const fbReactions = {};
+			for (const [mId, ems] of Object.entries(fbRaw)) {
+				const decoded = {};
+				for (const [k, users] of Object.entries(ems ?? {})) decoded[decodeReactionKey(k)] = users;
+				fbReactions[mId] = decoded;
+			}
 			const base = data.initialReactions ?? {};
 			// Deep merge per message: Turso base → current state (optimistic) → Firebase
 			const merged = {};
@@ -2641,6 +2670,26 @@
 	const _tgAnims = new WeakMap();
 	const _tgPlayedFx = new Set();   // "msgId:cp" — auto-played click overlays
 	let _tgObserver = null;
+	// Small inline + reaction emotes render through SpriteSticker (the picker's
+	// rasterization engine via the shared `engineMode` store) instead of a live
+	// lottie-web SVG, to save performance; only jumbo (1–3 emoji-only) messages
+	// keep the live SVG path. Real Map so detached spans can be swept.
+	const _tgSprites = new Map();
+	function mountSpriteEmote(span) {
+		if (_tgSprites.has(span)) return;
+		const fs = parseFloat(getComputedStyle(span).fontSize) || 16;
+		const size = Math.max(16, Math.round(fs * 1.4)); // .tg-emoji is 1.4em
+		let props;
+		if (span.dataset.tgCp) props = { cp: span.dataset.tgCp, size };
+		else if (span.dataset.tgPack && span.dataset.tgId) props = { short: span.dataset.tgPack, id: span.dataset.tgId, size };
+		else return;
+		try { _tgSprites.set(span, mount(SpriteSticker, { target: span, props })); } catch {}
+	}
+	function sweepSpriteEmotes() {
+		for (const [sp, comp] of _tgSprites) {
+			if (!sp.isConnected) { try { unmount(comp); } catch {} _tgSprites.delete(sp); }
+		}
+	}
 	// Snapshot of lastRead at page open — anything sent AFTER this is "unseen" for
 	// auto-play purposes. Default to now so we don't replay anything if the snapshot
 	// hasn't resolved yet (the 5-min freshness check still covers very recent msgs).
@@ -2778,18 +2827,33 @@
 		// while tgEntry returns null, and they'd never get .tg-fx or a lottie player.
 		if (!getCachedTgEmoji() || !getCachedCustomPacks()) return;
 		ensureTgObserver();
-		for (const span of listEl.querySelectorAll('.tg-emoji:not([data-tgm])')) {
+		// Drop SpriteSticker emotes whose span left the DOM.
+		sweepSpriteEmotes();
+		// Scan the message list AND the floating reaction preview so emotes in
+		// the lifted message copy mount too.
+		const _roots = [listEl, document.querySelector('.react-msg-preview'), ...document.querySelectorAll('.reply-bar')].filter(Boolean);
+		for (const _root of _roots)
+		for (const span of _root.querySelectorAll('.tg-emoji:not([data-tgm])')) {
 			span.dataset.tgm = '1';
-			// ── Standard Telegram emoji (cp-based) ───────────────────────────
+			// Flags are a static image at any size — handle before the engine split.
 			if (span.dataset.tgCp) {
-				const cp = span.dataset.tgCp;
-				const entry = tgEntry(cp);
-				if (entry?.flag) {
+				const _e = tgEntry(span.dataset.tgCp);
+				if (_e?.flag) {
 					const img = document.createElement('img');
-					img.src = tgFlagUrl(cp); img.className = 'tg-emoji-img'; img.alt = entry.e;
+					img.src = tgFlagUrl(span.dataset.tgCp); img.className = 'tg-emoji-img'; img.alt = _e.e;
 					span.appendChild(img);
 					continue;
 				}
+			}
+			// Small inline + reaction emotes → rasterization engine via SpriteSticker.
+			if (!span.closest('.bubble')?.classList.contains('jumbo-emoji')) {
+				mountSpriteEmote(span);
+				continue;
+			}
+			// ── Jumbo (1–3 emoji-only message): keep the live SVG player ──────
+			if (span.dataset.tgCp) {
+				const cp = span.dataset.tgCp;
+				const entry = tgEntry(cp);
 				_tgObserver.observe(span);
 				if ((entry?.av || 0) > 0) span.classList.add('tg-fx');
 				const msgId = span.closest('.message[data-msg-id]')?.dataset.msgId;
@@ -2850,7 +2914,22 @@
 		setTimeout(() => { if (host.isConnected) cleanup(); }, 6000);
 	}
 
-	$effect(() => { messages; tick().then(mountTgStickers); });
+	// Re-run on messages AND reactions so a freshly-added Telegram / custom
+	// emote reaction chip gets its <canvas> mounted immediately.
+	$effect(() => { messages; reactions; pickerMsgId; replyingTo; tick().then(mountTgStickers); });
+
+	// While the docked reaction picker is open on mobile, hide the bottom
+	// nav (it docks as a full-width sheet over the same strip) — same as the
+	// compose picker hides the nav. BottomNav watches html.reaction-picker-open.
+	$effect(() => {
+		const open = !!pickerMsgId;
+		if (typeof document !== 'undefined')
+			document.documentElement.classList.toggle('reaction-picker-open', open);
+		return () => {
+			if (typeof document !== 'undefined')
+				document.documentElement.classList.remove('reaction-picker-open');
+		};
+	});
 
 	function onReactionInsert(reaction) {
 		pendingAttachment = { url: reaction.url, filename: reaction.name, mimetype: 'image/webp', size: 0, isReaction: true };
@@ -2889,6 +2968,8 @@
 		}
 		_tgObserver?.disconnect();
 		while (_tgHeldSlots > 0) { _tgYieldPlay(); _tgHeldSlots--; }
+		for (const comp of _tgSprites.values()) { try { unmount(comp); } catch {} }
+		_tgSprites.clear();
 	});
 
 	async function send() {
@@ -2896,6 +2977,7 @@
 		const content = input.replace(/​/g, '').trim();
 		const attSnap = pendingAttachment ? { ...pendingAttachment } : null;
 		if (!content && !attSnap) return;
+		haptic('light'); // native send tap
 		clearTyping();
 		const replySnap = replyingTo ? { ...replyingTo } : null;
 		const fxSnap = messageEffect;
@@ -3498,7 +3580,7 @@
 				{:else}
 					{#key replayCounts[msg.id]}
 					<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-					<p class="bubble" use:scallopedClip={{ active: msg.fx === 'scalloped', ws: msg.wiggleSize || 6 }} use:starburstClip={{ active: msg.fx === 'starburst', ws: msg.wiggleSize || 6 }} class:fx-rainbow={msg.fx === 'rainbow'} class:fx-rainbow-fill={msg.fx === 'rainbow-fill'} class:fx-hearts={msg.fx === 'hearts'} class:fx-slam={msg.fx === 'slam'} class:fx-loud={msg.fx === 'loud'} class:fx-gentle={msg.fx === 'gentle'} class:fx-invisible={msg.fx === 'invisible'} class:fx-shake={msg.fx === 'shake'} class:fx-bounce={msg.fx === 'bounce'} class:fx-wave={msg.fx === 'wave'} class:fx-jitter={msg.fx === 'jitter'} class:fx-big={msg.fx === 'big'} class:fx-small={msg.fx === 'small'} class:fx-wiggly={msg.fx === 'wiggly'} class:fx-cursed={msg.fx === 'cursed'} class:fx-scalloped={msg.fx === 'scalloped'} class:fx-starburst={msg.fx === 'starburst'} class:revealed={revealedInvisible.has(msg.id)} class:jumbo-emoji={jumboEmojiCountM(msg.content) > 0 && !msg.replyTo} class:has-reply={!!msg.replyTo} style:font-size={bubbleFontSize(msg.content, msg.fontSize)} style:font-weight={msg.fontWeight && msg.fontWeight !== 400 ? msg.fontWeight : null} style:font-stretch={msg.fontStretch && msg.fontStretch !== 100 ? `${msg.fontStretch}%` : null} style:--ws={msg.fx === 'wiggly' && msg.wiggleSize ? `${msg.wiggleSize}px` : msg.fx === 'cursed' && msg.wiggleSize ? msg.wiggleSize : null} data-font-size={msg.fontSize && msg.fontSize !== 1 ? msg.fontSize : null} data-font-weight={msg.fontWeight && msg.fontWeight !== 400 ? msg.fontWeight : null} data-font-stretch={msg.fontStretch && msg.fontStretch !== 100 ? msg.fontStretch : null} onclick={msg.fx === 'invisible' && !revealedInvisible.has(msg.id) ? () => revealInvisible(msg.id) : undefined}>{#if msg.replyTo}{@const _rp = stripMarkup(msg.replyTo.content)}{@const _rj = jumboEmojiCountM(_rp)}<button class="reply-quote" onclick={(e) => { e.stopPropagation(); scrollToMessage(msg.replyTo.id); }}><span class="reply-author">{msg.replyTo.userName}</span><span class="reply-text" class:jumbo-reply={_rj > 0} style:font-size={_rj > 0 ? JUMBO_SIZES[_rj - 1] : null}>{@html contentHtmlM(msg.replyTo.content)}</span></button>{/if}{@html bubbleHtmlM(msg.content, msg.mentions, !msg.noSplit)}{#if msg.edited}<span class="edited-tag"> (edited)</span>{/if}</p>
+					<p class="bubble" use:scallopedClip={{ active: msg.fx === 'scalloped', ws: msg.wiggleSize || 6 }} use:starburstClip={{ active: msg.fx === 'starburst', ws: msg.wiggleSize || 6 }} class:fx-rainbow={msg.fx === 'rainbow'} class:fx-rainbow-fill={msg.fx === 'rainbow-fill'} class:fx-hearts={msg.fx === 'hearts'} class:fx-slam={msg.fx === 'slam'} class:fx-loud={msg.fx === 'loud'} class:fx-gentle={msg.fx === 'gentle'} class:fx-invisible={msg.fx === 'invisible'} class:fx-shake={msg.fx === 'shake'} class:fx-bounce={msg.fx === 'bounce'} class:fx-wave={msg.fx === 'wave'} class:fx-jitter={msg.fx === 'jitter'} class:fx-big={msg.fx === 'big'} class:fx-small={msg.fx === 'small'} class:fx-wiggly={msg.fx === 'wiggly'} class:fx-cursed={msg.fx === 'cursed'} class:fx-scalloped={msg.fx === 'scalloped'} class:fx-starburst={msg.fx === 'starburst'} class:revealed={revealedInvisible.has(msg.id)} class:jumbo-emoji={jumboEmojiCountM(msg.content) > 0 && !msg.replyTo} class:has-reply={!!msg.replyTo} style:font-size={bubbleFontSize(msg.content, msg.fontSize)} style:font-weight={msg.fontWeight && msg.fontWeight !== 400 ? msg.fontWeight : null} style:font-stretch={msg.fontStretch && msg.fontStretch !== 100 ? `${msg.fontStretch}%` : null} style:--ws={msg.fx === 'wiggly' && msg.wiggleSize ? `${msg.wiggleSize}px` : msg.fx === 'cursed' && msg.wiggleSize ? msg.wiggleSize : null} data-font-size={msg.fontSize && msg.fontSize !== 1 ? msg.fontSize : null} data-font-weight={msg.fontWeight && msg.fontWeight !== 400 ? msg.fontWeight : null} data-font-stretch={msg.fontStretch && msg.fontStretch !== 100 ? msg.fontStretch : null} onclick={msg.fx === 'invisible' && !revealedInvisible.has(msg.id) ? () => revealInvisible(msg.id) : undefined}>{#if msg.replyTo}<button class="reply-quote" onclick={(e) => { e.stopPropagation(); scrollToMessage(msg.replyTo.id); }}><span class="reply-author">{msg.replyTo.userName}</span><span class="reply-text">{@html contentHtmlM(stripFormatting(msg.replyTo.content))}</span></button>{/if}{@html bubbleHtmlM(msg.content, msg.mentions, !msg.noSplit)}{#if msg.edited}<span class="edited-tag"> (edited)</span>{/if}</p>
 					{/key}
 				{/if}
 				{#if !msg.pending}
@@ -3626,7 +3708,34 @@
 {/if}
 
 {#if pickerMsgId}
+	{@const pmsg = messages.find((m) => m.id === pickerMsgId)}
+	{@const pmReactions = reactions[pickerMsgId] ?? {}}
 	<div class="picker-overlay" onclick={() => pickerMsgId = null} onkeydown={(e) => e.key === 'Escape' && (pickerMsgId = null)} role="presentation"></div>
+	<!-- Mobile only (CSS-gated): brightly-lit copy of the focused message
+	     floating ~100px above the docked picker over the dimmed screen. -->
+	{#if pmsg}
+		<div class="react-msg-preview" class:mine={pmsg.userId === data.currentUser.id}>
+			<div class="rmp-inner">
+				<p class="bubble" class:jumbo-emoji={jumboEmojiCountM(pmsg.content) > 0 && !pmsg.replyTo}
+					style:font-size={bubbleFontSize(pmsg.content, pmsg.fontSize)}
+					style:font-weight={pmsg.fontWeight && pmsg.fontWeight !== 400 ? pmsg.fontWeight : null}
+					style:font-stretch={pmsg.fontStretch && pmsg.fontStretch !== 100 ? `${pmsg.fontStretch}%` : null}
+				>{@html bubbleHtmlM(pmsg.content, pmsg.mentions, !pmsg.noSplit)}</p>
+				{#if Object.values(pmReactions).some((u) => Object.keys(u).length > 0)}
+					<div class="reactions">
+						{#each Object.entries(pmReactions) as [emoji, users]}
+							{@const count = Object.keys(users).length}
+							{#if count > 0}
+								<span class="reaction-chip" class:reacted={data.currentUser.id in users}>
+									<span class="reaction-emoji">{@html contentHtml(emoji, false)}</span> <span class="reaction-count">{count}</span>
+								</span>
+							{/if}
+						{/each}
+					</div>
+				{/if}
+			</div>
+		</div>
+	{/if}
 	<div class="picker-popover" style:left="{pickerPos.x}px" style:top="{pickerPos.y}px">
 		<!-- Reaction popover uses ExpressionPicker in inline mode so
 		     the user gets the same 4 tabs the assignment form uses
@@ -3634,6 +3743,7 @@
 		     the full-size Reactions gallery. -->
 		<ExpressionPicker
 			inline
+			onClose={() => { pickerMsgId = null; }}
 			onSelectEmoji={(emoji) => { toggleReaction(pickerMsgId, emoji); pickerMsgId = null; }}
 			onInsertKitchen={(token) => { toggleReaction(pickerMsgId, token); pickerMsgId = null; }}
 			onInsertCustomEmoji={(emoji) => { toggleReaction(pickerMsgId, `[ce:${emoji.shortcode}]`); pickerMsgId = null; }}
@@ -3646,12 +3756,14 @@
 {/if}
 
 
-<div class="input-area" class:kb-open={keyboardOpen} class:picker-open={showComposePicker} bind:clientHeight={inputAreaHeight} style:--input-area-h="{inputAreaHeight}px">
+<div class="input-area" class:kb-open={keyboardOpen} class:picker-open={_anyComposePicker} bind:clientHeight={inputAreaHeight} style:--input-area-h="{inputAreaHeight}px">
 	{#if replyingTo}
 		<div class="reply-bar">
 			<div class="reply-bar-content">
 				<span class="reply-bar-to">Replying to <strong>{replyingTo.userName}</strong></span>
-				<span class="reply-bar-text">{stripMarkup(replyingTo.content).slice(0, 80)}</span>
+				<!-- Rendered mini-preview at uniform normal size (size/fx + jumbo
+				     stripped); emotes incl. animated Telegram render properly. -->
+				<span class="reply-bar-text reply-quote-preview">{@html contentHtmlM(stripFormatting(replyingTo.content))}</span>
 			</div>
 			<button class="reply-bar-close" onclick={() => replyingTo = null}>×</button>
 		</div>
@@ -3844,7 +3956,7 @@
 				</label>
 				<div class="compose-picker-wrap">
 					<button class="btn-fmt btn-fmt-expr" class:active={showComposePicker} title="Expressions"
-						onmousedown={(e) => { e.preventDefault(); showComposePicker = !showComposePicker; if (showComposePicker) inputEl?.blur(); }}>
+						onmousedown={(e) => { e.preventDefault(); showComposePicker = !showComposePicker; if (showComposePicker) { showMediaPicker = false; inputEl?.blur(); } }}>
 						<span class="msi msi-18" class:msi-fill={showComposePicker}>mood</span>
 					</button>
 					{#if showComposePicker}
@@ -3854,13 +3966,29 @@
 							<ExpressionPicker
 								onSelectEmoji={insertEmoji}
 								onInsertKitchen={onKitchenInsert}
-								onSelectGif={onGifSelect}
 								onInsertCustomEmoji={onCustomEmojiInsert}
-								onInsertReaction={onReactionInsert}
 								onInsertTgEmoji={onTgEmojiInsert}
 								isInstructor={data.currentUser.role === 'instructor'}
 								onClose={() => { showComposePicker = false; _clearHtmlCache(); }}
 								onBackspace={composeBackspace}
+							/>
+						</div>
+					{/if}
+				</div>
+				<div class="compose-picker-wrap">
+					<button class="btn-fmt btn-fmt-media" class:active={showMediaPicker} title="GIFs &amp; reaction images"
+						onmousedown={(e) => { e.preventDefault(); showMediaPicker = !showMediaPicker; if (showMediaPicker) { showComposePicker = false; inputEl?.blur(); } }}>
+						<span class="msi msi-18" class:msi-fill={showMediaPicker}>gif_box</span>
+					</button>
+					{#if showMediaPicker}
+						<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+						<div class="compose-picker-backdrop" onclick={() => { showMediaPicker = false; }}></div>
+						<div class="compose-picker-pop">
+							<MediaPicker
+								onSelectGif={onGifSelect}
+								onInsertReaction={onReactionInsert}
+								isInstructor={data.currentUser.role === 'instructor'}
+								onClose={() => { showMediaPicker = false; }}
 							/>
 						</div>
 					{/if}
@@ -4050,6 +4178,10 @@
 	/* Bubble row */
 	.bubble-row { position: relative; display: flex; align-items: flex-end; gap: 0.3rem; max-width: 100%; min-width: 0; }
 	.message.mine .bubble-row { flex-direction: row-reverse; }
+
+	/* Lift the hovered message above every sibling and disable mobile paint-
+	   containment for it so its floating action bar is never clipped/covered. */
+	.message:hover { z-index: 40; content-visibility: visible; }
 
 	.msg-actions-bar {
 		position: absolute;
@@ -4439,6 +4571,63 @@
 	/* Emoji picker */
 	.picker-overlay { position: fixed; inset: 0; z-index: 40; }
 	.picker-popover { position: fixed; z-index: 41; }
+	/* Focused-message preview is a mobile-only affordance. */
+	.react-msg-preview { display: none; }
+
+	@media (max-width: 640px) {
+		/* Mobile: dock the reaction popover as a full-width bottom sheet
+		   (mirrors the compose picker) so it never lands off-screen. The
+		   inline ExpressionPicker is height/width:100% on mobile. */
+		.picker-overlay { background: rgba(0,0,0,0.82); z-index: 60; }
+		.picker-popover {
+			left: 0 !important; right: 0;
+			top: auto !important; bottom: 0;
+			width: 100vw;
+			height: calc(min(58vh, 22rem) + env(safe-area-inset-bottom, 0px));
+			padding-bottom: env(safe-area-inset-bottom, 0px);
+			background: var(--paper);
+			border-top-left-radius: 16px;
+			border-top-right-radius: 16px;
+			box-shadow: 0 -8px 28px rgba(0,0,0,0.18);
+			overflow: hidden;
+			z-index: 61;
+		}
+		/* Floating, brightly-lit copy of the focused message — bottom edge
+		   100px above the picker, content anchored to its bottom (top clipped
+		   + masked) so the END of a tall message is always visible. */
+		.react-msg-preview {
+			display: flex;
+			position: fixed;
+			left: 0; right: 0;
+			bottom: calc(min(58vh, 22rem) + env(safe-area-inset-bottom, 0px) + 100px);
+			max-height: calc(100dvh - var(--header-h, 52px) - min(58vh, 22rem)
+			            - env(safe-area-inset-bottom, 0px) - 120px);
+			padding: 0 14px;
+			justify-content: flex-start;
+			align-items: flex-end;
+			overflow: hidden;
+			pointer-events: none;
+			z-index: 61;
+		}
+		.react-msg-preview.mine { justify-content: flex-end; }
+		.rmp-inner {
+			display: flex;
+			flex-direction: column;
+			justify-content: flex-end;
+			align-items: flex-start;
+			gap: 5px;
+			max-width: 84%;
+			max-height: 100%;
+			overflow: hidden;
+		}
+		.react-msg-preview.mine .rmp-inner { align-items: flex-end; }
+		.react-msg-preview.mine .bubble {
+			background: var(--md-sys-color-primary-container, color-mix(in srgb, var(--accent) 30%, var(--paper)));
+			color: var(--md-sys-color-on-primary-container, var(--ink));
+			border-color: var(--md-sys-color-primary-container, color-mix(in srgb, var(--accent) 30%, var(--paper)));
+		}
+		.react-msg-preview .bubble { box-shadow: 0 6px 22px rgba(0,0,0,0.22); }
+	}
 
 	/* Reply bar */
 	.reply-bar {
@@ -4449,6 +4638,16 @@
 	.reply-bar-to { font-size: 0.72rem; color: var(--muted-fg); }
 	.reply-bar-to strong { color: var(--ink); }
 	.reply-bar-text { font-size: 0.78rem; color: var(--muted-fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+	/* Reply mini-preview: emotes inline at one uniform size, single normal
+	   line (size/effect markup + jumbo already neutralized in the render). */
+	.reply-quote-preview { line-height: 1.5; }
+	.reply-quote-preview :global(.tg-emoji),
+	.reply-quote-preview :global(.ek-img),
+	.reply-quote-preview :global(.ek-img-ce),
+	.reply-quote-preview :global(.ce-img),
+	.reply-quote-preview :global(.ce-img-ce) {
+		width: 1.2em !important; height: 1.2em !important; vertical-align: -0.25em;
+	}
 	.reply-bar-close {
 		background: none; border: none; color: var(--muted-fg); font-size: 1.2rem;
 		cursor: pointer; line-height: 1; padding: 0.1rem 0.35rem; border-radius: 4px; flex-shrink: 0;
@@ -4579,12 +4778,16 @@
 		.input-area { --picker-h: min(58vh, 22rem); }
 		.input-area.picker-open { margin-bottom: calc(var(--picker-h) + env(safe-area-inset-bottom, 0px)); }
 		.input-area.picker-open .input-bar { padding-bottom: 0.5rem; }
+		/* Keyboard open → drop the safe-area padding (keyboard covers the home
+		   indicator) so there's no empty gap above the keyboard. */
+		.input-area.kb-open .input-bar { padding-bottom: 0.5rem; }
 		.compose-picker-pop {
 			position: fixed;
 			left: 0; right: 0; bottom: 0;
 			width: 100vw;
 			height: calc(var(--picker-h) + env(safe-area-inset-bottom, 0px));
-			padding-bottom: env(safe-area-inset-bottom, 0px);
+			/* No padding-bottom: the picker's bottom tab strip carries the
+			   safe-area inset so its grey background runs to the screen bottom. */
 			background: var(--paper);
 			z-index: 60;
 		}
@@ -4699,7 +4902,7 @@
 	.btn-send.sz-active { opacity: 0; }
 	/* Slider panel — floats above + below send button */
 	.sz-panel {
-		position: fixed;
+		position: absolute;
 		background: var(--ink); border-radius: 10px;
 		pointer-events: none; z-index: 300;
 	}
@@ -5060,7 +5263,15 @@
 		}
 		.chat-header h1 { font-size: 1.1rem; }
 		.message-list { padding: 0.75rem 0.875rem; }
-		.message { max-width: 88%; }
+		/* Mobile load perf: skip layout/paint of off-screen message rows; the
+		   `auto` intrinsic-size makes each row remember its real height after
+		   first paint so scrolling stays stable. Mobile-only (desktop hover
+		   tooltip/action bar overflow a row and would be clipped). */
+		.message {
+			max-width: 88%;
+			content-visibility: auto;
+			contain-intrinsic-size: auto 60px;
+		}
 		.reply-bar { padding: 0.4rem 0.75rem; }
 		.input-area {
 			background: var(--paper);

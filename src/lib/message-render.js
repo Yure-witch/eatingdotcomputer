@@ -162,6 +162,18 @@ export function stripMarkup(text) {
 	return result;
 }
 
+/**
+ * Strip size + text-effect markup but KEEP emote tokens ([ek:…], [ce:…],
+ * [tg:…], [tgc:…]) and plain text. markupToSegments already drops the SZ
+ * sentinels + FX PUA chars into structure (fxStack) and leaves everything else
+ * — including emote tokens — in `text`, so flattening the segments yields the
+ * content with all formatting removed but emotes intact. Used for reply quotes
+ * so a reply to a giant/animated/bold message previews as normal-size text.
+ */
+export function stripFormatting(text) {
+	return markupToSegments(text).map((s) => s.text).join('');
+}
+
 export function markupToSegments(markup) {
 	const segs = [];
 	let stack = [], textBuf = '';

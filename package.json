@@ -11,7 +11,9 @@
 		"generate-vapid": "node scripts/generate-vapid.js",
 		"migrate": "node scripts/migrate.js",
 		"generate-icons": "node scripts/generate-icons.js",
-		"generate-emoji-embeddings": "node scripts/generate-emoji-embeddings.mjs"
+		"generate-emoji-embeddings": "node scripts/generate-emoji-embeddings.mjs",
+		"cap:sync": "cap sync ios",
+		"cap:ios": "cap open ios"
 	},
 	"devDependencies": {
 		"@sveltejs/kit": "^2.50.1",
@@ -22,6 +24,15 @@
 	"dependencies": {
 		"@auth/sveltekit": "^1.11.1",
 		"@aws-sdk/client-s3": "^3.983.0",
+		"@capacitor/app": "^7.1.2",
+		"@capacitor/cli": "^7.6.6",
+		"@capacitor/core": "^7.6.6",
+		"@capacitor/haptics": "^7.0.5",
+		"@capacitor/ios": "^7.6.6",
+		"@capacitor/keyboard": "^7.0.6",
+		"@capacitor/network": "^7.0.4",
+		"@capacitor/splash-screen": "^7.0.5",
+		"@capacitor/status-bar": "^7.0.6",
 		"@huggingface/transformers": "^4.0.1",
 		"@libsql/client": "^0.17.0",
 		"@material/material-color-utilities": "^0.4.0",

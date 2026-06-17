@@ -382,6 +382,22 @@ main {
 	-webkit-user-select: none;
 	user-select: none;
 }
+/* Rasterized inline emotes (SpriteSticker, used for small/reaction Telegram
+   emoji) mount a `.tg-stack` wrapper inside the `.tg-emoji` span. Left as its
+   own intrinsic px-sized inline-block, the nested inline-block baseline pushed
+   it down and made the emote read a touch taller than the surrounding text.
+   Pin it to fill the span exactly — same footprint the old inline <svg> had —
+   so it sits flush on the text line. The span owns the 1.4em sizing +
+   vertical-align; the stack just fills it. */
+.tg-emoji > .tg-stack {
+	position: absolute !important;
+	inset: 0 !important;
+	width: 100% !important;
+	height: 100% !important;
+	display: block !important;
+	margin: 0 !important;
+	vertical-align: top !important;
+}
 /* Invisible full-size <img> base: a REPLACED element so the caret / mouse /
    selection treat the whole emote atomically, exactly like an Emoji-Kitchen
    <img>. This is what fixes "can't select / can't put the caret beside a
@@ -522,3 +538,90 @@ main {
    occupies the same bottom area, so they'd overlap. Toggled by a `body` class
    from the chat page (cross-component signal). */
 body.expr-picker-open .bottom-nav { display: none !important; }
+
+/* ──────────────────────────────────────────────────────────────────────
+   Native shell (Capacitor) feel pass. Scoped to `body.native-app` (set by
+   initNativeShell) so the plain web/PWA build is untouched. These kill the
+   most obvious "this is a website" tells inside the WKWebView wrapper.
+   ────────────────────────────────────────────────────────────────────── */
+
+/* No rubber-band bounce on the document; no blue tap-flash on touch. Inner
+   scrollers (chat list, pickers) keep their own momentum scrolling. */
+body.native-app {
+	overscroll-behavior: none;
+	-webkit-tap-highlight-color: transparent;
+}
+
+/* Interactive chrome only: remove the 300ms tap delay, the iOS long-press
+   callout/magnifier, and accidental text selection on buttons. IMPORTANT:
+   this must NOT hit message bubbles or the compose box — rich-text
+   selection + copy-with-effects lives there — so it's scoped to controls. */
+body.native-app button,
+body.native-app a,
+body.native-app label,
+body.native-app [role="button"],
+body.native-app .nav-item,
+body.native-app .btn-fmt,
+body.native-app .expr-tab,
+body.native-app .tg-cell,
+body.native-app .msi {
+	touch-action: manipulation;
+	-webkit-touch-callout: none;
+	-webkit-user-select: none;
+	user-select: none;
+}
+
+/* Belt-and-suspenders: keep selection explicitly ON for the surfaces that
+   need it, in case a control rule above ever wraps them. */
+body.native-app .compose-ce,
+body.native-app .message,
+body.native-app [contenteditable="true"] {
+	-webkit-user-select: text;
+	user-select: text;
+	-webkit-touch-callout: default;
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   Native keyboard handling (Capacitor resize:'none'). The keyboard overlays
+   the web view instead of resizing it, so there's NO page reflow when it
+   opens. We lift only the compose bar above the keyboard with a GPU
+   transform (composited — no layout), using --kb-height captured by the
+   Keyboard listener, and add a scroll spacer so the latest message clears
+   the lifted compose. Scoped to the native shell; PWA is unchanged.
+   ────────────────────────────────────────────────────────────────────── */
+body.native-app .input-area {
+	transition: transform 0.2s ease;
+	/* NO will-change/transform here unconditionally — either would make
+	   .input-area a containing block for its fixed-positioned descendant
+	   (.compose-picker-pop), anchoring the docked picker to the input bar
+	   instead of the screen and leaving a huge empty strip below it. The
+	   transform is applied ONLY while the keyboard is open (below), when the
+	   picker is closed, so there's no conflict. */
+}
+body.native-app.kb-native-open .input-area {
+	transform: translateY(calc(-1 * var(--kb-height, 0px)));
+}
+/* Belt-and-suspenders: never transform the input area while the picker is
+   open, so the fixed picker always anchors to the viewport. */
+body.native-app.expr-picker-open .input-area {
+	transform: none;
+}
+body.native-app.kb-native-open .message-list::after {
+	content: '';
+	display: block;
+	flex: 0 0 auto;
+	height: var(--kb-height, 0px);
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   Native notch handling. The status bar OVERLAYS the web view (overlay:true),
+   so the header's cream background paints up into the notch — a tan strip
+   that matches the header. The header + app shell pad DOWN by the notch
+   height so content still clears it. The 44px floor covers this web view
+   reporting env(safe-area-inset-top) as 0 (which otherwise put the logo
+   under the clock). Scoped to body.native-app, so the PWA is untouched.
+   ────────────────────────────────────────────────────────────────────── */
+body.native-app { --native-top-inset: max(env(safe-area-inset-top, 0px), 44px); }
+body.native-app .app-header { padding-top: calc(1rem + var(--native-top-inset)) !important; }
+body.native-app .app-shell { padding-top: var(--native-top-inset); }
+

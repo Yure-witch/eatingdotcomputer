@@ -1,7 +1,7 @@
-import { redirect } from '@sveltejs/kit';
-
 export async function load({ parent }) {
 	const { channels } = await parent();
-	const first = channels?.[0];
-	redirect(303, first ? `/app/chat/channel/${first.id}` : '/app');
+	// No server redirect anymore: on mobile this route shows the chat-menu
+	// pager panel (rendered by the app layout). Desktop redirects to the first
+	// conversation client-side (see +page.svelte) to preserve its behaviour.
+	return { firstChannelId: channels?.[0]?.id ?? null };
 }

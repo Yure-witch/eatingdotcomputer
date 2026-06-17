@@ -2,6 +2,7 @@ import { json, error } from '@sveltejs/kit';
 import { getAdminDb } from '$lib/server/firebase-admin.js';
 import { getDb } from '$lib/server/turso.js';
 import { requireClassAccess } from '$lib/server/access.js';
+import { encodeReactionKey } from '$lib/reaction-key.js';
 
 export async function POST({ request, locals }) {
 	const session = await locals.auth();
@@ -14,10 +15,15 @@ export async function POST({ request, locals }) {
 	const adminDb = getAdminDb();
 	const turso = getDb();
 
-	// Build the correct Firebase path based on conversation type passed by the client
+	// Build the correct Firebase path based on conversation type passed by the client.
+	// The reaction token is a Firebase KEY, so it must be escaped — rich tokens
+	// ([tg:…], [tgc:…], [ce:…], [ek:…]) contain `[`/`]`/`/` which Firebase rejects,
+	// which is why animated/custom emote reactions silently failed to write. Turso
+	// keeps the RAW token (no key restrictions); only the Firebase path is escaped.
 	const base = type === 'dm' ? `dms/${conversationId}` : `channels/${conversationId}`;
 	const msgReactionsPath = `${base}/reactions/${messageId}`;
-	const reactionPath = `${msgReactionsPath}/${emoji}/${userId}`;
+	const fbEmojiKey = encodeReactionKey(emoji);
+	const reactionPath = `${msgReactionsPath}/${fbEmojiKey}/${userId}`;
 
 	// If the message is archived in Turso, sync all its reactions to Firebase first.
 	// This ensures Firebase is the authoritative source so the toggle reads and writes
@@ -39,8 +45,9 @@ export async function POST({ request, locals }) {
 				const fbMsg = fbMsgSnap.exists() ? fbMsgSnap.val() : {};
 				const writes = {};
 				for (const row of tursoRxRows.rows) {
-					if (!fbMsg[row.emoji]?.[row.user_id]) {
-						writes[`${row.emoji}/${row.user_id}`] = true;
+					const k = encodeReactionKey(row.emoji);
+					if (!fbMsg[k]?.[row.user_id]) {
+						writes[`${k}/${row.user_id}`] = true;
 					}
 				}
 				if (Object.keys(writes).length > 0) {

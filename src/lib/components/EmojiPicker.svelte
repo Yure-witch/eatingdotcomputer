@@ -11,8 +11,18 @@
 <script>
 	import { onMount, tick } from 'svelte';
 	import { initSemanticSearch, searchEmoji, isSemanticReady, onSemanticReady } from '$lib/emoji-semantic.js';
+	import PickerStickyBtn from './PickerStickyBtn.svelte';
 
-	let { onSelect } = $props();
+	let { onSelect, onClose = null } = $props();
+
+	// The search box collapses into a single 🔍 control pinned at the left of
+	// the category bar; clicking it swaps the categories for the input.
+	let searchOpen = $state(false);
+	function toggleSearch() {
+		searchOpen = !searchOpen;
+		if (searchOpen) tick().then(() => searchEl?.focus());
+		else query = '';
+	}
 
 	const RECENT_KEY         = 'emoji-recent';
 	const FONT_KEY           = 'emoji-font';
@@ -419,7 +429,12 @@
 			for (const item of g.items) cpToName[item.cp] = item.n;
 		}
 		loading = false;
-		requestAnimationFrame(() => searchEl?.focus());
+		// Auto-focus the search ONLY on desktop (fine pointer). On touch /
+		// native the focus pops the on-screen keyboard the instant the picker
+		// opens — search must stay un-activated until the user taps it.
+		if (!window.matchMedia?.('(pointer: coarse)')?.matches) {
+			requestAnimationFrame(() => searchEl?.focus());
+		}
 	});
 
 	// Sync Noto Color Emoji font: toggle the html class + inject Google Fonts link when needed
@@ -883,28 +898,54 @@
 <svelte:window onkeydown={(e) => { if (e.key === 'Escape' && longPress) { longPress = null; e.stopPropagation(); } }} />
 
 <div class="picker emoji-picker" bind:this={pickerEl}>
-	<!-- Search -->
-	<div class="search-row">
-		<span class="search-icon">🔍</span>
-		<input
-			bind:this={searchEl}
-			bind:value={query}
-			class="search-input"
-			type="text"
-			placeholder="Search emoji…"
-			autocomplete="off"
-			spellcheck="false"
-		/>
-		{#if query}
-			<button class="clear-btn" onclick={() => query = ''}>✕</button>
+	<!-- Top bar: sticky controls (close ✕ + search 🔍) pinned at the left, then
+	     either the search input (when expanded) or the scrolling category
+	     buttons, with the style-settings gear pinned at the right. The category
+	     buttons scroll horizontally UNDER the sticky controls. -->
+	<div class="emoji-topbar">
+		{#if onClose}
+			<PickerStickyBtn square onclick={onClose} title="Close" label="Close picker">
+				<span class="msi msi-20">close</span>
+			</PickerStickyBtn>
+		{/if}
+		<PickerStickyBtn active={searchOpen} onclick={toggleSearch} title="Search emoji" label="Search emoji">
+			<span class="msi msi-20">search</span>
+		</PickerStickyBtn>
+		{#if searchOpen}
+			<input
+				bind:this={searchEl}
+				bind:value={query}
+				class="search-input"
+				type="text"
+				placeholder="Search emoji…"
+				autocomplete="off"
+				spellcheck="false"
+			/>
+			{#if query}
+				<button class="clear-btn" onclick={() => query = ''}>✕</button>
+			{/if}
+		{:else}
+			<!-- Only the category buttons scroll; the controls above stay fixed. -->
+			<div class="tabs" role="tablist" bind:this={tabsEl}>
+				<button role="tab" class="tab tab-text" class:active={activeGroup === -2} title="Most used"
+					onclick={() => pickTab(-2)}>#</button>
+				<button role="tab" class="tab tab-text" class:active={activeGroup === -1} title="Recently used"
+					onclick={() => pickTab(-1)}>🕐</button>
+				{#if data}
+					{#each data.groups as g, i}
+						<button role="tab" class="tab" class:active={activeGroup === i} title={g.name}
+							onclick={() => pickTab(i)}>{g.icon || '•'}</button>
+					{/each}
+				{/if}
+			</div>
 		{/if}
 		<button
-			class="settings-btn"
+			class="settings-btn bar-gear"
 			class:active={showSettings}
 			title="Emoji style"
 			onclick={() => showSettings = !showSettings}
 		>
-			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+			<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 				<circle cx="12" cy="12" r="3"/>
 				<path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
 			</svg>
@@ -925,22 +966,6 @@
 					System (iOS)
 				</button>
 			</div>
-		</div>
-	{/if}
-
-	<!-- Category tabs -->
-	{#if !query.trim()}
-		<div class="tabs" role="tablist" bind:this={tabsEl}>
-			<button role="tab" class="tab tab-text" class:active={activeGroup === -2} title="Most used"
-				onclick={() => pickTab(-2)}>#</button>
-			<button role="tab" class="tab tab-text" class:active={activeGroup === -1} title="Recently used"
-				onclick={() => pickTab(-1)}>🕐</button>
-			{#if data}
-				{#each data.groups as g, i}
-					<button role="tab" class="tab" class:active={activeGroup === i} title={g.name}
-						onclick={() => pickTab(i)}>{g.icon || '•'}</button>
-				{/each}
-			{/if}
 		</div>
 	{/if}
 
@@ -1323,35 +1348,60 @@
 	.style-opt.active { border-color: var(--muted-fg); color: #222; background: var(--surface-2); }
 	.style-swatch { font-size: 1rem; line-height: 1; }
 
-	/* ── Tabs ── */
-	.tabs {
+	/* ── Top bar: fixed controls (close + search) + scrolling categories + gear ── */
+	.emoji-topbar {
 		display: flex;
-		overflow-x: auto;
-		scrollbar-width: none;
+		align-items: center;
+		gap: 0.35rem;
+		padding: 0.45rem 0.55rem;
 		border-bottom: 1px solid var(--surface-2);
-		padding: 0 0.25rem;
+		background: var(--paper);
 		flex-shrink: 0;
 	}
+	.tabs {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		align-items: center;
+		gap: 0.25rem;
+		overflow-x: auto;
+		scrollbar-width: none;
+	}
 	.tabs::-webkit-scrollbar { display: none; }
+	/* Round category buttons, a touch bigger. */
 	.tab {
 		background: none;
 		border: none;
-		font-size: 1.05rem;
-		width: 2.1rem;
-		height: 2.1rem;
+		font-size: 1.1rem;
+		width: 2.4rem;
+		height: 2.4rem;
 		display: flex;
 		align-items: center;
 		justify-content: center;
 		cursor: pointer;
-		border-radius: 6px;
+		border-radius: 50%;
 		flex-shrink: 0;
-		opacity: 0.35;
+		opacity: 0.4;
 		transition: opacity 0.12s, background 0.12s;
 		padding: 0;
 	}
-	.tab:hover { opacity: 0.7; background: var(--surface-2); }
+	.tab:hover { opacity: 0.75; background: var(--surface-2); }
 	.tab.active { opacity: 1; background: var(--surface-2); }
-	.tab-text { font-size: 0.78rem; font-weight: 700; letter-spacing: -0.02em; }
+	.tab-text { font-size: 0.85rem; font-weight: 700; letter-spacing: -0.02em; }
+
+	/* Inline search input (shown when the 🔍 control is toggled) grows to fill
+	   the bar between the fixed controls and the settings gear. */
+	.search-input { flex: 1; min-width: 4rem; }
+	.bar-gear { flex: 0 0 auto; }
+
+	@media (max-width: 640px) {
+		.tab { width: 2.6rem; height: 2.6rem; font-size: 1.2rem; }
+		/* A bit taller top bar to match the roomier controls. */
+		.emoji-topbar { padding: 0.55rem 0.6rem; }
+		/* No hover on touch, so the "Hover an emoji to preview" bar is dead
+		   weight — drop it on mobile to reclaim the vertical space. */
+		.preview-bar { display: none; }
+	}
 
 	/* ── Grid ── */
 	.grid-wrap {
@@ -1382,6 +1432,13 @@
 		font-size: 1.3rem;
 		width: 36px;
 		height: 36px;
+		/* The grid renders all ~1800 emoji at once. content-visibility lets the
+		   browser skip style/layout/paint for the off-screen cells, which is
+		   what was making opening/switching to this category cost ~600ms of
+		   style-recalc + layout (per the Safari timeline). Cells are a fixed
+		   36px, so contain-intrinsic-size matches exactly — no scroll jump. */
+		content-visibility: auto;
+		contain-intrinsic-size: 36px 36px;
 		display: flex;
 		align-items: center;
 		justify-content: center;

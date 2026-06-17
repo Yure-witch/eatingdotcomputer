@@ -3,6 +3,11 @@
 	import { page } from '$app/stores';
 
 	const openSidebar = getContext('openSidebar');
+	// Live pager state (set by /app/+layout.svelte): the section currently in
+	// view follows the swipe so the selected tab updates instantly, and the
+	// chat drawer being open keeps the Chat icon selected.
+	const pagerNav = getContext('pagerNav');
+	const activePath = $derived(pagerNav?.activeRoute ?? $page.url.pathname);
 
 	let { isInstructor = false, totalUnread = 0 } = $props();
 
@@ -106,7 +111,9 @@
 		{
 			href: '/app',
 			label: 'Home',
-			active: (p) => p === '/app',
+			// /app/weeks (the "view previous weeks" page) is a Home sub-view, so
+			// keep Home selected there.
+			active: (p) => p === '/app' || p.startsWith('/app/weeks'),
 			iconName: 'home'
 		},
 		{
@@ -134,13 +141,34 @@
 	};
 
 	const items = $derived(isInstructor ? [...baseItems, manageItem] : baseItems);
-	const chatActive = $derived($page.url.pathname.startsWith('/app/chat'));
+	// Chat is selected on the chat menu panel OR any chat route (conversation).
+	const chatActive = $derived(activePath.startsWith('/app/chat'));
+
+	// Sliding highlight: the pager now includes the chat menu as panel 0, so the
+	// nav slots (Chat, Home, Orbit, …) map 1:1 to the pager fraction. The pill
+	// rides the live scroll position across all of them. Off the pager (in a
+	// conversation) it parks on Chat (slot 0).
+	const slotCount = $derived(items.length + 1);
+	// On the pager → ride the live fraction. Off the pager (conversation,
+	// /app/weeks, profile, …) → park on the discrete active tab: Chat if it's a
+	// chat route, else whichever section claims the path (Chat slot 0, then the
+	// items). Falls back to Chat if nothing claims it.
+	const _activeItemIdx = $derived(items.findIndex((it) => it.active(activePath)));
+	const indicatorSlot = $derived(
+		pagerNav?.activeRoute != null ? (pagerNav?.navFraction ?? 0)
+		: chatActive ? 0
+		: _activeItemIdx >= 0 ? _activeItemIdx + 1
+		: 0
+	);
 </script>
 
 <!-- Mobile bottom nav only — desktop nav is in the global sidebar (app/+layout.svelte) -->
 <nav class="bottom-nav" class:hidden={keyboardOpen}>
-	<!-- Chat button opens the full-screen sidebar instead of navigating -->
-	<button class="nav-item" class:active={chatActive} onclick={openSidebar} type="button">
+	<span class="nav-indicator" style:left="calc(({indicatorSlot} + 0.5) / {slotCount} * 100%)"></span>
+	<!-- Chat is a real tab now: scrolls the pager to the chat-menu panel (or
+	     navigates to it from a non-pager route like a conversation). -->
+	<a href="/app/chat" class="nav-item" class:active={chatActive}
+		onclick={(e) => { if (pagerNav?.goToSection?.('/app/chat')) e.preventDefault(); }}>
 		<span class="icon-wrap">
 			<span class="msi msi-20" class:msi-fill={chatActive}>{chatIconName}</span>
 			{#if totalUnread > 0}
@@ -148,10 +176,11 @@
 			{/if}
 		</span>
 		<span class="label">Chat</span>
-	</button>
+	</a>
 	{#each items as item}
-		{@const isActive = item.active($page.url.pathname)}
-		<a href={item.href} class="nav-item" class:active={isActive}>
+		{@const isActive = !chatActive && item.active(activePath)}
+		<a href={item.href} class="nav-item" class:active={isActive}
+			onclick={(e) => { if (pagerNav?.goToSection?.(item.href)) e.preventDefault(); }}>
 			<span class="icon-wrap">
 				<span class="msi msi-20" class:msi-fill={isActive}>{item.iconName}</span>
 			</span>
@@ -163,6 +192,20 @@
 <style>
 	.bottom-nav { display: none; }
 	.bottom-nav.hidden { display: none !important; }
+	/* Hide the nav while the docked reaction picker (a full-width bottom
+	   sheet on mobile) is open, exactly like it hides for the compose
+	   keyboard/picker. The chat page toggles this class on <html>. */
+	:global(html.reaction-picker-open) .bottom-nav { display: none !important; }
+	/* Hidden while the conversation panel covers most of the screen (set live by
+	   the pager in /app/+layout — follows the swipe, not just the route, so the
+	   nav reveals the instant you cross halfway back toward the menu). */
+	:global(html.conv-covering) .bottom-nav { display: none !important; }
+	/* Coming back to the menu, rise up from the bottom instead of popping in. */
+	:global(html.nav-rising) .bottom-nav { animation: nav-rise 0.32s cubic-bezier(0.33, 1, 0.68, 1); }
+	@keyframes nav-rise {
+		from { transform: translateY(100%); }
+		to { transform: translateY(0); }
+	}
 
 	@media (max-width: 640px) {
 		.bottom-nav {
@@ -181,7 +224,23 @@
 			z-index: 1000;
 		}
 
+		/* Sliding highlight pill — one element that glides between slots with
+		   the live scroll fraction instead of a per-item pill snapping on/off.
+		   Sits behind the icons (z-index 0); positioned at the icon row. */
+		.nav-indicator {
+			position: absolute;
+			top: 7px;
+			width: 48px;
+			height: 26px;
+			transform: translateX(-50%);
+			background: var(--sidebar-active);
+			border-radius: 999px;
+			pointer-events: none;
+			z-index: 0;
+		}
 		.nav-item {
+			position: relative;
+			z-index: 1;
 			flex: 1;
 			display: flex;
 			flex-direction: column;
@@ -220,11 +279,8 @@
 			justify-content: center;
 			padding: 3px 14px;
 			border-radius: 999px;
-			transition: background 0.15s;
 		}
-		.nav-item.active .icon-wrap {
-			background: var(--sidebar-active);
-		}
+		/* The active pill is now the shared sliding .nav-indicator above. */
 
 		.nav-badge {
 			position: absolute;

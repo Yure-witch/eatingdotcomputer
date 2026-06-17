@@ -15,10 +15,19 @@ export async function POST({ request, locals }) {
 		isPwa = body.isPwa != null ? (body.isPwa ? 1 : 0) : null;
 	} catch { /* body optional */ }
 
-	await db.execute({
-		sql: `INSERT INTO user_activity (user_id, logged_at, device_type, is_pwa) VALUES (?, datetime('now'), ?, ?)`,
-		args: [session.user.id, deviceType, isPwa]
-	});
+	// Append to history AND stamp the user's denormalised last_active, so the
+	// presence GET can read "last seen" off the 18-row users table instead of
+	// GROUP BY-ing over all of user_activity.
+	await db.batch([
+		{
+			sql: `INSERT INTO user_activity (user_id, logged_at, device_type, is_pwa) VALUES (?, datetime('now'), ?, ?)`,
+			args: [session.user.id, deviceType, isPwa]
+		},
+		{
+			sql: `UPDATE users SET last_active = datetime('now') WHERE id = ?`,
+			args: [session.user.id]
+		}
+	]);
 
 	return json({ ok: true });
 }

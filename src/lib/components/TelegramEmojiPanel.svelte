@@ -13,6 +13,7 @@
 	// Pixel-perfect, scales to hundreds of concurrent cells. Chat bubbles
 	// still use lottie-web SVG directly.
 	import LottieSticker from './SpriteSticker.svelte';
+	import PickerStickyBtn from './PickerStickyBtn.svelte';
 	import { prewarm as prewarmSprites } from '$lib/lottie-spritesheet.js';
 	import {
 		setHost as setSkottieHostMain,
@@ -38,7 +39,7 @@
 		clearSkottieWorker();
 	}
 
-	let { onInsert, packFilter = 'all' } = $props();
+	let { onInsert, packFilter = 'all', onClose = null } = $props();
 	// `packFilter` decides which custom packs the panel will surface and
 	// whether the standard Telegram categories (Effects, Custom aggregate,
 	// Smileys, …) are shown at all. Used by ExpressionPicker so the
@@ -512,25 +513,32 @@
 </script>
 
 <div class="tg-panel" bind:this={panelEl}>
-	<div class="tg-tabs" bind:this={tabsEl}>
-		{#each headCats as cat (cat.key)}
-			<button class="tg-tab" class:active={active === cat.key} title={cat.label} onclick={() => goToTab(cat.key)}>{cat.icon}</button>
-		{/each}
-		{#if packCats.length}
-			<span class="tg-tab-sep" aria-hidden="true">+</span>
+	<div class="tg-tabs-bar">
+		{#if onClose}
+			<PickerStickyBtn square onclick={onClose} title="Close" label="Close picker">
+				<span class="msi msi-20">close</span>
+			</PickerStickyBtn>
 		{/if}
-		{#each packCats as cat (cat.key)}
-			<button class="tg-tab tg-tab-pack" class:active={active === cat.key} title={cat.label} onclick={() => goToTab(cat.key)}>
-				<!-- Tab icons live outside the grid's scroll content (the
-				     Skottie stage host), so force them onto the rlottie
-				     engine so they animate in both engine modes. `eager`
-				     skips the 150 ms scroll-settle delay so they spring
-				     to life the moment the picker opens. -->
-				<LottieSticker short={cat.pack.short} id={cat.pack.firstId} size={22} mode="visible"
-					loop={true} root={tabsEl} title={cat.label}
-					forceEngine="rlottie" eager={true} />
-			</button>
-		{/each}
+		<div class="tg-tabs" bind:this={tabsEl}>
+			{#each headCats as cat (cat.key)}
+				<button class="tg-tab" class:active={active === cat.key} title={cat.label} onclick={() => goToTab(cat.key)}>{cat.icon}</button>
+			{/each}
+			{#if packCats.length}
+				<span class="tg-tab-sep" aria-hidden="true">+</span>
+			{/if}
+			{#each packCats as cat (cat.key)}
+				<button class="tg-tab tg-tab-pack" class:active={active === cat.key} title={cat.label} onclick={() => goToTab(cat.key)}>
+					<!-- Tab icons live outside the grid's scroll content (the
+					     Skottie stage host), so force them onto the rlottie
+					     engine so they animate in both engine modes. `eager`
+					     skips the 150 ms scroll-settle delay so they spring
+					     to life the moment the picker opens. -->
+					<LottieSticker short={cat.pack.short} id={cat.pack.firstId} size={22} mode="visible"
+						loop={true} root={tabsEl} title={cat.label}
+						forceEngine="rlottie" eager={true} />
+				</button>
+			{/each}
+		</div>
 	</div>
 
 	{#if activeCat?.pack && isStandalone(active)}
@@ -734,7 +742,8 @@
 		.tg-mode-row { padding: 0.2rem 0.5rem !important; }
 		.tg-search-row { padding: 0.2rem 0.5rem 0.25rem !important; }
 	}
-	.tg-tabs { display: flex; gap: 1px; border-bottom: 1.5px solid var(--border); background: var(--surface-2); flex-shrink: 0; overflow-x: auto; }
+	.tg-tabs-bar { display: flex; align-items: center; gap: 0.4rem; padding: 0.35rem 0.5rem; border-bottom: 1.5px solid var(--border); background: var(--surface-2); flex-shrink: 0; }
+	.tg-tabs { flex: 1; min-width: 0; display: flex; align-items: center; gap: 1px; overflow-x: auto; }
 	.tg-tabs::-webkit-scrollbar { height: 0; }
 	.tg-tab { flex: 1 0 auto; min-width: 34px; padding: 0.45rem 0; border: none; background: none; font-size: 1.05rem; line-height: 1; cursor: pointer; opacity: 0.55; transition: opacity 0.13s, background 0.13s; border-bottom: 2px solid transparent; }
 	.tg-tab:hover { opacity: 0.85; background: var(--surface-2); }

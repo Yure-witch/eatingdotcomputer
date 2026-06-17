@@ -114,7 +114,12 @@ export function segmentMentions(content, mentions) {
 	for (const m of ms) {
 		if (typeof m?.offset !== 'number' || typeof m?.len !== 'number') continue;
 		if (m.offset < cursor || m.offset + m.len > text.length) continue;
-		if (m.offset > cursor) out.push({ type: 'text', text: text.slice(cursor, m.offset) });
+		// `offset` indexes the NAME; the trigger `@` sits at offset-1. The pill
+		// renders its own leading `@`, so the literal `@` must NOT also remain in
+		// the preceding text segment — else it reads `@@Richard`. Cut the
+		// preceding text at the `@` and let the pill own that single `@`.
+		const atPos = (m.offset > cursor && text[m.offset - 1] === '@') ? m.offset - 1 : m.offset;
+		if (atPos > cursor) out.push({ type: 'text', text: text.slice(cursor, atPos) });
 		out.push({ type: 'mention', uid: m.uid, name: text.slice(m.offset, m.offset + m.len) });
 		cursor = m.offset + m.len;
 	}

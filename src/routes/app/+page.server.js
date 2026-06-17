@@ -25,10 +25,6 @@ export async function load({ locals, parent }) {
 	const nextPlan = currentPlan ? (upcoming.indexOf(currentPlan) >= 0 ? upcoming[upcoming.indexOf(currentPlan) + 1] : null) : null;
 
 	let completions = {};
-	let progress = {};
-	let allProgress = {};
-	let submissionsByItem = {};
-	let peerSubmissions = {};
 
 	const r2Base = (env.R2_PUBLIC_BASE_URL ?? env.PUBLIC_R2_PUBLIC_BASE_URL ?? '').replace(/\/$/, '');
 
@@ -42,34 +38,37 @@ export async function load({ locals, parent }) {
 		};
 	}
 
-	let studentCount = 0;
-	if (isInstructor) {
-		if (currentPlan) progress = await getCompletionsForWeek(currentPlan.id);
-		allProgress = await getAllProgressForClass(classId);
-		const rawSubs = await getSubmissionsByItem(classId);
-		for (const [itemId, subs] of Object.entries(rawSubs)) {
-			submissionsByItem[itemId] = subs.map(resolveSubmissionUrl);
-		}
-		// Class roster size — used by the All Assignments overview to
-		// render "N/M done" badges per item so instructors see
-		// completion as a ratio against the class, not just a raw count.
-		studentCount = await getStudentCountForClass(classId);
-	} else if (currentPlan) {
+	// Critical for the student: their own completion state drives the
+	// checklist, so it's awaited (streaming it would flash empty checkboxes).
+	if (!isInstructor && currentPlan) {
 		const rawCompletions = await getCompletionsForStudent(currentPlan.id, userId);
-		// Resolve R2 keys to public URLs so the inline "Edit submission"
-		// UI can render an image/video preview chip for the student's
-		// own past upload without each row having to know the R2 base.
 		for (const [itemId, c] of Object.entries(rawCompletions)) {
 			completions[itemId] = resolveSubmissionUrl(c);
-		}
-		const rawPeer = await getVisibleSubmissionsForPlan(currentPlan.id);
-		for (const [itemId, subs] of Object.entries(rawPeer)) {
-			peerSubmissions[itemId] = subs.map(resolveSubmissionUrl);
 		}
 	}
 
 	const maxWeek = plans.reduce((m, p) => Math.max(m, p.week), 0);
 	const pastPlans = plans.filter((p) => p.id !== currentPlan?.id && p.id !== nextPlan?.id).reverse();
+
+	// Secondary dashboard data — peer submissions and (for instructors) the
+	// class progress/overview. Returned as an UN-AWAITED promise so the week
+	// card + checklist paint immediately on tab switch; the page fills these
+	// sections in when it lands.
+	const extras = loadExtras();
+	async function loadExtras() {
+		const out = { progress: {}, allProgress: {}, submissionsByItem: {}, peerSubmissions: {}, studentCount: 0 };
+		if (isInstructor) {
+			if (currentPlan) out.progress = await getCompletionsForWeek(currentPlan.id);
+			out.allProgress = await getAllProgressForClass(classId);
+			const rawSubs = await getSubmissionsByItem(classId);
+			for (const [itemId, subs] of Object.entries(rawSubs)) out.submissionsByItem[itemId] = subs.map(resolveSubmissionUrl);
+			out.studentCount = await getStudentCountForClass(classId);
+		} else if (currentPlan) {
+			const rawPeer = await getVisibleSubmissionsForPlan(currentPlan.id);
+			for (const [itemId, subs] of Object.entries(rawPeer)) out.peerSubmissions[itemId] = subs.map(resolveSubmissionUrl);
+		}
+		return out;
+	}
 
 	return {
 		session,
@@ -77,14 +76,10 @@ export async function load({ locals, parent }) {
 		nextPlan,
 		pastPlans,
 		completions,
-		progress,
-		allProgress,
 		allPlans: isInstructor ? plans : [],
-		submissionsByItem,
-		peerSubmissions,
 		nextWeekNumber: maxWeek + 1,
-		studentCount,
-		classId
+		classId,
+		extras
 	};
 }
 

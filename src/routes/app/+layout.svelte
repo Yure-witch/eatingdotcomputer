@@ -1,17 +1,24 @@
 <script>
 	import '$lib/text-effects.css';
 	import { browser } from '$app/environment';
-	import { onMount, onDestroy, setContext } from 'svelte';
-	import { page } from '$app/stores';
+	import { onMount, onDestroy, setContext, untrack } from 'svelte';
+	import { page, navigating } from '$app/stores';
 	import { auth, db as rtdb } from '$lib/firebase.js';
 	import { signInWithCustomToken } from 'firebase/auth';
 	import { ref, onValue, onChildAdded, off, set, update, onDisconnect, query, limitToLast } from 'firebase/database';
 	import { getConvId } from '$lib/convId.js';
-	import { invalidateAll, afterNavigate } from '$app/navigation';
+	import { pageTitle, pageTitleHref } from '$lib/page-title-store.js';
+	import { invalidateAll, afterNavigate, goto, preloadData } from '$app/navigation';
 	import ProfileHover from '$lib/components/ProfileHover.svelte';
 	import Avatar from '$lib/components/Avatar.svelte';
 	import BottomNav from '$lib/components/BottomNav.svelte';
+	import ConvSkeleton from '$lib/components/ConvSkeleton.svelte';
 	import AppHeader from '$lib/components/AppHeader.svelte';
+	// Tab sections mounted as live panels in the mobile scroll-snap pager.
+	import HomePanel from './+page.svelte';
+	import OrbitPanel from './orbit/+page.svelte';
+	import LabPanel from './playground/+page.svelte';
+	import ManagePanel from './manage/+page.svelte';
 
 	let { data, children } = $props();
 
@@ -55,6 +62,538 @@
 
 	// ── Sidebar state ──
 	let sidebarOpen = $state(false);
+
+	// ── Section pager (mobile): the tab sections live in ONE native scroll-snap
+	// track, so swiping between them is compositor-smooth and the REAL pages are
+	// under your finger. Panels lazy-mount (current ± 1) and stay alive once
+	// seen (cached); far panels show a skeleton until reached. Desktop and
+	// non-pager routes (e.g. chat) render normally via {@render children()}.
+	let _isMobile = $state(false);
+	const _isConvRoute = (p) => /^\/app\/chat\/(channel|dm)\//.test(p);
+
+	// On mobile, the CURRENT conversation joins the pager as a full-screen panel
+	// at index 0 (left of the chat menu), so conversation → menu → home → orbit
+	// is ONE native scroll-snap pipeline — same compositor-driven smoothness as
+	// the section swipes. The conv panel is dynamic: present only while the route
+	// is a conversation (it renders the live page via {@render children()}; we
+	// don't preload conversations as section Comps).
+	const _onConvMobile = $derived(_isMobile && _isConvRoute($page.url.pathname));
+	const PANELS = $derived([
+		...(_onConvMobile ? [{ conv: true }] : []),
+		{ route: '/app/chat', chatMenu: true },
+		{ route: '/app', Comp: HomePanel },
+		{ route: '/app/orbit', Comp: OrbitPanel },
+		{ route: '/app/playground', Comp: LabPanel },
+		...(data.currentUser?.role === 'instructor' ? [{ route: '/app/manage', Comp: ManagePanel }] : [])
+	]);
+	function _panelIndexFor(path) {
+		// A conversation is the conv panel (index 0) when present.
+		if (_isConvRoute(path)) return PANELS[0]?.conv ? 0 : -1;
+		for (let i = 0; i < PANELS.length; i++) {
+			const r = PANELS[i].route;
+			if (!r) continue;
+			// '/app' and the chat MENU are EXACT matches — so Home doesn't catch
+			// every /app/* route. Section routes match themselves + sub-routes.
+			if (r === '/app' || r === '/app/chat') { if (path === r) return i; }
+			else if (path === r || path.startsWith(r + '/')) return i;
+		}
+		return -1;
+	}
+	const pagerIndex = $derived(_panelIndexFor($page.url.pathname));
+	const isPagerActive = $derived(_isMobile && pagerIndex >= 0);
+
+	// Instant feedback: the moment a tap navigates to a conversation, paint a
+	// skeleton message window (so it appears immediately) until the real page's
+	// data resolves and renders. Mobile only — desktop loads fast and differs.
+	const _showConvSkeleton = $derived(
+		_isMobile && !!$navigating && _isConvRoute($navigating.to?.url?.pathname ?? '')
+	);
+
+	// Keep the swipe-in menu MOUNTED (off-screen) the whole time you're in a
+	// conversation, so the right→left swipe just animates an already-rendered
+	// list (avatars/presence/previews) instead of building it on-demand mid-drag.
+	// The conversation → menu swipe is now a native pager transition (the conv is
+	// a real panel), so the finger-tracked slide-in overlay only ever mounts if a
+	// legacy drag is genuinely in flight — which it no longer is. Kept gated on
+	// _menuSliding alone so the markup/CSS can stay until fully removed.
+	const _menuOverlayMounted = $derived(_isMobile && _menuSliding);
+
+	// Bottom-nav visibility now follows the LIVE pager position, not just the
+	// route. The conversation is a pager panel, so while it covers most of the
+	// screen the nav is hidden; the instant you swipe past halfway toward the menu
+	// it reveals and rises up — riding WITH the gesture instead of popping in
+	// ~80ms after the route commits (which felt glitchy). The `conv-covering`
+	// class (consumed by BottomNav) replaces the old route-based `in-conversation`
+	// hide for nav purposes.
+	let _navHidden = false;
+	let _navRiseT;
+	$effect(() => {
+		if (typeof document === 'undefined') return;
+		const covering = _onConvMobile && _pagerFraction < 0.5;
+		const root = document.documentElement;
+		untrack(() => {
+			if (covering === _navHidden) return;
+			// Hidden → shown: animate up from the bottom.
+			if (!covering && _navHidden && _isMobile) {
+				root.classList.add('nav-rising');
+				clearTimeout(_navRiseT);
+				_navRiseT = setTimeout(() => root.classList.remove('nav-rising'), 340);
+			}
+			_navHidden = covering;
+			root.classList.toggle('conv-covering', covering);
+		});
+	});
+
+	let panelData = $state({});        // route -> data
+	let panelSeen = $state(new Set()); // routes ever mounted (keep-alive cache)
+	let pagerEl = $state(null);
+	let _pagerProg = false;            // suppress the scroll handler during a programmatic scroll
+	let _pagerSnapT;
+	let _lastScrollAt = 0;             // timestamp of the last user scroll (plain let: not reactive)
+	let _mqHandler;                    // matchMedia listener for the mobile breakpoint
+	let _pagerVisibleRoute = $state(null); // route of the panel currently in view (live, for nav highlight)
+	let _pagerFraction = $state(0);        // live fractional scroll position (for the sliding highlight)
+	let _gestureStartIdx = 0;          // panel index when the current touch gesture began (one-swipe-per-panel clamp)
+	let _suppressCommitUntil = 0;      // performance.now() until which scroll-settle nav-commits are ignored
+	// Extend (never shorten) the window during which a stray momentum/anchoring
+	// scroll event must NOT trigger a navigation — set by taps and programmatic
+	// snaps that are already driving their own navigation.
+	function _suppressCommits(ms) { _suppressCommitUntil = Math.max(_suppressCommitUntil, performance.now() + ms); }
+	// Abort any in-flight programmatic scroll (the eased _fastScrollTo or the
+	// hard-snap correction). Both run a rAF loop that keeps writing scrollLeft; if
+	// the user starts swiping while one is running it FIGHTS their finger — yanking
+	// the track back to the chat/home it was heading to and holding it there until
+	// the animation ends. Cancelling on finger-down hands control straight back.
+	function _cancelProgrammaticScroll() {
+		if (!_pagerProg) return;
+		cancelAnimationFrame(_fastScrollRAF);
+		cancelAnimationFrame(_hardSnapRAF);
+		if (pagerEl) pagerEl.style.scrollSnapType = '';
+		_pagerProg = false;
+	}
+	let _pagerTouching = false;        // a finger is currently down on the pager
+	let _pgVelX = 0, _pgPrevX = 0, _pgPrevT = 0, _pgStX = 0, _pgStY = 0, _pgHoriz = false;
+	// Anchor each swipe so a fast flick can't skip past the adjacent panel, and
+	// abort any in-flight programmatic scroll / pending commit so the new gesture
+	// starts from a clean, consistent state. Also begin tracking finger velocity
+	// for flick detection.
+	function onPagerTouchStart(e) {
+		if (!pagerEl) return;
+		_pagerTouching = true;
+		_cancelProgrammaticScroll();
+		clearTimeout(_pagerSnapT); // don't let a previous gesture's commit fire mid-swipe
+		_gestureStartIdx = Math.round(pagerEl.scrollLeft / (pagerEl.clientWidth || 1));
+		const t = e.touches?.[0];
+		if (t) { _pgStX = _pgPrevX = t.clientX; _pgStY = t.clientY; _pgPrevT = e.timeStamp; _pgVelX = 0; _pgHoriz = false; }
+	}
+	function onPagerTouchMove(e) {
+		const t = e.touches?.[0]; if (!t) return;
+		const dt = e.timeStamp - _pgPrevT;
+		if (dt > 0) _pgVelX = (t.clientX - _pgPrevX) / dt; // px/ms (last segment)
+		_pgPrevX = t.clientX; _pgPrevT = e.timeStamp;
+		if (!_pgHoriz) {
+			const adx = Math.abs(t.clientX - _pgStX), ady = Math.abs(t.clientY - _pgStY);
+			if (adx > 8 && adx > ady) _pgHoriz = true;
+		}
+	}
+	function onPagerTouchEnd() {
+		_pagerTouching = false;
+		// Quick flick → commit one panel in the flick direction even on a SHORT
+		// drag, so a fast little swipe navigates (responsive) instead of the native
+		// snap rubber-banding back (which flashes the next panel then returns). A
+		// slow drag-release still keeps the native nearest-snap. Restricted to the
+		// section/menu pager (not while a conversation panel is present) so it can't
+		// fight the conv add/remove repositioning.
+		if (_pgHoriz && Math.abs(_pgVelX) > 0.35 && pagerEl && !_onConvMobile) {
+			const w = pagerEl.clientWidth || 1;
+			const dir = _pgVelX < 0 ? 1 : -1; // finger moving left → next panel (scrollLeft +)
+			const cur = Math.round(pagerEl.scrollLeft / w); // where the scroll actually is now
+			// One panel per gesture: never more than one panel away from where this
+			// swipe began, so a flick can't skip a page.
+			const lo = Math.max(0, _gestureStartIdx - 1), hi = Math.min(PANELS.length - 1, _gestureStartIdx + 1);
+			const target = Math.max(lo, Math.min(hi, cur + dir));
+			if (target !== cur) {
+				_fastScrollTo(target * w, 260); // longer, momentum-like ease (smoother than the old 110ms)
+				const route = PANELS[target]?.route;
+				if (route && target !== pagerIndex) { _suppressCommits(300); goto(route, { noScroll: true, keepFocus: true }); }
+			}
+		}
+	}
+	// Keep the visible route synced to the URL after a navigation / on load.
+	$effect(() => { if (pagerIndex >= 0) { _pagerVisibleRoute = PANELS[pagerIndex].route; _pagerFraction = pagerIndex; } });
+
+	// Fast (~110ms) programmatic scroll for nav-icon taps — native 'smooth' is
+	// too slow. Snap is suspended during the animation so it doesn't fight it.
+	let _fastScrollRAF = 0;
+	function _fastScrollTo(to, dur = 110) {
+		const el = pagerEl; if (!el) return;
+		const from = el.scrollLeft;
+		if (Math.abs(to - from) < 2) return;
+		// Programmatic: flag _pagerProg so the live per-gesture clamp and the
+		// settle-commit both stand down (a nav-icon tap may jump several panels).
+		_pagerProg = true;
+		el.style.scrollSnapType = 'none';
+		const start = performance.now();
+		cancelAnimationFrame(_fastScrollRAF);
+		function step(now) {
+			const t = Math.min(1, (now - start) / dur);
+			const e = 1 - Math.pow(1 - t, 3); // ease-out cubic
+			el.scrollLeft = from + (to - from) * e;
+			if (t < 1) _fastScrollRAF = requestAnimationFrame(step);
+			else { el.style.scrollSnapType = ''; _suppressCommits(120); requestAnimationFrame(() => { _pagerProg = false; }); }
+		}
+		_fastScrollRAF = requestAnimationFrame(step);
+	}
+
+	// Current panel gets the live page data; neighbours get preloaded so they
+	// render real content the moment you peek toward them. This effect only
+	// depends on pagerIndex + $page.data (the triggers); the panelData/panelSeen
+	// reads & writes are untracked so writing them doesn't re-trigger the effect
+	// (that was an infinite update loop).
+	$effect(() => {
+		const idx = pagerIndex;
+		const pdata = $page.data;
+		const panels = PANELS;
+		if (idx < 0) return;
+		untrack(() => {
+			// The conv panel has no route and renders children() directly (not a
+			// keep-alive Comp), so skip its panelData/panelSeen bookkeeping — but
+			// still preload its neighbour (the menu) below.
+			if (panels[idx].route) {
+				panelData = { ...panelData, [panels[idx].route]: pdata };
+				if (!panelSeen.has(panels[idx].route)) { const s = new Set(panelSeen); s.add(panels[idx].route); panelSeen = s; }
+			}
+			for (const j of [idx - 1, idx + 1]) {
+				if (j < 0 || j >= panels.length) continue;
+				const route = panels[j].route;
+				if (!route) continue; // conv neighbour — nothing to preload
+				if (!panelData[route]) {
+					preloadData(route).then(r => {
+						if (r?.type === 'loaded') untrack(() => { panelData = { ...panelData, [route]: r.data }; });
+					}).catch(() => {});
+				}
+			}
+		});
+	});
+	function panelShouldMount(i) {
+		return Math.abs(i - pagerIndex) <= 1 || panelSeen.has(PANELS[i].route);
+	}
+
+	// Sync the track to the current section ONLY for a real mismatch — an
+	// external navigation (a link elsewhere) or the initial load — and never
+	// while the user is mid-scroll. The old version corrected any >4px drift,
+	// which during the swipe→navigation-commit window would yank the track back
+	// to the previous panel (the "snaps back to the previous tab" glitch).
+	$effect(() => {
+		const idx = pagerIndex;
+		if (idx < 0 || !pagerEl) return;
+		const w = pagerEl.clientWidth;
+		if (!w) return;
+		const target = idx * w;
+		const userScrolledRecently = performance.now() - _lastScrollAt < 250;
+		if (!userScrolledRecently && Math.abs(pagerEl.scrollLeft - target) > w * 0.5) {
+			_pagerProg = true;
+			pagerEl.scrollTo({ left: target, behavior: 'auto' });
+			requestAnimationFrame(() => { _pagerProg = false; });
+		}
+	});
+
+	// Keep the right panel in view when the conversation panel is added/removed
+	// at the FRONT of the track. Entering a conversation prepends a panel (every
+	// section shifts one slot right); leaving removes it (everything shifts left).
+	// The browser preserves the pixel scroll offset across that, so without a
+	// correction the track would suddenly show the WRONG panel (e.g. Home where
+	// the menu should be). We snap scrollLeft to `pagerIndex * width` the instant
+	// the panel set flips — synchronously in the same flush, before paint, so the
+	// transition is seamless. This is what makes conv ⇄ menu one native pipeline.
+	let _hadConvPanel = false;
+	$effect(() => {
+		const has = _onConvMobile;
+		const el = pagerEl;
+		untrack(() => {
+			if (!el) { _hadConvPanel = has; return; }
+			if (has === _hadConvPanel) return;
+			_hadConvPanel = has;
+			_hardSnapPager();
+		});
+	});
+	// Force the track to the current panel with NO animation, defeating the
+	// browser's scroll-anchoring + snap engine — both of which otherwise leave us
+	// parked on the wrong panel when the conv panel is inserted/removed at the
+	// front (the menu shows where the conversation should be, or a tap on the same
+	// chat "does nothing" because the track never leaves the menu). We kill snap,
+	// pin scrollLeft, then re-assert across the next two frames before restoring
+	// snap so nothing can nudge it back.
+	let _hardSnapRAF = 0;
+	function _hardSnapPager() {
+		const el = pagerEl;
+		if (!el) return;
+		const w = el.clientWidth || window.innerWidth || 1;
+		const target = Math.max(0, pagerIndex) * w;
+		_pagerProg = true;
+		// Brief commit-suppression covers the window after _pagerProg clears where a
+		// late scroll-anchoring event could still fire and bounce us off the panel.
+		_suppressCommits(150);
+		const prevSnap = el.style.scrollSnapType;
+		el.style.scrollSnapType = 'none';
+		el.scrollLeft = target;
+		cancelAnimationFrame(_hardSnapRAF);
+		_hardSnapRAF = requestAnimationFrame(() => {
+			el.scrollLeft = target;
+			_hardSnapRAF = requestAnimationFrame(() => {
+				el.scrollLeft = target;
+				el.style.scrollSnapType = prevSnap;
+				_pagerProg = false;
+			});
+		});
+	}
+	function onPagerScroll() {
+		if (!pagerEl) return;
+		_lastScrollAt = performance.now();
+		const w = pagerEl.clientWidth || 1;
+		// (No live scrollLeft clamp — it fought deliberate multi-panel drags and
+		// yanked you back on release. Panel skipping is prevented instead by native
+		// scroll-snap-stop + deferring nav commits until the gesture ends, so panel
+		// indices never shift mid-swipe.)
+		// Live fraction (drives the sliding highlight) + which panel is centred
+		// RIGHT NOW (drives the discrete selected tab), before navigation
+		// commits, so the bottom bar follows your finger.
+		_pagerFraction = pagerEl.scrollLeft / w;
+		const vi = Math.round(_pagerFraction);
+		if (PANELS[vi]) _pagerVisibleRoute = PANELS[vi].route;
+		if (_pagerProg) return;
+		clearTimeout(_pagerSnapT);
+		_pagerSnapT = setTimeout(function commit() {
+			// Don't hijack a navigation a tap (or a programmatic snap) just started —
+			// those open a short suppression window so a stray momentum / anchoring
+			// scroll can't bounce us onto the wrong panel (e.g. tap a chat → load →
+			// snap back to Home). If a GENUINE swipe happens to settle inside that
+			// window, don't drop it — re-check once the window passes (reading the
+			// live position then, so if the panel set has since corrected, it
+			// harmlessly no-ops).
+			// Never commit a navigation while a finger is still down — committing
+			// adds/removes the conversation panel, which shifts every panel's index;
+			// doing that mid-swipe re-anchors the gesture to the wrong panel (lands
+			// on Home instead of the menu, or skips to Orbit). Wait until the whole
+			// flick sequence ends so indices only settle once, between gestures.
+			const now = performance.now();
+			if (_pagerTouching || now < _suppressCommitUntil) {
+				_pagerSnapT = setTimeout(commit, _pagerTouching ? 60 : (_suppressCommitUntil - now + 20));
+				return;
+			}
+			const cw = pagerEl.clientWidth || 1;
+			const raw = Math.round(pagerEl.scrollLeft / cw);
+			// One panel per gesture: clamp the landing to ±1 of where the gesture
+			// began. Native momentum very occasionally blows past a page (iOS dropping
+			// scroll-snap-stop on a hard flick); on that rare over-skip, ease to the
+			// adjacent panel instead of navigating to the skipped one. Normal swipes
+			// land within range, so this never causes an everyday snap-back.
+			const i = Math.max(Math.max(0, _gestureStartIdx - 1), Math.min(Math.min(PANELS.length - 1, _gestureStartIdx + 1), raw));
+			if (i !== raw) { _suppressCommits(300); _fastScrollTo(i * cw, 260); }
+			// The conversation panel (PANELS[0] when present) has no route — you're
+			// already on it; never goto(undefined). Only commit for real section/menu
+			// panels you've actually scrolled to.
+			if (i !== pagerIndex && i >= 0 && i < PANELS.length && PANELS[i].route) {
+				goto(PANELS[i].route, { noScroll: true, keepFocus: true });
+			}
+		}, 80);
+	}
+
+	// Conversation → menu swipe. A conversation (channel/DM) is a full-screen,
+	// non-pager view; a clear right-to-left swipe navigates to the chat menu
+	// (the pager's left panel), from which you can keep swiping to Home etc.
+	// (_swDragX/_swDragging kept only so the desktop sidebar's drag bindings
+	// stay defined — unused on mobile now.)
+	let _swStartX = 0, _swStartY = 0, _swArmed = false, _swDecided = false;
+	let _swDragX = $state(0);
+	let _swDragging = $state(false);
+	// Menu overlay drag: 0 = off-screen right (conversation), 1 = fully covering.
+	let _menuSliding = $state(false);   // overlay present (dragging or settling)
+	let _menuDragging = $state(false);  // finger is actively dragging (no transition)
+	// Plain (non-reactive) — the visual transform is driven imperatively via the
+	// `--md` custom property on the overlay element, so dragging doesn't run a
+	// Svelte reactivity flush per touch-move (that's what kept it from feeling as
+	// smooth as the compositor-driven pager). This var only feeds the threshold
+	// logic in onSwipeEnd.
+	let _menuDrag = 0;
+	let _menuSlideEl = $state(null);
+	function _setMenuDrag(v) {
+		_menuDrag = v;
+		_menuSlideEl?.style.setProperty('--md', String(v));
+	}
+	let _menuGen = 0;                   // bumps each gesture so a stale settle never drops a newer overlay
+	let _menuNavPending = false;        // true between the conv→menu commit and the menu actually landing
+	let _menuJustLanded = false;        // ~400ms window right after landing on the menu (pager may not yet handle a fast flick)
+	let _menuLandedT;
+	let _swMode = 'menu';               // 'menu' (conversation → chat menu) | 'home' (fast follow-on → Home)
+	function onSwipeStart(e) {
+		if (window.innerWidth > 640) { _swArmed = false; return; }
+		// The conversation is now a real pager panel, so conv→menu is handled by
+		// the native scroll-snap track (compositor-smooth). The old finger-tracked
+		// overlay is fully redundant whenever the pager is live — never arm it.
+		if (isPagerActive) { _swArmed = false; return; }
+		const t = e.touches?.[0];
+		if (!t) { _swArmed = false; return; }
+		// Don't hijack the compose / sliders / horizontal scrollers / pickers.
+		if (e.target?.closest?.('.input-area, .send-wrap, .sz-capture, input[type="range"], .text-typo-bar, .expr-panel, .picker-popover, .compose-picker-pop')) { _swArmed = false; return; }
+		if ((_isConvRoute($page.url.pathname) || _showConvSkeleton) && !_menuNavPending) {
+			// In a conversation OR its loading skeleton → a left-swipe opens the
+			// chat menu (so you can bail back out of a still-loading chat too).
+			_swMode = 'menu';
+		} else if (_menuNavPending || _menuJustLanded) {
+			// Just opened the menu and the pager isn't reliably catching a FAST
+			// follow-on flick yet → treat a left-swipe as "carry on to Home".
+			_swMode = 'home';
+		} else {
+			_swArmed = false; return;
+		}
+		_swStartX = t.clientX; _swStartY = t.clientY;
+		_swPrevX = t.clientX; _swPrevT = e.timeStamp; _swVelX = 0;
+		_swArmed = true; _swDecided = false;
+	}
+	let _swLastDx = 0, _swVelX = 0, _swPrevX = 0, _swPrevT = 0;
+	function onSwipeMove(e) {
+		if (!_swArmed) return;
+		const t = e.touches?.[0]; if (!t) return;
+		const dx = t.clientX - _swStartX, dy = t.clientY - _swStartY, W = window.innerWidth;
+		_swLastDx = dx;
+		// Instantaneous horizontal velocity (px/ms) — lets a quick FLICK commit
+		// even at low drag distance, matching the native pager's momentum snap.
+		const _dt = e.timeStamp - _swPrevT;
+		if (_dt > 0) _swVelX = (t.clientX - _swPrevX) / _dt;
+		_swPrevX = t.clientX; _swPrevT = e.timeStamp;
+		if (!_swDecided) {
+			if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
+			if (Math.abs(dy) >= Math.abs(dx)) { _swArmed = false; return; } // vertical → scroll
+			if (dx > 0) { _swArmed = false; return; }                       // leftward only
+			_swDecided = true;
+			if (_swMode === 'menu') { _menuSliding = true; _menuDragging = true; }
+		}
+		// 'home' mode just waits for release (no overlay) — the pager will snap.
+		if (_swMode === 'menu') {
+			_setMenuDrag(Math.max(0, Math.min(1, -dx / W)));
+		}
+	}
+	function onSwipeEnd() {
+		if (!_swArmed) return;
+		_swArmed = false;
+		// Fast follow-on swipe right after opening the menu → go on to Home,
+		// without waiting for the pager's native scroll-snap to engage. Require a
+		// clear swipe (≥30px left) so it can never collide with a tap (≤16px,
+		// handled by onMenuTouchEnd → opens that conversation).
+		if (_swMode === 'home') {
+			if (_swDecided && (_swLastDx <= -30 || _swVelX < -0.4)) { clearTimeout(_pagerSnapT); pageTitle.set(null); pageTitleHref.set(null); goto('/app', { noScroll: true }); }
+			return;
+		}
+		if (!_menuSliding) return;
+		_menuDragging = false; // re-enable the transition so it animates to the snap
+		// Commit on a clear drag (past 30%) OR a quick leftward flick (velocity),
+		// like the native pager's momentum snap.
+		if (_menuDrag > 0.3 || _swVelX < -0.4) {
+			const gen = ++_menuGen;
+			_setMenuDrag(1); // settle fully in (fast transition)
+			// Commit the navigation IMMEDIATELY (no settle delay) so the real
+			// pager menu is live underneath the overlay right away — the overlay
+			// is pointer-events:none, so a quick SECOND left-swipe passes straight
+			// through and scrolls the pager to Home. Drop the overlay ONLY once
+			// BOTH (a) the pager menu has actually painted underneath and (b) the
+			// slide-in has finished — dropping before the paint is what made the
+			// old chat flash back for a few frames.
+			let painted = false, slid = false;
+			const drop = () => {
+				if (painted && slid && gen === _menuGen) { _menuSliding = false; _setMenuDrag(0); }
+			};
+			_menuNavPending = true; // block re-arming until the menu route actually lands
+			// A fast follow-on left-swipe within this window is routed to Home by
+			// onSwipeEnd ('home' mode), since the pager's native snap may not catch
+			// a quick flick this soon after mounting.
+			_menuJustLanded = true;
+			clearTimeout(_menuLandedT);
+			_menuLandedT = setTimeout(() => { _menuJustLanded = false; }, 450);
+			// Clear any eager chat title so the menu header isn't left showing it
+			// (covers the case where we bail before the conversation ever mounts).
+			pageTitle.set(null); pageTitleHref.set(null);
+			goto('/app/chat', { noScroll: true }).then(() => {
+				_menuNavPending = false; // pager is now live → further swipes go to it
+				requestAnimationFrame(() => requestAnimationFrame(() => { painted = true; drop(); }));
+			});
+			// Safety net: never leave it stuck pending if the nav promise stalls.
+			setTimeout(() => { _menuNavPending = false; }, 400);
+			setTimeout(() => { slid = true; drop(); }, 120);
+		} else {
+			_menuGen++;
+			_setMenuDrag(0); // cancel — slide back out
+			setTimeout(() => { _menuSliding = false; }, 130);
+		}
+	}
+
+	// Tap-to-navigate for the chat-menu panel. When you swipe Home → Chat and
+	// tap a conversation while the pager is still momentum-scrolling, iOS eats
+	// the synthetic click (it spends the tap stopping the scroll) so the link
+	// never fires. We detect the tap from the raw touch and navigate ourselves.
+	let _menuTap = null;
+	// Publish the tapped chat's title/subtitle to the header BEFORE navigating,
+	// so the header shows the right name immediately during the loading skeleton
+	// (it matches what the conversation re-publishes on mount → no flicker).
+	function _setEagerChatTitle(href) {
+		let m = href.match(/^\/app\/chat\/channel\/([^/?#]+)/);
+		if (m) { pageTitle.set('# ' + decodeURIComponent(m[1])); pageTitleHref.set(null); return; }
+		m = href.match(/^\/app\/chat\/dm\/([^/?#]+)/);
+		if (m) {
+			const cid = m[1];
+			const u = data.users?.find((x) => getConvId(data.currentUser.id, x.id) === cid);
+			pageTitle.set(u?.name ?? '');
+			pageTitleHref.set(u ? `/app/profile/${u.id}` : null);
+		}
+	}
+
+	function onMenuTouchStart(e) {
+		const t = e.touches?.[0];
+		// Capture the link under the finger AT touchstart — more reliable than the
+		// touchend target while the panel is scrolling.
+		const href = e.target?.closest?.('a[href]')?.getAttribute('href') ?? null;
+		_menuTap = t ? { x: t.clientX, y: t.clientY, t: e.timeStamp, href } : null;
+		// Kick the conversation's data load NOW, while the finger is still down, so
+		// it's (often) already cached by the time the tap lands → instant swap.
+		if (href && _isConvRoute(href)) preloadData(href).catch(() => {});
+	}
+	function onMenuTouchEnd(e) {
+		const start = _menuTap;
+		_menuTap = null;
+		if (!start) return;
+		const t = e.changedTouches?.[0];
+		if (!t) return;
+		// Tap, not a scroll/hold — generous thresholds so a fast flick-then-release
+		// on a chat (the "moving fast" case) still counts as a tap.
+		if (Math.abs(t.clientX - start.x) > 16 || Math.abs(t.clientY - start.y) > 16) return;
+		if (e.timeStamp - start.t > 700) return;
+		const href = start.href || e.target?.closest?.('a[href]')?.getAttribute('href');
+		if (!href || href === '#') return;
+		// The pager schedules goto(currentPanel) ~80ms after any scroll; if that
+		// fires after ours it yanks us back to the menu and the tap "does nothing".
+		// Cancel the pending one and suppress scroll-commits briefly so a stray
+		// momentum / anchoring scroll can't bounce us back out.
+		clearTimeout(_pagerSnapT);
+		_suppressCommits(400);
+		e.preventDefault();
+		const goingToConv = _isConvRoute(href);
+		if (goingToConv) _setEagerChatTitle(href);
+		// Are we visually on the menu but with the route STILL on a conversation —
+		// i.e. the swipe-out navigation hasn't committed yet? Then tapping another
+		// (or the SAME) conversation won't flip _onConvMobile, so the auto hard-snap
+		// that normally pulls the track to the conv panel never fires: we'd change
+		// route but stay stuck on the menu ("tap does nothing", or "loading then
+		// back to the menu"). For the same chat, goto() is even a no-op. Detect it
+		// and force the track back to the conversation panel ourselves.
+		const staleConv = goingToConv && _isConvRoute($page.url.pathname);
+		goto(href);
+		// Conv panel is already mounted at index 0 — slide the track to it with the
+		// same eased motion the nav-icon taps use (instead of an instant jump), so
+		// reopening a chat feels like the rest of the pager. (For a *different*
+		// chat the loading overlay covers this; for the same chat you see the slide.)
+		if (staleConv) _fastScrollTo(0);
+	}
+
 	let sidebarCollapsed = $state(false);
 	let sidebarWidth = $state(220);
 	let resizing = $state(false);
@@ -78,6 +617,41 @@
 	}
 
 	setContext('openSidebar', () => { sidebarOpen = !sidebarOpen; });
+	// Live nav state for the bottom bar: which section panel is in view RIGHT
+	// NOW (so the selected tab follows the swipe instead of waiting for the
+	// navigation to commit), and whether the chat drawer is open (so the Chat
+	// icon stays selected even with no conversation chosen).
+	setContext('pagerNav', {
+		get activeRoute() { return isPagerActive ? _pagerVisibleRoute : null; },
+		get sidebarOpen() { return sidebarOpen; },
+		// True while the conversation panel covers most of the screen. Goes false
+		// the instant you swipe past halfway toward the menu — so the header can
+		// switch from the chat name back to the standard wordmark live with the
+		// scroll, instead of waiting for the deferred route commit to settle.
+		get convCovering() { return _onConvMobile && _pagerFraction < 0.5; },
+		// Fractional BOTTOM-NAV slot (0 = Chat, 1 = Home, …). The chat panels
+		// (conversation + menu, which both sit left of Home) collapse onto the
+		// single Chat slot, so the pill rides correctly across the 4 nav icons
+		// regardless of whether the conversation panel is present.
+		get navFraction() {
+			const homeIdx = PANELS.findIndex((p) => p.route === '/app');
+			return homeIdx < 0 ? 0 : Math.max(0, _pagerFraction - homeIdx + 1);
+		},
+		// Tapping a nav icon: smooth-scroll the track to that panel (same motion
+		// as a swipe) instead of a navigate-then-jump. The scroll settling
+		// commits the navigation via onPagerScroll. Returns true if it handled
+		// it (so the <a> can preventDefault); false → let the link navigate.
+		goToSection(route) {
+			if (!isPagerActive || !pagerEl) return false;
+			const idx = PANELS.findIndex((p) => p.route === route);
+			if (idx < 0) return false;
+			_fastScrollTo(idx * pagerEl.clientWidth);
+			return true;
+		},
+		// Live fractional scroll position (0 = first section … N-1 = last), so
+		// the bottom-bar highlight can slide continuously with the swipe.
+		get fraction() { return _pagerFraction; }
+	});
 	// Expose rawPresence to child pages (e.g. manage) via a getter so the manage
 	// tab uses the exact same signal as the sidebar — no separate Firebase subscription.
 	setContext('rawPresence', { get value() { return rawPresence; } });
@@ -103,6 +677,66 @@
 		Object.fromEntries((data.channels ?? []).filter((ch) => ch.lastAt).map((ch) => [ch.id, { lastAt: ch.lastAt }]))
 	);
 	let dmList = $state([]);
+
+	// ── Member reordering (drag & drop) ──────────────────────────────────────
+	// A user-defined order of member uids, persisted per-class in localStorage.
+	// Members not in the list (new joins) sort to the end in server order.
+	const MEMBER_ORDER_KEY = `mem-order:${data.currentClass?.id ?? 'x'}`;
+	// Seed from the server (synced across every device); localStorage is just an
+	// offline fallback restored in onMount when the server has nothing yet.
+	let memberOrder = $state(
+		Array.isArray(data.currentUser?.memberOrder) ? data.currentUser.memberOrder : []
+	);
+	let dragUid = $state(null);
+	const orderedUsers = $derived.by(() => {
+		const users = data.users ?? [];
+		if (!memberOrder.length) return users;
+		const rank = new Map(memberOrder.map((id, i) => [id, i]));
+		return [...users].sort((a, b) =>
+			(rank.has(a.id) ? rank.get(a.id) : Infinity) - (rank.has(b.id) ? rank.get(b.id) : Infinity)
+		);
+	});
+	function persistMemberOrder() {
+		// localStorage = instant local cache; the POST makes it identical on
+		// every device (desktop + mobile) via users.member_order.
+		try { localStorage.setItem(MEMBER_ORDER_KEY, JSON.stringify(memberOrder)); } catch {}
+		fetch('/api/member-order', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ order: memberOrder })
+		}).catch(() => {});
+	}
+	function onMemberDragStart(e, uid) {
+		dragUid = uid;
+		try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', uid); } catch {}
+	}
+	function onMemberDragOver(e, overUid) {
+		if (!dragUid || dragUid === overUid) return;
+		e.preventDefault();
+		try { e.dataTransfer.dropEffect = 'move'; } catch {}
+		// Live reorder: splice the dragged uid in just before the row it's over.
+		const cur = orderedUsers.map((u) => u.id);
+		const from = cur.indexOf(dragUid);
+		const to = cur.indexOf(overUid);
+		if (from < 0 || to < 0 || from === to) return;
+		cur.splice(to, 0, cur.splice(from, 1)[0]);
+		memberOrder = cur;
+	}
+	function onMemberDragEnd() {
+		if (dragUid) persistMemberOrder();
+		dragUid = null;
+	}
+
+	// Clean a raw message into a one-line preview: drop emote tokens
+	// ([ek|ce|tg|tgc:…]) and the PUA size/effect sentinels so the list shows
+	// readable text instead of markup noise.
+	function previewText(s) {
+		return (s || '')
+			.replace(/\[(?:ek|ce|tg|tgc):[^\]]*\]/gi, ' ')
+			.replace(/[\uE000-\uF8FF]/g, '')
+			.replace(/\s+/g, ' ')
+			.trim();
+	}
 
 	function isUnread(convId, lastAt) {
 		return (lastAt ?? 0) > (lastRead[convId] ?? 0);
@@ -400,6 +1034,15 @@
 
 	onMount(async () => {
 
+		// Restore a locally-cached member ordering ONLY if the server hasn't
+		// supplied one yet (first drag before it round-trips, or offline).
+		try {
+			if (!memberOrder.length) {
+				const saved = JSON.parse(localStorage.getItem(MEMBER_ORDER_KEY) || '[]');
+				if (Array.isArray(saved) && saved.length) memberOrder = saved;
+			}
+		} catch {}
+
 		// BroadcastChannel: service worker relays push data here, but we no longer show
 		// toasts from it — Firebase subscriptions (onChildAdded / userChats) handle
 		// in-app toasts with better attribution while the app is open. The OS notification
@@ -408,6 +1051,18 @@
 		try {
 			pushBroadcast = new BroadcastChannel('ec-push');
 		} catch { /* BroadcastChannel not available */ }
+
+		// Track mobile breakpoint for the section pager.
+		const _mq = window.matchMedia('(max-width: 640px)');
+		_isMobile = _mq.matches;
+		_mqHandler = (e) => { _isMobile = e.matches; };
+		_mq.addEventListener('change', _mqHandler);
+
+		// Swipe-to-close the mobile sidebar drawer (open via the Chat button).
+		// Passive — we never preventDefault, so native scrolling stays smooth.
+		window.addEventListener('touchstart', onSwipeStart, { passive: true });
+		window.addEventListener('touchmove', onSwipeMove, { passive: true });
+		window.addEventListener('touchend', onSwipeEnd, { passive: true });
 
 		sidebarCollapsed = localStorage.getItem('sidebar_collapsed') === '1';
 		const savedWidth = parseInt(localStorage.getItem('sidebar_width') ?? '220');
@@ -878,6 +1533,11 @@
 	});
 
 	onDestroy(() => {
+		if (typeof window !== 'undefined') {
+			window.removeEventListener('touchstart', onSwipeStart);
+			window.removeEventListener('touchmove', onSwipeMove);
+			window.removeEventListener('touchend', onSwipeEnd);
+		}
 		pushBroadcast?.close();
 		clearInterval(heartbeatTimer);
 		clearInterval(tickTimer);
@@ -933,12 +1593,132 @@
 <!-- Profile hover card (desktop) -->
 <ProfileHover userId={hoverUserId} x={hoverX} y={hoverY} {onlineIds} />
 
+<!-- Conversation list — shared by the desktop sidebar AND the mobile chat
+     panel (pager index 0). Defined once at the top level so both can render it. -->
+{#snippet chatListContent()}
+	{#if data.channels?.length}
+		<!-- Channels -->
+		<div class="sidebar-section">
+			<div class="section-header">
+				<span>Channels</span>
+				{#if data.currentUser?.role === 'instructor'}
+					<button class="btn-icon" onclick={() => { showNewChannel = !showNewChannel; channelError = null; }} title="New channel">+</button>
+				{/if}
+			</div>
+
+			{#if showNewChannel}
+				<div class="inline-input">
+					<span class="hash">#</span>
+					<input type="text" bind:value={newChannelName} onkeydown={onChannelKeydown} placeholder="channel-name" autofocus disabled={creatingChannel} />
+					{#if channelError}<span class="inline-error">{channelError}</span>{/if}
+				</div>
+			{/if}
+
+			{#each data.channels as ch}
+				{@const path = `/app/chat/channel/${ch.id}`}
+				{@const unreadCount = unreadCounts[ch.id] ?? 0}
+				{@const hasDot = unreadCount === 0 && isUnread(ch.id, channelMeta[ch.id]?.lastAt)}
+				{@const meta = channelMeta[ch.id]}
+				<a href={path} class="conv-item" class:active={$page.url.pathname === path}>
+					<span class="avatar-wrap">
+						<span class="conv-avatar channel-avatar">#</span>
+					</span>
+					<div class="member-text">
+						<span class="member-name" class:bold={unreadCount > 0 || hasDot}>{ch.name}</span>
+						<span class="conv-last">
+							{#if meta?.lastMessage}{#if meta.lastUser}<span class="last-sender">{meta.lastUser}:</span> {/if}{previewText(meta.lastMessage)}{:else}<span class="conv-last-empty">No messages yet</span>{/if}
+						</span>
+					</div>
+					{#if unreadCount > 0}
+						<span class="unread-badge">{unreadCount > 99 ? '99+' : unreadCount}</span>
+					{:else if hasDot}
+						<span class="unread-dot"></span>
+					{/if}
+				</a>
+			{/each}
+		</div>
+	{/if}
+
+	{#if data.users?.length}
+		<!-- Members (DMs) -->
+		<div class="sidebar-section">
+			<div class="section-header">
+				<span>Members</span>
+				{#if onlineIds.size > 0}<span class="online-count">{onlineIds.size} online</span>{/if}
+			</div>
+
+			{#if data.currentUser}
+				<div class="member-row self" onmouseenter={(e) => showHover(e, data.currentUser.id)} onmouseleave={hideHover}>
+					<a class="conv-item" href="/app/profile/{data.currentUser.id}">
+						<span class="avatar-wrap">
+							<Avatar
+								name={data.currentUser.name}
+								uid={data.currentUser.id}
+								avatarKind={data.currentUser.avatarKind ?? 'gen'}
+								avatarValue={data.currentUser.avatarValue ?? null}
+								size={40}
+							/>
+							<span class="presence-dot" class:idle={presenceStatus[data.currentUser.id] === 'idle'}></span>
+						</span>
+						<div class="member-text">
+							<span class="member-name">{data.currentUser.name} <span class="you-tag">you</span></span>
+							<span class="conv-last conv-last-empty">View your profile</span>
+						</div>
+						{#if data.currentUser.role === 'instructor'}<span class="role-badge">instr.</span>{/if}
+					</a>
+				</div>
+			{/if}
+
+			{#each orderedUsers as u (u.id)}
+				{@const isOnline = onlineIds.has(u.id)}
+				{@const convId = getConvId(data.currentUser.id, u.id)}
+				{@const dmPath = `/app/chat/dm/${convId}`}
+				{@const dmUnreadCount = unreadCounts[convId] ?? 0}
+				{@const dmUnreadDot = dmUnreadCount === 0 && isUnread(convId, dmList.find((d) => d.convId === convId)?.lastAt)}
+				{@const lastMsg = dmList.find((d) => d.convId === convId)?.lastMessage ?? null}
+				<div class="member-row"
+					class:drag-target={dragUid && dragUid !== u.id}
+					class:dragging={dragUid === u.id}
+					draggable="true"
+					ondragstart={(e) => onMemberDragStart(e, u.id)}
+					ondragover={(e) => onMemberDragOver(e, u.id)}
+					ondragend={onMemberDragEnd}
+					ondrop={(e) => e.preventDefault()}
+					onmouseenter={(e) => showHover(e, u.id)} onmouseleave={hideHover}>
+					<a class="conv-item" href={dmPath} class:active={$page.url.pathname === dmPath} draggable="false">
+						<span class="avatar-wrap">
+							<Avatar
+								name={u.name}
+								uid={u.id}
+								avatarKind={u.avatarKind ?? 'gen'}
+								avatarValue={u.avatarValue ?? null}
+								size={40}
+							/>
+							{#if isOnline}<span class="presence-dot" class:idle={presenceStatus[u.id] === 'idle'}></span>{/if}
+						</span>
+						<div class="member-text">
+							<span class="member-name" class:bold={dmUnreadCount > 0 || dmUnreadDot}>{u.name}</span>
+							{#if lastMsg}<span class="conv-last">{previewText(lastMsg)}</span>{:else}<span class="conv-last conv-last-empty">Tap to message</span>{/if}
+						</div>
+						{#if u.role === 'instructor'}<span class="role-badge">instr.</span>{/if}
+						{#if dmUnreadCount > 0}
+							<span class="unread-badge">{dmUnreadCount > 99 ? '99+' : dmUnreadCount}</span>
+						{:else if dmUnreadDot}
+							<span class="unread-dot"></span>
+						{/if}
+					</a>
+				</div>
+			{/each}
+		</div>
+	{/if}
+{/snippet}
+
 {#if sidebarOpen}
 	<div class="sidebar-backdrop" onclick={() => sidebarOpen = false}></div>
 {/if}
 
 <!-- Global sidebar -->
-<nav class="global-sidebar" class:open={sidebarOpen} class:collapsed={sidebarCollapsed} style:width={sidebarCollapsed ? null : `${sidebarWidth}px`} style:transition={resizing ? 'none' : null}>
+<nav class="global-sidebar" class:open={sidebarOpen} class:collapsed={sidebarCollapsed} class:sw-dragging={_swDragging} style:width={sidebarCollapsed ? null : `${sidebarWidth}px`} style:transform={_swDragging ? `translateX(calc(-100% + ${_swDragX}px))` : null} style:transition={resizing ? 'none' : null}>
 	<!-- Header: logo + collapse toggle in one row -->
 	<div class="sidebar-header">
 		<a class="sidebar-logo" href="/app" title="eating.computer">eating.computer</a>
@@ -971,104 +1751,7 @@
 	<div class="sidebar-divider"></div>
 
 	<div class="sidebar-scroll">
-	{#if data.channels?.length}
-		<!-- Channels -->
-		<div class="sidebar-section">
-			<div class="section-header">
-				<span>Channels</span>
-				{#if data.currentUser?.role === 'instructor'}
-					<button class="btn-icon" onclick={() => { showNewChannel = !showNewChannel; channelError = null; }} title="New channel">+</button>
-				{/if}
-			</div>
-
-			{#if showNewChannel}
-				<div class="inline-input">
-					<span class="hash">#</span>
-					<input type="text" bind:value={newChannelName} onkeydown={onChannelKeydown} placeholder="channel-name" autofocus disabled={creatingChannel} />
-					{#if channelError}<span class="inline-error">{channelError}</span>{/if}
-				</div>
-			{/if}
-
-			{#each data.channels as ch}
-				{@const path = `/app/chat/channel/${ch.id}`}
-				{@const unreadCount = unreadCounts[ch.id] ?? 0}
-				{@const hasDot = unreadCount === 0 && isUnread(ch.id, channelMeta[ch.id]?.lastAt)}
-				<a href={path} class="sidebar-item" class:active={$page.url.pathname === path}>
-					<span class="hash">#</span>
-					<span class="item-name" class:bold={unreadCount > 0 || hasDot}>{ch.name}</span>
-					{#if unreadCount > 0}
-						<span class="unread-badge">{unreadCount > 99 ? '99+' : unreadCount}</span>
-					{:else if hasDot}
-						<span class="unread-dot"></span>
-					{/if}
-				</a>
-			{/each}
-		</div>
-	{/if}
-
-	{#if data.users?.length}
-		<!-- Members (DMs) -->
-		<div class="sidebar-section">
-			<div class="section-header">
-				<span>Members</span>
-				{#if onlineIds.size > 0}<span class="online-count">{onlineIds.size} online</span>{/if}
-			</div>
-
-			{#if data.currentUser}
-				<div class="member-row self" onmouseenter={(e) => showHover(e, data.currentUser.id)} onmouseleave={hideHover}>
-					<a class="member-inner" href="/app/profile/{data.currentUser.id}">
-						<span class="avatar-wrap">
-							<Avatar
-								name={data.currentUser.name}
-								uid={data.currentUser.id}
-								avatarKind={data.currentUser.avatarKind ?? 'gen'}
-								avatarValue={data.currentUser.avatarValue ?? null}
-								size={26}
-							/>
-							<span class="presence-dot" class:idle={presenceStatus[data.currentUser.id] === 'idle'}></span>
-						</span>
-						<div class="member-text">
-							<span class="member-name">{data.currentUser.name} <span class="you-tag">you</span></span>
-						</div>
-						{#if data.currentUser.role === 'instructor'}<span class="role-badge">instr.</span>{/if}
-					</a>
-				</div>
-			{/if}
-
-			{#each data.users as u}
-				{@const isOnline = onlineIds.has(u.id)}
-				{@const convId = getConvId(data.currentUser.id, u.id)}
-				{@const dmPath = `/app/chat/dm/${convId}`}
-				{@const dmUnreadCount = unreadCounts[convId] ?? 0}
-				{@const dmUnreadDot = dmUnreadCount === 0 && isUnread(convId, dmList.find((d) => d.convId === convId)?.lastAt)}
-				{@const lastMsg = dmList.find((d) => d.convId === convId)?.lastMessage ?? null}
-				<div class="member-row" onmouseenter={(e) => showHover(e, u.id)} onmouseleave={hideHover}>
-					<a class="member-inner" href={dmPath} class:active={$page.url.pathname === dmPath}>
-						<span class="avatar-wrap">
-							<Avatar
-								name={u.name}
-								uid={u.id}
-								avatarKind={u.avatarKind ?? 'gen'}
-								avatarValue={u.avatarValue ?? null}
-								size={26}
-							/>
-							{#if isOnline}<span class="presence-dot" class:idle={presenceStatus[u.id] === 'idle'}></span>{/if}
-						</span>
-						<div class="member-text">
-							<span class="member-name" class:bold={dmUnreadCount > 0 || dmUnreadDot}>{u.name}</span>
-							{#if lastMsg}<span class="dm-last">{lastMsg}</span>{/if}
-						</div>
-						{#if u.role === 'instructor'}<span class="role-badge">instr.</span>{/if}
-						{#if dmUnreadCount > 0}
-							<span class="unread-badge">{dmUnreadCount > 99 ? '99+' : dmUnreadCount}</span>
-						{:else if dmUnreadDot}
-							<span class="unread-dot"></span>
-						{/if}
-					</a>
-				</div>
-			{/each}
-		</div>
-	{/if}
+		{#if !_isMobile}{@render chatListContent()}{/if}
 	</div>
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div class="sidebar-resize-handle" onpointerdown={startResize} class:active={resizing}></div>
@@ -1082,8 +1765,66 @@
 <BottomNav isInstructor={data.currentUser?.role === 'instructor'} {totalUnread} />
 
 <div class="app-shell" style:margin-left={sidebarCollapsed ? '52px' : `${sidebarWidth}px`} style:transition={resizing ? 'none' : null}>
-	{@render children()}
+	{#if isPagerActive}
+		<!-- Native scroll-snap pager: one panel per tab section, swiping
+		     between them is compositor-smooth and the real pages are live
+		     under your finger. Panels lazy-mount (current ± 1, then cached);
+		     far panels show a skeleton until reached. -->
+		<div class="pager-track" bind:this={pagerEl} onscroll={onPagerScroll} ontouchstart={onPagerTouchStart} ontouchmove={onPagerTouchMove} ontouchend={onPagerTouchEnd} ontouchcancel={onPagerTouchEnd}>
+			{#each PANELS as panel, i (panel.route ?? 'conv')}
+				<section class="pager-panel" class:current={i === pagerIndex} class:conv={panel.conv}>
+					{#if panel.conv}
+						{@render children()}
+					{:else if panel.chatMenu}
+						<div class="chat-menu-panel" ontouchstart={onMenuTouchStart} ontouchend={onMenuTouchEnd}>
+							<div class="chat-menu-title">{data.currentClass?.name ?? 'Chat'}</div>
+							{@render chatListContent()}
+						</div>
+					{:else if panelShouldMount(i) && panelData[panel.route]}
+						{@const C = panel.Comp}
+						<C data={panelData[panel.route]} form={i === pagerIndex ? $page.form : undefined} />
+					{:else}
+						<div class="pager-skel">
+							<div class="pk pk-title"></div>
+							<div class="pk pk-line"></div>
+							<div class="pk pk-line short"></div>
+							<div class="pk pk-card"></div>
+							<div class="pk pk-card"></div>
+						</div>
+					{/if}
+				</section>
+			{/each}
+		</div>
+	{:else}
+		{@render children()}
+	{/if}
 </div>
+
+<!-- Slide-in chat menu — animates the conversation → menu swipe (the live
+     pager menu takes over once the navigation lands underneath it). -->
+{#if _menuOverlayMounted}
+	<div class="menu-slide" class:dragging={_menuDragging} class:idle={!_menuSliding} bind:this={_menuSlideEl}>
+		<!-- The standard (wordmark) header rides in with the menu, covering the
+		     chat header, so the whole screen slides as one. -->
+		<div class="ms-header">
+			<span class="ms-wordmark">eating.computer</span>
+			{#if data.currentClass?.name}<span class="ms-class">{data.currentClass.name}</span>{/if}
+		</div>
+		<div class="ms-scroll">
+			<div class="chat-menu-panel">
+				<div class="chat-menu-title">{data.currentClass?.name ?? 'Chat'}</div>
+				{@render chatListContent()}
+			</div>
+		</div>
+	</div>
+{/if}
+
+<!-- Instant placeholder while a tapped conversation loads. Covers the menu the
+     moment you tap so the message window appears immediately; the real page
+     paints over it the instant its data resolves. -->
+{#if _showConvSkeleton}
+	<ConvSkeleton slide />
+{/if}
 
 <!-- Global app header. Lives in the layout so it's identical on every
      /app/* page (Home, Atlas, Lab, Manage, Files, Chat, Theme, Profile)
@@ -1331,39 +2072,72 @@
 	.unread-dot { width: 8px; height: 8px; border-radius: 50%; background: #e53935; flex-shrink: 0; margin-left: auto; }
 	.online-count { font-size: 0.65rem; color: #4caf50; font-weight: 600; margin-right: auto; margin-left: 0.3rem; }
 
-	/* ── Members ── */
-	.member-row { /* wrapper */ }
-	.member-row.self { opacity: 0.75; }
-	.member-row.self:hover { opacity: 1; }
-
-	.member-inner {
-		display: flex; align-items: center; gap: 0.5rem;
-		padding: 0.22rem 0.6rem; border-radius: 5px; width: 100%;
-		font-size: 0.82rem; color: var(--sidebar-fg-muted); text-decoration: none;
+	/* ── Conversation rows (channels + members share one taller layout) ──
+	   ~1.5× the old height: a 40px avatar + two lines (name + last message),
+	   so every channel and DM is the same size with a bigger photo and a
+	   preview of the most recent message. Same markup on desktop + mobile. */
+	.conv-item {
+		display: flex; align-items: center; gap: 0.6rem;
+		padding: 0.4rem 0.55rem; border-radius: 9px; width: 100%;
+		color: var(--sidebar-fg-muted); text-decoration: none;
 		transition: background 0.1s; box-sizing: border-box;
 	}
-	.member-inner:hover, .member-inner.active { background: var(--sidebar-hover); color: var(--sidebar-fg); }
+	.conv-item:hover { background: var(--sidebar-hover); color: var(--sidebar-fg); }
+	.conv-item.active { background: var(--sidebar-active); color: var(--sidebar-active-fg); }
+	/* On the selected row, let the active-fg flow through the name + preview
+	   instead of their own explicit colours. */
+	.conv-item.active .member-name,
+	.conv-item.active .conv-last,
+	.conv-item.active .last-sender,
+	.conv-item.active .you-tag { color: inherit; }
+
+	/* Channel "photo": a rounded-square tile with the # glyph, sized to match
+	   the member avatars so channel rows are exactly as tall as DM rows. */
+	.conv-avatar {
+		width: 40px; height: 40px; flex-shrink: 0;
+		display: flex; align-items: center; justify-content: center;
+		border-radius: 11px;
+	}
+	.channel-avatar {
+		background: var(--sidebar-hover);
+		color: var(--sidebar-fg-muted);
+		font-size: 1.35rem; font-weight: 600; line-height: 1;
+	}
+	.conv-item.active .channel-avatar { color: var(--sidebar-active-fg); }
+
+	/* ── Members ── */
+	.member-row { border-radius: 9px; }
+	.member-row.self { opacity: 0.8; }
+	.member-row.self:hover { opacity: 1; }
+	/* Drag-to-reorder affordance + feedback. */
+	.member-row[draggable='true'] { cursor: grab; }
+	.member-row[draggable='true']:active { cursor: grabbing; }
+	.member-row.dragging { opacity: 0.4; }
+	.member-row.dragging .conv-item { background: var(--sidebar-hover); }
 
 	.avatar-wrap { position: relative; flex-shrink: 0; }
 	.avatar {
-		width: 20px; height: 20px; border-radius: 4px; background: #444; color: var(--sidebar-fg);
-		font-size: 0.68rem; font-weight: 700; display: flex; align-items: center; justify-content: center;
+		width: 40px; height: 40px; border-radius: 11px; background: #444; color: var(--sidebar-fg);
+		font-size: 1rem; font-weight: 700; display: flex; align-items: center; justify-content: center;
 	}
 	.presence-dot {
 		position: absolute; bottom: -1px; right: -1px;
-		width: 7px; height: 7px; border-radius: 50%;
-		background: #4caf50; border: 1.5px solid var(--ink);
+		width: 11px; height: 11px; border-radius: 50%;
+		background: #4caf50; border: 2px solid var(--sidebar-bg);
 	}
 	/* Idle = tab open, no input for ≥4 min. Amber is the standard
 	   away signal across iMessage / Slack / Discord so the colour
 	   reads as "they're around but not at the keyboard". */
 	.presence-dot.idle { background: #ffc107; }
 
-	.member-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.05rem; }
-	.member-name { font-size: 0.82rem; color: var(--sidebar-fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-	.member-name.bold { font-weight: 600; color: var(--sidebar-fg); }
-	.you-tag { font-size: 0.65rem; color: var(--sidebar-fg-muted); font-weight: 400; margin-left: 0.2rem; }
-	.dm-last { font-size: 0.68rem; color: var(--sidebar-fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.member-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.1rem; }
+	.member-name { font-size: 0.9rem; font-weight: 500; color: var(--sidebar-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.member-name.bold { font-weight: 700; color: var(--sidebar-fg); }
+	.you-tag { font-size: 0.68rem; color: var(--sidebar-fg-muted); font-weight: 400; margin-left: 0.2rem; }
+	/* Last-message preview line (and the channel sender prefix). */
+	.conv-last, .dm-last { font-size: 0.74rem; color: var(--sidebar-fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.last-sender { font-weight: 600; color: var(--sidebar-fg); opacity: 0.85; }
+	.conv-last-empty { opacity: 0.55; font-style: italic; }
 
 	.role-badge {
 		font-size: 0.6rem; font-weight: 600; background: #333; color: var(--sidebar-fg-muted);
@@ -1380,7 +2154,10 @@
 			flex-direction: column;
 			position: fixed;
 			top: 0; left: 0; bottom: 0;
-			width: 100%;
+			/* Full-screen drawer on mobile. !important beats the inline
+			   `style:width={sidebarWidth}px` (the desktop resize width),
+			   which would otherwise leak in and pin the drawer to ~220px. */
+			width: 100vw !important;
 			background: var(--sidebar-bg);
 			color: var(--border);
 			overflow-y: auto;
@@ -1392,6 +2169,10 @@
 			transition: transform 0.22s ease;
 		}
 		.global-sidebar.open { transform: translateX(0); }
+		/* While the finger is dragging the drawer, kill the transition so it
+		   tracks 1:1 (the inline transform drives it). On release the class
+		   removes and the transition animates the snap to open/closed. */
+		.global-sidebar.sw-dragging { transition: none; }
 		/* Hide nav items on mobile — bottom bar handles navigation */
 		.global-sidebar .sidebar-nav,
 		.global-sidebar .sidebar-divider { display: none; }
@@ -1421,6 +2202,142 @@
 	   the chat layout inside (header + input bar) scrolls with the
 	   page instead of staying anchored. */
 	.app-shell { min-height: 100dvh; }
+	/* Native scroll-snap pager — one panel per tab section. The browser's
+	   compositor drives the swipe, so it's smooth regardless of page weight. */
+	.pager-track {
+		display: flex;
+		width: 100%;
+		/* Sit exactly below the (measured) fixed header and stop above the
+		   bottom nav. --header-h is the real header height incl. its notch
+		   padding; the app-shell already pads the notch inset, so the margin
+		   only adds the rest. */
+		margin-top: calc(var(--header-h, 52px) - var(--native-top-inset, 0px));
+		/* FULL height (to the screen bottom). Section panels reserve the bottom
+		   nav via their own padding; the conversation panel uses the whole thing
+		   (its nav is hidden). This lets the conversation be a real pager panel. */
+		height: calc(100dvh - var(--header-h, 52px));
+		overflow-x: auto;
+		overflow-y: hidden;
+		scroll-snap-type: x mandatory;
+		overscroll-behavior-x: contain;
+		scrollbar-width: none;
+		-webkit-overflow-scrolling: touch;
+	}
+	.pager-track::-webkit-scrollbar { display: none; }
+	.pager-panel {
+		flex: 0 0 100%;
+		width: 100%;
+		height: 100%;
+		overflow-y: auto;
+		overflow-x: hidden;
+		scroll-snap-align: start;
+		scroll-snap-stop: always;
+		scrollbar-width: none;
+		/* Reserve the bottom nav strip (the section content stops above it). */
+		padding-bottom: calc(56px + env(safe-area-inset-bottom, 0px));
+		box-sizing: border-box;
+	}
+	.pager-panel::-webkit-scrollbar { display: none; }
+	/* The conversation panel uses the FULL height (nav hidden) and doesn't
+	   scroll itself — the conversation's own .message-list scrolls internally. */
+	.pager-panel.conv { padding-bottom: 0; overflow: hidden; }
+	:global(.pager-panel.conv .chat-wrap) {
+		height: 100% !important;
+		margin-top: 0 !important;
+	}
+	/* Chat-menu panel (pager index 0) — wraps the shared conversation list. */
+	.chat-menu-panel { padding: 0 0.25rem 1.5rem; }
+	.chat-menu-title {
+		font-family: 'Avara', serif;
+		font-size: 1.15rem;
+		color: var(--ink);
+		padding: 0.75rem 0.75rem 0.4rem;
+	}
+	/* Slide-in menu overlay for the conversation → menu swipe. Covers the
+	   content area (below header, above bottom nav) and slides in from the
+	   right; the live pager menu is identical underneath, so the swap is
+	   invisible once it lands. */
+	.menu-slide {
+		position: fixed;
+		/* Covers the whole screen (incl. the header) so the standard header rides
+		   in with the menu over the chat header. */
+		top: 0;
+		left: 0; right: 0;
+		bottom: 0;
+		background: var(--paper);
+		/* Above the loading skeleton (z 1100) so swiping back is visible while a
+		   conversation is still loading. */
+		z-index: 1200;
+		display: flex;
+		flex-direction: column;
+		/* Touches pass THROUGH the settling overlay to the live pager menu
+		   underneath, so a quick second swipe scrolls the pager immediately. */
+		pointer-events: none;
+		/* Promote to its own GPU layer so dragging it (a heavy full-screen list)
+		   is a composited transform, not a per-frame repaint. The drag position is
+		   the `--md` custom property (0 = off-screen right … 1 = fully covering),
+		   set imperatively during the drag so there's NO Svelte reactivity per
+		   frame — the transform recalc + composite is all that runs, like the
+		   native pager. */
+		transform: translateX(calc((1 - var(--md, 0)) * 100%));
+		will-change: transform;
+		/* Transition only kicks in on release to animate to the snapped position.
+		   Snappy so the hand-off to the pager is quick. */
+		/* Match the pager's programmatic scroll exactly: 110ms ease-out cubic
+		   (cubic-bezier(0.33,1,0.68,1)), so the conv→menu settle feels identical
+		   to a menu→home tap/snap. */
+		transition: transform 0.11s cubic-bezier(0.33, 1, 0.68, 1);
+		box-shadow: -10px 0 28px rgba(0,0,0,0.16);
+	}
+	.menu-slide.dragging { transition: none; }
+	/* Mounted but parked off-screen (ready for the swipe): no transition flash on
+	   first paint, and hide the edge shadow that would otherwise peek in. */
+	.menu-slide.idle { transition: none; box-shadow: none; }
+	/* Header strip — matches the real header's measured height + padding so the
+	   hand-off to the global header on land is seamless. */
+	.ms-header {
+		flex-shrink: 0;
+		height: var(--header-h, 52px);
+		box-sizing: border-box;
+		display: flex;
+		flex-direction: column;
+		justify-content: center;
+		gap: 0.1rem;
+		padding: 0 1rem;
+		padding-top: var(--native-top-inset, 0px);
+		border-bottom: 1.5px solid var(--border);
+		background: var(--paper);
+	}
+	.ms-wordmark { font-family: 'Avara', serif; font-size: 1.25rem; color: var(--ink); line-height: 1.1; }
+	.ms-class { font-size: 0.72rem; color: var(--md-sys-color-on-surface-variant, var(--muted-fg)); }
+	.ms-scroll { flex: 1; min-height: 0; overflow-y: auto; }
+	/* Keep the list clear of the bottom strip the nav will rise into. */
+	.menu-slide .chat-menu-panel { padding-bottom: calc(56px + env(safe-area-inset-bottom, 0px) + 0.5rem); }
+
+	/* Skeleton shown for a panel until its section mounts. */
+	.pager-skel {
+		padding: 1.25rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.9rem;
+	}
+	.pager-skel .pk {
+		border-radius: 10px;
+		background: linear-gradient(90deg,
+			color-mix(in srgb, var(--ink) 6%, transparent) 25%,
+			color-mix(in srgb, var(--ink) 12%, transparent) 37%,
+			color-mix(in srgb, var(--ink) 6%, transparent) 63%);
+		background-size: 400% 100%;
+		animation: pk-shimmer 1.3s ease-in-out infinite;
+	}
+	.pager-skel .pk-title { height: 2rem; width: 55%; }
+	.pager-skel .pk-line { height: 1rem; width: 100%; }
+	.pager-skel .pk-line.short { width: 70%; }
+	.pager-skel .pk-card { height: 5.5rem; width: 100%; }
+	@keyframes pk-shimmer {
+		0% { background-position: 100% 0; }
+		100% { background-position: 0 0; }
+	}
 
 	@media (min-width: 641px) {
 		/* Default margin matches sidebar width; overridden by inline style when collapsed */
@@ -1485,5 +2402,31 @@
 	@media (max-width: 640px) {
 		.app-shell { margin-left: 0 !important; }
 		.install-banner { bottom: calc(56px + env(safe-area-inset-bottom, 0px) + 0.75rem); }
+
+		/* Mobile in-app notifications: a single full-width bar across the
+		   screen, dropped just below the app header (so the fixed top bar
+		   never covers it), with centered, slightly larger, higher-emphasis
+		   text. Stacks downward if more than one arrives. */
+		.toast-stack {
+			top: calc(var(--header-h, 52px) + 0.4rem);
+			left: 0; right: 0;
+			align-items: stretch;
+			gap: 0.4rem;
+			padding: 0 0.5rem;
+		}
+		.toast {
+			width: auto;
+			padding: 0.85rem 1rem;
+			border-radius: 14px;
+			text-align: center;
+			box-shadow: 0 6px 24px rgba(0,0,0,0.28);
+		}
+		.toast-header { justify-content: center; margin-bottom: 0.2rem; position: relative; }
+		.toast-title { font-size: 0.98rem; font-weight: 800; letter-spacing: 0.01em; }
+		.toast-close {
+			position: absolute; right: 0; top: 50%; transform: translateY(-50%);
+			font-size: 1.15rem;
+		}
+		.toast-body { font-size: 0.9rem; white-space: normal; }
 	}
 </style>

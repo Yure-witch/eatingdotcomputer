@@ -1,5 +1,6 @@
 <script>
 	import { onMount } from 'svelte';
+	import PickerStickyBtn from './PickerStickyBtn.svelte';
 	import { invalidateCustomEmojiCache, addToCustomEmojiCache, removeFromCustomEmojiCache } from '$lib/custom-emoji-store.js';
 
 	// Virtualization geometry. The grid is `grid-template-columns:
@@ -32,7 +33,7 @@
 		gridWR = reactionsGridWrapEl.clientWidth;
 	}
 
-	let { onInsertEmoji, onInsertReaction, isInstructor = false, mode = 'both' } = $props();
+	let { onInsertEmoji, onInsertReaction, isInstructor = false, mode = 'both', onClose = null } = $props();
 
 	// `mode` constrains which side of the panel the parent wants:
 	//   'emoji'     — only uploaded class emotes (no reactions UI, no tab bar)
@@ -242,10 +243,17 @@
 </script>
 
 <div class="ce-panel">
-	{#if mode === 'both'}
+	{#if onClose || mode === 'both'}
 		<div class="ce-tabs">
-			<button class="ce-tab" class:active={tab === 'emoji'} onclick={() => tab = 'emoji'}>Custom Emotes</button>
-			<button class="ce-tab" class:active={tab === 'reactions'} onclick={() => tab = 'reactions'}>Reaction Images</button>
+			{#if onClose}
+				<PickerStickyBtn square onclick={onClose} title="Close" label="Close picker">
+					<span class="msi msi-20">close</span>
+				</PickerStickyBtn>
+			{/if}
+			{#if mode === 'both'}
+				<button class="ce-tab" class:active={tab === 'emoji'} onclick={() => tab = 'emoji'}>Custom Emotes</button>
+				<button class="ce-tab" class:active={tab === 'reactions'} onclick={() => tab = 'reactions'}>Reaction Images</button>
+			{/if}
 		</div>
 	{/if}
 
@@ -401,7 +409,7 @@
 		display: flex; flex-direction: column; overflow: hidden;
 		font-family: 'Google Sans Flex', 'Space Grotesk', sans-serif; font-size: 0.85rem;
 	}
-	.ce-tabs { display: flex; border-bottom: 1.5px solid var(--border); background: var(--surface-2); flex-shrink: 0; }
+	.ce-tabs { display: flex; align-items: center; gap: 0.25rem; padding: 0.3rem 0.4rem; border-bottom: 1.5px solid var(--border); background: var(--surface-2); --picker-bar-bg: var(--surface-2); flex-shrink: 0; }
 	.ce-tab { flex: 1; padding: 0.55rem 0; border: none; background: none; color: var(--muted-fg); font-family: inherit; font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: color 0.15s, background 0.15s; letter-spacing: 0.02em; }
 	.ce-tab:hover { color: var(--ink, var(--ink)); background: var(--surface-2); }
 	.ce-tab.active { color: var(--ink, var(--ink)); background: var(--paper, var(--paper)); border-bottom: 2px solid var(--ink, var(--ink)); margin-bottom: -1.5px; }

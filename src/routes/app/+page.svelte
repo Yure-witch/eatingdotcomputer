@@ -15,6 +15,24 @@
 	const user = data.session.user;
 	const isInstructor = user.role === 'instructor';
 
+	// Streamed secondary data (peer submissions + instructor overview). Starts
+	// empty so the week card + checklist paint instantly on tab switch, then
+	// fills in when load()'s `extras` promise resolves. $effect re-subscribes
+	// on navigation so a new page's data replaces the old.
+	let submissionsByItem = $state({});
+	let studentCount = $state(0);
+	let peerSubmissions = $state({});
+	$effect(() => {
+		let cancelled = false;
+		Promise.resolve(data.extras).then((x) => {
+			if (cancelled || !x) return;
+			submissionsByItem = x.submissionsByItem ?? {};
+			studentCount = x.studentCount ?? 0;
+			peerSubmissions = x.peerSubmissions ?? {};
+		});
+		return () => { cancelled = true; };
+	});
+
 	// ── Notifications / Install ──
 	let pushSupported = $state(false);
 	let pushSubscribed = $state(false);
@@ -557,9 +575,9 @@
 							{#if plan.items.length > 0}
 								<div class="overview-items">
 									{#each plan.items as item}
-										{@const subs = data.submissionsByItem[item.id] ?? []}
+										{@const subs = submissionsByItem[item.id] ?? []}
 										{@const isOpen = expandedItemSubs === item.id}
-										{@const total = data.studentCount ?? 0}
+										{@const total = studentCount ?? 0}
 										<div class="overview-item-block">
 											<button class="overview-item" class:has-subs={subs.length > 0} onclick={() => expandedItemSubs = isOpen ? null : item.id}>
 												<span class="overview-item-label">{@html contentHtml(item.label, false)}</span>
@@ -659,7 +677,7 @@
 					<div class="checklist">
 						{#each data.currentPlan.items as item (item.id)}
 							{@const done = !!completions[item.id]}
-							{@const peers = data.peerSubmissions?.[item.id] ?? []}
+							{@const peers = peerSubmissions?.[item.id] ?? []}
 							<div class="check-row" class:completed={done}>
 								{#if item.requiresSubmission}
 									<!-- Submission item -->

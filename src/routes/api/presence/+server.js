@@ -51,11 +51,14 @@ export async function GET({ locals }) {
 		}
 	}
 
-	// Turso: fill in lastSeen for users not in Firebase (display only — not online detection).
+	// Turso: fill in lastSeen for users not in Firebase (display only — not
+	// online detection). Reads the denormalised users.last_active (~18 rows)
+	// instead of GROUP BY-ing over the whole user_activity history (~23k rows),
+	// which previously full-scanned on every presence poll.
 	const db = getDb();
 	if (db) {
 		const rows = await db.execute(
-			`SELECT user_id, MAX(logged_at) as last_active FROM user_activity GROUP BY user_id`
+			`SELECT id AS user_id, last_active FROM users WHERE last_active IS NOT NULL`
 		);
 		for (const r of rows.rows) {
 			const uid = String(r.user_id);

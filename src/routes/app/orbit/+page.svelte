@@ -42,21 +42,14 @@
 			? orderedWeeks.findIndex((w) => w.planId === data.currentPlanId)
 			: -1
 	);
+	// Roadmap shows just the CURRENT week + the NEXT one; the full timeline
+	// lives on /app/weeks (linked below the window).
 	const visibleWeeks = $derived.by(() => {
 		if (!orderedWeeks.length) return [];
-		const n = orderedWeeks.length;
-		if (currentIdx < 0) {
-			// No "current" plan resolved — fall back to the first 5.
-			return orderedWeeks.slice(0, Math.min(n, WINDOW_RADIUS * 2 + 1));
-		}
-		const span = WINDOW_RADIUS * 2 + 1;
-		let start = currentIdx - WINDOW_RADIUS;
-		let end = currentIdx + WINDOW_RADIUS + 1;
-		if (start < 0) { end += -start; start = 0; }
-		if (end > n) { start -= (end - n); end = n; }
-		start = Math.max(0, start);
-		return orderedWeeks.slice(start, end);
+		const start = currentIdx < 0 ? 0 : currentIdx;
+		return orderedWeeks.slice(start, start + 2);
 	});
+	const hasMoreWeeks = $derived(orderedWeeks.length > visibleWeeks.length);
 
 	// Per-week status for the student. Instructors get a flat
 	// "N items" tag so they see the shape of each week without a
@@ -74,9 +67,26 @@
 	let openSubmit = $state(null);
 	let submitTypes = $state({});
 
-	let links = $state(data.links);
-	let uploadedFiles = $state(data.uploadedFiles ?? []);
-	let starredMessages = $state(data.starredMessages ?? []);
+	// Streamed Collection data — starts empty so the roadmap paints instantly,
+	// then fills in when load()'s `collection` promise resolves a beat later.
+	// The $effect re-subscribes on navigation so a new page's data replaces
+	// the old. `collectionLoading` drives the Files-section skeleton.
+	let links = $state([]);
+	let uploadedFiles = $state([]);
+	let starredMessages = $state([]);
+	let collectionLoading = $state(true);
+	$effect(() => {
+		let cancelled = false;
+		collectionLoading = true;
+		Promise.resolve(data.collection).then((c) => {
+			if (cancelled || !c) return;
+			links = c.links ?? [];
+			uploadedFiles = c.uploadedFiles ?? [];
+			starredMessages = c.starredMessages ?? [];
+			collectionLoading = false;
+		});
+		return () => { cancelled = true; };
+	});
 
 	// Instructor delete-from-Orbit. Hits the existing /api/upload/[id]
 	// DELETE which now also accepts instructor callers (see
@@ -193,6 +203,12 @@
 					</li>
 				{/each}
 			</ul>
+			{#if hasMoreWeeks}
+				<a class="roadmap-all-link" href="/app/weeks">
+					<span>See all weeks</span>
+					<span class="msi msi-18">arrow_forward</span>
+				</a>
+			{/if}
 		{/if}
 
 		<!-- ═══════════════════ FILES ═══════════════════ -->
@@ -512,6 +528,18 @@
 	   Replaces the long per-week sections with a 5-row list centered
 	   on the current week. Rows themselves are plain anchors that
 	   jump to /app for the full checklist. */
+	.roadmap-all-link {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		margin: -0.5rem 0 2rem;
+		padding: 0.5rem 0.25rem;
+		color: var(--accent);
+		text-decoration: none;
+		font-size: 0.9rem;
+		font-weight: 600;
+	}
+	.roadmap-all-link:hover { text-decoration: underline; }
 	.roadmap-window {
 		list-style: none;
 		padding: 0;

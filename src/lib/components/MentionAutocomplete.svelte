@@ -72,12 +72,38 @@
 	// caret where the screen has free space.
 	function placePopover() {
 		if (!inputEl) return;
+		// Mobile: the caret sits in the compose field right above (or behind)
+		// the on-screen keyboard, so anchoring the popover to it puts it under
+		// the keyboard. Instead pin it as a full-width bar whose BOTTOM edge
+		// rests on the TOP of the whole input area — which is itself lifted
+		// above the keyboard — so the suggestions always sit clear of it.
+		const isMobile = typeof window !== 'undefined' && window.matchMedia?.('(max-width: 640px)').matches;
+		if (isMobile) {
+			// Positioned in CSS: position:absolute inside `.input-area`, pinned
+			// just above it (bottom: 100%). It rides the bar (the keyboard-lift
+			// transform on native, or iOS pushing the whole app up in the PWA).
+			// Cap the height to the visible space between the header and the bar
+			// so it never slides under the header and instead scrolls.
+			const cs = getComputedStyle(document.documentElement);
+			const headerH = parseFloat(cs.getPropertyValue('--header-h')) || 52;
+			const kb = parseFloat(cs.getPropertyValue('--kb-height')) || 0;
+			const container = inputEl.closest('.input-area') || inputEl;
+			const inputH = container.getBoundingClientRect().height;
+			// Visible viewport height differs by keyboard model: the native shell
+			// overlays the keyboard (innerHeight stays full → subtract --kb-height),
+			// while the PWA/mobile-web shrinks visualViewport for it (--kb-height 0).
+			const vh = kb > 0 ? window.innerHeight : (window.visualViewport?.height || window.innerHeight);
+			const maxH = Math.max(140, Math.round(vh - headerH - kb - inputH - 24));
+			pos = { mobile: true, maxH };
+			return;
+		}
 		const sel = window.getSelection?.();
 		if (!sel?.rangeCount) return;
 		const r = sel.getRangeAt(0).getBoundingClientRect();
 		const inputRect = inputEl.getBoundingClientRect();
 		const base = (r && (r.width || r.height)) ? r : inputRect;
 		pos = {
+			mobile: false,
 			left: Math.round(base.left),
 			top: Math.round(base.top)
 		};
@@ -166,7 +192,11 @@
 </script>
 
 {#if open && matches.length}
-	<div class="mention-pop" style:left="{pos.left}px" style:top="{pos.top}px" role="listbox" aria-label="Mention suggestions">
+	<div class="mention-pop" class:mobile={pos.mobile}
+		style:left={pos.mobile ? null : `${pos.left}px`}
+		style:top={pos.mobile ? null : `${pos.top}px`}
+		style:max-height={pos.mobile ? `${pos.maxH}px` : null}
+		role="listbox" aria-label="Mention suggestions">
 		{#each matches as m, i (m.id)}
 			<button
 				type="button"
@@ -211,6 +241,30 @@
 		display: flex;
 		flex-direction: column;
 		gap: 1px;
+	}
+	/* Mobile: a full-width bar pinned above the input area (placePopover sets
+	   `bottom`), instead of a caret-anchored popover that the keyboard covers.
+	   No upward translate — `bottom` already places it above the input. */
+	/* Mobile: a full-width bar pinned directly above the input area. Switched to
+	   position:absolute so it's anchored to `.input-area` (position:relative) and
+	   rides the keyboard-lift transform with it — staying above the input bar and
+	   the keyboard, instead of a caret-anchored popover the keyboard covers. */
+	.mention-pop.mobile {
+		position: absolute;
+		left: 8px;
+		right: 8px;
+		bottom: calc(100% + 6px);
+		top: auto;
+		max-width: none;
+		transform: none;
+		/* max-height is computed in JS (placePopover) from the real visible
+		   space between the header and the input bar — capped so it never slides
+		   under the fixed header and scrolls instead. Fallback for the first
+		   frame before JS measures: */
+		max-height: 40vh;
+		overflow-y: auto;
+		-webkit-overflow-scrolling: touch;
+		overscroll-behavior: contain;
 	}
 	.mention-item {
 		display: flex;

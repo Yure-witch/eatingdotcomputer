@@ -1,6 +1,7 @@
 import { json, error } from '@sveltejs/kit';
 import { getAdminDb } from '$lib/server/firebase-admin.js';
 import { getDb } from '$lib/server/turso.js';
+import { decodeReactionKey } from '$lib/reaction-key.js';
 import { env } from '$env/dynamic/private';
 
 // Decode millisecond timestamp from the first 8 chars of a Firebase push ID
@@ -85,7 +86,9 @@ export async function GET({ request }) {
 			// Archive reactions for this message → message_reactions table
 			const reactSnap = await adminDb.ref(`${reactionsBasePath}/${msg.key}`).get();
 			if (reactSnap.exists()) {
-				for (const [emoji, users] of Object.entries(reactSnap.val())) {
+				for (const [emojiKey, users] of Object.entries(reactSnap.val())) {
+					// Firebase keys are escaped; Turso stores the raw token.
+					const emoji = decodeReactionKey(emojiKey);
 					for (const reactUserId of Object.keys(users)) {
 						await turso.execute({
 							sql: 'INSERT OR IGNORE INTO message_reactions (message_id, emoji, user_id) VALUES (?, ?, ?)',
@@ -125,7 +128,8 @@ export async function GET({ request }) {
 				});
 				if (inTurso.rows.length === 0) continue; // not in Turso, leave it
 				// Sync any reactions not yet in Turso
-				for (const [emoji, users] of Object.entries(emojiMap)) {
+				for (const [emojiKey, users] of Object.entries(emojiMap)) {
+					const emoji = decodeReactionKey(emojiKey);
 					for (const reactUserId of Object.keys(users)) {
 						await turso.execute({
 							sql: 'INSERT OR IGNORE INTO message_reactions (message_id, emoji, user_id) VALUES (?, ?, ?)',
