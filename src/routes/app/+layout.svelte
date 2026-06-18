@@ -636,15 +636,27 @@
 			const homeIdx = PANELS.findIndex((p) => p.route === '/app');
 			return homeIdx < 0 ? 0 : Math.max(0, _pagerFraction - homeIdx + 1);
 		},
-		// Tapping a nav icon: smooth-scroll the track to that panel (same motion
-		// as a swipe) instead of a navigate-then-jump. The scroll settling
-		// commits the navigation via onPagerScroll. Returns true if it handled
-		// it (so the <a> can preventDefault); false → let the link navigate.
+		// Tapping a nav icon: go STRAIGHT to the target — no eased scroll. Kill any
+		// in-flight programmatic scroll / pending settle / snap so nothing fights the
+		// jump, hard-set scrollLeft to the panel, and commit the route. (An eased
+		// scroll here could collide with a swipe animation still settling, which
+		// caused the transform fighting.) Returns true so the <a> can preventDefault.
 		goToSection(route) {
 			if (!isPagerActive || !pagerEl) return false;
 			const idx = PANELS.findIndex((p) => p.route === route);
 			if (idx < 0) return false;
-			_fastScrollTo(idx * pagerEl.clientWidth);
+			_cancelProgrammaticScroll();   // abort any eased scroll / hard-snap in flight
+			clearTimeout(_pagerSnapT);     // drop any pending scroll-settle commit
+			_suppressCommits(250);         // and ignore the jump's own scroll events
+			const w = pagerEl.clientWidth || 1;
+			_pagerProg = true;
+			const prevSnap = pagerEl.style.scrollSnapType;
+			pagerEl.style.scrollSnapType = 'none';
+			pagerEl.scrollLeft = idx * w;  // instant — straight to the target
+			_pagerFraction = idx;          // jump the highlight too (no lag)
+			_pagerVisibleRoute = route;
+			requestAnimationFrame(() => { pagerEl.style.scrollSnapType = prevSnap; _pagerProg = false; });
+			goto(route, { noScroll: true, keepFocus: true });
 			return true;
 		},
 		// Live fractional scroll position (0 = first section … N-1 = last), so
