@@ -209,6 +209,7 @@
 		if (!pagerEl) return;
 		_pagerTouching = true;
 		_repinGen++;               // cancel any lingering re-pin so it can't fight this gesture/tap
+		_goSecGen++;               // a swipe supersedes a nav-icon jump's re-assert (so tap-then-swipe doesn't snap back to the tapped tab)
 		_cancelProgrammaticScroll();
 		clearTimeout(_pagerSnapT); // don't let a previous gesture's commit fire mid-swipe
 		_gestureStartIdx = Math.round(pagerEl.scrollLeft / (pagerEl.clientWidth || 1));
