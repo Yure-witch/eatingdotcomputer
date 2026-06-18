@@ -244,15 +244,21 @@
 		// a chat is active/being entered.
 		const minIdx = _convActiveOrEntering ? 0 : 1;
 		const i = Math.max(Math.max(minIdx, _gestureStartIdx - 1), Math.min(Math.min(PANELS.length - 1, _gestureStartIdx + 1), raw));
-		if (i !== raw) { _suppressCommits(300); pagerEl.scrollTo({ left: i * cw, behavior: 'smooth' }); }
+		const lockLeft = i * cw;
+		// Pin EXACTLY onto the target panel right now — instant, not a smooth
+		// animation that the conversation teardown could interrupt and freeze
+		// half-way. Covers both a rare over-flick (clamped i) and a few-px-short snap.
+		if (!_pagerTouching && Math.abs(pagerEl.scrollLeft - lockLeft) > 1) {
+			_pagerProg = true;
+			pagerEl.scrollLeft = lockLeft;
+			_suppressCommits(200);
+			requestAnimationFrame(() => { _pagerProg = false; });
+		}
 		// The conv panel has no route — you're already on it; never goto(undefined).
 		if (i !== pagerIndex && i >= 0 && i < PANELS.length && PANELS[i].route) {
-			const lockLeft = i * cw;
 			goto(PANELS[i].route, { noScroll: true, keepFocus: true }).then(() => {
-				// Lock the track EXACTLY onto the panel once the nav + any teardown
-				// settle. Leaving a conversation tears down a heavy component right
-				// after scrollend, which can leave the native snap a few px short of
-				// the menu ("not fully locked in"). Only nudge if we're settled.
+				// Re-pin after the nav + teardown settle — leaving a conversation tears
+				// down a heavy component right after, which can nudge the snap off again.
 				requestAnimationFrame(() => {
 					if (pagerEl && !_pagerTouching && Math.abs(pagerEl.scrollLeft - lockLeft) > 1) {
 						_pagerProg = true;
@@ -363,13 +369,19 @@
 		if (!pagerEl) return;
 		_lastScrollAt = performance.now();
 		const w = pagerEl.clientWidth || 1;
-		// Left-edge clamp: the conv panel (index 0) is only reachable while a chat
-		// is active/being entered. Otherwise the menu (index 1) is the leftmost
-		// panel, so pin the left edge there — you can't scroll into the empty conv
-		// slot. Edge-only (never fights a forward swipe), skipped during
-		// programmatic scrolls.
-		if (!_pagerProg && !_convActiveOrEntering && pagerEl.scrollLeft < w) {
-			pagerEl.scrollLeft = w;
+		// Reachability edges (edge-only, never fight a forward swipe; skipped during
+		// programmatic scrolls):
+		//  • In a conversation → only conv(0) ↔ menu(1) are reachable. Cap the RIGHT
+		//    edge at the menu so a hard exit flick can't overshoot toward Home and
+		//    strand the viewport halfway between the menu and Home.
+		//  • Not in a chat → the menu (index 1) is the leftmost panel; floor the LEFT
+		//    edge there so you can't scroll into the empty conv slot.
+		if (!_pagerProg) {
+			if (_onConvMobile) {
+				if (pagerEl.scrollLeft > w) pagerEl.scrollLeft = w;
+			} else if (!_convActiveOrEntering && pagerEl.scrollLeft < w) {
+				pagerEl.scrollLeft = w;
+			}
 		}
 		// (No live scrollLeft clamp — it fought deliberate multi-panel drags and
 		// yanked you back on release. Panel skipping is prevented instead by native
