@@ -239,11 +239,14 @@
 		}
 		const cw = pagerEl.clientWidth || 1;
 		const raw = Math.round(pagerEl.scrollLeft / cw);
-		// One panel per gesture: clamp the landing to ±1 of where the gesture began
-		// (rare iOS over-flick safety net). Conv panel (index 0) is off-limits unless
-		// a chat is active/being entered.
+		// Commit whatever panel the track actually SETTLED on. Native
+		// scroll-snap-stop already limits a flick to one panel, so we don't need a
+		// gesture-anchored ±1 clamp — and that clamp caused the random jumps: when a
+		// touch landed mid-momentum, its anchor rounded to the wrong panel and the
+		// clamp yanked the settled position back to a neighbour. Just floor at the
+		// menu when no chat is active (the conv slot is off-limits then).
 		const minIdx = _convActiveOrEntering ? 0 : 1;
-		const i = Math.max(Math.max(minIdx, _gestureStartIdx - 1), Math.min(Math.min(PANELS.length - 1, _gestureStartIdx + 1), raw));
+		const i = Math.max(minIdx, Math.min(PANELS.length - 1, raw));
 		const lockLeft = i * cw;
 		// Pin EXACTLY onto the target panel right now — instant, not a smooth
 		// animation that the conversation teardown could interrupt and freeze
