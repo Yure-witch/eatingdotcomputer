@@ -78,7 +78,7 @@
 	// — on iOS's tight WebView budget that runaway is what got the app jetsammed.
 	// Touch/native only; desktop has the headroom and skips the re-decode churn.
 	const _RELEASE_OFFSCREEN = typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)')?.matches;
-	const OFFSCREEN_RELEASE_MS = 8000;
+	const OFFSCREEN_RELEASE_MS = 3000;
 	let _offscreenT = null;
 	// Flips true after the worker has drawn 3 confirmed frames into
 	// the canvas tile — at that point we know the canvas has visibly
