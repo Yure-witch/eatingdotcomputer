@@ -217,6 +217,13 @@
 			const w = pagerEl.clientWidth || 1;
 			const dir = _pgVelX < 0 ? 1 : -1; // finger moving left → next panel (scrollLeft +)
 			const cur = Math.round(pagerEl.scrollLeft / w); // where the scroll actually is now
+			// Leaving a conversation: DON'T drive the slide with the JS ease — the
+			// conv panel is heavy (message list + animated sprites + Firebase), and a
+			// main-thread scrollLeft animation stutters against it. Let the native
+			// compositor carry the snap and let the deferred settle commit the route
+			// (the menu list is already painted underneath, so it's seamless). Section
+			// flicks below stay on the eased path (those panels are light).
+			if (cur === 0 && _onConvMobile) return;
 			// One panel per gesture: never more than one panel away from where this
 			// swipe began, so a flick can't skip a page. The conv panel (index 0) is
 			// off-limits unless a chat is active/being entered — otherwise a
