@@ -227,7 +227,12 @@
 			if (target !== cur) {
 				_fastScrollTo(target * w, 260); // longer, momentum-like ease (smoother than the old 110ms)
 				const route = PANELS[target]?.route;
-				if (route && target !== pagerIndex) { _suppressCommits(300); goto(route, { noScroll: true, keepFocus: true }); }
+				// ALWAYS goto the target route (don't gate on pagerIndex — that's the
+				// COMMITTED route, which lags on prod). During rapid flicks each goto
+				// supersedes the previous in-flight one, so the LAST flick wins instead
+				// of a stale "already there" check skipping it and an earlier nav
+				// (Home) committing last. Same-route gotos are harmless no-ops.
+				if (route) { _suppressCommits(300); goto(route, { noScroll: true, keepFocus: true }); }
 			}
 		}
 	}
