@@ -182,6 +182,7 @@
 	let _pagerFraction = $state(0);        // live fractional scroll position (for the sliding highlight)
 	let _gestureStartIdx = 0;          // panel index when the current touch gesture began (one-swipe-per-panel clamp)
 	let _suppressCommitUntil = 0;      // performance.now() until which scroll-settle nav-commits are ignored
+	let _goSecGen = 0;                 // generation token for nav-icon jumps (latest tap wins)
 	// Extend (never shorten) the window during which a stray momentum/anchoring
 	// scroll event must NOT trigger a navigation — set by taps and programmatic
 	// snaps that are already driving their own navigation.
@@ -692,18 +693,36 @@
 			if (!isPagerActive || !pagerEl) return false;
 			const idx = PANELS.findIndex((p) => p.route === route);
 			if (idx < 0) return false;
-			_cancelProgrammaticScroll();   // abort any eased scroll / hard-snap in flight
-			clearTimeout(_pagerSnapT);     // drop any pending scroll-settle commit
-			_suppressCommits(250);         // and ignore the jump's own scroll events
-			const w = pagerEl.clientWidth || 1;
+			const gen = ++_goSecGen;
+			// Kill EVERYTHING that could fight or revert the jump: any eased scroll /
+			// hard-snap, any pending settle-commit, AND any lingering re-pin (a pin
+			// queued after a recent chat exit was snapping us back — "flashes there
+			// then back"). Clear the entry overlay too.
+			_cancelProgrammaticScroll();
+			_repinGen++;
+			clearTimeout(_pagerSnapT);
+			_convEntering = false;
+			_suppressCommits(700);
+			// Hold _pagerProg true for the WHOLE navigation (not just one frame) so no
+			// scroll-commit can fire mid-nav and bounce us back to the old panel.
 			_pagerProg = true;
-			const prevSnap = pagerEl.style.scrollSnapType;
 			pagerEl.style.scrollSnapType = 'none';
-			pagerEl.scrollLeft = idx * w;  // instant — straight to the target
+			const jump = () => {
+				if (_goSecGen !== gen || !pagerEl) return;
+				const t = pagerEl.children?.[idx]?.offsetLeft ?? idx * (pagerEl.clientWidth || 1);
+				if (Math.abs(pagerEl.scrollLeft - t) > 1) pagerEl.scrollLeft = t;
+			};
+			jump();                        // instant — straight to the target
 			_pagerFraction = idx;          // jump the highlight too (no lag)
 			_pagerVisibleRoute = route;
-			requestAnimationFrame(() => { pagerEl.style.scrollSnapType = prevSnap; _pagerProg = false; });
-			goto(route, { noScroll: true, keepFocus: true });
+			const finish = () => {
+				if (_goSecGen !== gen) return; // superseded by a newer tap
+				if (!_pagerTouching) jump();   // re-assert after route/render settled (unless user grabbed it)
+				if (pagerEl) pagerEl.style.scrollSnapType = '';
+				_pagerProg = false;
+			};
+			goto(route, { noScroll: true, keepFocus: true }).then(() => requestAnimationFrame(finish));
+			setTimeout(() => { if (_goSecGen === gen) finish(); }, 800); // safety if goto stalls
 			return true;
 		},
 		// Live fractional scroll position (0 = first section … N-1 = last), so
