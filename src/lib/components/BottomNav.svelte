@@ -164,7 +164,7 @@
 
 <!-- Mobile bottom nav only — desktop nav is in the global sidebar (app/+layout.svelte) -->
 <nav class="bottom-nav" class:hidden={keyboardOpen}>
-	<span class="nav-indicator" style:left="calc(({indicatorSlot} + 0.5) / {slotCount} * 100%)"></span>
+	<span class="nav-indicator" style:--slot={indicatorSlot} style:--slot-count={slotCount}></span>
 	<!-- Chat is a real tab now: scrolls the pager to the chat-menu panel (or
 	     navigates to it from a non-pager route like a conversation). -->
 	<a href="/app/chat" class="nav-item" class:active={chatActive}
@@ -230,9 +230,15 @@
 		.nav-indicator {
 			position: absolute;
 			top: 7px;
+			left: 0;
 			width: 48px;
 			height: 26px;
-			transform: translateX(-50%);
+			/* Move with transform (compositor / GPU) instead of `left` (which forced a
+			   layout reflow every scroll frame → framey). The nav is full-viewport
+			   width, so each slot is 100vw/slot-count; centre on the slot, minus half
+			   the pill's own width. --slot / --slot-count are set per frame inline. */
+			transform: translateX(calc((var(--slot, 0) + 0.5) * (100vw / var(--slot-count, 5)) - 50%));
+			will-change: transform;
 			background: var(--sidebar-active);
 			border-radius: 999px;
 			pointer-events: none;
