@@ -189,6 +189,7 @@
 	function onPagerTouchStart(e) {
 		if (!pagerEl) return;
 		_pagerTouching = true;
+		_repinGen++;               // cancel any lingering re-pin so it can't fight this gesture/tap
 		_cancelProgrammaticScroll();
 		clearTimeout(_pagerSnapT); // don't let a previous gesture's commit fire mid-swipe
 		_gestureStartIdx = Math.round(pagerEl.scrollLeft / (pagerEl.clientWidth || 1));
@@ -267,17 +268,39 @@
 	// heavier component (profile card, presence, partner data) that can shift the
 	// snap a frame or two LATER — after a single re-pin would have run. Each retry
 	// is a no-op once stable, and bails the moment you touch (a new swipe wins).
-	function _repinPager(lockLeft, tries) {
-		if (!pagerEl || _pagerTouching) return;
+	let _repinGen = 0;
+	function _repinPager(lockLeft, tries, gen) {
+		if (gen === undefined) gen = ++_repinGen; // a new invocation supersedes any prior
+		// Bail if superseded (a newer pin) or cancelled (a fresh touch bumps the gen
+		// — otherwise a lingering re-pin to the MENU fights a tap that's opening a
+		// chat, which is why DM taps needed a second tap).
+		if (gen !== _repinGen || !pagerEl || _pagerTouching) return;
 		if (Math.abs(pagerEl.scrollLeft - lockLeft) > 1) {
 			_pagerProg = true;
 			pagerEl.scrollLeft = lockLeft;
 			requestAnimationFrame(() => { _pagerProg = false; });
 		}
-		if (tries > 0) setTimeout(() => _repinPager(lockLeft, tries - 1), 60);
+		if (tries > 0) setTimeout(() => _repinPager(lockLeft, tries - 1, gen), 60);
 	}
 	// Keep the visible route synced to the URL after a navigation / on load.
 	$effect(() => { if (pagerIndex >= 0) { _pagerVisibleRoute = PANELS[pagerIndex].route; _pagerFraction = pagerIndex; } });
+
+	// When you LEAVE a conversation, lock the track onto the committed panel as the
+	// teardown settles. A DM is heavier than a channel — it unmounts sprite
+	// overlays + a profile-link header that nudge the snap across several frames,
+	// some after the post-nav re-pin — so this fires at the exact flip and retries
+	// over a longer window (superseding the commit's pin; a fresh touch cancels it).
+	let _wasOnConvMobile = false;
+	$effect(() => {
+		const onConv = _onConvMobile;
+		const el = pagerEl;
+		untrack(() => {
+			if (_wasOnConvMobile && !onConv && el && isPagerActive && !_pagerTouching) {
+				_repinPager(Math.max(0, pagerIndex) * (el.clientWidth || 1), 12);
+			}
+			_wasOnConvMobile = onConv;
+		});
+	});
 
 	// Fast (~110ms) programmatic scroll for nav-icon taps — native 'smooth' is
 	// too slow. Snap is suspended during the animation so it doesn't fight it.
