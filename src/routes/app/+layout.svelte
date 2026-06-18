@@ -112,11 +112,29 @@
 	const isPagerActive = $derived(_isMobile && pagerIndex >= 0);
 
 	// Instant feedback: the moment a tap navigates to a conversation, paint a
-	// skeleton message window (so it appears immediately) until the real page's
-	// data resolves and renders. Mobile only — desktop loads fast and differs.
+	// skeleton message window (so it appears immediately). It stays up until the
+	// nav lands AND the slide/snap onto the conv panel + header reflow have settled
+	// (_convEntering, cleared in onPagerScrollEnd) — so the chat is never revealed
+	// mid-reflow / mid-snap. Mobile only.
+	let _convEntering = $state(false);
+	let _convEnterT;
 	const _showConvSkeleton = $derived(
-		_isMobile && !!$navigating && _isConvRoute($navigating.to?.url?.pathname ?? '')
+		_isMobile && (
+			_convEntering ||
+			(!!$navigating && _isConvRoute($navigating.to?.url?.pathname ?? ''))
+		)
 	);
+	// Arm the overlay whenever a navigation INTO a conversation begins, with a
+	// safety timeout so it can never get stuck up.
+	$effect(() => {
+		const enteringNav = _isMobile && !!$navigating && _isConvRoute($navigating.to?.url?.pathname ?? '');
+		if (!enteringNav) return;
+		untrack(() => {
+			_convEntering = true;
+			clearTimeout(_convEnterT);
+			_convEnterT = setTimeout(() => { _convEntering = false; }, 900);
+		});
+	});
 
 	// Keep the swipe-in menu MOUNTED (off-screen) the whole time you're in a
 	// conversation, so the right→left swipe just animates an already-rendered
@@ -220,7 +238,15 @@
 	// track in a half-snapped "in-between" position. scrollend guarantees we're
 	// parked on a real panel first.
 	function onPagerScrollEnd() {
-		if (!pagerEl || _pagerProg || _pagerTouching) return;
+		if (!pagerEl) return;
+		// Entering a conversation: the slide/snap onto the conv panel (and the header
+		// reflow) is now complete, so drop the loading overlay — one rAF lets the
+		// reflow paint first. Checked even during the programmatic entry slide.
+		if (_convEntering && _onConvMobile && pagerEl.scrollLeft < (pagerEl.clientWidth || 1) * 0.5) {
+			clearTimeout(_convEnterT);
+			requestAnimationFrame(() => { _convEntering = false; });
+		}
+		if (_pagerProg || _pagerTouching) return;
 		clearTimeout(_pagerSnapT);
 		commitPagerRoute();
 	}
@@ -387,13 +413,16 @@
 		const w = pagerEl.clientWidth || 1;
 		// Reachability edges (edge-only, never fight a forward swipe; skipped during
 		// programmatic scrolls):
-		//  • In a conversation → only conv(0) ↔ menu(1) are reachable. Cap the RIGHT
-		//    edge at the menu so a hard exit flick can't overshoot toward Home and
-		//    strand the viewport halfway between the menu and Home.
+		//  • Exiting a conversation (gesture STARTED on the conv panel) → cap the
+		//    RIGHT edge at the menu so a hard exit flick can't overshoot toward Home.
+		//    Gating on the gesture START is critical: after a quick conv→menu the
+		//    route is still committing, so a follow-on menu→Home swipe is still
+		//    "_onConvMobile" — without the gate the cap would clamp it back to the
+		//    menu (the "can't reach Home, glitches back" bug).
 		//  • Not in a chat → the menu (index 1) is the leftmost panel; floor the LEFT
 		//    edge there so you can't scroll into the empty conv slot.
 		if (!_pagerProg) {
-			if (_onConvMobile) {
+			if (_onConvMobile && _gestureStartIdx === 0) {
 				if (pagerEl.scrollLeft > w) pagerEl.scrollLeft = w;
 			} else if (!_convActiveOrEntering && pagerEl.scrollLeft < w) {
 				pagerEl.scrollLeft = w;
