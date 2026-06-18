@@ -218,8 +218,11 @@
 			const dir = _pgVelX < 0 ? 1 : -1; // finger moving left → next panel (scrollLeft +)
 			const cur = Math.round(pagerEl.scrollLeft / w); // where the scroll actually is now
 			// One panel per gesture: never more than one panel away from where this
-			// swipe began, so a flick can't skip a page.
-			const lo = Math.max(0, _gestureStartIdx - 1), hi = Math.min(PANELS.length - 1, _gestureStartIdx + 1);
+			// swipe began, so a flick can't skip a page. The conv panel (index 0) is
+			// off-limits unless a chat is active/being entered — otherwise a
+			// right-flick on the menu would land on the empty conv slot.
+			const minIdx = _convActiveOrEntering ? 0 : 1;
+			const lo = Math.max(minIdx, _gestureStartIdx - 1), hi = Math.min(PANELS.length - 1, _gestureStartIdx + 1);
 			const target = Math.max(lo, Math.min(hi, cur + dir));
 			if (target !== cur) {
 				_fastScrollTo(target * w, 260); // longer, momentum-like ease (smoother than the old 110ms)
@@ -373,7 +376,9 @@
 			// scroll-snap-stop on a hard flick); on that rare over-skip, ease to the
 			// adjacent panel instead of navigating to the skipped one. Normal swipes
 			// land within range, so this never causes an everyday snap-back.
-			const i = Math.max(Math.max(0, _gestureStartIdx - 1), Math.min(Math.min(PANELS.length - 1, _gestureStartIdx + 1), raw));
+			// Conv panel (index 0) is off-limits unless a chat is active/being entered.
+			const minIdx = _convActiveOrEntering ? 0 : 1;
+			const i = Math.max(Math.max(minIdx, _gestureStartIdx - 1), Math.min(Math.min(PANELS.length - 1, _gestureStartIdx + 1), raw));
 			if (i !== raw) { _suppressCommits(300); _fastScrollTo(i * cw, 260); }
 			// The conversation panel (PANELS[0] when present) has no route — you're
 			// already on it; never goto(undefined). Only commit for real section/menu
