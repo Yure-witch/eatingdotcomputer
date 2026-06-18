@@ -1764,7 +1764,7 @@
 								uid={data.currentUser.id}
 								avatarKind={data.currentUser.avatarKind ?? 'gen'}
 								avatarValue={data.currentUser.avatarValue ?? null}
-								size={40}
+								size={_isMobile ? 40 : 26}
 							/>
 							<span class="presence-dot" class:idle={presenceStatus[data.currentUser.id] === 'idle'}></span>
 						</span>
@@ -1800,7 +1800,7 @@
 								uid={u.id}
 								avatarKind={u.avatarKind ?? 'gen'}
 								avatarValue={u.avatarValue ?? null}
-								size={40}
+								size={_isMobile ? 40 : 26}
 							/>
 							{#if isOnline}<span class="presence-dot" class:idle={presenceStatus[u.id] === 'idle'}></span>{/if}
 						</span>
@@ -2218,6 +2218,16 @@
 
 	/* ── Members ── */
 	.member-row { border-radius: 9px; }
+	/* On desktop, DM (member) rows sit at ~66% the size of channel rows — the
+	   avatar drops to 26px (set via the size prop) and the row's padding / text /
+	   presence-dot scale to match. Channels keep their fuller size. Mobile is
+	   unchanged. */
+	@media (min-width: 641px) {
+		.member-row .conv-item { padding: 0.26rem 0.55rem; gap: 0.45rem; }
+		.member-row .member-name { font-size: 0.8rem; }
+		.member-row .conv-last { font-size: 0.66rem; }
+		.member-row .presence-dot { width: 8px; height: 8px; border-width: 1.5px; bottom: 0; right: 0; }
+	}
 	.member-row.self { opacity: 0.8; }
 	.member-row.self:hover { opacity: 1; }
 	/* Drag-to-reorder affordance + feedback. */
