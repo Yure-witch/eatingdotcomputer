@@ -15,11 +15,11 @@ const config: CapacitorConfig = {
 	appName: 'eating.computer',
 	webDir: 'capacitor-shell',
 	server: {
-		// PRODUCTION — the native shell loads the live deployment. To go back to
-		// local dev testing, swap url to 'http://192.168.86.135:4173' and set
-		// cleartext: true (phone + Mac on the same WiFi).
-		url: 'https://www.eating.computer',
-		cleartext: false,
+		// ⚠️ DEV TESTING — pointed at the local dev/preview server so the native app
+		// runs our in-progress code. Phone + Mac must be on the same WiFi. REVERT to
+		// url: 'https://www.eating.computer' (cleartext: false) before archiving.
+		url: 'http://192.168.86.135:4173',
+		cleartext: true,
 		allowNavigation: ['192.168.86.135', 'www.eating.computer', 'eating.computer']
 	},
 	ios: {

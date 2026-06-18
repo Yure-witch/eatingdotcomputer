@@ -72,6 +72,14 @@
 	let visible = $state(false);
 	let hovering = $state(false);
 	let mounted = true;
+	// Free an rlottie cell's rasterised frames (GPU-backed ImageBitmaps) after it's
+	// been off-screen this long; they're re-acquired automatically when it scrolls
+	// back. Bounds GPU memory to ~the visible set instead of every emote ever shown
+	// — on iOS's tight WebView budget that runaway is what got the app jetsammed.
+	// Touch/native only; desktop has the headroom and skips the re-decode churn.
+	const _RELEASE_OFFSCREEN = typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)')?.matches;
+	const OFFSCREEN_RELEASE_MS = 8000;
+	let _offscreenT = null;
 	// Flips true after the worker has drawn 3 confirmed frames into
 	// the canvas tile — at that point we know the canvas has visibly
 	// taken over and the CSS backdrop can fall away without ever
@@ -422,6 +430,17 @@
 		observer = new IntersectionObserver((entries) => {
 			const wasVisible = visible;
 			visible = entries[0].isIntersecting;
+			// Cancel any pending off-screen frame release the moment we're back.
+			if (visible && _offscreenT) { clearTimeout(_offscreenT); _offscreenT = null; }
+			// Went off-screen → schedule freeing the rasterised frames (re-acquired by
+			// the `visible && !wasVisible` branch above when it scrolls back).
+			if (!visible && wasVisible && _RELEASE_OFFSCREEN && activeEngine === 'rlottie' && !eager) {
+				clearTimeout(_offscreenT);
+				_offscreenT = setTimeout(() => {
+					_offscreenT = null;
+					if (!visible && mounted && activeEngine === 'rlottie') teardown_rlottie();
+				}, OFFSCREEN_RELEASE_MS);
+			}
 			if (visible && !wasVisible) {
 				if (activeEngine === 'rlottie' && !eager) ensureLoaded();
 				if (isSkottieEngine(activeEngine)) {
@@ -463,6 +482,7 @@
 
 	onDestroy(() => {
 		mounted = false;
+		clearTimeout(_offscreenT);
 		observer?.disconnect();
 		teardownCurrent(activeEngine);
 	});
