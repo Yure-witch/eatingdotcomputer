@@ -259,18 +259,22 @@
 		}
 		// The conv panel has no route — you're already on it; never goto(undefined).
 		if (i !== pagerIndex && i >= 0 && i < PANELS.length && PANELS[i].route) {
-			goto(PANELS[i].route, { noScroll: true, keepFocus: true }).then(() => {
-				// Re-pin after the nav + teardown settle — leaving a conversation tears
-				// down a heavy component right after, which can nudge the snap off again.
-				requestAnimationFrame(() => {
-					if (pagerEl && !_pagerTouching && Math.abs(pagerEl.scrollLeft - lockLeft) > 1) {
-						_pagerProg = true;
-						pagerEl.scrollLeft = lockLeft;
-						requestAnimationFrame(() => { _pagerProg = false; });
-					}
-				});
-			});
+			goto(PANELS[i].route, { noScroll: true, keepFocus: true }).then(() => _repinPager(lockLeft, 6));
 		}
+	}
+	// Re-pin the track exactly onto a panel, retrying across a short window so it
+	// catches a SLOW teardown nudge. Channels lock instantly, but a DM tears down a
+	// heavier component (profile card, presence, partner data) that can shift the
+	// snap a frame or two LATER — after a single re-pin would have run. Each retry
+	// is a no-op once stable, and bails the moment you touch (a new swipe wins).
+	function _repinPager(lockLeft, tries) {
+		if (!pagerEl || _pagerTouching) return;
+		if (Math.abs(pagerEl.scrollLeft - lockLeft) > 1) {
+			_pagerProg = true;
+			pagerEl.scrollLeft = lockLeft;
+			requestAnimationFrame(() => { _pagerProg = false; });
+		}
+		if (tries > 0) setTimeout(() => _repinPager(lockLeft, tries - 1), 60);
 	}
 	// Keep the visible route synced to the URL after a navigation / on load.
 	$effect(() => { if (pagerIndex >= 0) { _pagerVisibleRoute = PANELS[pagerIndex].route; _pagerFraction = pagerIndex; } });
