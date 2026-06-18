@@ -2335,6 +2335,16 @@
 		overflow-anchor: none;
 	}
 	.pager-track::-webkit-scrollbar { display: none; }
+	/* While an emoji / expression / reaction picker is open, LOCK the pager's
+	   horizontal scroll so a swipe on the picker (it lives inside the conversation
+	   panel, which is the pager's scroll container) can't drag the whole page to
+	   another tab. The picker's own category rows scroll in their own containers,
+	   so they keep working. */
+	:global(body.expr-picker-open) .pager-track,
+	:global(html.reaction-picker-open) .pager-track {
+		overflow-x: hidden;
+		scroll-snap-type: none;
+	}
 	.pager-panel {
 		flex: 0 0 100%;
 		width: 100%;
