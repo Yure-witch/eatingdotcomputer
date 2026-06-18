@@ -149,22 +149,14 @@
 	// rides the live scroll position across all of them. Off the pager (in a
 	// conversation) it parks on Chat (slot 0).
 	const slotCount = $derived(items.length + 1);
-	// On the pager → ride the live fraction. Off the pager (conversation,
-	// /app/weeks, profile, …) → park on the discrete active tab: Chat if it's a
-	// chat route, else whichever section claims the path (Chat slot 0, then the
-	// items). Falls back to Chat if nothing claims it.
-	const _activeItemIdx = $derived(items.findIndex((it) => it.active(activePath)));
-	const indicatorSlot = $derived(
-		pagerNav?.activeRoute != null ? (pagerNav?.navFraction ?? 0)
-		: chatActive ? 0
-		: _activeItemIdx >= 0 ? _activeItemIdx + 1
-		: 0
-	);
+	// The pill's fractional position rides the CSS var `--nav-frac`, written
+	// straight to <html> by the pager (imperatively, per scroll frame) for 60fps —
+	// no Svelte reactivity in the hot path. We only feed it the (stable) slot count.
 </script>
 
 <!-- Mobile bottom nav only — desktop nav is in the global sidebar (app/+layout.svelte) -->
 <nav class="bottom-nav" class:hidden={keyboardOpen}>
-	<span class="nav-indicator" style:--slot={indicatorSlot} style:--slot-count={slotCount}></span>
+	<span class="nav-indicator" style:--slot-count={slotCount}></span>
 	<!-- Chat is a real tab now: scrolls the pager to the chat-menu panel (or
 	     navigates to it from a non-pager route like a conversation). -->
 	<a href="/app/chat" class="nav-item" class:active={chatActive}
@@ -236,8 +228,10 @@
 			/* Move with transform (compositor / GPU) instead of `left` (which forced a
 			   layout reflow every scroll frame → framey). The nav is full-viewport
 			   width, so each slot is 100vw/slot-count; centre on the slot, minus half
-			   the pill's own width. --slot / --slot-count are set per frame inline. */
-			transform: translateX(calc((var(--slot, 0) + 0.5) * (100vw / var(--slot-count, 5)) - 50%));
+			   the pill's own width. --nav-frac is written straight to <html> by the
+			   pager (imperatively, per frame) so there's no Svelte flush in the hot
+			   path; --slot-count is the stable inline value. */
+			transform: translateX(calc((var(--nav-frac, 0) + 0.5) * (100vw / var(--slot-count, 5)) - 50%));
 			will-change: transform;
 			background: var(--sidebar-active);
 			border-radius: 999px;

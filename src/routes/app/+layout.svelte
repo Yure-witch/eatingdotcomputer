@@ -438,6 +438,11 @@
 		// RIGHT NOW (drives the discrete selected tab), before navigation
 		// commits, so the bottom bar follows your finger.
 		_pagerFraction = pagerEl.scrollLeft / w;
+		// Drive the bottom-nav pill IMPERATIVELY (write the CSS var straight to the
+		// DOM, bypassing Svelte's per-frame reactivity flush) so it tracks the swipe
+		// at 60fps. The pill's transform reads --nav-frac. (A settle/nav effect sets
+		// it for non-scroll route changes.)
+		_writeNavFrac(_pagerFraction);
 		const vi = Math.round(_pagerFraction);
 		if (PANELS[vi]) _pagerVisibleRoute = PANELS[vi].route;
 		if (_pagerProg) return;
@@ -449,6 +454,31 @@
 		_pagerSnapT = setTimeout(commitPagerRoute, _scrollEndSupported ? 350 : 80);
 	}
 	const _scrollEndSupported = typeof window !== 'undefined' && 'onscrollend' in window;
+
+	// ── Bottom-nav pill position (driven via a CSS var, not Svelte, for 60fps) ──
+	// Expressed as a fractional nav slot: 0 = Chat, 1 = Home, 2 = Orbit, … The
+	// conversation + menu panels both collapse onto the Chat slot (0).
+	function _writeNavFrac(frac) {
+		if (typeof document === 'undefined') return;
+		const homeIdx = PANELS.findIndex((p) => p.route === '/app');
+		if (homeIdx < 0) return;
+		document.documentElement.style.setProperty('--nav-frac', String(Math.max(0, frac - homeIdx + 1)));
+	}
+	// Discrete slot for a committed route — for settle, nav-icon taps, and off-pager
+	// routes (where the live scroll handler isn't running).
+	function _navSlotForPath(path) {
+		if (path.startsWith('/app/chat')) return 0;
+		if (path === '/app' || path.startsWith('/app/weeks')) return 1;
+		if (path.startsWith('/app/orbit') || path.startsWith('/app/atlas') || path.startsWith('/app/collection') || path.startsWith('/app/assignments') || path.startsWith('/app/files')) return 2;
+		if (path.startsWith('/app/playground')) return 3;
+		if (path.startsWith('/app/manage')) return 4;
+		return 0;
+	}
+	$effect(() => {
+		const path = $page.url.pathname; // fires on navigation (settle), not per scroll frame
+		if (typeof document === 'undefined') return;
+		document.documentElement.style.setProperty('--nav-frac', String(_navSlotForPath(path)));
+	});
 
 	// Conversation → menu swipe. A conversation (channel/DM) is a full-screen,
 	// non-pager view; a clear right-to-left swipe navigates to the chat menu
@@ -694,36 +724,27 @@
 			if (!isPagerActive || !pagerEl) return false;
 			const idx = PANELS.findIndex((p) => p.route === route);
 			if (idx < 0) return false;
-			const gen = ++_goSecGen;
-			// Kill EVERYTHING that could fight or revert the jump: any eased scroll /
-			// hard-snap, any pending settle-commit, AND any lingering re-pin (a pin
-			// queued after a recent chat exit was snapping us back — "flashes there
-			// then back"). Clear the entry overlay too.
+			// Kill everything that could fight or revert the jump: any eased scroll /
+			// hard-snap, pending settle-commit, AND any lingering re-pin (a pin queued
+			// after a recent chat exit was snapping us back). Clear the entry overlay.
 			_cancelProgrammaticScroll();
 			_repinGen++;
 			clearTimeout(_pagerSnapT);
 			_convEntering = false;
-			_suppressCommits(700);
-			// Hold _pagerProg true for the WHOLE navigation (not just one frame) so no
-			// scroll-commit can fire mid-nav and bounce us back to the old panel.
+			// Suppress scroll-commits during the nav so none reverts us. No post-nav
+			// re-assert: that "finish" step fought a follow-on swipe (tap-then-swipe
+			// snapped back to the tapped tab). The jump + suppression + re-pin cancel
+			// are enough to land cleanly without anything to fight a later gesture.
+			_suppressCommits(600);
 			_pagerProg = true;
+			const prevSnap = pagerEl.style.scrollSnapType;
 			pagerEl.style.scrollSnapType = 'none';
-			const jump = () => {
-				if (_goSecGen !== gen || !pagerEl) return;
-				const t = pagerEl.children?.[idx]?.offsetLeft ?? idx * (pagerEl.clientWidth || 1);
-				if (Math.abs(pagerEl.scrollLeft - t) > 1) pagerEl.scrollLeft = t;
-			};
-			jump();                        // instant — straight to the target
+			const t = pagerEl.children?.[idx]?.offsetLeft ?? idx * (pagerEl.clientWidth || 1);
+			pagerEl.scrollLeft = t;        // instant — straight to the target
 			_pagerFraction = idx;          // jump the highlight too (no lag)
 			_pagerVisibleRoute = route;
-			const finish = () => {
-				if (_goSecGen !== gen) return; // superseded by a newer tap
-				if (!_pagerTouching) jump();   // re-assert after route/render settled (unless user grabbed it)
-				if (pagerEl) pagerEl.style.scrollSnapType = '';
-				_pagerProg = false;
-			};
-			goto(route, { noScroll: true, keepFocus: true }).then(() => requestAnimationFrame(finish));
-			setTimeout(() => { if (_goSecGen === gen) finish(); }, 800); // safety if goto stalls
+			requestAnimationFrame(() => { if (pagerEl) pagerEl.style.scrollSnapType = prevSnap; _pagerProg = false; });
+			goto(route, { noScroll: true, keepFocus: true });
 			return true;
 		},
 		// Live fractional scroll position (0 = first section … N-1 = last), so
