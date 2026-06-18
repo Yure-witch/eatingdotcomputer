@@ -248,7 +248,9 @@
 		// menu when no chat is active (the conv slot is off-limits then).
 		const minIdx = _convActiveOrEntering ? 0 : 1;
 		const i = Math.max(minIdx, Math.min(PANELS.length - 1, raw));
-		const lockLeft = i * cw;
+		// Use the panel's ACTUAL offset (its exact scroll-snap position) rather than
+		// i*width, so a pin can never fight the native snap point.
+		const lockLeft = pagerEl.children?.[i]?.offsetLeft ?? i * cw;
 		// Pin EXACTLY onto the target panel right now — instant, not a smooth
 		// animation that the conversation teardown could interrupt and freeze
 		// half-way. Covers both a rare over-flick (clamped i) and a few-px-short snap.
@@ -260,47 +262,31 @@
 		}
 		// The conv panel has no route — you're already on it; never goto(undefined).
 		if (i !== pagerIndex && i >= 0 && i < PANELS.length && PANELS[i].route) {
-			goto(PANELS[i].route, { noScroll: true, keepFocus: true }).then(() => _repinPager(lockLeft, 6));
+			// Single clean correction once the nav + teardown settle (no retry loop —
+			// repeated pins read as a stagger). overflow-anchor:none on the track
+			// should keep the teardown from nudging the scroll in the first place.
+			goto(PANELS[i].route, { noScroll: true, keepFocus: true }).then(() => _repinPager(i, 0));
 		}
 	}
-	// Re-pin the track exactly onto a panel, retrying across a short window so it
-	// catches a SLOW teardown nudge. Channels lock instantly, but a DM tears down a
-	// heavier component (profile card, presence, partner data) that can shift the
-	// snap a frame or two LATER — after a single re-pin would have run. Each retry
-	// is a no-op once stable, and bails the moment you touch (a new swipe wins).
+	// Pin the track exactly onto panel `idx` (reading its live offset, so a teardown
+	// layout shift can't make the target stale). `tries` extra retries are optional;
+	// default is a single check (no stagger). A fresh touch bumps `_repinGen` and
+	// cancels it, so a lingering pin can't fight a tap opening a chat.
 	let _repinGen = 0;
-	function _repinPager(lockLeft, tries, gen) {
+	function _repinPager(idx, tries, gen) {
 		if (gen === undefined) gen = ++_repinGen; // a new invocation supersedes any prior
-		// Bail if superseded (a newer pin) or cancelled (a fresh touch bumps the gen
-		// — otherwise a lingering re-pin to the MENU fights a tap that's opening a
-		// chat, which is why DM taps needed a second tap).
 		if (gen !== _repinGen || !pagerEl || _pagerTouching) return;
+		const lockLeft = pagerEl.children?.[idx]?.offsetLeft ?? idx * (pagerEl.clientWidth || 1);
 		if (Math.abs(pagerEl.scrollLeft - lockLeft) > 1) {
 			_pagerProg = true;
 			pagerEl.scrollLeft = lockLeft;
 			requestAnimationFrame(() => { _pagerProg = false; });
 		}
-		if (tries > 0) setTimeout(() => _repinPager(lockLeft, tries - 1, gen), 60);
+		if (tries > 0) setTimeout(() => _repinPager(idx, tries - 1, gen), 60);
 	}
 	// Keep the visible route synced to the URL after a navigation / on load.
 	$effect(() => { if (pagerIndex >= 0) { _pagerVisibleRoute = PANELS[pagerIndex].route; _pagerFraction = pagerIndex; } });
 
-	// When you LEAVE a conversation, lock the track onto the committed panel as the
-	// teardown settles. A DM is heavier than a channel — it unmounts sprite
-	// overlays + a profile-link header that nudge the snap across several frames,
-	// some after the post-nav re-pin — so this fires at the exact flip and retries
-	// over a longer window (superseding the commit's pin; a fresh touch cancels it).
-	let _wasOnConvMobile = false;
-	$effect(() => {
-		const onConv = _onConvMobile;
-		const el = pagerEl;
-		untrack(() => {
-			if (_wasOnConvMobile && !onConv && el && isPagerActive && !_pagerTouching) {
-				_repinPager(Math.max(0, pagerIndex) * (el.clientWidth || 1), 12);
-			}
-			_wasOnConvMobile = onConv;
-		});
-	});
 
 	// Fast (~110ms) programmatic scroll for nav-icon taps — native 'smooth' is
 	// too slow. Snap is suspended during the animation so it doesn't fight it.
@@ -2268,6 +2254,10 @@
 		overscroll-behavior-x: contain;
 		scrollbar-width: none;
 		-webkit-overflow-scrolling: touch;
+		/* Don't let the browser adjust the horizontal scroll position when a panel's
+		   content changes (e.g. a conversation tearing down) — that anchoring is what
+		   nudged the menu off its snap when leaving a DM. */
+		overflow-anchor: none;
 	}
 	.pager-track::-webkit-scrollbar { display: none; }
 	.pager-panel {
@@ -2279,6 +2269,7 @@
 		scroll-snap-align: start;
 		scroll-snap-stop: always;
 		scrollbar-width: none;
+		overflow-anchor: none;
 		/* Reserve the bottom nav strip (the section content stops above it). */
 		padding-bottom: calc(56px + env(safe-area-inset-bottom, 0px));
 		box-sizing: border-box;
