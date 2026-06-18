@@ -20,6 +20,7 @@
 	} from '$lib/skottie-stage-worker.js';
 	import { dropAdaptiveFrames as dropCpuAtlasAdaptive } from '$lib/cpu-atlas.js';
 	import { initTheme, onThemeChanged } from '$lib/theme-store.js';
+	import { initEmoteIdle } from '$lib/emote-idle.js';
 	import { dev } from '$app/environment';
 	import { initNativeShell, isNativeApp, updateStatusBarTheme } from '$lib/native.js';
 	import GetAppBanner from '$lib/components/GetAppBanner.svelte';
@@ -71,6 +72,11 @@
 		window.addEventListener('native-resume', onAppResume);
 		const onVisible = () => { if (document.visibilityState === 'visible') onAppResume(); };
 		document.addEventListener('visibilitychange', onVisible);
+
+		// On touch devices, drive the "emotes awake" idle signal so animated
+		// emotes freeze after ~45s of no interaction (and wake on any) — that
+		// sustained 60fps emote churn was jetsamming the native WebView.
+		if (window.matchMedia?.('(pointer: coarse)')?.matches) initEmoteIdle();
 
 		// Apply the saved Material 3 theme as early as possible. Runs
 		// in onMount so it happens client-side only — the hex fallbacks

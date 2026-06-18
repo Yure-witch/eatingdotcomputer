@@ -15,6 +15,7 @@
 		isAdaptivePack
 	} from '$lib/telegram-emoji-store.js';
 	import { acquire, release } from '$lib/lottie-spritesheet.js';
+	import { emotesAwake } from '$lib/emote-idle.js';
 	import * as SkMain from '$lib/skottie-stage.js';
 	import * as SkWorker from '$lib/skottie-stage-worker.js';
 	import * as CpuAtlas from '$lib/cpu-atlas.js';
@@ -197,10 +198,16 @@
 	}
 	function updatePlay_rlottie() {
 		if (!entry || paused) return;
-		const want = mode === 'hover' ? hovering : (eager || visible);
+		// On touch, also gate on the global idle signal: after ~45s of no
+		// interaction emotes freeze (loops stop) so an idle chat does ~zero GPU
+		// work; any activity wakes them. Desktop ignores it (always loops).
+		const awake = !_coarse || $emotesAwake;
+		const want = (mode === 'hover' ? hovering : (eager || visible)) && awake;
 		if (want && !running) startLoop_rlottie();
 		else if (!want && running) stopLoop_rlottie();
 	}
+	// React to the awake signal flipping (idle ↔ active) so loops start/stop.
+	$effect(() => { void $emotesAwake; updatePlay_rlottie(); });
 	function teardown_rlottie() {
 		stopLoop_rlottie();
 		if (settleTimer) { clearTimeout(settleTimer); settleTimer = null; }
