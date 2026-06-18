@@ -56,4 +56,4 @@ vite.config.ts.timestamp-*
 **/xcuserdata/
 
 # Stray Web Inspector timeline recordings
-*-recording.json
+*recording*.json

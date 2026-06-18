@@ -2680,11 +2680,15 @@
 		const fs = parseFloat(getComputedStyle(span).fontSize) || 16;
 		const size = Math.max(16, Math.round(fs * 1.4)); // .tg-emoji is 1.4em
 		let props;
-		if (span.dataset.tgCp) props = { cp: span.dataset.tgCp, size };
-		else if (span.dataset.tgPack && span.dataset.tgId) props = { short: span.dataset.tgPack, id: span.dataset.tgId, size };
+		if (span.dataset.tgCp) props = { cp: span.dataset.tgCp, size, loop: _emoteLoop };
+		else if (span.dataset.tgPack && span.dataset.tgId) props = { short: span.dataset.tgPack, id: span.dataset.tgId, size, loop: _emoteLoop };
 		else return;
 		try { _tgSprites.set(span, mount(SpriteSticker, { target: span, props })); } catch {}
 	}
+	// Loop emotes forever only on desktop. On touch/native, play once then freeze
+	// (they replay when scrolled back into view): ~30 emotes looping at 60fps was
+	// sustained GPU/canvas churn that jetsammed the WebContent process on a phone.
+	const _emoteLoop = !(typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)')?.matches);
 	function sweepSpriteEmotes() {
 		for (const [sp, comp] of _tgSprites) {
 			if (!sp.isConnected) { try { unmount(comp); } catch {} _tgSprites.delete(sp); }
