@@ -395,6 +395,9 @@
 		plain: _codeIcon(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><rect x="2" y="1" width="12" height="14" rx="1.5" fill="none" stroke="#9399b2" stroke-width="1.3"/><line x1="5" y1="5" x2="11" y2="5" stroke="#9399b2" stroke-width="1"/><line x1="5" y1="8" x2="11" y2="8" stroke="#9399b2" stroke-width="1"/><line x1="5" y1="11" x2="9" y2="11" stroke="#9399b2" stroke-width="1"/></svg>`),
 	};
 	const { contentHtml, contentHtmlM, clearCache: _clearHtmlCache } = createContentRenderer({ hljs, codeIcons: _ci, getCeMap: getCachedCustomEmojiMap, wrapEmoji: wrapEmojiInText });
+	// Touch the reactive _ceMap so reaction chips re-render the instant the custom-
+	// emote map loads (contentHtml reads it through a getter Svelte can't track).
+	function reactionHtml(emoji) { void _ceMap; return contentHtml(emoji, false); }
 
 	// Wrap contentHtmlM with mention-pill rendering. Splits content at
 	// each mention's offset, runs the surrounding text through the
@@ -3845,9 +3848,9 @@
 							     of the chat already renders (mountTgStickers
 							     will pick up any tg spans on its next pass). -->
 							<button class="reaction-chip" class:reacted={data.currentUser.id in users} onclick={() => toggleReaction(msg.id, emoji)} onmouseenter={positionReactionTooltip}>
-								<span class="reaction-emoji">{@html contentHtml(emoji, false)}</span> <span class="reaction-count">{count}</span>
+								<span class="reaction-emoji">{@html reactionHtml(emoji)}</span> <span class="reaction-count">{count}</span>
 								<div class="reaction-tooltip">
-									<span class="reaction-tooltip-emoji">{@html contentHtml(emoji, false)}</span>
+									<span class="reaction-tooltip-emoji">{@html reactionHtml(emoji)}</span>
 									<div class="reaction-tooltip-text">
 										<span class="reaction-tooltip-names">{Object.keys(users).map(uid => userMap[uid]?.name ?? 'Someone').join(', ')}</span>
 										<span class="reaction-tooltip-label">reacted with {emojiNames[emoji] ?? emoji}</span>
@@ -3940,7 +3943,7 @@
 							{@const count = Object.keys(users).length}
 							{#if count > 0}
 								<span class="reaction-chip" class:reacted={data.currentUser.id in users}>
-									<span class="reaction-emoji">{@html contentHtml(emoji, false)}</span> <span class="reaction-count">{count}</span>
+									<span class="reaction-emoji">{@html reactionHtml(emoji)}</span> <span class="reaction-count">{count}</span>
 								</span>
 							{/if}
 						{/each}
