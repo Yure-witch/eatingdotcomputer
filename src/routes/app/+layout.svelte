@@ -2218,15 +2218,16 @@
 
 	/* ── Members ── */
 	.member-row { border-radius: 9px; }
-	/* On desktop, DM (member) rows sit at ~66% the size of channel rows — the
-	   avatar drops to 26px (set via the size prop) and the row's padding / text /
-	   presence-dot scale to match. Channels keep their fuller size. Mobile is
-	   unchanged. */
+	/* On desktop, ALL chat-list rows (channels AND DMs) sit at the compact ~66%
+	   size: 26px avatar (DMs via the size prop, channels via .conv-avatar) with
+	   matching padding / text / presence-dot. Mobile is unchanged. */
 	@media (min-width: 641px) {
-		.member-row .conv-item { padding: 0.26rem 0.55rem; gap: 0.45rem; }
-		.member-row .member-name { font-size: 0.8rem; }
-		.member-row .conv-last { font-size: 0.66rem; }
-		.member-row .presence-dot { width: 8px; height: 8px; border-width: 1.5px; bottom: 0; right: 0; }
+		.conv-item { padding: 0.26rem 0.55rem; gap: 0.45rem; }
+		.member-name { font-size: 0.8rem; }
+		.conv-last { font-size: 0.66rem; }
+		.presence-dot { width: 8px; height: 8px; border-width: 1.5px; bottom: 0; right: 0; }
+		.conv-avatar { width: 26px; height: 26px; }
+		.channel-avatar { font-size: 0.92rem; }
 	}
 	.member-row.self { opacity: 0.8; }
 	.member-row.self:hover { opacity: 1; }
