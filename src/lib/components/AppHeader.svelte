@@ -182,5 +182,11 @@
 		   height as every other page's header. */
 		.app-header.conv-mobile .page-title-block { flex: 1; gap: 0.1rem; line-height: normal; }
 		.app-header.conv-mobile .page-title { font-size: 1.25rem; }
+		/* A DM's title is a LINK (to the partner's profile); its vertical padding
+		   made the DM header ~6px taller than a channel's plain title, so leaving a
+		   DM changed --header-h and relayed out the pager mid-snap (DMs settled
+		   weird, channels didn't). Drop the vertical padding so every conversation
+		   header is the exact same height. */
+		.app-header.conv-mobile .page-title-link { padding-top: 0; padding-bottom: 0; }
 	}
 </style>
