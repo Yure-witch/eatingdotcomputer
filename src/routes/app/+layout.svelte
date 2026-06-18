@@ -296,9 +296,13 @@
 		// The conv panel has no route — you're already on it; never goto(undefined).
 		if (i !== pagerIndex && i >= 0 && i < PANELS.length && PANELS[i].route) {
 			// Single clean correction once the nav + teardown settle (no retry loop —
-			// repeated pins read as a stagger). overflow-anchor:none on the track
-			// should keep the teardown from nudging the scroll in the first place.
-			goto(PANELS[i].route, { noScroll: true, keepFocus: true }).then(() => _repinPager(i, 0));
+			// repeated pins read as a stagger). CAPTURE the re-pin generation NOW, at
+			// commit time — not when goto resolves. On prod goto resolves slowly, and
+			// if you've swiped away by then, a token grabbed at resolve-time would
+			// still be current and re-pin to THIS (old) panel — "snaps back". A token
+			// captured here is invalidated by the next touch (which bumps _repinGen).
+			const rg = ++_repinGen;
+			goto(PANELS[i].route, { noScroll: true, keepFocus: true }).then(() => _repinPager(i, 0, rg));
 		}
 	}
 	// Pin the track exactly onto panel `idx` (reading its live offset, so a teardown
