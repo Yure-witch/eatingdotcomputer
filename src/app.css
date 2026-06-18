@@ -356,6 +356,15 @@ main {
 	object-fit: contain;
 	display: inline-block;
 }
+/* Fallback when a [ce:…] custom emote can't be resolved (renamed / removed /
+   dead URL): show the :shortcode: as muted text instead of a blank "removed"
+   box, so it's identifiable. */
+.ce-missing {
+	font-size: 0.85em;
+	opacity: 0.6;
+	font-style: italic;
+	white-space: nowrap;
+}
 .tg-emoji {
 	display: inline-block;
 	position: relative;

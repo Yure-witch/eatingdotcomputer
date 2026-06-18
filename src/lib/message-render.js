@@ -477,10 +477,18 @@ export function createContentRenderer({ hljs = null, codeIcons = {}, getCeMap = 
 					const ceId = item.match[1];
 					const ceToken = item.match[0];
 					const ceData = getCeMap()[ceId];
-					const ceUrl = ceData?.url ?? '';
-					const ceAlt = ceData ? ':' + ceData.shortcode + ':' : ceToken;
-					const imgHtml = `<img class="ce-img" data-ce="${escapeHtml(ceToken)}" src="${escapeHtml(ceUrl)}" alt="${escapeHtml(ceAlt)}" loading="lazy" />`;
-					parts.push(s.fxStack.length ? nestedFxHtml(s.fxStack, imgHtml, split ? `${(globalWi++ * 0.06).toFixed(2)}s` : null) : imgHtml);
+					let emoteHtml;
+					if (ceData?.url) {
+						const ceAlt = ':' + ceData.shortcode + ':';
+						// `onerror` falls back to the :shortcode: text if the image URL is
+						// dead (e.g. an R2 file that got cleaned up), instead of a broken icon.
+						emoteHtml = `<img class="ce-img" data-ce="${escapeHtml(ceToken)}" src="${escapeHtml(ceData.url)}" alt="${escapeHtml(ceAlt)}" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'ce-missing',textContent:':${escapeHtml(ceId)}:'}))" />`;
+					} else {
+						// Custom emote not in the loaded map (renamed / removed / no URL) —
+						// show the shortcode as text so it's identifiable, not a blank box.
+						emoteHtml = `<span class="ce-missing" data-ce="${escapeHtml(ceToken)}" title="custom emote :${escapeHtml(ceId)}: not found">:${escapeHtml(ceId)}:</span>`;
+					}
+					parts.push(s.fxStack.length ? nestedFxHtml(s.fxStack, emoteHtml, split ? `${(globalWi++ * 0.06).toFixed(2)}s` : null) : emoteHtml);
 				}
 				lastIdx = item.end;
 			}
