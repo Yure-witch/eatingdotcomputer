@@ -52,6 +52,26 @@
 			}
 		}
 
+		// Native resume: DON'T blindly reload (that's what flashed the loading
+		// screen every time you came back). When the app returns to the foreground,
+		// just check whether a NEWER version has been deployed. If so, reload to pick
+		// it up; if not, stay exactly where you were — route, scroll, chat connection
+		// all intact. (`updated.check()` fetches the version manifest and compares it
+		// to the running build.) The native shell emits `native-resume` from its
+		// appStateChange listener; we also catch web/PWA foregrounding via visibility.
+		let _resumeChecking = false;
+		const onAppResume = async () => {
+			if (_resumeChecking) return;
+			_resumeChecking = true;
+			try {
+				if (await updated.check()) location.reload();
+			} catch {}
+			_resumeChecking = false;
+		};
+		window.addEventListener('native-resume', onAppResume);
+		const onVisible = () => { if (document.visibilityState === 'visible') onAppResume(); };
+		document.addEventListener('visibilitychange', onVisible);
+
 		// Apply the saved Material 3 theme as early as possible. Runs
 		// in onMount so it happens client-side only — the hex fallbacks
 		// in app.css cover SSR + the brief pre-hydration paint.
@@ -131,6 +151,11 @@
 				document.head.appendChild(link);
 			}
 		} catch {}
+
+		return () => {
+			window.removeEventListener('native-resume', onAppResume);
+			document.removeEventListener('visibilitychange', onVisible);
+		};
 	});
 
 	async function prewarmTelegramSkottieWorker() {
