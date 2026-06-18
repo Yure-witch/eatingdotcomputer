@@ -1,6 +1,7 @@
 <script>
 	import { onMount, onDestroy, tick, getContext, mount, unmount } from 'svelte';
 	import SpriteSticker from '$lib/components/SpriteSticker.svelte';
+	import { saveChatScroll, loadChatScroll } from '$lib/chat-scroll-store.js';
 	import { afterNavigate } from '$app/navigation';
 	import { pageTitle, pageTitleHref } from '$lib/page-title-store.js';
 	import { db } from '$lib/firebase.js';
@@ -2297,7 +2298,20 @@
 
 	let userScrolledUp = false;
 
+	let _scrollRestored = false;
 	function scrollToBottom() {
+		// On the FIRST scroll-to-bottom of this mount, restore the saved position
+		// (distance from the bottom) instead — so a reload lands you back where you
+		// were reading rather than snapping to the latest.
+		if (!_scrollRestored) {
+			_scrollRestored = true;
+			const savedDist = loadChatScroll(convId);
+			if (savedDist != null && savedDist >= 80) {
+				const restore = () => { if (listEl) { listEl.scrollTop = Math.max(0, listEl.scrollHeight - listEl.clientHeight - savedDist); userScrolledUp = true; } };
+				tick().then(() => { restore(); requestAnimationFrame(restore); setTimeout(restore, 60); });
+				return;
+			}
+		}
 		// Pin to the true bottom across late layout shifts (emote canvases, fonts,
 		// image loads) — a single scroll right after mount lands a few px short
 		// because the content is still settling. Re-pin on the next frame and once
@@ -2311,6 +2325,7 @@
 		if (!userScrolledUp && listEl) listEl.scrollTop = listEl.scrollHeight;
 	}
 
+	let _saveScrollT = 0;
 	function onListScroll() {
 		if (!listEl) return;
 		const dist = listEl.scrollHeight - listEl.scrollTop - listEl.clientHeight;
@@ -2318,6 +2333,9 @@
 		if (emojiTooltip) emojiTooltip = null;
 		// Load more history when scrolled near top
 		if (listEl.scrollTop < 200 && hasMoreHistory && !loadingMore) loadMoreHistory();
+		// Persist position (throttled) so a reload restores it.
+		const now = Date.now();
+		if (now - _saveScrollT > 350) { _saveScrollT = now; saveChatScroll(convId, dist); }
 	}
 
 	async function loadMoreHistory() {

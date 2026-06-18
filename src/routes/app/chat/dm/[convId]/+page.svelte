@@ -3,6 +3,7 @@
 	import SpriteSticker from '$lib/components/SpriteSticker.svelte';
 	import { pageTitle, pageTitleHref } from '$lib/page-title-store.js';
 	import { profileLink } from '$lib/profile-link.js';
+	import { saveChatScroll, loadChatScroll } from '$lib/chat-scroll-store.js';
 	import { afterNavigate } from '$app/navigation';
 	import { db } from '$lib/firebase.js';
 	import { ref, onChildAdded, onValue, off, query, limitToLast, set, remove, get } from 'firebase/database';
@@ -2197,7 +2198,21 @@
 
 	let userScrolledUp = false;
 
+	let _scrollRestored = false;
 	function scrollToBottom() {
+		// On the FIRST scroll-to-bottom of this mount, restore the saved position
+		// (distance from the bottom) instead — so a reload lands you back where you
+		// were reading rather than snapping to the latest. Only when meaningfully
+		// scrolled up (≥80px); otherwise just go to the bottom as usual.
+		if (!_scrollRestored) {
+			_scrollRestored = true;
+			const savedDist = loadChatScroll(data.convId);
+			if (savedDist != null && savedDist >= 80) {
+				const restore = () => { if (listEl) { listEl.scrollTop = Math.max(0, listEl.scrollHeight - listEl.clientHeight - savedDist); userScrolledUp = true; } };
+				tick().then(() => { restore(); requestAnimationFrame(restore); setTimeout(restore, 60); });
+				return;
+			}
+		}
 		// Re-pin to the true bottom across late layout shifts (emotes, fonts,
 		// images) so the first paint isn't a few px short of the bottom.
 		const go = () => { if (listEl) { listEl.scrollTop = listEl.scrollHeight; userScrolledUp = false; } };
@@ -2209,12 +2224,16 @@
 		if (!userScrolledUp && listEl) listEl.scrollTop = listEl.scrollHeight;
 	}
 
+	let _saveScrollT = 0;
 	function onListScroll() {
 		if (!listEl) return;
 		const dist = listEl.scrollHeight - listEl.scrollTop - listEl.clientHeight;
 		userScrolledUp = dist > 80;
 		if (emojiTooltip) emojiTooltip = null;
 		if (listEl.scrollTop < 200 && hasMoreHistory && !loadingMore) loadMoreHistory();
+		// Persist position (throttled) so a reload restores it.
+		const now = Date.now();
+		if (now - _saveScrollT > 350) { _saveScrollT = now; saveChatScroll(data.convId, dist); }
 	}
 
 	async function loadMoreHistory() {
