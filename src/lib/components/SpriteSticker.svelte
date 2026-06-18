@@ -60,7 +60,14 @@
 	const url = $derived(isCustom ? tgcUrl(short, id) : tgAnimatedUrl(cp));
 	const thumbUrl = $derived(isCustom ? tgcThumbUrl(short, id) : tgThumbUrl(cp));
 	const itemKey = $derived(isCustom ? spriteKeyForCustom(short, id) : spriteKeyForCp(cp));
-	const engine = $derived(forceEngine || $engineMode);
+	// On touch/phone devices force the lightweight rlottie engine regardless of the
+	// saved preference. The Skottie/CanvasKit engines hold GPU surfaces per loaded
+	// animation and intentionally DON'T free built animations off-screen (to avoid
+	// scroll-back flicker), so on a phone's tiny WebView budget they accumulate and
+	// the OS jetsams the app. rlottie is CPU-canvas, 48px frames, and releases its
+	// frames off-screen (see _RELEASE_OFFSCREEN). An explicit forceEngine still wins.
+	const _coarse = typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)')?.matches;
+	const engine = $derived(forceEngine || (_coarse ? 'rlottie' : $engineMode));
 
 	const sprite = $derived($spriteSheet);
 	const spritePos = $derived(sprite?.items?.[itemKey] || null);
