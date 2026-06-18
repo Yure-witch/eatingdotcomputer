@@ -207,44 +207,47 @@
 	}
 	function onPagerTouchEnd() {
 		_pagerTouching = false;
-		// Quick flick → commit one panel in the flick direction even on a SHORT
-		// drag, so a fast little swipe navigates (responsive) instead of the native
-		// snap rubber-banding back (which flashes the next panel then returns). A
-		// slow drag-release still keeps the native nearest-snap. Works everywhere on
-		// the pager now (including flicking OUT of a conversation) — the permanent
-		// conv panel means there's no index shift to fight.
-		if (_pgHoriz && Math.abs(_pgVelX) > 0.35 && pagerEl) {
-			const w = pagerEl.clientWidth || 1;
-			const dir = _pgVelX < 0 ? 1 : -1; // finger moving left → next panel (scrollLeft +)
-			const cur = Math.round(pagerEl.scrollLeft / w); // where the scroll actually is now
-			// Leaving a conversation: DON'T drive the slide with the JS ease — the
-			// conv panel is heavy (message list + animated sprites + Firebase), and a
-			// main-thread scrollLeft animation stutters against it. Let the native
-			// compositor carry the snap and let the deferred settle commit the route
-			// (the menu list is already painted underneath, so it's seamless). Section
-			// flicks below stay on the eased path (those panels are light).
-			if (cur === 0 && _onConvMobile) return;
-			// One panel per gesture: never more than one panel away from where this
-			// swipe began, so a flick can't skip a page. The conv panel (index 0) is
-			// off-limits unless a chat is active/being entered — otherwise a
-			// right-flick on the menu would land on the empty conv slot.
-			const minIdx = _convActiveOrEntering ? 0 : 1;
-			const lo = Math.max(minIdx, _gestureStartIdx - 1), hi = Math.min(PANELS.length - 1, _gestureStartIdx + 1);
-			const target = Math.max(lo, Math.min(hi, cur + dir));
-			if (target !== cur) {
-				// Native compositor smooth-scroll — NOT the main-thread JS ease, which
-				// went framy whenever a panel was rendering. This stays buttery (the
-				// scroll runs on the compositor) and a new touch interrupts it cleanly.
-				pagerEl.scrollTo({ left: target * w, behavior: 'smooth' });
-				const route = PANELS[target]?.route;
-				// ALWAYS goto the target route (don't gate on pagerIndex — that's the
-				// COMMITTED route, which lags on prod). During rapid flicks each goto
-				// supersedes the previous in-flight one, so the LAST flick wins instead
-				// of a stale "already there" check skipping it and an earlier nav
-				// (Home) committing last. Same-route gotos are harmless no-ops. Suppress
-				// the settle so it doesn't double-fire while the smooth scroll runs.
-				if (route) { _suppressCommits(450); goto(route, { noScroll: true, keepFocus: true }); }
-			}
+		// Pure native momentum — no programmatic scroll. iOS's own scroll-snap
+		// physics carry the slide (the smooth feel the conv↔menu flow already had),
+		// and the route commits on `scrollend` once the snap actually settles (see
+		// onPagerScrollEnd). No JS animation to go framy, no custom easing to feel
+		// off. (`_pgVelX`/`_pgHoriz` are still tracked above for future use.)
+	}
+	// Fires when ALL scrolling (drag + momentum + snap) has fully settled — the
+	// precise moment to commit the route. Committing earlier (the 80ms debounce)
+	// could fire mid-snap and, with the heavy conversation tearing down, freeze the
+	// track in a half-snapped "in-between" position. scrollend guarantees we're
+	// parked on a real panel first.
+	function onPagerScrollEnd() {
+		if (!pagerEl || _pagerProg || _pagerTouching) return;
+		clearTimeout(_pagerSnapT);
+		commitPagerRoute();
+	}
+	// Commit the navigation for whatever panel the track has settled on. Called by
+	// scrollend (primary) or the idle debounce (fallback).
+	function commitPagerRoute() {
+		if (!pagerEl) return;
+		// Don't hijack a navigation a tap / programmatic snap just started, and never
+		// commit while a finger is down (committing can tear down the conversation,
+		// which we want to happen between gestures, not mid-swipe). If we're inside
+		// that window, re-check once it passes.
+		const now = performance.now();
+		if (_pagerTouching || now < _suppressCommitUntil) {
+			clearTimeout(_pagerSnapT);
+			_pagerSnapT = setTimeout(commitPagerRoute, _pagerTouching ? 60 : (_suppressCommitUntil - now + 20));
+			return;
+		}
+		const cw = pagerEl.clientWidth || 1;
+		const raw = Math.round(pagerEl.scrollLeft / cw);
+		// One panel per gesture: clamp the landing to ±1 of where the gesture began
+		// (rare iOS over-flick safety net). Conv panel (index 0) is off-limits unless
+		// a chat is active/being entered.
+		const minIdx = _convActiveOrEntering ? 0 : 1;
+		const i = Math.max(Math.max(minIdx, _gestureStartIdx - 1), Math.min(Math.min(PANELS.length - 1, _gestureStartIdx + 1), raw));
+		if (i !== raw) { _suppressCommits(300); pagerEl.scrollTo({ left: i * cw, behavior: 'smooth' }); }
+		// The conv panel has no route — you're already on it; never goto(undefined).
+		if (i !== pagerIndex && i >= 0 && i < PANELS.length && PANELS[i].route) {
+			goto(PANELS[i].route, { noScroll: true, keepFocus: true });
 		}
 	}
 	// Keep the visible route synced to the URL after a navigation / on load.
@@ -366,44 +369,14 @@
 		const vi = Math.round(_pagerFraction);
 		if (PANELS[vi]) _pagerVisibleRoute = PANELS[vi].route;
 		if (_pagerProg) return;
+		// scrollend (when supported) is the precise commit trigger — it fires only
+		// after the snap fully settles, so we never commit mid-snap. Keep an idle
+		// debounce as a backstop: short when scrollend is absent, long (just a safety
+		// net) when present so scrollend wins but we never get stuck if it misfires.
 		clearTimeout(_pagerSnapT);
-		_pagerSnapT = setTimeout(function commit() {
-			// Don't hijack a navigation a tap (or a programmatic snap) just started —
-			// those open a short suppression window so a stray momentum / anchoring
-			// scroll can't bounce us onto the wrong panel (e.g. tap a chat → load →
-			// snap back to Home). If a GENUINE swipe happens to settle inside that
-			// window, don't drop it — re-check once the window passes (reading the
-			// live position then, so if the panel set has since corrected, it
-			// harmlessly no-ops).
-			// Never commit a navigation while a finger is still down — committing
-			// adds/removes the conversation panel, which shifts every panel's index;
-			// doing that mid-swipe re-anchors the gesture to the wrong panel (lands
-			// on Home instead of the menu, or skips to Orbit). Wait until the whole
-			// flick sequence ends so indices only settle once, between gestures.
-			const now = performance.now();
-			if (_pagerTouching || now < _suppressCommitUntil) {
-				_pagerSnapT = setTimeout(commit, _pagerTouching ? 60 : (_suppressCommitUntil - now + 20));
-				return;
-			}
-			const cw = pagerEl.clientWidth || 1;
-			const raw = Math.round(pagerEl.scrollLeft / cw);
-			// One panel per gesture: clamp the landing to ±1 of where the gesture
-			// began. Native momentum very occasionally blows past a page (iOS dropping
-			// scroll-snap-stop on a hard flick); on that rare over-skip, ease to the
-			// adjacent panel instead of navigating to the skipped one. Normal swipes
-			// land within range, so this never causes an everyday snap-back.
-			// Conv panel (index 0) is off-limits unless a chat is active/being entered.
-			const minIdx = _convActiveOrEntering ? 0 : 1;
-			const i = Math.max(Math.max(minIdx, _gestureStartIdx - 1), Math.min(Math.min(PANELS.length - 1, _gestureStartIdx + 1), raw));
-			if (i !== raw) { _suppressCommits(300); _fastScrollTo(i * cw, 260); }
-			// The conversation panel (PANELS[0] when present) has no route — you're
-			// already on it; never goto(undefined). Only commit for real section/menu
-			// panels you've actually scrolled to.
-			if (i !== pagerIndex && i >= 0 && i < PANELS.length && PANELS[i].route) {
-				goto(PANELS[i].route, { noScroll: true, keepFocus: true });
-			}
-		}, 80);
+		_pagerSnapT = setTimeout(commitPagerRoute, _scrollEndSupported ? 350 : 80);
 	}
+	const _scrollEndSupported = typeof window !== 'undefined' && 'onscrollend' in window;
 
 	// Conversation → menu swipe. A conversation (channel/DM) is a full-screen,
 	// non-pager view; a clear right-to-left swipe navigates to the chat menu
@@ -1785,7 +1758,7 @@
 		     between them is compositor-smooth and the real pages are live
 		     under your finger. Panels lazy-mount (current ± 1, then cached);
 		     far panels show a skeleton until reached. -->
-		<div class="pager-track" bind:this={pagerEl} onscroll={onPagerScroll} ontouchstart={onPagerTouchStart} ontouchmove={onPagerTouchMove} ontouchend={onPagerTouchEnd} ontouchcancel={onPagerTouchEnd}>
+		<div class="pager-track" bind:this={pagerEl} onscroll={onPagerScroll} onscrollend={onPagerScrollEnd} ontouchstart={onPagerTouchStart} ontouchmove={onPagerTouchMove} ontouchend={onPagerTouchEnd} ontouchcancel={onPagerTouchEnd}>
 			{#each PANELS as panel, i (panel.route ?? 'conv')}
 				<section class="pager-panel" class:current={i === pagerIndex} class:conv={panel.conv}>
 					{#if panel.conv}
