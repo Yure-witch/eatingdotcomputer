@@ -208,10 +208,15 @@
 	function onPagerTouchStart(e) {
 		if (!pagerEl) return;
 		_pagerTouching = true;
-		_repinGen++;               // cancel any lingering re-pin so it can't fight this gesture/tap
-		_goSecGen++;               // a swipe supersedes a nav-icon jump's re-assert (so tap-then-swipe doesn't snap back to the tapped tab)
-		_cancelProgrammaticScroll();
-		clearTimeout(_pagerSnapT); // don't let a previous gesture's commit fire mid-swipe
+		// A NEW touch supersedes everything in flight — kill it all instantly so
+		// nothing can fight or delay this gesture:
+		_repinGen++;                 //   • any lingering re-pin
+		_goSecGen++;                 //   • a nav-icon jump's re-assert (tap-then-swipe)
+		_cancelProgrammaticScroll(); //   • any eased programmatic scroll / hard-snap
+		clearTimeout(_pagerSnapT);   //   • a previous gesture's pending commit
+		_suppressCommitUntil = 0;    //   • a prior action's commit-suppression window —
+		                             //     else THIS gesture's nav-commit is blocked and
+		                             //     it snaps back ("multiple swipes break").
 		_gestureStartIdx = Math.round(pagerEl.scrollLeft / (pagerEl.clientWidth || 1));
 		const t = e.touches?.[0];
 		if (t) { _pgStX = _pgPrevX = t.clientX; _pgStY = t.clientY; _pgPrevT = e.timeStamp; _pgVelX = 0; _pgHoriz = false; }
