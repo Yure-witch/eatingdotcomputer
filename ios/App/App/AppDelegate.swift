@@ -36,6 +36,15 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
     func applicationDidBecomeActive(_ application: UIApplication) {
         // Restart any tasks that were paused (or not yet started) while the application was inactive. If the application was previously in the background, optionally refresh the user interface.
+
+        // Make the Capacitor WKWebView inspectable so Safari's Web Inspector
+        // (Develop → device → WebView) can attach for memory profiling. On
+        // iOS 16.4+ a WKWebView only shows up there when isInspectable == true.
+        if #available(iOS 16.4, *) {
+            DispatchQueue.main.async {
+                (self.window?.rootViewController as? CAPBridgeViewController)?.webView?.isInspectable = true
+            }
+        }
     }
 
     func applicationWillTerminate(_ application: UIApplication) {
