@@ -64,9 +64,13 @@
 		const onAppResume = async () => {
 			if (_resumeChecking) return;
 			_resumeChecking = true;
-			try {
-				if (await updated.check()) location.reload();
-			} catch {}
+			// Only CHECK for a new version — do NOT reload here. Reloading on resume
+			// re-initializes whatever you were on (e.g. re-rasterizing a whole
+			// conversation's emotes — the low-quality flash). updated.check() arms
+			// SvelteKit's $updated, which shows the update banner AND makes the NEXT
+			// navigation hard-reload into the new build. So the new version lands the
+			// next time you move around the app; your current view stays put.
+			try { await updated.check(); } catch {}
 			_resumeChecking = false;
 		};
 		window.addEventListener('native-resume', onAppResume);
