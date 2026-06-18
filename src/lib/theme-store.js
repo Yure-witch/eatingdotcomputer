@@ -362,9 +362,19 @@ function applyTokens(theme) {
 		}
 	);
 	const root = document.documentElement;
+	let surfaceHex = null;
 	for (const [role, argb] of Object.entries(roles)) {
 		if (argb == null) continue;
-		root.style.setProperty(`--md-sys-color-${kebab(role)}`, hexFromArgb(argb));
+		const hex = hexFromArgb(argb);
+		root.style.setProperty(`--md-sys-color-${kebab(role)}`, hex);
+		if (role === 'surface') surfaceHex = hex;
+	}
+	// Persist the resolved page background (--paper === surface) so app.html can
+	// paint it inline BEFORE hydration — kills the white/default-bg flash when the
+	// native WebView reloads. Apply it now too so it's there immediately.
+	if (surfaceHex) {
+		root.style.backgroundColor = surfaceHex;
+		try { localStorage.setItem('theme-bg', surfaceHex); } catch {}
 	}
 	// Surface for plain `color-scheme` so form controls / scrollbars
 	// follow the theme without per-element styling.

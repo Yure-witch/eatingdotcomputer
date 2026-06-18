@@ -2,6 +2,16 @@
 <html lang="en">
 	<head>
 		<meta charset="utf-8" />
+		<!-- Paint the saved theme background BEFORE first paint so a WebView reload
+		     (native app) doesn't flash white/default while the theme CSS + JS load.
+		     theme-store.js writes the resolved surface colour to localStorage on
+		     every theme apply; we read it back synchronously here. -->
+		<script>
+			try {
+				var __bg = localStorage.getItem('theme-bg');
+				if (__bg) document.documentElement.style.backgroundColor = __bg;
+			} catch (e) {}
+		</script>
 		<!--
 			`interactive-widget=resizes-content` tells mobile browsers
 			to shrink the layout viewport when the on-screen keyboard
