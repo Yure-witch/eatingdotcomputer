@@ -4,7 +4,10 @@ let _promise = null;
 
 export function getCustomEmojiMap() {
 	if (_map) return Promise.resolve(_map);
-	if (!_promise) _promise = fetch('/api/custom-emoji')
+	// `no-store`: the picker fetches fresh, so the render map must too — otherwise
+	// the browser/CDN can serve a stale list missing recently-added emotes, and
+	// reactions using them render as ":shortcode:" even though the picker shows them.
+	if (!_promise) _promise = fetch('/api/custom-emoji', { cache: 'no-store' })
 		.then(r => r.json())
 		.then(arr => {
 			_map = {};
