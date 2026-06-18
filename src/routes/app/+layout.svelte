@@ -247,7 +247,20 @@
 		if (i !== raw) { _suppressCommits(300); pagerEl.scrollTo({ left: i * cw, behavior: 'smooth' }); }
 		// The conv panel has no route — you're already on it; never goto(undefined).
 		if (i !== pagerIndex && i >= 0 && i < PANELS.length && PANELS[i].route) {
-			goto(PANELS[i].route, { noScroll: true, keepFocus: true });
+			const lockLeft = i * cw;
+			goto(PANELS[i].route, { noScroll: true, keepFocus: true }).then(() => {
+				// Lock the track EXACTLY onto the panel once the nav + any teardown
+				// settle. Leaving a conversation tears down a heavy component right
+				// after scrollend, which can leave the native snap a few px short of
+				// the menu ("not fully locked in"). Only nudge if we're settled.
+				requestAnimationFrame(() => {
+					if (pagerEl && !_pagerTouching && Math.abs(pagerEl.scrollLeft - lockLeft) > 1) {
+						_pagerProg = true;
+						pagerEl.scrollLeft = lockLeft;
+						requestAnimationFrame(() => { _pagerProg = false; });
+					}
+				});
+			});
 		}
 	}
 	// Keep the visible route synced to the URL after a navigation / on load.
