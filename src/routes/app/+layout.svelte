@@ -2310,8 +2310,9 @@
 	.conv-last, .dm-last { font-size: 0.74rem; color: var(--sidebar-fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	.last-sender { font-weight: 600; color: var(--sidebar-fg); opacity: 0.85; }
 	.conv-last-empty { opacity: 0.55; font-style: italic; }
-	/* Inline emote thumbnails in the chat-list preview (static — no animation). */
-	.prev-emote { height: 1.2em; width: 1.2em; object-fit: contain; vertical-align: -0.25em; display: inline-block; }
+	/* Inline emote thumbnails in the chat-list preview (static — no animation).
+	   :global because they're injected via {@html}, which Svelte's scoping skips. */
+	:global(.prev-emote) { height: 1.2em; width: 1.2em; object-fit: contain; vertical-align: -0.25em; display: inline-block; }
 
 	.role-badge {
 		font-size: 0.6rem; font-weight: 600; background: #333; color: var(--sidebar-fg-muted);
