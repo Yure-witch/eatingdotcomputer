@@ -1938,7 +1938,6 @@
 						{#if _onConvMobile}{@render children()}{/if}
 					{:else if panel.chatMenu}
 						<div class="chat-menu-panel" ontouchstart={onMenuTouchStart} ontouchend={onMenuTouchEnd}>
-							<div class="chat-menu-title">{data.currentClass?.name ?? 'Chat'}</div>
 							{@render chatListContent()}
 						</div>
 					{:else if panelShouldMount(i) && panelData[panel.route]}
