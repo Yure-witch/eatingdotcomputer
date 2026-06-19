@@ -19,6 +19,12 @@
 	import OrbitPanel from './orbit/+page.svelte';
 	import LabPanel from './playground/+page.svelte';
 	import ManagePanel from './manage/+page.svelte';
+	import { ekTokenToUrl } from '$lib/message-render.js';
+	import {
+		tgThumbUrl, tgcThumbUrl, tgFlagUrl, tgEntry,
+		loadTelegramEmoji, loadCustomPacks, getCachedTgEmoji, getCachedCustomPacks
+	} from '$lib/telegram-emoji-store.js';
+	import { getCustomEmojiMap, getCachedCustomEmojiMap } from '$lib/custom-emoji-store.js';
 
 	let { data, children } = $props();
 
@@ -846,6 +852,43 @@
 			.trim();
 	}
 
+	// Bumped once the emote manifests (TG / custom packs / custom emoji) load so
+	// previewHtml re-renders with resolved image URLs instead of dropping the emote.
+	let _prevVer = $state(0);
+	const _escText = (t) => t.replace(/[\uE000-\uF8FF]/g, '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+	const _escAttr = (u) => String(u).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+	// Chat-list preview that renders emote tokens ([ek:\u2026], [ce:\u2026], [tg:\u2026],
+	// [tgc:\u2026]) as small STATIC images (thumbs \u2014 no animation/SpriteSticker, so the
+	// list stays cheap). Unresolvable tokens are dropped. Reactive on _prevVer so
+	// it refreshes when the manifests finish loading. Output is HTML \u2014 escape text.
+	function previewHtml(s) {
+		void _prevVer;
+		if (!s) return '';
+		const ceMap = getCachedCustomEmojiMap();
+		const RE = /\[(ek|ce|tg|tgc):([^\]]*)\]/gi;
+		let out = '', last = 0, m;
+		while ((m = RE.exec(s)) !== null) {
+			out += _escText(s.slice(last, m.index));
+			last = RE.lastIndex;
+			const kind = m[1].toLowerCase(), payload = m[2];
+			let url = '';
+			if (kind === 'ek') {
+				const [d36, parent, child] = payload.split(':');
+				if (d36 && parent && child) url = ekTokenToUrl(d36, parent, child);
+			} else if (kind === 'ce') {
+				url = ceMap[payload]?.url ?? '';
+			} else if (kind === 'tg') {
+				url = tgEntry(payload)?.flag ? tgFlagUrl(payload) : tgThumbUrl(payload);
+			} else if (kind === 'tgc') {
+				const [short, id] = payload.split(':');
+				if (short && id) url = tgcThumbUrl(short, id);
+			}
+			if (url) out += `<img class="prev-emote" src="${_escAttr(url)}" alt="" loading="lazy" />`;
+		}
+		out += _escText(s.slice(last));
+		return out.replace(/\s+/g, ' ').trim();
+	}
+
 	function isUnread(convId, lastAt) {
 		return (lastAt ?? 0) > (lastRead[convId] ?? 0);
 	}
@@ -1141,6 +1184,13 @@
 	afterNavigate(() => { presencePing(); });
 
 	onMount(async () => {
+
+		// Load the emote manifests so chat-list previews can resolve emote thumb
+		// URLs (TG / custom packs / custom emoji). Bump _prevVer when each lands so
+		// the previews re-render with the images instead of dropping the tokens.
+		loadTelegramEmoji().then(() => _prevVer++).catch(() => {});
+		loadCustomPacks().then(() => _prevVer++).catch(() => {});
+		getCustomEmojiMap().then(() => _prevVer++).catch(() => {});
 
 		// Restore a locally-cached member ordering ONLY if the server hasn't
 		// supplied one yet (first drag before it round-trips, or offline).
@@ -1734,7 +1784,7 @@
 					<div class="member-text">
 						<span class="member-name" class:bold={unreadCount > 0 || hasDot}>{ch.name}</span>
 						<span class="conv-last">
-							{#if meta?.lastMessage}{#if meta.lastUser}<span class="last-sender">{meta.lastUser}:</span> {/if}{previewText(meta.lastMessage)}{:else}<span class="conv-last-empty">No messages yet</span>{/if}
+							{#if meta?.lastMessage}{#if meta.lastUser}<span class="last-sender">{meta.lastUser}:</span> {/if}{@html previewHtml(meta.lastMessage)}{:else}<span class="conv-last-empty">No messages yet</span>{/if}
 						</span>
 					</div>
 					{#if unreadCount > 0}
@@ -1806,7 +1856,7 @@
 						</span>
 						<div class="member-text">
 							<span class="member-name" class:bold={dmUnreadCount > 0 || dmUnreadDot}>{u.name}</span>
-							{#if lastMsg}<span class="conv-last">{previewText(lastMsg)}</span>{:else}<span class="conv-last conv-last-empty">Tap to message</span>{/if}
+							{#if lastMsg}<span class="conv-last">{@html previewHtml(lastMsg)}</span>{:else}<span class="conv-last conv-last-empty">Tap to message</span>{/if}
 						</div>
 						{#if u.role === 'instructor'}<span class="role-badge">instr.</span>{/if}
 						{#if dmUnreadCount > 0}
@@ -2260,6 +2310,8 @@
 	.conv-last, .dm-last { font-size: 0.74rem; color: var(--sidebar-fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	.last-sender { font-weight: 600; color: var(--sidebar-fg); opacity: 0.85; }
 	.conv-last-empty { opacity: 0.55; font-style: italic; }
+	/* Inline emote thumbnails in the chat-list preview (static — no animation). */
+	.prev-emote { height: 1.2em; width: 1.2em; object-fit: contain; vertical-align: -0.25em; display: inline-block; }
 
 	.role-badge {
 		font-size: 0.6rem; font-weight: 600; background: #333; color: var(--sidebar-fg-muted);
