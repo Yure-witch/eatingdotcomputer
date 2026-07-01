@@ -10,7 +10,8 @@
 	let preset = $state('spotlight');    // kinetic-type sub-preset
 	let cycles = $state(1);
 	let fontFrac = $state(0.30);
-	let spread = $state(1.6);            // Step & Repeat: wave cycles across the wall
+	let repeats = $state(14);            // Step & Repeat: number of stacked lines
+	let spread = $state(1.6);            // Step & Repeat: wave cycles down the stack
 
 	const activeScene = $derived(SCENES.find((s) => s.id === mode) ?? SCENES[0]);
 	const usesPreset = $derived(activeScene.usesPreset);
@@ -58,7 +59,7 @@
 	// speed update live; text/dims changes rebuild the scene — see below).
 	function liveOpts() {
 		return {
-			text, subtitle: subtitle.trim(), preset, cycles, duration, spread,
+			text, subtitle: subtitle.trim(), preset, cycles, duration, spread, repeats,
 			bg, bg2, fg, accent, bgType,
 			fontFamily: "'Google Sans Flex'", fontFrac, hasStretch
 		};
@@ -79,7 +80,7 @@
 	});
 	// Repaint on a colour / preset change even while paused.
 	$effect(() => {
-		void [bg, bg2, fg, accent, bgType, preset, cycles, spread];
+		void [bg, bg2, fg, accent, bgType, preset, cycles, spread, repeats];
 		if (scene && previewCtx && !playing) scene.render(previewCtx);
 	});
 
@@ -249,11 +250,18 @@
 			</div>
 
 			<div class="group sliders">
-				<label class="slider">
-					<span>Text size <b>{Math.round(fontFrac * 100)}</b></span>
-					<input type="range" min="16" max="46" value={Math.round(fontFrac * 100)}
-						oninput={(e) => (fontFrac = +e.currentTarget.value / 100)} />
-				</label>
+				{#if mode === 'tile'}
+					<label class="slider">
+						<span>Repeats <b>{repeats}</b></span>
+						<input type="range" min="3" max="30" step="1" bind:value={repeats} />
+					</label>
+				{:else}
+					<label class="slider">
+						<span>Text size <b>{Math.round(fontFrac * 100)}</b></span>
+						<input type="range" min="16" max="46" value={Math.round(fontFrac * 100)}
+							oninput={(e) => (fontFrac = +e.currentTarget.value / 100)} />
+					</label>
+				{/if}
 				<label class="slider">
 					<span>Duration <b>{duration}s</b></span>
 					<input type="range" min="1" max="6" step="0.5" bind:value={duration} />

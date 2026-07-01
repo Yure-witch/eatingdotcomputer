@@ -420,47 +420,29 @@ function sceneCloth(env) {
 	return { reset, step, render };
 }
 
-// Step & Repeat — tile the phrase across the whole page and run a DIAGONAL
-// phase gradient through the grid, so a wave of weight/width/slant ripples from
-// tile to tile. This is where the variable font really shows off: every
-// repetition sits at a different point in the animation at once.
+// Step & Repeat — the phrase stacked as N full-width lines filling the page,
+// each animating the SAME wave but phase-shifted down the stack (spread = how
+// many wave cycles span the page). So the wave crest sits at a different spot in
+// every repetition and appears to travel down the wall — a whole page of the
+// title breathing out of sync. This is where the variable font shows off.
 function sceneTile(env) {
 	const { W, H, getOpts } = env;
 	let t = 0;
-	const mctx = document.createElement('canvas').getContext('2d');
-	function neutralWidth(o, fontPx) {
-		const letters = Array.from(o.text || '');
-		if (!letters.length) return fontPx;
-		mctx.font = `400 ${fontPx}px ${o.fontFamily}`;
-		if (o.hasStretch) mctx.fontStretch = '100%';
-		let w = 0; for (const ch of letters) w += mctx.measureText(ch).width;
-		return w;
-	}
 	return {
 		reset() { t = 0; },
 		step(dt) { t += dt; },
 		render(ctx) {
 			const o = getOpts();
 			paintBg(ctx, o, W, H);
-			const dur = o.duration || 3;
-			const base = ((t / dur) % 1 + 1) % 1;
-			// Text size controls tile density (smaller → more repeats).
-			const fontPx = H * clamp((o.fontFrac || 0.3) * 0.5, 0.05, 0.5);
-			const lineH = fontPx * 1.28;
-			const phraseW = Math.max(fontPx, neutralWidth(o, fontPx));
-			const tileW = phraseW + fontPx * 1.0;
-			const rows = Math.ceil(H / lineH) + 1;
-			const cols = Math.ceil(W / tileW) + 2;
-			const spread = o.spread || 1.5; // how many wave cycles span the wall
-			for (let r = 0; r < rows; r++) {
-				const cy = r * lineH + lineH * 0.5;
-				const brick = (r % 2) * (tileW * 0.5); // offset alternate rows
-				for (let c = 0; c < cols; c++) {
-					const cx = -tileW + brick + c * tileW + tileW * 0.5;
-					// diagonal gradient: phase advances down rows and across columns
-					const ph = ((base + (r / Math.max(1, rows)) * spread + (c / Math.max(1, cols)) * spread * 0.45) % 1 + 1) % 1;
-					drawTypeLine(ctx, o.text, ph, o, { cx, cy, fontPx });
-				}
+			const N = Math.max(2, Math.round(o.repeats || 12));
+			const base = ((t / (o.duration || 3)) % 1 + 1) % 1;
+			const lineH = H / N;
+			const fontPx = lineH * 0.82;
+			const spread = o.spread || 1.5; // wave cycles from top row → bottom row
+			for (let r = 0; r < N; r++) {
+				const cy = (r + 0.5) * lineH;
+				const ph = ((base + (r / N) * spread) % 1 + 1) % 1;
+				drawTypeLine(ctx, o.text, ph, o, { cx: W / 2, cy, fontPx, fit: W * 0.94 });
 			}
 		}
 	};
