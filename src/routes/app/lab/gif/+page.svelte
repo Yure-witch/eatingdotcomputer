@@ -1,13 +1,18 @@
 <script>
 	import { onMount } from 'svelte';
-	import { PRESETS, renderFrame, encodeGif, supportsFontStretch } from '$lib/gif-studio.js';
+	import { PRESETS, encodeGif, supportsFontStretch } from '$lib/gif-studio.js';
+	import { SCENES, makeScene } from '$lib/gen-art.js';
 
 	// ── State ──────────────────────────────────────────────────────────────
+	let mode = $state('bz');            // scene id
 	let text = $state('Interactive Design');
 	let subtitle = $state('Fall 2026');
-	let preset = $state('spotlight');
+	let preset = $state('spotlight');    // kinetic-type sub-preset
 	let cycles = $state(1);
 	let fontFrac = $state(0.30);
+
+	const activeScene = $derived(SCENES.find((s) => s.id === mode) ?? SCENES[0]);
+	const usesPreset = $derived(activeScene.usesPreset);
 
 	// Background / colours
 	let bgType = $state('radial');
@@ -45,41 +50,41 @@
 	let hasStretch = $state(true);
 	let fontsReady = $state(false);
 	let playing = $state(true);
-	let phase = 0;
 
 	const dims = $derived(ASPECTS[aspect]);
 
-	function buildOpts(W, H) {
+	// Live opts snapshot read by the active scene each frame (colours, preset,
+	// speed update live; text/dims changes rebuild the scene — see below).
+	function liveOpts() {
 		return {
-			W, H,
-			text,
-			subtitle: subtitle.trim(),
-			preset, cycles,
-			bg, bg2, fg, accent, subColor: fg, bgType,
-			fontFamily: "'Google Sans Flex'",
-			fontPx: H * fontFrac,
-			tracking: 0.02,
-			fitW: 0.86,
-			hasStretch
+			text, subtitle: subtitle.trim(), preset, cycles, duration,
+			bg, bg2, fg, accent, bgType,
+			fontFamily: "'Google Sans Flex'", fontFrac, hasStretch
 		};
 	}
 
-	// Re-render a single static frame when a control changes while paused.
-	function paintPreview() {
+	let scene = null;
+	let previewCtx = null;
+
+	// (Re)build the scene when structural inputs change — mode, text, aspect,
+	// text size — so the simulation reseeds from the new typography / dimensions.
+	// Colours, preset and speed are read live by the scene and don't rebuild.
+	$effect(() => {
+		void [mode, text, aspect, fontFrac, fontsReady];
 		const cv = canvasEl;
 		if (!cv) return;
-		const ctx = cv.getContext('2d');
-		renderFrame(ctx, phase, buildOpts(cv.width, cv.height));
-	}
-	// React to any control change (re-paint even when paused).
+		scene = makeScene(mode, { W: cv.width, H: cv.height, getOpts: liveOpts, seed: 1337 });
+		if (previewCtx) scene.render(previewCtx);
+	});
+	// Repaint on a colour / preset change even while paused.
 	$effect(() => {
-		// touch reactive deps so the effect re-runs on change
-		void [text, subtitle, preset, cycles, fontFrac, bgType, bg, bg2, fg, accent, aspect, fontsReady];
-		paintPreview();
+		void [bg, bg2, fg, accent, bgType, preset, cycles];
+		if (scene && previewCtx && !playing) scene.render(previewCtx);
 	});
 
 	onMount(() => {
 		hasStretch = supportsFontStretch();
+		previewCtx = canvasEl.getContext('2d', { willReadFrequently: true });
 		// Preload the variable font (both weight extremes) so the first frames
 		// aren't drawn in the fallback face.
 		(async () => {
@@ -91,15 +96,15 @@
 				await document.fonts.ready;
 			} catch {}
 			fontsReady = true;
-			paintPreview();
 		})();
 
 		let raf = 0, last = performance.now();
 		const loop = (now) => {
-			const dt = (now - last) / 1000; last = now;
-			if (playing && duration > 0) {
-				phase = (phase + dt / duration) % 1;
-				paintPreview();
+			let dt = (now - last) / 1000; last = now;
+			dt = Math.min(dt, 0.05); // clamp big gaps (tab switch) so sims don't explode
+			if (playing && scene && previewCtx) {
+				scene.step(dt);
+				scene.render(previewCtx);
 			}
 			raf = requestAnimationFrame(loop);
 		};
@@ -118,10 +123,10 @@
 			const q = QUALITY[quality];
 			const W = Math.round(dims.w * q), H = Math.round(dims.h * q);
 			const frames = Math.max(2, Math.round(duration * fps));
-			const optsBase = buildOpts(W, H);
+			// Fresh scene at export resolution, reset — encodeGif steps it per frame.
+			const exportScene = makeScene(mode, { W, H, getOpts: liveOpts, seed: 1337 });
 			const bytes = await encodeGif({
-				W, H, fps, frames,
-				draw: (ctx, ph) => renderFrame(ctx, ph, optsBase),
+				W, H, fps, frames, scene: exportScene,
 				onProgress: (p) => { progress = p; }
 			});
 			const blob = new Blob([bytes], { type: 'image/gif' });
@@ -185,13 +190,24 @@
 			</label>
 
 			<div class="group">
-				<span class="group-label">Animation</span>
+				<span class="group-label">Mode</span>
 				<div class="preset-grid">
-					{#each PRESETS as p}
-						<button class="preset" class:on={preset === p.id} onclick={() => (preset = p.id)}>{p.name}</button>
+					{#each SCENES as s}
+						<button class="preset mode" class:on={mode === s.id} onclick={() => (mode = s.id)}>{s.name}</button>
 					{/each}
 				</div>
 			</div>
+
+			{#if usesPreset}
+				<div class="group">
+					<span class="group-label">{mode === 'sort' ? 'Base animation' : 'Animation'}</span>
+					<div class="preset-grid">
+						{#each PRESETS as p}
+							<button class="preset" class:on={preset === p.id} onclick={() => (preset = p.id)}>{p.name}</button>
+						{/each}
+					</div>
+				</div>
+			{/if}
 
 			<div class="group">
 				<span class="group-label">Palette</span>
@@ -340,6 +356,8 @@
 		transition: border-color 0.12s, background 0.12s;
 	}
 	.preset.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); font-weight: 600; }
+	.preset.mode { font-weight: 500; }
+	.preset.mode.on { background: var(--accent); color: #fff; border-color: var(--accent); }
 
 	.palette-row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
 	.swatch {

@@ -105,6 +105,24 @@ export const PRESETS = [
 			const s = 0.5 - 0.5 * Math.cos(TAU * u); // smooth 0→1→0
 			return { weight: lerp(160, 640, s), widthPct: lerp(88, 116, s), dy: lerp(0.12, 0, s), alpha: lerp(0.6, 1, s) };
 		}
+	},
+	{
+		id: 'axisStorm', name: 'Axis Storm',
+		fn: (t, i, n, cyc) => {
+			// Drive EVERY axis independently per letter with layered periodic noise
+			// (integer harmonics of the loop → seamless): weight, width, slant (via
+			// skew), and vertical drift all churning at once.
+			const a = TAU * t * cyc;
+			const nz = (k, ph) => Math.sin(a * k + i * ph);
+			const wS = 0.5 + 0.5 * (0.6 * nz(1, 0.9) + 0.4 * nz(2, 0.5));
+			const dS = 0.5 + 0.5 * (0.5 * nz(1, 1.3) + 0.5 * nz(3, 0.7));
+			return {
+				weight: lerp(100, 700, clamp(wS, 0, 1)),
+				widthPct: lerp(28, 150, clamp(dS, 0, 1)),
+				skew: 0.30 * (0.6 * nz(1, 1.7) + 0.4 * nz(2, 1.1)),
+				dy: 0.10 * (0.5 * nz(2, 0.6) + 0.5 * nz(1, 2.1))
+			};
+		}
 	}
 ];
 const PRESET_MAP = Object.fromEntries(PRESETS.map((p) => [p.id, p.fn]));
@@ -170,6 +188,7 @@ export function renderFrame(ctx, phase, o) {
 			ctx.translate(x + advScaled / 2, cy + (p.dy || 0) * px);
 			if (p.rot) ctx.rotate(p.rot);
 			if (p.scale && p.scale !== 1) ctx.scale(p.scale, p.scale);
+			if (p.skew) ctx.transform(1, 0, Math.tan(p.skew), 1, 0, 0); // slant (ital-ish)
 			ctx.fillText(letters[i], 0, 0);
 			ctx.restore();
 			x += advScaled + spacing * scale;
@@ -196,18 +215,22 @@ export function supportsFontStretch() {
 		&& 'fontStretch' in CanvasRenderingContext2D.prototype;
 }
 
-// Encode a looping GIF. `draw(ctx, phase)` paints a frame at loop-phase 0..1.
-// Returns a Uint8Array of GIF bytes.
-export async function encodeGif({ W, H, fps, frames, draw, onProgress, signal }) {
+// Encode a looping GIF from a stateful `scene` ({ step(dt), render(ctx) }).
+// Frame 0 captures the reset state; each subsequent frame steps by 1/fps and
+// renders — so stateful simulations (reaction-diffusion, CA, cloth …) advance
+// deterministically. Returns a Uint8Array of GIF bytes.
+export async function encodeGif({ W, H, fps, frames, scene, onProgress, signal }) {
 	const gif = GIFEncoder();
 	const cv = document.createElement('canvas');
 	cv.width = W; cv.height = H;
 	const ctx = cv.getContext('2d', { willReadFrequently: true });
 	const delay = Math.round(1000 / fps);
+	const dt = 1 / fps;
 
 	for (let f = 0; f < frames; f++) {
 		if (signal?.aborted) throw new Error('aborted');
-		draw(ctx, f / frames); // never reaches 1 → seamless loop back to frame 0
+		if (f > 0) scene.step(dt);
+		scene.render(ctx);
 		const { data } = ctx.getImageData(0, 0, W, H);
 		const palette = quantize(data, 256, { format: 'rgb565' });
 		const index = applyPalette(data, palette, 'rgb565');
@@ -218,4 +241,19 @@ export async function encodeGif({ W, H, fps, frames, draw, onProgress, signal })
 	}
 	gif.finish();
 	return gif.bytes();
+}
+
+// Build the renderFrame options bag from the studio's live opts + target dims.
+// Shared by the kinetic-type scene and the pixel-sort scene (which sorts a
+// freshly-rendered type frame).
+export function buildRenderOpts(o, W, H) {
+	return {
+		W, H,
+		text: o.text,
+		subtitle: (o.subtitle || '').trim(),
+		preset: o.preset, cycles: o.cycles,
+		bg: o.bg, bg2: o.bg2, fg: o.fg, accent: o.accent, subColor: o.fg, bgType: o.bgType,
+		fontFamily: o.fontFamily, fontPx: H * (o.fontFrac || 0.3),
+		tracking: 0.02, fitW: 0.86, hasStretch: o.hasStretch
+	};
 }
