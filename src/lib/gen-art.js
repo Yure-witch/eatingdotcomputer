@@ -126,8 +126,8 @@ function sceneType(env) {
 // text is a periodic pacemaker, so waves keep radiating from the letters.
 function sceneBZ(env) {
 	const { W, H, getOpts } = env;
-	const N = 20, THRESH = 2, scale = 0.46;
-	let gw, gh, state, next, source, small, sctx, sdata;
+	const N = 20, THRESH = 2, scale = 0.46, BASE_HZ = 26;
+	let gw, gh, state, next, source, small, sctx, sdata, acc;
 	function reset() {
 		const o = getOpts();
 		gw = Math.max(8, Math.round(W * scale)); gh = Math.max(8, Math.round(H * scale));
@@ -139,9 +139,17 @@ function sceneBZ(env) {
 		for (let i = 0; i < gw * gh; i++) if (cov[i] > 0.5) { source[i] = 1; state[i] = 1; }
 		small = document.createElement('canvas'); small.width = gw; small.height = gh;
 		sctx = small.getContext('2d'); sdata = sctx.createImageData(gw, gh);
-		for (let k = 0; k < N + 4; k++) step(); // warm up so frame 0 already has rings
+		acc = 0;
+		for (let k = 0; k < N + 4; k++) iterate(); // warm up so frame 0 already has rings
 	}
-	function step() {
+	// Advance the CA by however many iterations `dt` × sim-speed calls for, so the
+	// Speed slider actually changes how fast the waves travel (fps-independent).
+	function step(dt) {
+		acc += (dt || 1 / 30) * BASE_HZ * (getOpts().simSpeed || 1);
+		let n = 0;
+		while (acc >= 1 && n < 10) { iterate(); acc -= 1; n++; }
+	}
+	function iterate() {
 		for (let y = 0; y < gh; y++) {
 			const yc = y * gw, up = y > 0 ? yc - gw : -1, dn = y < gh - 1 ? yc + gw : -1;
 			for (let x = 0; x < gw; x++) {
@@ -181,8 +189,8 @@ function sceneBZ(env) {
 // rotating spirals; the text biases the initial field.
 function sceneCCA(env) {
 	const { W, H, getOpts, rng } = env;
-	const N = 16, THRESH = 1, scale = 0.32;
-	let gw, gh, state, next, small, sctx, sdata;
+	const N = 16, THRESH = 1, scale = 0.32, BASE_HZ = 16;
+	let gw, gh, state, next, small, sctx, sdata, acc;
 	function reset() {
 		const o = getOpts();
 		gw = Math.max(6, Math.round(W * scale)); gh = Math.max(6, Math.round(H * scale));
@@ -191,8 +199,14 @@ function sceneCCA(env) {
 		for (let i = 0; i < gw * gh; i++) state[i] = mask[i] > 0.45 ? 1 : (rng() * N) | 0;
 		small = document.createElement('canvas'); small.width = gw; small.height = gh;
 		sctx = small.getContext('2d'); sdata = sctx.createImageData(gw, gh);
+		acc = 0;
 	}
-	function step() {
+	function step(dt) {
+		acc += (dt || 1 / 30) * BASE_HZ * (getOpts().simSpeed || 1);
+		let n = 0;
+		while (acc >= 1 && n < 8) { iterate(); acc -= 1; n++; }
+	}
+	function iterate() {
 		for (let y = 0; y < gh; y++) {
 			const yu = ((y - 1 + gh) % gh) * gw, yd = ((y + 1) % gh) * gw, yc = y * gw;
 			for (let x = 0; x < gw; x++) {
@@ -251,10 +265,11 @@ function sceneFlow(env) {
 		for (let k = 0; k < 45; k++) step(1 / 30); // warm up so frame 0 has streams
 	}
 	function step(dt) {
-		t += dt;
 		const o = getOpts();
+		const spd = o.simSpeed || 1;
+		t += dt * spd;
 		bctx.globalAlpha = 0.05; bctx.fillStyle = o.bg; bctx.fillRect(0, 0, W, H); bctx.globalAlpha = 1;
-		const sp = 1.35 * (W / 960), ns = 0.0022;
+		const sp = 1.35 * (W / 960) * spd, ns = 0.0022;
 		bctx.lineWidth = 1.2;
 		for (const p of parts) {
 			const ang = noise(p.x * ns, p.y * ns + t * 0.14) * TAU;
@@ -327,10 +342,11 @@ function sceneWalk(env) {
 		for (let k = 0; k < 30; k++) step(1 / 30); // warm up so frame 0 has some web
 	}
 	function step(dt) {
-		t += dt;
 		const o = getOpts();
+		const spd = o.simSpeed || 1;
+		t += dt * spd;
 		bctx.globalAlpha = 0.02; bctx.fillStyle = o.bg; bctx.fillRect(0, 0, W, H); bctx.globalAlpha = 1;
-		const sp = 2.2 * (W / 960);
+		const sp = 2.2 * (W / 960) * spd;
 		bctx.lineWidth = 1.2; bctx.lineCap = 'round';
 		for (const w of walkers) {
 			w.a += (noise(w.x * 0.004, w.y * 0.004 + t * 0.1)) * 0.9 + (rng() - 0.5) * 0.9;
@@ -369,6 +385,7 @@ function sceneCloth(env) {
 		t = 0;
 	}
 	function step(dt) {
+		dt = Math.min((dt || 1 / 30) * (getOpts().simSpeed || 1), 0.05); // clamp → stable Verlet
 		t += dt;
 		const grav = H * 0.9, damp = 0.985;
 		const windAmp = W * 1.1;

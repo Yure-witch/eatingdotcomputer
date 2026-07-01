@@ -12,6 +12,7 @@
 	let fontFrac = $state(0.30);
 	let repeats = $state(14);            // Step & Repeat: number of stacked lines
 	let spread = $state(1.6);            // Step & Repeat: wave cycles down the stack
+	let simSpeed = $state(1);            // generative-sim speed (BZ/CA/flow/walk/cloth)
 
 	const activeScene = $derived(SCENES.find((s) => s.id === mode) ?? SCENES[0]);
 	const usesPreset = $derived(activeScene.usesPreset);
@@ -67,7 +68,7 @@
 	// speed update live; text/dims changes rebuild the scene — see below).
 	function liveOpts() {
 		return {
-			text, subtitle: subtitle.trim(), preset, cycles, duration, spread, repeats,
+			text, subtitle: subtitle.trim(), preset, cycles, duration, spread, repeats, simSpeed,
 			bg, bg2, fg, accent, bgType,
 			fontFamily: "'Google Sans Flex'", fontFrac, hasStretch
 		};
@@ -88,7 +89,7 @@
 	});
 	// Repaint on a colour / preset change even while paused.
 	$effect(() => {
-		void [bg, bg2, fg, accent, bgType, preset, cycles, spread, repeats];
+		void [bg, bg2, fg, accent, bgType, preset, cycles, spread, repeats, simSpeed];
 		if (scene && previewCtx && !playing) scene.render(previewCtx);
 	});
 
@@ -286,10 +287,17 @@
 					<span>Duration <b>{duration}s</b></span>
 					<input type="range" min="1" max="6" step="0.5" bind:value={duration} />
 				</label>
-				<label class="slider">
-					<span>Speed <b>{cycles}×</b></span>
-					<input type="range" min="1" max="4" step="1" bind:value={cycles} />
-				</label>
+				{#if usesPreset}
+					<label class="slider">
+						<span>Speed <b>{cycles}×</b></span>
+						<input type="range" min="1" max="4" step="1" bind:value={cycles} />
+					</label>
+				{:else}
+					<label class="slider">
+						<span>Speed <b>{simSpeed.toFixed(2)}×</b></span>
+						<input type="range" min="0.15" max="3" step="0.05" bind:value={simSpeed} />
+					</label>
+				{/if}
 				{#if mode === 'tile'}
 					<label class="slider">
 						<span>Wave spread <b>{spread.toFixed(1)}</b></span>
