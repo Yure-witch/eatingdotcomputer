@@ -16,7 +16,8 @@
 	let gifSpeed = $state(1);            // playback rate multiplier (frame delay)
 	let bzRound = $state(4);             // BZ: wavefront roundedness level (1..6)
 	let bzBands = $state(20);            // BZ: gradient steps (posterise the fade)
-	let bzFade = $state(0.4);            // BZ: fade length = wave spacing (0..1)
+	let bzSpacing = $state(0.4);         // BZ: distance between waves (refractory length)
+	let bzFade = $state(0.5);            // BZ: trailing tail length (0 = single line)
 
 	const activeScene = $derived(SCENES.find((s) => s.id === mode) ?? SCENES[0]);
 	const usesPreset = $derived(activeScene.usesPreset);
@@ -73,7 +74,7 @@
 	function liveOpts() {
 		return {
 			text, subtitle: subtitle.trim(), preset, cycles, duration, spread, repeats, reactionSpeed,
-			bzRound, bzBands, bzFade,
+			bzRound, bzBands, bzSpacing, bzFade,
 			bg, bg2, fg, accent, bgType,
 			fontFamily: "'Google Sans Flex'", fontFrac, hasStretch
 		};
@@ -94,7 +95,7 @@
 	});
 	// Repaint on a colour / preset change even while paused.
 	$effect(() => {
-		void [bg, bg2, fg, accent, bgType, preset, cycles, spread, repeats, reactionSpeed, bzRound, bzBands, bzFade];
+		void [bg, bg2, fg, accent, bgType, preset, cycles, spread, repeats, reactionSpeed, bzRound, bzBands, bzSpacing, bzFade];
 		if (scene && previewCtx && !playing) scene.render(previewCtx);
 	});
 
@@ -327,12 +328,16 @@
 						<input type="range" min="1" max="6" step="1" bind:value={bzRound} />
 					</label>
 					<label class="slider">
-						<span>Gradient steps <b>{bzBands}</b></span>
-						<input type="range" min="2" max="24" step="1" bind:value={bzBands} />
+						<span>Spacing <b>{bzSpacing.toFixed(2)}</b></span>
+						<input type="range" min="0" max="1" step="0.02" bind:value={bzSpacing} />
 					</label>
 					<label class="slider">
-						<span>Fade / spacing <b>{bzFade.toFixed(2)}</b></span>
+						<span>Fade <b>{bzFade.toFixed(2)}</b></span>
 						<input type="range" min="0" max="1" step="0.02" bind:value={bzFade} />
+					</label>
+					<label class="slider">
+						<span>Gradient steps <b>{bzBands}</b></span>
+						<input type="range" min="2" max="24" step="1" bind:value={bzBands} />
 					</label>
 				{/if}
 				<label class="slider">

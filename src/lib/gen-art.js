@@ -143,9 +143,9 @@ function sceneBZ(env) {
 		THRESH = Math.max(1, Math.round((OFF.length / 2) * 0.16));
 	}
 	// Wave SPACING = the refractory length N (a new ring emits every N steps and
-	// travels ~N cells before the next). Driven live by Fade → bigger N = waves
-	// further apart AND a longer high→low gradient. Read live so dragging is smooth.
-	function curN() { return clamp(Math.round(lerp(6, MAXN, clamp(getOpts().bzFade ?? 0.4, 0, 1))), 6, MAXN); }
+	// travels ~N cells before the next). Driven live by the Spacing slider → bigger
+	// N = waves further apart. Read live so dragging is smooth.
+	function curN() { return clamp(Math.round(lerp(6, MAXN, clamp(getOpts().bzSpacing ?? 0.4, 0, 1))), 6, MAXN); }
 	let gw, gh, state, next, source, small, sctx, sdata, acc;
 	function reset() {
 		const o = getOpts();
@@ -192,16 +192,25 @@ function sceneBZ(env) {
 		const o = getOpts();
 		const N = curN();
 		const bg = hexToRgb(o.bg), ac = hexToRgb(o.accent), fg = hexToRgb(o.fg);
-		// Gradient stepping (bands) posterises the wavefront→background fade so you
-		// can see the steps. LUT covers 0..MAXN so a just-lowered N (leaving stale
-		// states behind for a step) never indexes past the end.
+		// FADE = trailing tail length behind each wavefront (independent of spacing):
+		//   0   → only the wavefront shows → a single line emanating from the type
+		//   1   → the trail fades across the whole gap to the next wave
+		// GRADIENT STEPS posterise that tail so you can see the banding. LUT covers
+		// 0..MAXN so a just-lowered N (stale states) never indexes past the end.
+		const fade = clamp(o.bzFade ?? 0.5, 0, 1);
 		const bands = clamp(Math.round(o.bzBands || 20), 2, N);
 		const lut = new Array(MAXN);
 		lut[0] = bg;
 		for (let s = 1; s < MAXN; s++) {
-			let a = clamp((s - 1) / (N - 1), 0, 1);           // 0 fresh front → 1 old (stale → bg)
-			a = Math.round(a * (bands - 1)) / (bands - 1);    // posterise into `bands` steps
-			const bright = Math.pow(1 - a, 1.4);
+			const a = clamp((s - 1) / (N - 1), 0, 1);         // 0 fresh front → 1 old
+			let bright;
+			if (fade <= 0.02) {
+				bright = s === 1 ? 1 : 0;                     // single emanating line
+			} else {
+				const u = a / fade;                           // position within the tail
+				if (u >= 1) bright = 0;                       // beyond the tail → background
+				else { const uu = Math.round(u * (bands - 1)) / (bands - 1); bright = Math.pow(1 - uu, 1.3); }
+			}
 			const hue = a < 0.25 ? mix3(fg, ac, a / 0.25) : ac;
 			lut[s] = mix3(bg, hue, bright);
 		}
