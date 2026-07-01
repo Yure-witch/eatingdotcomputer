@@ -37,8 +37,16 @@
 		'4:3':  { w: 900, h: 675, label: 'Classic 4:3' }
 	};
 	let aspect = $state('16:9');
-	const QUALITY = { small: 0.7, medium: 1, large: 1.4 };
-	let quality = $state('medium');
+	// Resolution = the output's LONG edge in px; the other edge follows the aspect.
+	const RES = [360, 480, 640, 800, 1080, 1280];
+	let resolution = $state(720);
+	// Export pixel dims at the chosen resolution (long edge = resolution).
+	const outDims = $derived.by(() => {
+		const b = ASPECTS[aspect];
+		const long = Math.max(b.w, b.h);
+		const s = resolution / long;
+		return { w: Math.round(b.w * s), h: Math.round(b.h * s) };
+	});
 	let duration = $state(3);
 	let fps = $state(20);
 
@@ -144,8 +152,7 @@
 		if (exporting) return;
 		exporting = true; progress = 0;
 		try {
-			const q = QUALITY[quality];
-			const W = Math.round(dims.w * q), H = Math.round(dims.h * q);
+			const W = outDims.w, H = outDims.h;
 			const frames = Math.max(2, Math.round(duration * fps));
 			// Fresh scene at export resolution, reset — encodeGif steps it per frame.
 			const exportScene = makeScene(mode, { W, H, getOpts: liveOpts, seed: 1337 });
@@ -271,15 +278,16 @@
 			</div>
 
 			<div class="group">
-				<span class="group-label">Size</span>
+				<span class="group-label">Shape</span>
 				<div class="seg wrap">
 					{#each Object.entries(ASPECTS) as [key, a]}
 						<button class:on={aspect === key} onclick={() => (aspect = key)}>{a.label}</button>
 					{/each}
 				</div>
-				<div class="seg">
-					{#each Object.keys(QUALITY) as q}
-						<button class:on={quality === q} onclick={() => (quality = q)}>{q}</button>
+				<span class="group-label" style="margin-top:0.35rem">Resolution <em style="font-weight:400;color:var(--muted-fg)">— {outDims.w}×{outDims.h}px</em></span>
+				<div class="seg wrap">
+					{#each RES as r}
+						<button class:on={resolution === r} onclick={() => (resolution = r)}>{r}p</button>
 					{/each}
 				</div>
 			</div>

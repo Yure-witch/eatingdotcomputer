@@ -126,7 +126,7 @@ function sceneType(env) {
 // text is a periodic pacemaker, so waves keep radiating from the letters.
 function sceneBZ(env) {
 	const { W, H, getOpts } = env;
-	const scale = 0.46, MAXN = 80;
+	const GRID_LONG = 300, MAXN = 80; // fixed cell count (long edge) → resolution-independent
 	// Roundedness is a DISCRETE level (1..6) — each maps to a distinct circular
 	// neighbourhood, so every tick visibly changes the wave shape (a continuous
 	// radius only jumped at √2, 2, √5 … which read as "nothing then a jump").
@@ -149,7 +149,8 @@ function sceneBZ(env) {
 	let gw, gh, state, next, source, small, sctx, sdata, acc;
 	function reset() {
 		const o = getOpts();
-		gw = Math.max(8, Math.round(W * scale)); gh = Math.max(8, Math.round(H * scale));
+		const long = Math.max(W, H);
+		gw = Math.max(8, Math.round(GRID_LONG * W / long)); gh = Math.max(8, Math.round(GRID_LONG * H / long));
 		state = new Uint8Array(gw * gh); next = new Uint8Array(gw * gh);
 		// The letters ARE the source — a permanent excited region. No random noise,
 		// so waves radiate cleanly from the exact typography shape.
@@ -233,11 +234,12 @@ function sceneBZ(env) {
 // rotating spirals; the text biases the initial field.
 function sceneCCA(env) {
 	const { W, H, getOpts, rng } = env;
-	const N = 16, THRESH = 1, scale = 0.32;
+	const N = 16, THRESH = 1, GRID_LONG = 240;
 	let gw, gh, state, next, small, sctx, sdata, acc;
 	function reset() {
 		const o = getOpts();
-		gw = Math.max(6, Math.round(W * scale)); gh = Math.max(6, Math.round(H * scale));
+		const long = Math.max(W, H);
+		gw = Math.max(6, Math.round(GRID_LONG * W / long)); gh = Math.max(6, Math.round(GRID_LONG * H / long));
 		state = new Uint8Array(gw * gh); next = new Uint8Array(gw * gh);
 		const mask = textMaskAt(gw, gh, o);
 		for (let i = 0; i < gw * gh; i++) state[i] = mask[i] > 0.45 ? 1 : (rng() * N) | 0;
@@ -288,7 +290,7 @@ function sceneCCA(env) {
 function sceneFlow(env) {
 	const { W, H, getOpts, rng, noise } = env;
 	let buf, bctx, parts, t, seeds;
-	const COUNT = Math.min(4200, Math.round(W * 4.2));
+	const COUNT = 3600; // fixed (motion scales by W/960) → resolution-independent
 	function spawn(p) {
 		const s = seeds[(rng() * seeds.length) | 0];
 		p.x = s[0] * W; p.y = s[1] * H; p.life = 22 + rng() * 46;
@@ -370,7 +372,7 @@ function sceneSort(env) {
 function sceneWalk(env) {
 	const { W, H, getOpts, rng, noise } = env;
 	let buf, bctx, walkers, t, seeds;
-	const COUNT = Math.min(220, Math.round(W / 5));
+	const COUNT = 190; // fixed (motion scales by W/960) → resolution-independent
 	function seedPt() { return seeds.length ? seeds[(rng() * seeds.length) | 0] : [rng(), rng()]; }
 	function reset() {
 		const o = getOpts();
