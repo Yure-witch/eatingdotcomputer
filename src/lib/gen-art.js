@@ -127,21 +127,22 @@ function sceneType(env) {
 function sceneBZ(env) {
 	const { W, H, getOpts } = env;
 	const MAXN = 220;
-	// Roundedness is a DISCRETE level (1..6) — each maps to a distinct circular
-	// neighbourhood, so every tick visibly changes the wave shape (a continuous
-	// radius only jumped at √2, 2, √5 … which read as "nothing then a jump").
-	// Small disk (level 1, von Neumann) → diamond waves; big disk → round rings.
-	const RADII = [1.0, 1.45, 2.05, 2.35, 2.85, 3.25];
+	// Roundedness is a level 0..15 → a circular neighbourhood radius. Level 0 = a
+	// tiny disk (von-Neumann-ish diamond waves); higher = bigger round disk → round
+	// rings (wave speed becomes curvature-driven). Radius scales by gridF so the
+	// look is resolution-consistent, capped so the neighbour scan stays affordable.
 	// gridF: the grid resolution scales WITH the output (so it's crisp — a fixed
 	// grid meant a fat, resolution-growing upscale blur), and the pattern params
-	// (wave spacing N, neighbourhood radius, reaction speed) all scale by gridF so
-	// the LOOK stays the same at any resolution — just sharper.
+	// (spacing N, neighbourhood radius, reaction speed) scale by gridF so the LOOK
+	// is unchanged at any resolution — just sharper.
 	let gridF = 1;
-	let OFF = [], THRESH = 4, level = -1;
+	let OFF = [], THRESH = 4, level = -99;
 	function ensureOffsets() {
-		const L = clamp(Math.round(getOpts().bzRound || 4), 1, 6);
+		const L = clamp(Math.round(getOpts().bzRound ?? 6), 0, 15);
 		if (L === level) return;
-		level = L; const r = RADII[L - 1] * gridF, r2 = r * r, R = Math.ceil(r); OFF = [];
+		level = L;
+		const r = Math.min(lerp(1.0, 5.0, L / 15) * gridF, 6.5), r2 = r * r, R = Math.ceil(r);
+		OFF = [];
 		for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++)
 			if ((dx || dy) && dx * dx + dy * dy <= r2) OFF.push(dx, dy);
 		THRESH = Math.max(1, Math.round((OFF.length / 2) * 0.16));
@@ -149,13 +150,13 @@ function sceneBZ(env) {
 	// Wave SPACING = the refractory length N (a new ring emits every N steps and
 	// travels ~N cells before the next). From the Spacing slider, scaled by gridF.
 	function curN() { return clamp(Math.round(lerp(6, 80, clamp(getOpts().bzSpacing ?? 0.4, 0, 1)) * gridF), 6, MAXN); }
-	let gw, gh, state, next, source, small, sctx, sdata, acc;
+	let gw, gh, state, next, source, stateA, small, sctx, sdata, phase;
 	function reset() {
 		const o = getOpts();
 		const long = Math.max(W, H);
 		// ~0.5× the output = crisp (small upscale); capped so the neighbourhood
-		// scan stays affordable at 1080/1280.
-		const gridLong = clamp(Math.round(long * 0.5), 220, 480);
+		// scan stays affordable at 1080/1280+.
+		const gridLong = clamp(Math.round(long * 0.5), 220, 560);
 		gw = Math.max(8, Math.round(gridLong * W / long)); gh = Math.max(8, Math.round(gridLong * H / long));
 		gridF = gridLong / 300; // reference grid = 300 (where the slider ranges are tuned)
 		state = new Uint8Array(gw * gh); next = new Uint8Array(gw * gh);
@@ -166,15 +167,20 @@ function sceneBZ(env) {
 		for (let i = 0; i < gw * gh; i++) if (cov[i] > 0.5) { source[i] = 1; state[i] = 1; }
 		small = document.createElement('canvas'); small.width = gw; small.height = gh;
 		sctx = small.getContext('2d'); sdata = sctx.createImageData(gw, gh);
-		acc = 0; level = -1;
+		level = -99; phase = 0;
 		for (let k = 0; k < curN() + 4; k++) iterate(); // warm up so frame 0 has rings
+		stateA = state.slice(); // prev-state snapshot for cross-fade interpolation
 	}
-	// Reaction speed = CA iterations advanced PER FRAME (fractional → accumulator).
-	// Decoupled from playback: how fast the reaction "cooks" into each frame.
+	// Reaction speed = CA iterations advanced PER FRAME (fractional). To keep slow
+	// motion SMOOTH (not framey) we cross-fade between the previous and current CA
+	// state by `phase` (the sub-iteration remainder), so at <1 iteration/frame the
+	// waves still glide instead of jumping every few frames. Playback fps is set by
+	// GIF speed / Smoothness and is independent of this.
 	function step() {
-		acc += (getOpts().reactionSpeed || 1.5) * gridF; // scale so visual wave speed is resolution-consistent
-		let n = 0, cap = Math.ceil(20 * gridF);
-		while (acc >= 1 && n < cap) { iterate(); acc -= 1; n++; }
+		phase += (getOpts().reactionSpeed || 1.5) * gridF;
+		let guard = 0, cap = Math.ceil(20 * gridF) + 2;
+		while (phase >= 1 && guard < cap) { stateA.set(state); iterate(); phase -= 1; guard++; }
+		if (guard >= cap) phase = 0;
 	}
 	function iterate() {
 		ensureOffsets();
@@ -222,15 +228,22 @@ function sceneBZ(env) {
 			const hue = a < 0.25 ? mix3(fg, ac, a / 0.25) : ac;
 			lut[s] = mix3(bg, hue, bright);
 		}
+		// Cross-fade the previous CA state (stateA) → current (state) by `phase` so
+		// slow reaction speeds glide instead of stepping. Letters (steady state) are
+		// identical in both, so they don't flicker.
+		const ph = clamp(phase, 0, 1);
 		const px = sdata.data;
-		for (let i = 0; i < gw * gh; i++) { const c = lut[state[i]] || bg; const j = i * 4; px[j] = c[0]; px[j + 1] = c[1]; px[j + 2] = c[2]; px[j + 3] = 255; }
+		for (let i = 0; i < gw * gh; i++) {
+			const a = lut[stateA[i]] || bg, b = lut[state[i]] || bg, j = i * 4;
+			px[j] = a[0] + (b[0] - a[0]) * ph; px[j + 1] = a[1] + (b[1] - a[1]) * ph; px[j + 2] = a[2] + (b[2] - a[2]) * ph; px[j + 3] = 255;
+		}
 		sctx.putImageData(sdata, 0, 0);
 		// Tiny fixed blur just anti-aliases the (now small) upscale into pretty
 		// curves; skipped at low bands so hard "stepped" gradients stay crisp. The
 		// grid tracks the output resolution, so the upscale ratio stays ~1.8× and
 		// this doesn't smear as resolution grows (which used to make it look low-res).
 		ctx.imageSmoothingEnabled = true;
-		const b = bands >= 6 ? Math.max(0.6, (ctx.canvas.width / gw) * 0.5) : 0;
+		const b = bands >= 6 ? Math.min(1.5, Math.max(0.6, (ctx.canvas.width / gw) * 0.5)) : 0;
 		ctx.filter = b ? `blur(${b}px)` : 'none';
 		ctx.drawImage(small, 0, 0, gw, gh, 0, 0, ctx.canvas.width, ctx.canvas.height);
 		ctx.filter = 'none';
@@ -247,11 +260,11 @@ function sceneCCA(env) {
 	// Grid tracks the output resolution (crisp) instead of a fixed coarse grid;
 	// reaction speed scales by gridF so spirals rotate at a consistent visual rate.
 	let gridF = 1;
-	let gw, gh, state, next, small, sctx, sdata, acc;
+	let gw, gh, state, next, stateA, small, sctx, sdata, phase;
 	function reset() {
 		const o = getOpts();
 		const long = Math.max(W, H);
-		const gridLong = clamp(Math.round(long * 0.4), 190, 420);
+		const gridLong = clamp(Math.round(long * 0.4), 190, 480);
 		gw = Math.max(6, Math.round(gridLong * W / long)); gh = Math.max(6, Math.round(gridLong * H / long));
 		gridF = gridLong / 240;
 		state = new Uint8Array(gw * gh); next = new Uint8Array(gw * gh);
@@ -259,12 +272,14 @@ function sceneCCA(env) {
 		for (let i = 0; i < gw * gh; i++) state[i] = mask[i] > 0.45 ? 1 : (rng() * N) | 0;
 		small = document.createElement('canvas'); small.width = gw; small.height = gh;
 		sctx = small.getContext('2d'); sdata = sctx.createImageData(gw, gh);
-		acc = 0;
+		phase = 0; stateA = state.slice();
 	}
+	// Cross-fade between CA states by `phase` so slow reaction speeds glide (see BZ).
 	function step() {
-		acc += (getOpts().reactionSpeed || 1.5) * gridF;
-		let n = 0, cap = Math.ceil(14 * gridF);
-		while (acc >= 1 && n < cap) { iterate(); acc -= 1; n++; }
+		phase += (getOpts().reactionSpeed || 1.5) * gridF;
+		let guard = 0, cap = Math.ceil(14 * gridF) + 2;
+		while (phase >= 1 && guard < cap) { stateA.set(state); iterate(); phase -= 1; guard++; }
+		if (guard >= cap) phase = 0;
 	}
 	function iterate() {
 		for (let y = 0; y < gh; y++) {
@@ -288,8 +303,12 @@ function sceneCCA(env) {
 			const pos = (s / N) * 2, k = Math.min(1, Math.floor(pos)), f = pos - k;
 			lut[s] = mix3(stops[k], stops[k + 1], f);
 		}
+		const ph = clamp(phase, 0, 1);
 		const px = sdata.data;
-		for (let i = 0; i < gw * gh; i++) { const c = lut[state[i]]; const j = i * 4; px[j] = c[0]; px[j + 1] = c[1]; px[j + 2] = c[2]; px[j + 3] = 255; }
+		for (let i = 0; i < gw * gh; i++) {
+			const a = lut[stateA[i]], b = lut[state[i]], j = i * 4;
+			px[j] = a[0] + (b[0] - a[0]) * ph; px[j + 1] = a[1] + (b[1] - a[1]) * ph; px[j + 2] = a[2] + (b[2] - a[2]) * ph; px[j + 3] = 255;
+		}
 		sctx.putImageData(sdata, 0, 0);
 		ctx.imageSmoothingEnabled = true;
 		ctx.drawImage(small, 0, 0, gw, gh, 0, 0, ctx.canvas.width, ctx.canvas.height);

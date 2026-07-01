@@ -14,7 +14,7 @@
 	let spread = $state(1.6);            // Step & Repeat: wave cycles down the stack
 	let reactionSpeed = $state(1.5);     // sim iterations/motion advanced per frame (BZ/CA/flow/walk/cloth)
 	let gifSpeed = $state(1);            // playback rate multiplier (frame delay)
-	let bzRound = $state(4);             // BZ: wavefront roundedness level (1..6)
+	let bzRound = $state(6);             // BZ: wavefront roundedness level (0..15)
 	let bzBands = $state(20);            // BZ: gradient steps (posterise the fade)
 	let bzSpacing = $state(0.4);         // BZ: distance between waves (refractory length)
 	let bzFade = $state(0.5);            // BZ: trailing tail length (0 = single line)
@@ -38,7 +38,7 @@
 	};
 	let aspect = $state('16:9');
 	// Resolution = the output's LONG edge in px; the other edge follows the aspect.
-	const RES = [360, 480, 640, 720, 960, 1280];
+	const RES = [360, 480, 640, 720, 960, 1280, 1600, 1920];
 	let resolution = $state(720);
 	// Export pixel dims at the chosen resolution (long edge = resolution).
 	const outDims = $derived.by(() => {
@@ -331,7 +331,7 @@
 				{#if mode === 'bz'}
 					<label class="slider">
 						<span>Roundedness <b>{bzRound}</b></span>
-						<input type="range" min="1" max="6" step="1" bind:value={bzRound} />
+						<input type="range" min="0" max="15" step="1" bind:value={bzRound} />
 					</label>
 					<label class="slider">
 						<span>Spacing <b>{bzSpacing.toFixed(2)}</b></span>
