@@ -12,7 +12,8 @@
 	let fontFrac = $state(0.30);
 	let repeats = $state(14);            // Step & Repeat: number of stacked lines
 	let spread = $state(1.6);            // Step & Repeat: wave cycles down the stack
-	let simSpeed = $state(1);            // generative-sim speed (BZ/CA/flow/walk/cloth)
+	let reactionSpeed = $state(1.5);     // sim iterations/motion advanced per frame (BZ/CA/flow/walk/cloth)
+	let gifSpeed = $state(1);            // playback rate multiplier (frame delay)
 	let bzRound = $state(4);             // BZ: wavefront roundedness level (1..6)
 	let bzBands = $state(20);            // BZ: gradient steps (posterise the fade)
 	let bzFade = $state(0.4);            // BZ: fade length = wave spacing (0..1)
@@ -71,7 +72,7 @@
 	// speed update live; text/dims changes rebuild the scene — see below).
 	function liveOpts() {
 		return {
-			text, subtitle: subtitle.trim(), preset, cycles, duration, spread, repeats, simSpeed,
+			text, subtitle: subtitle.trim(), preset, cycles, duration, spread, repeats, reactionSpeed,
 			bzRound, bzBands, bzFade,
 			bg, bg2, fg, accent, bgType,
 			fontFamily: "'Google Sans Flex'", fontFrac, hasStretch
@@ -93,7 +94,7 @@
 	});
 	// Repaint on a colour / preset change even while paused.
 	$effect(() => {
-		void [bg, bg2, fg, accent, bgType, preset, cycles, spread, repeats, simSpeed, bzRound, bzBands, bzFade];
+		void [bg, bg2, fg, accent, bgType, preset, cycles, spread, repeats, reactionSpeed, bzRound, bzBands, bzFade];
 		if (scene && previewCtx && !playing) scene.render(previewCtx);
 	});
 
@@ -113,13 +114,20 @@
 			fontsReady = true;
 		})();
 
-		let raf = 0, last = performance.now();
+		// Frame-accurate preview: advance ONE GIF-frame per displayed frame, throttled
+		// to the actual playback rate (fps × GIF speed). So the preview is exactly what
+		// the exported GIF looks like — same per-frame reaction advance, same play rate.
+		let raf = 0, last = performance.now(), accT = 0;
 		const loop = (now) => {
-			let dt = (now - last) / 1000; last = now;
-			dt = Math.min(dt, 0.05); // clamp big gaps (tab switch) so sims don't explode
+			const dt = Math.min((now - last) / 1000, 0.1); last = now;
 			if (playing && scene && previewCtx) {
-				scene.step(dt);
-				scene.render(previewCtx);
+				const interval = 1 / Math.max(1, fps * gifSpeed); // seconds between displayed frames
+				accT += dt;
+				if (accT >= interval) {
+					accT = 0; // drop extra under lag rather than spiral
+					scene.step(1 / fps);
+					scene.render(previewCtx);
+				}
 			}
 			raf = requestAnimationFrame(loop);
 		};
@@ -142,6 +150,7 @@
 			const exportScene = makeScene(mode, { W, H, getOpts: liveOpts, seed: 1337 });
 			const bytes = await encodeGif({
 				W, H, fps, frames, scene: exportScene,
+				delayMs: (1000 / fps) / gifSpeed,   // GIF speed = playback rate
 				onProgress: (p) => { progress = p; }
 			});
 			const blob = new Blob([bytes], { type: 'image/gif' });
@@ -293,15 +302,19 @@
 				</label>
 				{#if usesPreset}
 					<label class="slider">
-						<span>Speed <b>{cycles}×</b></span>
+						<span>Animation speed <b>{cycles}×</b></span>
 						<input type="range" min="1" max="4" step="1" bind:value={cycles} />
 					</label>
 				{:else}
 					<label class="slider">
-						<span>Speed <b>{simSpeed.toFixed(2)}×</b></span>
-						<input type="range" min="0.15" max="3" step="0.05" bind:value={simSpeed} />
+						<span>Reaction speed <b>{reactionSpeed.toFixed(2)}</b></span>
+						<input type="range" min="0.2" max="6" step="0.1" bind:value={reactionSpeed} />
 					</label>
 				{/if}
+				<label class="slider">
+					<span>GIF speed <b>{gifSpeed.toFixed(2)}×</b></span>
+					<input type="range" min="0.25" max="3" step="0.05" bind:value={gifSpeed} />
+				</label>
 				{#if mode === 'tile'}
 					<label class="slider">
 						<span>Wave spread <b>{spread.toFixed(1)}</b></span>

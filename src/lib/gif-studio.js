@@ -225,12 +225,14 @@ export function supportsFontStretch() {
 // Frame 0 captures the reset state; each subsequent frame steps by 1/fps and
 // renders — so stateful simulations (reaction-diffusion, CA, cloth …) advance
 // deterministically. Returns a Uint8Array of GIF bytes.
-export async function encodeGif({ W, H, fps, frames, scene, onProgress, signal }) {
+export async function encodeGif({ W, H, fps, frames, scene, delayMs, onProgress, signal }) {
 	const gif = GIFEncoder();
 	const cv = document.createElement('canvas');
 	cv.width = W; cv.height = H;
 	const ctx = cv.getContext('2d', { willReadFrequently: true });
-	const delay = Math.round(1000 / fps);
+	// Playback delay per frame (GIF speed). Sim advance uses dt = 1/fps regardless,
+	// so GIF speed changes how fast frames PLAY, not how much reaction is baked.
+	const delay = Math.max(20, Math.round(delayMs || 1000 / fps));
 	const dt = 1 / fps;
 
 	for (let f = 0; f < frames; f++) {

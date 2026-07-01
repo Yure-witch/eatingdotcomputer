@@ -126,7 +126,7 @@ function sceneType(env) {
 // text is a periodic pacemaker, so waves keep radiating from the letters.
 function sceneBZ(env) {
 	const { W, H, getOpts } = env;
-	const scale = 0.46, BASE_HZ = 26, MAXN = 80;
+	const scale = 0.46, MAXN = 80;
 	// Roundedness is a DISCRETE level (1..6) — each maps to a distinct circular
 	// neighbourhood, so every tick visibly changes the wave shape (a continuous
 	// radius only jumped at √2, 2, √5 … which read as "nothing then a jump").
@@ -161,12 +161,12 @@ function sceneBZ(env) {
 		acc = 0;
 		for (let k = 0; k < curN() + 4; k++) iterate(); // warm up so frame 0 has rings
 	}
-	// Advance the CA by however many iterations `dt` × sim-speed calls for, so the
-	// Speed slider actually changes how fast the waves travel (fps-independent).
-	function step(dt) {
-		acc += (dt || 1 / 30) * BASE_HZ * (getOpts().simSpeed || 1);
+	// Reaction speed = CA iterations advanced PER FRAME (fractional → accumulator).
+	// Decoupled from playback: how fast the reaction "cooks" into each frame.
+	function step() {
+		acc += (getOpts().reactionSpeed || 1.5);
 		let n = 0;
-		while (acc >= 1 && n < 12) { iterate(); acc -= 1; n++; }
+		while (acc >= 1 && n < 15) { iterate(); acc -= 1; n++; }
 	}
 	function iterate() {
 		ensureOffsets();
@@ -224,7 +224,7 @@ function sceneBZ(env) {
 // rotating spirals; the text biases the initial field.
 function sceneCCA(env) {
 	const { W, H, getOpts, rng } = env;
-	const N = 16, THRESH = 1, scale = 0.32, BASE_HZ = 16;
+	const N = 16, THRESH = 1, scale = 0.32;
 	let gw, gh, state, next, small, sctx, sdata, acc;
 	function reset() {
 		const o = getOpts();
@@ -236,10 +236,10 @@ function sceneCCA(env) {
 		sctx = small.getContext('2d'); sdata = sctx.createImageData(gw, gh);
 		acc = 0;
 	}
-	function step(dt) {
-		acc += (dt || 1 / 30) * BASE_HZ * (getOpts().simSpeed || 1);
+	function step() {
+		acc += (getOpts().reactionSpeed || 1.5);
 		let n = 0;
-		while (acc >= 1 && n < 8) { iterate(); acc -= 1; n++; }
+		while (acc >= 1 && n < 10) { iterate(); acc -= 1; n++; }
 	}
 	function iterate() {
 		for (let y = 0; y < gh; y++) {
@@ -299,12 +299,12 @@ function sceneFlow(env) {
 		t = 0;
 		for (let k = 0; k < 45; k++) step(1 / 30); // warm up so frame 0 has streams
 	}
-	function step(dt) {
+	function step() {
 		const o = getOpts();
-		const spd = o.simSpeed || 1;
-		t += dt * spd;
+		const spd = o.reactionSpeed || 1.5;
+		t += 0.033 * spd;
 		bctx.globalAlpha = 0.05; bctx.fillStyle = o.bg; bctx.fillRect(0, 0, W, H); bctx.globalAlpha = 1;
-		const sp = 1.35 * (W / 960) * spd, ns = 0.0022;
+		const sp = 0.9 * (W / 960) * spd, ns = 0.0022;
 		bctx.lineWidth = 1.2;
 		for (const p of parts) {
 			const ang = noise(p.x * ns, p.y * ns + t * 0.14) * TAU;
@@ -376,12 +376,12 @@ function sceneWalk(env) {
 		t = 0;
 		for (let k = 0; k < 30; k++) step(1 / 30); // warm up so frame 0 has some web
 	}
-	function step(dt) {
+	function step() {
 		const o = getOpts();
-		const spd = o.simSpeed || 1;
-		t += dt * spd;
+		const spd = o.reactionSpeed || 1.5;
+		t += 0.033 * spd;
 		bctx.globalAlpha = 0.02; bctx.fillStyle = o.bg; bctx.fillRect(0, 0, W, H); bctx.globalAlpha = 1;
-		const sp = 2.2 * (W / 960) * spd;
+		const sp = 1.5 * (W / 960) * spd;
 		bctx.lineWidth = 1.2; bctx.lineCap = 'round';
 		for (const w of walkers) {
 			w.a += (noise(w.x * 0.004, w.y * 0.004 + t * 0.1)) * 0.9 + (rng() - 0.5) * 0.9;
@@ -419,8 +419,8 @@ function sceneCloth(env) {
 		mask = textMaskAt(mw, mh, o);
 		t = 0;
 	}
-	function step(dt) {
-		dt = Math.min((dt || 1 / 30) * (getOpts().simSpeed || 1), 0.05); // clamp → stable Verlet
+	function step() {
+		const dt = Math.min(0.03 * (getOpts().reactionSpeed || 1.5), 0.05); // per-frame, clamped → stable Verlet
 		t += dt;
 		const grav = H * 0.9, damp = 0.985;
 		const windAmp = W * 1.1;
