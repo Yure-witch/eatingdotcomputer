@@ -10,6 +10,7 @@
 	let preset = $state('spotlight');    // kinetic-type sub-preset
 	let cycles = $state(1);
 	let fontFrac = $state(0.30);
+	let spread = $state(1.6);            // Step & Repeat: wave cycles across the wall
 
 	const activeScene = $derived(SCENES.find((s) => s.id === mode) ?? SCENES[0]);
 	const usesPreset = $derived(activeScene.usesPreset);
@@ -57,7 +58,7 @@
 	// speed update live; text/dims changes rebuild the scene — see below).
 	function liveOpts() {
 		return {
-			text, subtitle: subtitle.trim(), preset, cycles, duration,
+			text, subtitle: subtitle.trim(), preset, cycles, duration, spread,
 			bg, bg2, fg, accent, bgType,
 			fontFamily: "'Google Sans Flex'", fontFrac, hasStretch
 		};
@@ -78,7 +79,7 @@
 	});
 	// Repaint on a colour / preset change even while paused.
 	$effect(() => {
-		void [bg, bg2, fg, accent, bgType, preset, cycles];
+		void [bg, bg2, fg, accent, bgType, preset, cycles, spread];
 		if (scene && previewCtx && !playing) scene.render(previewCtx);
 	});
 
@@ -261,6 +262,12 @@
 					<span>Speed <b>{cycles}×</b></span>
 					<input type="range" min="1" max="4" step="1" bind:value={cycles} />
 				</label>
+				{#if mode === 'tile'}
+					<label class="slider">
+						<span>Wave spread <b>{spread.toFixed(1)}</b></span>
+						<input type="range" min="0.4" max="5" step="0.1" bind:value={spread} />
+					</label>
+				{/if}
 				<label class="slider">
 					<span>Smoothness <b>{fps}fps</b></span>
 					<input type="range" min="10" max="30" step="2" bind:value={fps} />

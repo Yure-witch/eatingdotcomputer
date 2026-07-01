@@ -16,7 +16,7 @@
 //   sort      — pixel-sorting glitch over an animated type frame
 //   walk      — random walkers released from the text, weaving a web
 //   cloth     — Verlet cloth: the title printed on a waving banner
-import { renderFrame, buildRenderOpts } from '$lib/gif-studio.js';
+import { renderFrame, buildRenderOpts, drawTypeLine } from '$lib/gif-studio.js';
 
 const TAU = Math.PI * 2;
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -59,6 +59,16 @@ function hexToRgb(h) {
 }
 const mix3 = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
 const cssRgb = (c) => `rgb(${c[0] | 0},${c[1] | 0},${c[2] | 0})`;
+
+// Shared background painter (solid / linear / radial) at W×H.
+function paintBg(ctx, o, W, H) {
+	if (o.bgType === 'gradient') {
+		const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, o.bg2 || o.bg); g.addColorStop(1, o.bg); ctx.fillStyle = g;
+	} else if (o.bgType === 'radial') {
+		const g = ctx.createRadialGradient(W / 2, H * 0.42, 0, W / 2, H * 0.42, Math.max(W, H) * 0.72); g.addColorStop(0, o.bg2 || o.bg); g.addColorStop(1, o.bg); ctx.fillStyle = g;
+	} else ctx.fillStyle = o.bg;
+	ctx.fillRect(0, 0, W, H);
+}
 
 // ── text → mask ──────────────────────────────────────────────────────────────
 function drawFittedText(ctx, text, W, H, fontPx, fontFamily, weight, hasStretch) {
@@ -393,10 +403,7 @@ function sceneCloth(env) {
 	}
 	function render(ctx) {
 		const o = getOpts();
-		if (o.bgType === 'gradient') { const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, o.bg2 || o.bg); g.addColorStop(1, o.bg); ctx.fillStyle = g; }
-		else if (o.bgType === 'radial') { const g = ctx.createRadialGradient(W / 2, H * 0.42, 0, W / 2, H * 0.42, Math.max(W, H) * 0.72); g.addColorStop(0, o.bg2 || o.bg); g.addColorStop(1, o.bg); ctx.fillStyle = g; }
-		else ctx.fillStyle = o.bg;
-		ctx.fillRect(0, 0, W, H);
+		paintBg(ctx, o, W, H);
 		const bg = hexToRgb(o.bg), fg = hexToRgb(o.fg), ac = hexToRgb(o.accent);
 		for (let j = 0; j < ROWS - 1; j++) for (let i = 0; i < COLS - 1; i++) {
 			const a = idx(i, j), b = idx(i + 1, j), c = idx(i + 1, j + 1), d = idx(i, j + 1);
@@ -413,9 +420,56 @@ function sceneCloth(env) {
 	return { reset, step, render };
 }
 
+// Step & Repeat — tile the phrase across the whole page and run a DIAGONAL
+// phase gradient through the grid, so a wave of weight/width/slant ripples from
+// tile to tile. This is where the variable font really shows off: every
+// repetition sits at a different point in the animation at once.
+function sceneTile(env) {
+	const { W, H, getOpts } = env;
+	let t = 0;
+	const mctx = document.createElement('canvas').getContext('2d');
+	function neutralWidth(o, fontPx) {
+		const letters = Array.from(o.text || '');
+		if (!letters.length) return fontPx;
+		mctx.font = `400 ${fontPx}px ${o.fontFamily}`;
+		if (o.hasStretch) mctx.fontStretch = '100%';
+		let w = 0; for (const ch of letters) w += mctx.measureText(ch).width;
+		return w;
+	}
+	return {
+		reset() { t = 0; },
+		step(dt) { t += dt; },
+		render(ctx) {
+			const o = getOpts();
+			paintBg(ctx, o, W, H);
+			const dur = o.duration || 3;
+			const base = ((t / dur) % 1 + 1) % 1;
+			// Text size controls tile density (smaller → more repeats).
+			const fontPx = H * clamp((o.fontFrac || 0.3) * 0.5, 0.05, 0.5);
+			const lineH = fontPx * 1.28;
+			const phraseW = Math.max(fontPx, neutralWidth(o, fontPx));
+			const tileW = phraseW + fontPx * 1.0;
+			const rows = Math.ceil(H / lineH) + 1;
+			const cols = Math.ceil(W / tileW) + 2;
+			const spread = o.spread || 1.5; // how many wave cycles span the wall
+			for (let r = 0; r < rows; r++) {
+				const cy = r * lineH + lineH * 0.5;
+				const brick = (r % 2) * (tileW * 0.5); // offset alternate rows
+				for (let c = 0; c < cols; c++) {
+					const cx = -tileW + brick + c * tileW + tileW * 0.5;
+					// diagonal gradient: phase advances down rows and across columns
+					const ph = ((base + (r / Math.max(1, rows)) * spread + (c / Math.max(1, cols)) * spread * 0.45) % 1 + 1) % 1;
+					drawTypeLine(ctx, o.text, ph, o, { cx, cy, fontPx });
+				}
+			}
+		}
+	};
+}
+
 // ── registry ─────────────────────────────────────────────────────────────────
 export const SCENES = [
 	{ id: 'type',  name: 'Kinetic Type', make: sceneType,  usesPreset: true },
+	{ id: 'tile',  name: 'Step & Repeat', make: sceneTile, usesPreset: true },
 	{ id: 'bz',    name: 'BZ Waves',     make: sceneBZ,    usesPreset: false },
 	{ id: 'cca',   name: 'Cyclic CA',    make: sceneCCA,   usesPreset: false },
 	{ id: 'flow',  name: 'Flow Field',   make: sceneFlow,  usesPreset: false },

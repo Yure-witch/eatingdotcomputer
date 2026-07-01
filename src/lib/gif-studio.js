@@ -144,57 +144,63 @@ function paintBackground(ctx, o) {
 	ctx.fillRect(0, 0, W, H);
 }
 
+// Export the background painter so tiling / other scenes can reuse it.
+export function paintBg(ctx, o) { paintBackground(ctx, o); }
+
+// Draw ONE animated line of type. `layout` = { cx, cy, fontPx, fit }:
+//   cx, cy  — centre point
+//   fontPx  — base size
+//   fit     — if set, scale the line down to fit this width (else natural size)
+// Used by renderFrame (single centred title) AND the Step & Repeat tile scene
+// (many lines, each at its own phase). Does NOT paint the background.
+export function drawTypeLine(ctx, text, phase, o, layout) {
+	const letters = Array.from(text || '');
+	if (!letters.length) return;
+	const cyc = o.cycles || 1;
+	const params = letters.map((ch, i) => PRESET_MAP[o.preset](phase, i, letters.length, cyc, o));
+	const basePx = layout.fontPx;
+	const spacing = (o.tracking || 0) * basePx;
+
+	ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+	const adv = new Array(letters.length);
+	let total = 0;
+	for (let i = 0; i < letters.length; i++) {
+		const p = params[i];
+		ctx.font = `${Math.round(p.weight)} ${basePx}px ${o.fontFamily}`;
+		if (o.hasStretch) ctx.fontStretch = p.widthPct + '%';
+		adv[i] = ctx.measureText(letters[i]).width;
+		total += adv[i] + (i < letters.length - 1 ? spacing : 0);
+	}
+	const scale = layout.fit ? (total > 0 ? Math.min(1.7, layout.fit / total) : 1) : 1;
+	const px = basePx * scale;
+	let x = layout.cx - (total * scale) / 2;
+
+	for (let i = 0; i < letters.length; i++) {
+		const p = params[i];
+		ctx.save();
+		ctx.font = `${Math.round(p.weight)} ${px}px ${o.fontFamily}`;
+		if (o.hasStretch) ctx.fontStretch = p.widthPct + '%';
+		ctx.fillStyle = p.color || o.fg;
+		ctx.globalAlpha = clamp(p.alpha ?? 1, 0, 1);
+		ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+		const advScaled = adv[i] * scale;
+		ctx.translate(x + advScaled / 2, layout.cy + (p.dy || 0) * px);
+		if (p.rot) ctx.rotate(p.rot);
+		if (p.scale && p.scale !== 1) ctx.scale(p.scale, p.scale);
+		if (p.skew) ctx.transform(1, 0, Math.tan(p.skew), 1, 0, 0); // slant (ital-ish)
+		ctx.fillText(letters[i], 0, 0);
+		ctx.restore();
+		x += advScaled + spacing * scale;
+	}
+	ctx.globalAlpha = 1;
+}
+
 // Draw one frame. `phase` is the loop position in [0,1).
 export function renderFrame(ctx, phase, o) {
 	const { W, H } = o;
 	paintBackground(ctx, o);
-
-	const letters = Array.from(o.text || '');
 	const cy = H * (o.subtitle ? 0.44 : 0.5);
-
-	if (letters.length) {
-		const cyc = o.cycles || 1;
-		const params = letters.map((ch, i) => PRESET_MAP[o.preset](phase, i, letters.length, cyc, o));
-		const basePx = o.fontPx;
-		const spacing = (o.tracking || 0) * basePx;
-
-		// Measure advances at each letter's live weight/width.
-		ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
-		const adv = new Array(letters.length);
-		let total = 0;
-		for (let i = 0; i < letters.length; i++) {
-			const p = params[i];
-			ctx.font = `${Math.round(p.weight)} ${basePx}px ${o.fontFamily}`;
-			if (o.hasStretch) ctx.fontStretch = p.widthPct + '%';
-			adv[i] = ctx.measureText(letters[i]).width;
-			total += adv[i] + (i < letters.length - 1 ? spacing : 0);
-		}
-
-		// Fit to width (letters can grow/shrink per frame) and re-centre.
-		const maxW = W * (o.fitW || 0.86);
-		const scale = total > 0 ? Math.min(1.7, maxW / total) : 1;
-		const px = basePx * scale;
-		let x = (W - total * scale) / 2;
-
-		for (let i = 0; i < letters.length; i++) {
-			const p = params[i];
-			ctx.save();
-			ctx.font = `${Math.round(p.weight)} ${px}px ${o.fontFamily}`;
-			if (o.hasStretch) ctx.fontStretch = p.widthPct + '%';
-			ctx.fillStyle = p.color || o.fg;
-			ctx.globalAlpha = clamp(p.alpha ?? 1, 0, 1);
-			ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-			const advScaled = adv[i] * scale;
-			ctx.translate(x + advScaled / 2, cy + (p.dy || 0) * px);
-			if (p.rot) ctx.rotate(p.rot);
-			if (p.scale && p.scale !== 1) ctx.scale(p.scale, p.scale);
-			if (p.skew) ctx.transform(1, 0, Math.tan(p.skew), 1, 0, 0); // slant (ital-ish)
-			ctx.fillText(letters[i], 0, 0);
-			ctx.restore();
-			x += advScaled + spacing * scale;
-		}
-		ctx.globalAlpha = 1;
-	}
+	drawTypeLine(ctx, o.text, phase, o, { cx: W / 2, cy, fontPx: o.fontPx, fit: W * (o.fitW || 0.86) });
 
 	// Optional static subtitle line.
 	if (o.subtitle) {
