@@ -1,0 +1,221 @@
+// GIF Studio — variable-font title animation engine.
+//
+// Renders "mesmerizing" kinetic-typography frames to a Canvas 2D context using
+// a variable font (Google Sans Flex: wght 100..700, wdth 25..150), then encodes
+// a looping GIF with gifenc. The same renderFrame() drives both the live preview
+// and the export, so what you see is what you get.
+//
+// Variable axes on canvas: `wght` comes through the numeric font-weight in
+// ctx.font (browsers interpolate the axis); `wdth` comes through ctx.fontStretch
+// (Safari 17.4+/Chrome 116+). Where fontStretch is unsupported, weight animation
+// alone still carries the effect.
+import { GIFEncoder, quantize, applyPalette } from 'gifenc';
+
+const TAU = Math.PI * 2;
+const lerp = (a, b, t) => a + (b - a) * t;
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+
+// ── colour helpers ──────────────────────────────────────────────────────────
+function hexToRgb(hex) {
+	let h = String(hex).replace('#', '').trim();
+	if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+	const n = parseInt(h, 16);
+	return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+}
+function rgbCss({ r, g, b }) { return `rgb(${r | 0},${g | 0},${b | 0})`; }
+function mixHex(a, b, t) {
+	const A = hexToRgb(a), B = hexToRgb(b);
+	return rgbCss({ r: lerp(A.r, B.r, t), g: lerp(A.g, B.g, t), b: lerp(A.b, B.b, t) });
+}
+
+// Wrapped distance between letter index `i` and a fractional position `pos`
+// around a ring of `n` letters — for travelling "sweep" effects.
+function ringDist(i, pos, n) {
+	let d = Math.abs(i - pos);
+	if (d > n / 2) d = n - d;
+	return d;
+}
+
+// ── presets: (phase 0..1, i, n, cyc, o) → per-letter { weight, widthPct, dy,
+//    alpha, scale, rot, color } ────────────────────────────────────────────────
+export const PRESETS = [
+	{
+		id: 'weightWave', name: 'Weight Wave',
+		fn: (t, i, n, cyc) => {
+			const s = 0.5 + 0.5 * Math.sin(TAU * (t * cyc - i / Math.max(1, n)));
+			return { weight: lerp(120, 680, s), widthPct: 100, dy: 0 };
+		}
+	},
+	{
+		id: 'breathe', name: 'Breathe',
+		fn: (t, i, n, cyc) => {
+			const s = 0.5 + 0.5 * Math.sin(TAU * t * cyc);
+			return { weight: lerp(140, 660, s), widthPct: lerp(74, 128, s), dy: 0 };
+		}
+	},
+	{
+		id: 'wave', name: 'Wave',
+		fn: (t, i, n, cyc) => {
+			const u = t * cyc - i / Math.max(1, n);
+			const s = Math.sin(TAU * u);
+			return { weight: lerp(200, 600, 0.5 + 0.5 * s), widthPct: 100, dy: 0.16 * s };
+		}
+	},
+	{
+		id: 'widthMorph', name: 'Width Morph',
+		fn: (t, i, n, cyc) => {
+			const s = 0.5 + 0.5 * Math.sin(TAU * (t * cyc - i / Math.max(1, n)));
+			return { weight: lerp(300, 580, s), widthPct: lerp(30, 150, s), dy: 0 };
+		}
+	},
+	{
+		id: 'spotlight', name: 'Spotlight',
+		fn: (t, i, n, cyc, o) => {
+			const pos = ((t * cyc) % 1) * n;
+			const d = ringDist(i, pos, n);
+			const b = Math.exp(-(d * d) / (2 * 1.1 * 1.1));
+			return {
+				weight: lerp(150, 700, b),
+				widthPct: lerp(90, 118, b),
+				dy: -0.09 * b,
+				scale: 1 + 0.07 * b,
+				color: mixHex(o.fg, o.accent, b)
+			};
+		}
+	},
+	{
+		id: 'shimmer', name: 'Shimmer',
+		fn: (t, i, n, cyc, o) => {
+			const pos = ((t * cyc) % 1) * n;
+			const d = ringDist(i, pos, n);
+			const b = Math.exp(-(d * d) / (2 * 1.6 * 1.6));
+			return {
+				weight: 520, widthPct: 100, dy: 0,
+				alpha: lerp(0.55, 1, b),
+				color: mixHex(o.fg, o.accent, b)
+			};
+		}
+	},
+	{
+		id: 'stagger', name: 'Cascade',
+		fn: (t, i, n, cyc) => {
+			// Each letter runs the same rise+thicken cycle, phase-offset so it
+			// cascades across the word and loops seamlessly.
+			const u = (t * cyc + i / Math.max(1, n)) % 1;
+			const s = 0.5 - 0.5 * Math.cos(TAU * u); // smooth 0→1→0
+			return { weight: lerp(160, 640, s), widthPct: lerp(88, 116, s), dy: lerp(0.12, 0, s), alpha: lerp(0.6, 1, s) };
+		}
+	}
+];
+const PRESET_MAP = Object.fromEntries(PRESETS.map((p) => [p.id, p.fn]));
+
+// ── background ──────────────────────────────────────────────────────────────
+function paintBackground(ctx, o) {
+	const { W, H } = o;
+	if (o.bgType === 'gradient') {
+		const g = ctx.createLinearGradient(0, 0, 0, H);
+		g.addColorStop(0, o.bg2 || o.bg); g.addColorStop(1, o.bg);
+		ctx.fillStyle = g;
+	} else if (o.bgType === 'radial') {
+		const g = ctx.createRadialGradient(W / 2, H * 0.42, 0, W / 2, H * 0.42, Math.max(W, H) * 0.72);
+		g.addColorStop(0, o.bg2 || o.bg); g.addColorStop(1, o.bg);
+		ctx.fillStyle = g;
+	} else {
+		ctx.fillStyle = o.bg;
+	}
+	ctx.fillRect(0, 0, W, H);
+}
+
+// Draw one frame. `phase` is the loop position in [0,1).
+export function renderFrame(ctx, phase, o) {
+	const { W, H } = o;
+	paintBackground(ctx, o);
+
+	const letters = Array.from(o.text || '');
+	const cy = H * (o.subtitle ? 0.44 : 0.5);
+
+	if (letters.length) {
+		const cyc = o.cycles || 1;
+		const params = letters.map((ch, i) => PRESET_MAP[o.preset](phase, i, letters.length, cyc, o));
+		const basePx = o.fontPx;
+		const spacing = (o.tracking || 0) * basePx;
+
+		// Measure advances at each letter's live weight/width.
+		ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+		const adv = new Array(letters.length);
+		let total = 0;
+		for (let i = 0; i < letters.length; i++) {
+			const p = params[i];
+			ctx.font = `${Math.round(p.weight)} ${basePx}px ${o.fontFamily}`;
+			if (o.hasStretch) ctx.fontStretch = p.widthPct + '%';
+			adv[i] = ctx.measureText(letters[i]).width;
+			total += adv[i] + (i < letters.length - 1 ? spacing : 0);
+		}
+
+		// Fit to width (letters can grow/shrink per frame) and re-centre.
+		const maxW = W * (o.fitW || 0.86);
+		const scale = total > 0 ? Math.min(1.7, maxW / total) : 1;
+		const px = basePx * scale;
+		let x = (W - total * scale) / 2;
+
+		for (let i = 0; i < letters.length; i++) {
+			const p = params[i];
+			ctx.save();
+			ctx.font = `${Math.round(p.weight)} ${px}px ${o.fontFamily}`;
+			if (o.hasStretch) ctx.fontStretch = p.widthPct + '%';
+			ctx.fillStyle = p.color || o.fg;
+			ctx.globalAlpha = clamp(p.alpha ?? 1, 0, 1);
+			ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+			const advScaled = adv[i] * scale;
+			ctx.translate(x + advScaled / 2, cy + (p.dy || 0) * px);
+			if (p.rot) ctx.rotate(p.rot);
+			if (p.scale && p.scale !== 1) ctx.scale(p.scale, p.scale);
+			ctx.fillText(letters[i], 0, 0);
+			ctx.restore();
+			x += advScaled + spacing * scale;
+		}
+		ctx.globalAlpha = 1;
+	}
+
+	// Optional static subtitle line.
+	if (o.subtitle) {
+		const subPx = o.fontPx * 0.26;
+		ctx.font = `500 ${subPx}px ${o.fontFamily}`;
+		if (o.hasStretch) ctx.fontStretch = '100%';
+		ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+		ctx.fillStyle = o.subColor || o.fg;
+		ctx.globalAlpha = 0.72;
+		ctx.fillText(o.subtitle, W / 2, cy + o.fontPx * 0.62);
+		ctx.globalAlpha = 1;
+	}
+}
+
+// True when the browser can drive the `wdth` axis via ctx.fontStretch.
+export function supportsFontStretch() {
+	return typeof CanvasRenderingContext2D !== 'undefined'
+		&& 'fontStretch' in CanvasRenderingContext2D.prototype;
+}
+
+// Encode a looping GIF. `draw(ctx, phase)` paints a frame at loop-phase 0..1.
+// Returns a Uint8Array of GIF bytes.
+export async function encodeGif({ W, H, fps, frames, draw, onProgress, signal }) {
+	const gif = GIFEncoder();
+	const cv = document.createElement('canvas');
+	cv.width = W; cv.height = H;
+	const ctx = cv.getContext('2d', { willReadFrequently: true });
+	const delay = Math.round(1000 / fps);
+
+	for (let f = 0; f < frames; f++) {
+		if (signal?.aborted) throw new Error('aborted');
+		draw(ctx, f / frames); // never reaches 1 → seamless loop back to frame 0
+		const { data } = ctx.getImageData(0, 0, W, H);
+		const palette = quantize(data, 256, { format: 'rgb565' });
+		const index = applyPalette(data, palette, 'rgb565');
+		gif.writeFrame(index, W, H, { palette, delay });
+		onProgress?.((f + 1) / frames);
+		// Yield periodically so the UI (progress bar) stays responsive.
+		if ((f & 3) === 0) await new Promise((r) => requestAnimationFrame(r));
+	}
+	gif.finish();
+	return gif.bytes();
+}

@@ -126,9 +126,9 @@
 			iconName: 'planet'
 		},
 		{
-			href: '/app/playground',
+			href: '/app/lab',
 			label: 'Lab',
-			active: (p) => p.startsWith('/app/playground'),
+			active: (p) => p.startsWith('/app/lab') || p.startsWith('/app/playground'),
 			iconName: 'experiment'
 		}
 	];

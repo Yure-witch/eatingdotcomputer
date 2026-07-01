@@ -17,7 +17,7 @@
 	// Tab sections mounted as live panels in the mobile scroll-snap pager.
 	import HomePanel from './+page.svelte';
 	import OrbitPanel from './orbit/+page.svelte';
-	import LabPanel from './playground/+page.svelte';
+	import LabPanel from './lab/+page.svelte';
 	import ManagePanel from './manage/+page.svelte';
 	import { ekTokenToUrl } from '$lib/message-render.js';
 	import {
@@ -52,9 +52,9 @@
 			iconName: 'planet'
 		},
 		{
-			href: '/app/playground',
+			href: '/app/lab',
 			label: 'Lab',
-			active: (p) => p.startsWith('/app/playground'),
+			active: (p) => p.startsWith('/app/lab') || p.startsWith('/app/playground'),
 			iconName: 'experiment'
 		},
 		{
@@ -94,7 +94,7 @@
 		{ route: '/app/chat', chatMenu: true },
 		{ route: '/app', Comp: HomePanel },
 		{ route: '/app/orbit', Comp: OrbitPanel },
-		{ route: '/app/playground', Comp: LabPanel },
+		{ route: '/app/lab', Comp: LabPanel },
 		...(data.currentUser?.role === 'instructor' ? [{ route: '/app/manage', Comp: ManagePanel }] : [])
 	]);
 	// The conv panel is only reachable/active while you're in a conversation OR
@@ -107,9 +107,11 @@
 		for (let i = 1; i < PANELS.length; i++) {
 			const r = PANELS[i].route;
 			if (!r) continue;
-			// '/app' and the chat MENU are EXACT matches — so Home doesn't catch
-			// every /app/* route. Section routes match themselves + sub-routes.
-			if (r === '/app' || r === '/app/chat') { if (path === r) return i; }
+			// '/app', the chat MENU, and Lab are EXACT matches — so Home doesn't
+			// catch every /app/* route, and Lab's sub-tools (e.g. /app/lab/gif)
+			// render as full pages via children() instead of the Lab pager panel.
+			// Other sections match themselves + sub-routes.
+			if (r === '/app' || r === '/app/chat' || r === '/app/lab') { if (path === r) return i; }
 			else if (path === r || path.startsWith(r + '/')) return i;
 		}
 		return -1;
@@ -485,7 +487,7 @@
 		if (path.startsWith('/app/chat')) return 0;
 		if (path === '/app' || path.startsWith('/app/weeks')) return 1;
 		if (path.startsWith('/app/orbit') || path.startsWith('/app/atlas') || path.startsWith('/app/collection') || path.startsWith('/app/assignments') || path.startsWith('/app/files')) return 2;
-		if (path.startsWith('/app/playground')) return 3;
+		if (path.startsWith('/app/lab') || path.startsWith('/app/playground')) return 3;
 		if (path.startsWith('/app/manage')) return 4;
 		return 0;
 	}
