@@ -47,6 +47,17 @@
 		const s = resolution / long;
 		return { w: Math.round(b.w * s), h: Math.round(b.h * s) };
 	});
+	// Preview renders at a capped size so the sim grid stays small and the preview
+	// stays smooth to interact with; the EXPORT uses full outDims (offline, so it
+	// affords a much larger grid → crisp). The look matches because the sim's
+	// pattern params scale with grid size.
+	const PREVIEW_MAX = 900;
+	const previewDims = $derived.by(() => {
+		const d = outDims, long = Math.max(d.w, d.h);
+		if (long <= PREVIEW_MAX) return d;
+		const s = PREVIEW_MAX / long;
+		return { w: Math.round(d.w * s), h: Math.round(d.h * s) };
+	});
 	let duration = $state(3);
 	let fps = $state(20);
 
@@ -195,8 +206,8 @@
 	<div class="studio">
 		<!-- Preview -->
 		<div class="preview-wrap">
-			<div class="preview-frame" class:portrait={outDims.h > outDims.w}>
-				<canvas bind:this={canvasEl} width={outDims.w} height={outDims.h}></canvas>
+			<div class="preview-frame" class:portrait={previewDims.h > previewDims.w}>
+				<canvas bind:this={canvasEl} width={previewDims.w} height={previewDims.h}></canvas>
 			</div>
 			<div class="preview-actions">
 				<button class="chip" onclick={() => (playing = !playing)}>

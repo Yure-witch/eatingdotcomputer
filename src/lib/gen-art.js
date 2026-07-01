@@ -156,7 +156,10 @@ function sceneBZ(env) {
 		const long = Math.max(W, H);
 		// ~0.5× the output = crisp (small upscale); capped so the neighbourhood
 		// scan stays affordable at 1080/1280+.
-		const gridLong = clamp(Math.round(long * 0.5), 220, 560);
+		// Grid ≈ 0.5× the output long edge so the upscale ratio stays ~2× → crisp.
+		// Cap balances sharpness vs cost; the PREVIEW is rendered at a capped canvas
+		// (see the page) so its grid stays small and smooth to interact with.
+		const gridLong = clamp(Math.round(long * 0.5), 220, 760);
 		gw = Math.max(8, Math.round(gridLong * W / long)); gh = Math.max(8, Math.round(gridLong * H / long));
 		gridF = gridLong / 300; // reference grid = 300 (where the slider ranges are tuned)
 		state = new Uint8Array(gw * gh); next = new Uint8Array(gw * gh);
@@ -168,7 +171,9 @@ function sceneBZ(env) {
 		small = document.createElement('canvas'); small.width = gw; small.height = gh;
 		sctx = small.getContext('2d'); sdata = sctx.createImageData(gw, gh);
 		level = -99; phase = 0;
-		for (let k = 0; k < curN() + 4; k++) iterate(); // warm up so frame 0 has rings
+		// Warm up so frame 0 already shows rings — bounded so big grids don't hang.
+		const warm = Math.min(curN() + 4, 90);
+		for (let k = 0; k < warm; k++) iterate();
 		stateA = state.slice(); // prev-state snapshot for cross-fade interpolation
 	}
 	// Reaction speed = CA iterations advanced PER FRAME (fractional). To keep slow
@@ -243,7 +248,7 @@ function sceneBZ(env) {
 		// grid tracks the output resolution, so the upscale ratio stays ~1.8× and
 		// this doesn't smear as resolution grows (which used to make it look low-res).
 		ctx.imageSmoothingEnabled = true;
-		const b = bands >= 6 ? Math.min(1.5, Math.max(0.6, (ctx.canvas.width / gw) * 0.5)) : 0;
+		const b = bands >= 6 ? Math.min(1.0, Math.max(0.4, (ctx.canvas.width / gw) * 0.35)) : 0;
 		ctx.filter = b ? `blur(${b}px)` : 'none';
 		ctx.drawImage(small, 0, 0, gw, gh, 0, 0, ctx.canvas.width, ctx.canvas.height);
 		ctx.filter = 'none';
@@ -264,7 +269,7 @@ function sceneCCA(env) {
 	function reset() {
 		const o = getOpts();
 		const long = Math.max(W, H);
-		const gridLong = clamp(Math.round(long * 0.4), 190, 480);
+		const gridLong = clamp(Math.round(long * 0.45), 190, 680);
 		gw = Math.max(6, Math.round(gridLong * W / long)); gh = Math.max(6, Math.round(gridLong * H / long));
 		gridF = gridLong / 240;
 		state = new Uint8Array(gw * gh); next = new Uint8Array(gw * gh);
