@@ -46,6 +46,14 @@
 		{ name: 'Vapor',   bg: '#120a2e', bg2: '#3a1a6e', fg: '#f0eaff', accent: '#ff6ac1', bgType: 'gradient' }
 	];
 	function applyPalette(p) { bg = p.bg; bg2 = p.bg2; fg = p.fg; accent = p.accent; bgType = p.bgType; }
+	// Set a colour from a typed hex string (any 3- or 6-digit hex, with/without #).
+	function setHex(which, val) {
+		let s = String(val).trim();
+		if (s && s[0] !== '#') s = '#' + s;
+		if (!/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(s)) return; // wait for a valid value
+		if (which === 'bg') bg = s; else if (which === 'fg') fg = s;
+		else if (which === 'accent') accent = s; else if (which === 'bg2') bg2 = s;
+	}
 
 	// ── Canvas / preview ───────────────────────────────────────────────────
 	let canvasEl = $state(null);
@@ -222,11 +230,23 @@
 						</button>
 					{/each}
 				</div>
-				<div class="color-row">
-					<label class="color"><span>Bg</span><input type="color" bind:value={bg} /></label>
-					<label class="color"><span>Bg 2</span><input type="color" bind:value={bg2} /></label>
-					<label class="color"><span>Text</span><input type="color" bind:value={fg} /></label>
-					<label class="color"><span>Accent</span><input type="color" bind:value={accent} /></label>
+				<div class="color-grid">
+					<div class="color-field">
+						<span>Background</span>
+						<span class="ci"><input type="color" bind:value={bg} /><input class="hex" value={bg} maxlength="7" oninput={(e) => setHex('bg', e.currentTarget.value)} /></span>
+					</div>
+					<div class="color-field">
+						<span>Text</span>
+						<span class="ci"><input type="color" bind:value={fg} /><input class="hex" value={fg} maxlength="7" oninput={(e) => setHex('fg', e.currentTarget.value)} /></span>
+					</div>
+					<div class="color-field">
+						<span>Accent</span>
+						<span class="ci"><input type="color" bind:value={accent} /><input class="hex" value={accent} maxlength="7" oninput={(e) => setHex('accent', e.currentTarget.value)} /></span>
+					</div>
+					<div class="color-field">
+						<span>Bg 2 <em>(gradient)</em></span>
+						<span class="ci"><input type="color" bind:value={bg2} /><input class="hex" value={bg2} maxlength="7" oninput={(e) => setHex('bg2', e.currentTarget.value)} /></span>
+					</div>
 				</div>
 				<div class="seg">
 					{#each ['solid', 'gradient', 'radial'] as bt}
@@ -382,9 +402,19 @@
 	.swatch-dot { position: absolute; bottom: 5px; right: 5px; width: 9px; height: 9px; border-radius: 50%; }
 	.swatch-fg { position: absolute; top: 6px; left: 6px; width: 14px; height: 4px; border-radius: 2px; }
 
-	.color-row { display: flex; gap: 0.6rem; flex-wrap: wrap; }
-	.color { display: flex; flex-direction: column; align-items: center; gap: 0.2rem; font-size: 0.68rem; color: var(--muted-fg); }
-	.color input { width: 40px; height: 28px; border: 1px solid var(--border); border-radius: 7px; background: none; padding: 0; cursor: pointer; }
+	.color-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem 0.7rem; }
+	.color-field { display: flex; flex-direction: column; gap: 0.22rem; }
+	.color-field > span { font-size: 0.72rem; font-weight: 600; color: var(--ink); }
+	.color-field em { color: var(--muted-fg); font-weight: 400; font-style: normal; }
+	.ci { display: flex; align-items: center; gap: 0.35rem; }
+	.ci input[type='color'] { width: 30px; height: 30px; flex-shrink: 0; border: 1px solid var(--border); border-radius: 7px; background: none; padding: 0; cursor: pointer; }
+	.ci .hex {
+		flex: 1; min-width: 0; width: 100%;
+		padding: 0.34rem 0.45rem; border: 1.5px solid var(--border); border-radius: 7px;
+		background: var(--paper); color: var(--ink);
+		font-family: ui-monospace, monospace; font-size: 0.78rem; text-transform: lowercase;
+	}
+	.ci .hex:focus { outline: none; border-color: var(--accent); }
 
 	.seg { display: flex; gap: 0; border: 1.5px solid var(--border); border-radius: 9px; overflow: hidden; width: fit-content; }
 	.seg.wrap { flex-wrap: wrap; width: 100%; }

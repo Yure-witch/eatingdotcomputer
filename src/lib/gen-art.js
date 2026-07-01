@@ -125,46 +125,47 @@ function sceneType(env) {
 // so a wavefront can only travel OUTWARD — giving BZ target/spiral waves. The
 // text is a periodic pacemaker, so waves keep radiating from the letters.
 function sceneBZ(env) {
-	const { W, H, getOpts, rng } = env;
-	const N = 14, THRESH = 3, scale = 0.34;
-	let gw, gh, state, next, mask, small, sctx, sdata, frame, pace;
-	function seedText() { for (let i = 0; i < gw * gh; i++) if (mask[i] > 0.45) state[i] = 1; }
+	const { W, H, getOpts } = env;
+	const N = 20, THRESH = 2, scale = 0.46;
+	let gw, gh, state, next, source, small, sctx, sdata;
 	function reset() {
 		const o = getOpts();
-		gw = Math.max(6, Math.round(W * scale)); gh = Math.max(6, Math.round(H * scale));
+		gw = Math.max(8, Math.round(W * scale)); gh = Math.max(8, Math.round(H * scale));
 		state = new Uint8Array(gw * gh); next = new Uint8Array(gw * gh);
-		mask = textMaskAt(gw, gh, o);
+		// The letters ARE the source — a permanent excited region. No random noise,
+		// so waves radiate cleanly from the exact typography shape.
+		const cov = textMaskAt(gw, gh, o);
+		source = new Uint8Array(gw * gh);
+		for (let i = 0; i < gw * gh; i++) if (cov[i] > 0.5) { source[i] = 1; state[i] = 1; }
 		small = document.createElement('canvas'); small.width = gw; small.height = gh;
 		sctx = small.getContext('2d'); sdata = sctx.createImageData(gw, gh);
-		frame = 0; pace = N;
-		seedText();
-		for (let i = 0; i < gw * gh; i++) if (rng() < 0.0009) state[i] = 1 + ((rng() * (N - 1)) | 0);
+		for (let k = 0; k < N + 4; k++) step(); // warm up so frame 0 already has rings
 	}
 	function step() {
-		frame++;
-		if (frame % pace === 0) seedText();
 		for (let y = 0; y < gh; y++) {
-			const yu = ((y - 1 + gh) % gh) * gw, yd = ((y + 1) % gh) * gw, yc = y * gw;
+			const yc = y * gw, up = y > 0 ? yc - gw : -1, dn = y < gh - 1 ? yc + gw : -1;
 			for (let x = 0; x < gw; x++) {
 				const idx = yc + x, s = state[idx];
 				if (s !== 0) { next[idx] = (s + 1) % N; continue; }
-				const xl = (x - 1 + gw) % gw, xr = (x + 1) % gw;
+				const l = x > 0, r = x < gw - 1;
 				let c = 0;
-				if (state[yu + xl] === 1) c++; if (state[yu + x] === 1) c++; if (state[yu + xr] === 1) c++;
-				if (state[yc + xl] === 1) c++; if (state[yc + xr] === 1) c++;
-				if (state[yd + xl] === 1) c++; if (state[yd + x] === 1) c++; if (state[yd + xr] === 1) c++;
+				if (up >= 0) { if (l && state[up + x - 1] === 1) c++; if (state[up + x] === 1) c++; if (r && state[up + x + 1] === 1) c++; }
+				if (l && state[yc + x - 1] === 1) c++; if (r && state[yc + x + 1] === 1) c++;
+				if (dn >= 0) { if (l && state[dn + x - 1] === 1) c++; if (state[dn + x] === 1) c++; if (r && state[dn + x + 1] === 1) c++; }
 				next[idx] = c >= THRESH ? 1 : 0;
 			}
 		}
 		const tmp = state; state = next; next = tmp;
+		// Re-ignite the letters every step → they pace target waves at period N.
+		for (let i = 0; i < gw * gh; i++) if (source[i]) state[i] = 1;
 	}
 	function render(ctx) {
 		const o = getOpts();
 		const bg = hexToRgb(o.bg), ac = hexToRgb(o.accent), fg = hexToRgb(o.fg);
 		const lut = [bg];
 		for (let s = 1; s < N; s++) {
-			const a = (s - 1) / (N - 1); // 0 fresh wavefront → 1 old
-			lut[s] = a < 0.18 ? mix3(fg, ac, a / 0.18) : mix3(ac, bg, (a - 0.18) / 0.82);
+			const a = (s - 1) / (N - 1); // 0 fresh wavefront → 1 old refractory
+			lut[s] = a < 0.2 ? mix3(fg, ac, a / 0.2) : mix3(ac, bg, (a - 0.2) / 0.8);
 		}
 		const px = sdata.data;
 		for (let i = 0; i < gw * gh; i++) { const c = lut[state[i]]; const j = i * 4; px[j] = c[0]; px[j + 1] = c[1]; px[j + 2] = c[2]; px[j + 3] = 255; }
@@ -222,46 +223,44 @@ function sceneCCA(env) {
 	return { reset, step, render };
 }
 
-// Perlin flow field — particles are born on the letters and advect along a
-// curling noise field, leaving fading trails. The text dissolves into motion.
+// Perlin flow field — every particle is born ON the letters and streams along a
+// smooth curling noise field, fading. Because particles constantly respawn on
+// the text, the typography stays legible as the glowing emitter while ribbons
+// flow off it. (No off-text spawning → the shape is respected.)
 function sceneFlow(env) {
 	const { W, H, getOpts, rng, noise } = env;
 	let buf, bctx, parts, t, seeds;
-	const COUNT = Math.min(2600, Math.round(W * 2.4));
+	const COUNT = Math.min(4200, Math.round(W * 4.2));
 	function spawn(p) {
-		// 70% on the text, else anywhere — keeps the letters as the source.
-		for (let tries = 0; tries < 24; tries++) {
-			const sx = rng(), sy = rng();
-			if (rng() < 0.7 && seeds.length) { const s = seeds[(rng() * seeds.length) | 0]; p.x = s[0] * W; p.y = s[1] * H; p.life = 30 + rng() * 60; return; }
-			if (rng() < 0.4) { p.x = sx * W; p.y = sy * H; p.life = 20 + rng() * 50; return; }
-		}
-		p.x = rng() * W; p.y = rng() * H; p.life = 30;
+		const s = seeds[(rng() * seeds.length) | 0];
+		p.x = s[0] * W; p.y = s[1] * H; p.life = 22 + rng() * 46;
 	}
 	function reset() {
 		const o = getOpts();
 		buf = document.createElement('canvas'); buf.width = W; buf.height = H;
-		bctx = buf.getContext('2d');
+		bctx = buf.getContext('2d'); bctx.lineCap = 'round';
 		bctx.fillStyle = o.bg; bctx.fillRect(0, 0, W, H);
-		// mask seed points
-		const mw = 200, mh = Math.max(2, Math.round(200 * H / W));
+		// dense seed points sampled from the letters (higher-res mask = crisp shape)
+		const mw = 320, mh = Math.max(2, Math.round(320 * H / W));
 		const cov = textMaskAt(mw, mh, o);
 		seeds = [];
-		for (let y = 0; y < mh; y++) for (let x = 0; x < mw; x++) if (cov[y * mw + x] > 0.5 && rng() < 0.5) seeds.push([x / mw, y / mh]);
-		parts = Array.from({ length: COUNT }, () => { const p = { x: 0, y: 0, life: 0 }; spawn(p); return p; });
+		for (let y = 0; y < mh; y++) for (let x = 0; x < mw; x++) if (cov[y * mw + x] > 0.5) seeds.push([x / mw, y / mh]);
+		if (!seeds.length) seeds.push([0.5, 0.5]);
+		parts = Array.from({ length: COUNT }, () => { const p = { x: 0, y: 0, life: 0 }; spawn(p); p.life = rng() * 50; return p; });
 		t = 0;
+		for (let k = 0; k < 45; k++) step(1 / 30); // warm up so frame 0 has streams
 	}
 	function step(dt) {
 		t += dt;
 		const o = getOpts();
-		bctx.globalAlpha = 0.055; bctx.fillStyle = o.bg; bctx.fillRect(0, 0, W, H); bctx.globalAlpha = 1;
-		const sp = 1.5 * (W / 960), ns = 0.0032;
-		bctx.lineWidth = 1.1;
+		bctx.globalAlpha = 0.05; bctx.fillStyle = o.bg; bctx.fillRect(0, 0, W, H); bctx.globalAlpha = 1;
+		const sp = 1.35 * (W / 960), ns = 0.0022;
+		bctx.lineWidth = 1.2;
 		for (const p of parts) {
-			const ang = noise(p.x * ns, p.y * ns + t * 0.12) * TAU * 1.6;
+			const ang = noise(p.x * ns, p.y * ns + t * 0.14) * TAU;
 			const nx = p.x + Math.cos(ang) * sp, ny = p.y + Math.sin(ang) * sp;
-			const near = ((p.x / W + p.y / H) * 0.5);
-			bctx.strokeStyle = mixCss(o.accent, o.fg, 0.5 + 0.5 * Math.sin(near * 6 + t));
-			bctx.globalAlpha = 0.5;
+			bctx.strokeStyle = mixCss(o.fg, o.accent, 0.5 + 0.5 * Math.sin((p.y / H) * 4 + t));
+			bctx.globalAlpha = 0.55;
 			bctx.beginPath(); bctx.moveTo(p.x, p.y); bctx.lineTo(nx, ny); bctx.stroke();
 			p.x = nx; p.y = ny; p.life--;
 			if (p.life <= 0 || p.x < 0 || p.x > W || p.y < 0 || p.y > H) spawn(p);
@@ -318,12 +317,14 @@ function sceneWalk(env) {
 		const o = getOpts();
 		buf = document.createElement('canvas'); buf.width = W; buf.height = H;
 		bctx = buf.getContext('2d'); bctx.fillStyle = o.bg; bctx.fillRect(0, 0, W, H);
-		const mw = 200, mh = Math.max(2, Math.round(200 * H / W));
+		const mw = 300, mh = Math.max(2, Math.round(300 * H / W));
 		const cov = textMaskAt(mw, mh, o);
 		seeds = [];
-		for (let y = 0; y < mh; y++) for (let x = 0; x < mw; x++) if (cov[y * mw + x] > 0.5 && rng() < 0.25) seeds.push([x / mw, y / mh]);
+		for (let y = 0; y < mh; y++) for (let x = 0; x < mw; x++) if (cov[y * mw + x] > 0.5 && rng() < 0.3) seeds.push([x / mw, y / mh]);
+		if (!seeds.length) seeds.push([0.5, 0.5]);
 		walkers = Array.from({ length: COUNT }, () => { const s = seedPt(); return { x: s[0] * W, y: s[1] * H, a: rng() * TAU, life: 40 + rng() * 80 }; });
 		t = 0;
+		for (let k = 0; k < 30; k++) step(1 / 30); // warm up so frame 0 has some web
 	}
 	function step(dt) {
 		t += dt;
