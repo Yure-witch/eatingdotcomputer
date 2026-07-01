@@ -550,10 +550,77 @@ function sceneTile(env) {
 	};
 }
 
+// Metaballs — the type rendered as gooey merging blobs. Circles are sampled from
+// the letterforms and wobble on a noise field; a blur + alpha-threshold "goo"
+// pass (the 2D metaball technique) melds nearby blobs into smooth organic shapes
+// that read as the typography. Full-res, so it stays crisp at any resolution.
+function sceneMeta(env) {
+	const { W, H, getOpts, rng, noise } = env;
+	let balls, t, off, octx, s;
+	function reset() {
+		const o = getOpts();
+		s = clamp(H * (o.fontFrac || 0.3) * 0.16, 6, 70); // blob spacing (Text size drives it)
+		const step2 = s * 0.6;
+		const mw = Math.max(4, Math.round(W / step2)), mh = Math.max(4, Math.round(H / step2));
+		const cov = textMaskAt(mw, mh, o);
+		balls = [];
+		for (let y = 0; y < mh; y++) for (let x = 0; x < mw; x++) {
+			if (cov[y * mw + x] > 0.5) {
+				const bx = ((x + 0.5) / mw) * W + (rng() - 0.5) * s * 0.4;
+				const by = ((y + 0.5) / mh) * H + (rng() - 0.5) * s * 0.4;
+				balls.push({ x0: bx, y0: by, x: bx, y: by, r: s * 0.9 * (0.8 + rng() * 0.4), ph: rng() * TAU });
+			}
+		}
+		off = document.createElement('canvas'); off.width = W; off.height = H;
+		octx = off.getContext('2d', { willReadFrequently: true });
+		t = 0;
+	}
+	function step() {
+		const spd = getOpts().reactionSpeed || 1.5;
+		t += 0.03 * spd;
+		const amp = Math.min(W, H) * 0.03;
+		for (const b of balls) {
+			b.x = b.x0 + noise(b.x0 * 0.004, b.y0 * 0.004 + t) * amp;
+			b.y = b.y0 + noise(b.x0 * 0.004 + 99, b.y0 * 0.004 + t) * amp;
+			b.rr = b.r * (0.85 + 0.25 * (0.5 + 0.5 * Math.sin(t * 2 + b.ph)));
+		}
+	}
+	function render(ctx) {
+		const o = getOpts();
+		paintBg(ctx, o, W, H);
+		if (!balls || !balls.length) return;
+		const fgc = hexToRgb(o.fg), acc = hexToRgb(o.accent);
+		const R = clamp(s * 0.55, 3, 60); // goo blur — merges neighbours within ~s
+		octx.clearRect(0, 0, W, H);
+		octx.filter = `blur(${R}px)`;
+		octx.fillStyle = o.fg;
+		for (const b of balls) { octx.beginPath(); octx.arc(b.x, b.y, b.rr || b.r, 0, TAU); octx.fill(); }
+		octx.filter = 'none';
+		// Threshold the blurred alpha into hard-but-anti-aliased metaball edges, and
+		// tint a thin rim toward the accent so the goo has a little depth.
+		const img = octx.getImageData(0, 0, W, H), d = img.data;
+		for (let i = 0; i < d.length; i += 4) {
+			const a0 = d[i + 3];
+			const a = clamp((a0 - 118) * 6, 0, 255);
+			if (a <= 0) { d[i + 3] = 0; continue; }
+			const rim = a0 < 150 ? (150 - a0) / 32 : 0; // near the edge → toward accent
+			const m = clamp(rim, 0, 1);
+			d[i] = fgc[0] + (acc[0] - fgc[0]) * m;
+			d[i + 1] = fgc[1] + (acc[1] - fgc[1]) * m;
+			d[i + 2] = fgc[2] + (acc[2] - fgc[2]) * m;
+			d[i + 3] = a;
+		}
+		octx.putImageData(img, 0, 0);
+		ctx.drawImage(off, 0, 0);
+	}
+	return { reset, step, render };
+}
+
 // ── registry ─────────────────────────────────────────────────────────────────
 export const SCENES = [
 	{ id: 'type',  name: 'Kinetic Type', make: sceneType,  usesPreset: true },
 	{ id: 'tile',  name: 'Step & Repeat', make: sceneTile, usesPreset: true },
+	{ id: 'meta',  name: 'Metaballs',    make: sceneMeta,  usesPreset: false },
 	{ id: 'bz',    name: 'BZ Waves',     make: sceneBZ,    usesPreset: false },
 	{ id: 'cca',   name: 'Cyclic CA',    make: sceneCCA,   usesPreset: false },
 	{ id: 'flow',  name: 'Flow Field',   make: sceneFlow,  usesPreset: false },
