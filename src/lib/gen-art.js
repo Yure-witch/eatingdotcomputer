@@ -126,13 +126,20 @@ function sceneType(env) {
 // text is a periodic pacemaker, so waves keep radiating from the letters.
 function sceneBZ(env) {
 	const { W, H, getOpts } = env;
-	const N = 20, THRESH = 4, scale = 0.46, BASE_HZ = 26;
-	// Circular (radius √6.25 ≈ 2.5) neighbourhood → isotropic propagation. With a
-	// Moore/8 neighbourhood diagonals travel faster, so waves square off; a round
-	// disk makes wave speed curvature-driven, which rounds bulges and corners.
-	const OFF = [];
-	for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
-		if ((dx || dy) && dx * dx + dy * dy <= 6.25) OFF.push(dx, dy);
+	const N = 20, scale = 0.46, BASE_HZ = 26;
+	// Circular neighbourhood → isotropic propagation. A Moore/8 block makes
+	// diagonals travel faster (waves square off); a round disk makes wave speed
+	// curvature-driven, rounding corners. Radius is LIVE (the Roundedness slider):
+	// bigger disk = rounder waves. THRESH scales with the disk so waves still
+	// propagate one cell per step.
+	let OFF = [], THRESH = 4, radius = -1;
+	function ensureOffsets() {
+		const r = clamp(getOpts().bzRound || 2.5, 1, 3.6);
+		if (r === radius) return;
+		radius = r; OFF = []; const r2 = r * r;
+		for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++)
+			if ((dx || dy) && dx * dx + dy * dy <= r2) OFF.push(dx, dy);
+		THRESH = Math.max(1, Math.round((OFF.length / 2) * 0.2));
 	}
 	let gw, gh, state, next, source, small, sctx, sdata, acc;
 	function reset() {
@@ -157,6 +164,7 @@ function sceneBZ(env) {
 		while (acc >= 1 && n < 10) { iterate(); acc -= 1; n++; }
 	}
 	function iterate() {
+		ensureOffsets();
 		const M = OFF.length;
 		for (let y = 0; y < gh; y++) {
 			const yc = y * gw;
@@ -178,19 +186,28 @@ function sceneBZ(env) {
 	function render(ctx) {
 		const o = getOpts();
 		const bg = hexToRgb(o.bg), ac = hexToRgb(o.accent), fg = hexToRgb(o.fg);
+		// Gradient stepping (bands) posterises the fade so you can see the steps;
+		// fade (0..1) controls the falloff from wavefront → background (crisp rings
+		// ↔ soft glow).
+		const bands = clamp(Math.round(o.bzBands || 20), 2, N);
+		const k = lerp(4, 0.7, clamp(o.bzFade ?? 0.4, 0, 1));
 		const lut = [bg];
 		for (let s = 1; s < N; s++) {
-			const a = (s - 1) / (N - 1); // 0 fresh wavefront → 1 old refractory
-			lut[s] = a < 0.2 ? mix3(fg, ac, a / 0.2) : mix3(ac, bg, (a - 0.2) / 0.8);
+			let a = (s - 1) / (N - 1);                        // 0 fresh front → 1 old
+			a = Math.round(a * (bands - 1)) / (bands - 1);    // posterise into `bands` steps
+			const bright = Math.pow(1 - a, k);
+			const hue = a < 0.25 ? mix3(fg, ac, a / 0.25) : ac;
+			lut[s] = mix3(bg, hue, bright);
 		}
 		const px = sdata.data;
 		for (let i = 0; i < gw * gh; i++) { const c = lut[state[i]]; const j = i * 4; px[j] = c[0]; px[j + 1] = c[1]; px[j + 2] = c[2]; px[j + 3] = 255; }
 		sctx.putImageData(sdata, 0, 0);
 		// Light blur on the upscale softens the remaining pixel stair-stepping so the
-		// rounded fronts read as smooth, pretty curves.
+		// rounded fronts read as smooth, pretty curves. Skipped when bands are low so
+		// hard "stepped" gradients stay crisp.
 		ctx.imageSmoothingEnabled = true;
-		const b = Math.max(0.6, (ctx.canvas.width / gw) * 0.6);
-		ctx.filter = `blur(${b}px)`;
+		const b = bands >= 6 ? Math.max(0.6, (ctx.canvas.width / gw) * 0.6) : 0;
+		ctx.filter = b ? `blur(${b}px)` : 'none';
 		ctx.drawImage(small, 0, 0, gw, gh, 0, 0, ctx.canvas.width, ctx.canvas.height);
 		ctx.filter = 'none';
 	}
