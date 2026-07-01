@@ -126,7 +126,14 @@ function sceneType(env) {
 // text is a periodic pacemaker, so waves keep radiating from the letters.
 function sceneBZ(env) {
 	const { W, H, getOpts } = env;
-	const N = 20, THRESH = 2, scale = 0.46, BASE_HZ = 26;
+	const N = 20, THRESH = 4, scale = 0.46, BASE_HZ = 26;
+	// Circular (radius √6.25 ≈ 2.5) neighbourhood → isotropic propagation. With a
+	// Moore/8 neighbourhood diagonals travel faster, so waves square off; a round
+	// disk makes wave speed curvature-driven, which rounds bulges and corners.
+	const OFF = [];
+	for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+		if ((dx || dy) && dx * dx + dy * dy <= 6.25) OFF.push(dx, dy);
+	}
 	let gw, gh, state, next, source, small, sctx, sdata, acc;
 	function reset() {
 		const o = getOpts();
@@ -150,16 +157,17 @@ function sceneBZ(env) {
 		while (acc >= 1 && n < 10) { iterate(); acc -= 1; n++; }
 	}
 	function iterate() {
+		const M = OFF.length;
 		for (let y = 0; y < gh; y++) {
-			const yc = y * gw, up = y > 0 ? yc - gw : -1, dn = y < gh - 1 ? yc + gw : -1;
+			const yc = y * gw;
 			for (let x = 0; x < gw; x++) {
 				const idx = yc + x, s = state[idx];
 				if (s !== 0) { next[idx] = (s + 1) % N; continue; }
-				const l = x > 0, r = x < gw - 1;
 				let c = 0;
-				if (up >= 0) { if (l && state[up + x - 1] === 1) c++; if (state[up + x] === 1) c++; if (r && state[up + x + 1] === 1) c++; }
-				if (l && state[yc + x - 1] === 1) c++; if (r && state[yc + x + 1] === 1) c++;
-				if (dn >= 0) { if (l && state[dn + x - 1] === 1) c++; if (state[dn + x] === 1) c++; if (r && state[dn + x + 1] === 1) c++; }
+				for (let k = 0; k < M; k += 2) {
+					const nx = x + OFF[k], ny = y + OFF[k + 1];
+					if (nx >= 0 && nx < gw && ny >= 0 && ny < gh && state[ny * gw + nx] === 1) { if (++c >= THRESH) break; }
+				}
 				next[idx] = c >= THRESH ? 1 : 0;
 			}
 		}
@@ -178,8 +186,13 @@ function sceneBZ(env) {
 		const px = sdata.data;
 		for (let i = 0; i < gw * gh; i++) { const c = lut[state[i]]; const j = i * 4; px[j] = c[0]; px[j + 1] = c[1]; px[j + 2] = c[2]; px[j + 3] = 255; }
 		sctx.putImageData(sdata, 0, 0);
+		// Light blur on the upscale softens the remaining pixel stair-stepping so the
+		// rounded fronts read as smooth, pretty curves.
 		ctx.imageSmoothingEnabled = true;
+		const b = Math.max(0.6, (ctx.canvas.width / gw) * 0.6);
+		ctx.filter = `blur(${b}px)`;
 		ctx.drawImage(small, 0, 0, gw, gh, 0, 0, ctx.canvas.width, ctx.canvas.height);
+		ctx.filter = 'none';
 	}
 	return { reset, step, render };
 }
