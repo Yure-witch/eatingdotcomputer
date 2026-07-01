@@ -126,21 +126,26 @@ function sceneType(env) {
 // text is a periodic pacemaker, so waves keep radiating from the letters.
 function sceneBZ(env) {
 	const { W, H, getOpts } = env;
-	const N = 20, scale = 0.46, BASE_HZ = 26;
-	// Circular neighbourhood → isotropic propagation. A Moore/8 block makes
-	// diagonals travel faster (waves square off); a round disk makes wave speed
-	// curvature-driven, rounding corners. Radius is LIVE (the Roundedness slider):
-	// bigger disk = rounder waves. THRESH scales with the disk so waves still
-	// propagate one cell per step.
-	let OFF = [], THRESH = 4, radius = -1;
+	const scale = 0.46, BASE_HZ = 26, MAXN = 80;
+	// Roundedness is a DISCRETE level (1..6) — each maps to a distinct circular
+	// neighbourhood, so every tick visibly changes the wave shape (a continuous
+	// radius only jumped at √2, 2, √5 … which read as "nothing then a jump").
+	// Small disk (level 1, von Neumann) → diamond waves; big disk → round rings,
+	// because a round disk makes wave speed curvature-driven.
+	const RADII = [1.0, 1.45, 2.05, 2.35, 2.85, 3.25];
+	let OFF = [], THRESH = 4, level = -1;
 	function ensureOffsets() {
-		const r = clamp(getOpts().bzRound || 2.5, 1, 3.6);
-		if (r === radius) return;
-		radius = r; OFF = []; const r2 = r * r;
+		const L = clamp(Math.round(getOpts().bzRound || 4), 1, 6);
+		if (L === level) return;
+		level = L; const r2 = RADII[L - 1] ** 2; OFF = [];
 		for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++)
 			if ((dx || dy) && dx * dx + dy * dy <= r2) OFF.push(dx, dy);
-		THRESH = Math.max(1, Math.round((OFF.length / 2) * 0.2));
+		THRESH = Math.max(1, Math.round((OFF.length / 2) * 0.16));
 	}
+	// Wave SPACING = the refractory length N (a new ring emits every N steps and
+	// travels ~N cells before the next). Driven live by Fade → bigger N = waves
+	// further apart AND a longer high→low gradient. Read live so dragging is smooth.
+	function curN() { return clamp(Math.round(lerp(6, MAXN, clamp(getOpts().bzFade ?? 0.4, 0, 1))), 6, MAXN); }
 	let gw, gh, state, next, source, small, sctx, sdata, acc;
 	function reset() {
 		const o = getOpts();
@@ -154,18 +159,18 @@ function sceneBZ(env) {
 		small = document.createElement('canvas'); small.width = gw; small.height = gh;
 		sctx = small.getContext('2d'); sdata = sctx.createImageData(gw, gh);
 		acc = 0;
-		for (let k = 0; k < N + 4; k++) iterate(); // warm up so frame 0 already has rings
+		for (let k = 0; k < curN() + 4; k++) iterate(); // warm up so frame 0 has rings
 	}
 	// Advance the CA by however many iterations `dt` × sim-speed calls for, so the
 	// Speed slider actually changes how fast the waves travel (fps-independent).
 	function step(dt) {
 		acc += (dt || 1 / 30) * BASE_HZ * (getOpts().simSpeed || 1);
 		let n = 0;
-		while (acc >= 1 && n < 10) { iterate(); acc -= 1; n++; }
+		while (acc >= 1 && n < 12) { iterate(); acc -= 1; n++; }
 	}
 	function iterate() {
 		ensureOffsets();
-		const M = OFF.length;
+		const N = curN(), M = OFF.length;
 		for (let y = 0; y < gh; y++) {
 			const yc = y * gw;
 			for (let x = 0; x < gw; x++) {
@@ -185,26 +190,26 @@ function sceneBZ(env) {
 	}
 	function render(ctx) {
 		const o = getOpts();
+		const N = curN();
 		const bg = hexToRgb(o.bg), ac = hexToRgb(o.accent), fg = hexToRgb(o.fg);
-		// Gradient stepping (bands) posterises the fade so you can see the steps;
-		// fade (0..1) controls the falloff from wavefront → background (crisp rings
-		// ↔ soft glow).
+		// Gradient stepping (bands) posterises the wavefront→background fade so you
+		// can see the steps. LUT covers 0..MAXN so a just-lowered N (leaving stale
+		// states behind for a step) never indexes past the end.
 		const bands = clamp(Math.round(o.bzBands || 20), 2, N);
-		const k = lerp(4, 0.7, clamp(o.bzFade ?? 0.4, 0, 1));
-		const lut = [bg];
-		for (let s = 1; s < N; s++) {
-			let a = (s - 1) / (N - 1);                        // 0 fresh front → 1 old
+		const lut = new Array(MAXN);
+		lut[0] = bg;
+		for (let s = 1; s < MAXN; s++) {
+			let a = clamp((s - 1) / (N - 1), 0, 1);           // 0 fresh front → 1 old (stale → bg)
 			a = Math.round(a * (bands - 1)) / (bands - 1);    // posterise into `bands` steps
-			const bright = Math.pow(1 - a, k);
+			const bright = Math.pow(1 - a, 1.4);
 			const hue = a < 0.25 ? mix3(fg, ac, a / 0.25) : ac;
 			lut[s] = mix3(bg, hue, bright);
 		}
 		const px = sdata.data;
-		for (let i = 0; i < gw * gh; i++) { const c = lut[state[i]]; const j = i * 4; px[j] = c[0]; px[j + 1] = c[1]; px[j + 2] = c[2]; px[j + 3] = 255; }
+		for (let i = 0; i < gw * gh; i++) { const c = lut[state[i]] || bg; const j = i * 4; px[j] = c[0]; px[j + 1] = c[1]; px[j + 2] = c[2]; px[j + 3] = 255; }
 		sctx.putImageData(sdata, 0, 0);
-		// Light blur on the upscale softens the remaining pixel stair-stepping so the
-		// rounded fronts read as smooth, pretty curves. Skipped when bands are low so
-		// hard "stepped" gradients stay crisp.
+		// Light blur on the upscale softens pixel stair-stepping into pretty curves;
+		// skipped at low bands so hard "stepped" gradients stay crisp.
 		ctx.imageSmoothingEnabled = true;
 		const b = bands >= 6 ? Math.max(0.6, (ctx.canvas.width / gw) * 0.6) : 0;
 		ctx.filter = b ? `blur(${b}px)` : 'none';

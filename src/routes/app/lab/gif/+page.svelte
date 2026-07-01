@@ -13,9 +13,9 @@
 	let repeats = $state(14);            // Step & Repeat: number of stacked lines
 	let spread = $state(1.6);            // Step & Repeat: wave cycles down the stack
 	let simSpeed = $state(1);            // generative-sim speed (BZ/CA/flow/walk/cloth)
-	let bzRound = $state(2.5);           // BZ: wavefront roundedness (neighbourhood radius)
+	let bzRound = $state(4);             // BZ: wavefront roundedness level (1..6)
 	let bzBands = $state(20);            // BZ: gradient steps (posterise the fade)
-	let bzFade = $state(0.4);            // BZ: falloff, crisp rings ↔ soft glow
+	let bzFade = $state(0.4);            // BZ: fade length = wave spacing (0..1)
 
 	const activeScene = $derived(SCENES.find((s) => s.id === mode) ?? SCENES[0]);
 	const usesPreset = $derived(activeScene.usesPreset);
@@ -310,16 +310,16 @@
 				{/if}
 				{#if mode === 'bz'}
 					<label class="slider">
-						<span>Roundedness <b>{bzRound.toFixed(1)}</b></span>
-						<input type="range" min="1" max="3.6" step="0.1" bind:value={bzRound} />
+						<span>Roundedness <b>{bzRound}</b></span>
+						<input type="range" min="1" max="6" step="1" bind:value={bzRound} />
 					</label>
 					<label class="slider">
 						<span>Gradient steps <b>{bzBands}</b></span>
-						<input type="range" min="2" max="20" step="1" bind:value={bzBands} />
+						<input type="range" min="2" max="24" step="1" bind:value={bzBands} />
 					</label>
 					<label class="slider">
-						<span>Fade <b>{bzFade.toFixed(2)}</b></span>
-						<input type="range" min="0" max="1" step="0.05" bind:value={bzFade} />
+						<span>Fade / spacing <b>{bzFade.toFixed(2)}</b></span>
+						<input type="range" min="0" max="1" step="0.02" bind:value={bzFade} />
 					</label>
 				{/if}
 				<label class="slider">
