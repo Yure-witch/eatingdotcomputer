@@ -126,31 +126,38 @@ function sceneType(env) {
 // text is a periodic pacemaker, so waves keep radiating from the letters.
 function sceneBZ(env) {
 	const { W, H, getOpts } = env;
-	const GRID_LONG = 300, MAXN = 80; // fixed cell count (long edge) → resolution-independent
+	const MAXN = 220;
 	// Roundedness is a DISCRETE level (1..6) — each maps to a distinct circular
 	// neighbourhood, so every tick visibly changes the wave shape (a continuous
 	// radius only jumped at √2, 2, √5 … which read as "nothing then a jump").
-	// Small disk (level 1, von Neumann) → diamond waves; big disk → round rings,
-	// because a round disk makes wave speed curvature-driven.
+	// Small disk (level 1, von Neumann) → diamond waves; big disk → round rings.
 	const RADII = [1.0, 1.45, 2.05, 2.35, 2.85, 3.25];
+	// gridF: the grid resolution scales WITH the output (so it's crisp — a fixed
+	// grid meant a fat, resolution-growing upscale blur), and the pattern params
+	// (wave spacing N, neighbourhood radius, reaction speed) all scale by gridF so
+	// the LOOK stays the same at any resolution — just sharper.
+	let gridF = 1;
 	let OFF = [], THRESH = 4, level = -1;
 	function ensureOffsets() {
 		const L = clamp(Math.round(getOpts().bzRound || 4), 1, 6);
 		if (L === level) return;
-		level = L; const r2 = RADII[L - 1] ** 2; OFF = [];
-		for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++)
+		level = L; const r = RADII[L - 1] * gridF, r2 = r * r, R = Math.ceil(r); OFF = [];
+		for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++)
 			if ((dx || dy) && dx * dx + dy * dy <= r2) OFF.push(dx, dy);
 		THRESH = Math.max(1, Math.round((OFF.length / 2) * 0.16));
 	}
 	// Wave SPACING = the refractory length N (a new ring emits every N steps and
-	// travels ~N cells before the next). Driven live by the Spacing slider → bigger
-	// N = waves further apart. Read live so dragging is smooth.
-	function curN() { return clamp(Math.round(lerp(6, MAXN, clamp(getOpts().bzSpacing ?? 0.4, 0, 1))), 6, MAXN); }
+	// travels ~N cells before the next). From the Spacing slider, scaled by gridF.
+	function curN() { return clamp(Math.round(lerp(6, 80, clamp(getOpts().bzSpacing ?? 0.4, 0, 1)) * gridF), 6, MAXN); }
 	let gw, gh, state, next, source, small, sctx, sdata, acc;
 	function reset() {
 		const o = getOpts();
 		const long = Math.max(W, H);
-		gw = Math.max(8, Math.round(GRID_LONG * W / long)); gh = Math.max(8, Math.round(GRID_LONG * H / long));
+		// ~0.5× the output = crisp (small upscale); capped so the neighbourhood
+		// scan stays affordable at 1080/1280.
+		const gridLong = clamp(Math.round(long * 0.5), 220, 480);
+		gw = Math.max(8, Math.round(gridLong * W / long)); gh = Math.max(8, Math.round(gridLong * H / long));
+		gridF = gridLong / 300; // reference grid = 300 (where the slider ranges are tuned)
 		state = new Uint8Array(gw * gh); next = new Uint8Array(gw * gh);
 		// The letters ARE the source — a permanent excited region. No random noise,
 		// so waves radiate cleanly from the exact typography shape.
@@ -159,15 +166,15 @@ function sceneBZ(env) {
 		for (let i = 0; i < gw * gh; i++) if (cov[i] > 0.5) { source[i] = 1; state[i] = 1; }
 		small = document.createElement('canvas'); small.width = gw; small.height = gh;
 		sctx = small.getContext('2d'); sdata = sctx.createImageData(gw, gh);
-		acc = 0;
+		acc = 0; level = -1;
 		for (let k = 0; k < curN() + 4; k++) iterate(); // warm up so frame 0 has rings
 	}
 	// Reaction speed = CA iterations advanced PER FRAME (fractional → accumulator).
 	// Decoupled from playback: how fast the reaction "cooks" into each frame.
 	function step() {
-		acc += (getOpts().reactionSpeed || 1.5);
-		let n = 0;
-		while (acc >= 1 && n < 15) { iterate(); acc -= 1; n++; }
+		acc += (getOpts().reactionSpeed || 1.5) * gridF; // scale so visual wave speed is resolution-consistent
+		let n = 0, cap = Math.ceil(20 * gridF);
+		while (acc >= 1 && n < cap) { iterate(); acc -= 1; n++; }
 	}
 	function iterate() {
 		ensureOffsets();
@@ -218,10 +225,12 @@ function sceneBZ(env) {
 		const px = sdata.data;
 		for (let i = 0; i < gw * gh; i++) { const c = lut[state[i]] || bg; const j = i * 4; px[j] = c[0]; px[j + 1] = c[1]; px[j + 2] = c[2]; px[j + 3] = 255; }
 		sctx.putImageData(sdata, 0, 0);
-		// Light blur on the upscale softens pixel stair-stepping into pretty curves;
-		// skipped at low bands so hard "stepped" gradients stay crisp.
+		// Tiny fixed blur just anti-aliases the (now small) upscale into pretty
+		// curves; skipped at low bands so hard "stepped" gradients stay crisp. The
+		// grid tracks the output resolution, so the upscale ratio stays ~1.8× and
+		// this doesn't smear as resolution grows (which used to make it look low-res).
 		ctx.imageSmoothingEnabled = true;
-		const b = bands >= 6 ? Math.max(0.6, (ctx.canvas.width / gw) * 0.6) : 0;
+		const b = bands >= 6 ? Math.max(0.6, (ctx.canvas.width / gw) * 0.5) : 0;
 		ctx.filter = b ? `blur(${b}px)` : 'none';
 		ctx.drawImage(small, 0, 0, gw, gh, 0, 0, ctx.canvas.width, ctx.canvas.height);
 		ctx.filter = 'none';
@@ -234,12 +243,17 @@ function sceneBZ(env) {
 // rotating spirals; the text biases the initial field.
 function sceneCCA(env) {
 	const { W, H, getOpts, rng } = env;
-	const N = 16, THRESH = 1, GRID_LONG = 240;
+	const N = 16, THRESH = 1;
+	// Grid tracks the output resolution (crisp) instead of a fixed coarse grid;
+	// reaction speed scales by gridF so spirals rotate at a consistent visual rate.
+	let gridF = 1;
 	let gw, gh, state, next, small, sctx, sdata, acc;
 	function reset() {
 		const o = getOpts();
 		const long = Math.max(W, H);
-		gw = Math.max(6, Math.round(GRID_LONG * W / long)); gh = Math.max(6, Math.round(GRID_LONG * H / long));
+		const gridLong = clamp(Math.round(long * 0.4), 190, 420);
+		gw = Math.max(6, Math.round(gridLong * W / long)); gh = Math.max(6, Math.round(gridLong * H / long));
+		gridF = gridLong / 240;
 		state = new Uint8Array(gw * gh); next = new Uint8Array(gw * gh);
 		const mask = textMaskAt(gw, gh, o);
 		for (let i = 0; i < gw * gh; i++) state[i] = mask[i] > 0.45 ? 1 : (rng() * N) | 0;
@@ -248,9 +262,9 @@ function sceneCCA(env) {
 		acc = 0;
 	}
 	function step() {
-		acc += (getOpts().reactionSpeed || 1.5);
-		let n = 0;
-		while (acc >= 1 && n < 10) { iterate(); acc -= 1; n++; }
+		acc += (getOpts().reactionSpeed || 1.5) * gridF;
+		let n = 0, cap = Math.ceil(14 * gridF);
+		while (acc >= 1 && n < cap) { iterate(); acc -= 1; n++; }
 	}
 	function iterate() {
 		for (let y = 0; y < gh; y++) {
