@@ -38,7 +38,7 @@
 	};
 	let aspect = $state('16:9');
 	// Resolution = the output's LONG edge in px; the other edge follows the aspect.
-	const RES = [360, 480, 640, 800, 1080, 1280];
+	const RES = [360, 480, 640, 720, 960, 1280];
 	let resolution = $state(720);
 	// Export pixel dims at the chosen resolution (long edge = resolution).
 	const outDims = $derived.by(() => {
@@ -75,8 +75,6 @@
 	let fontsReady = $state(false);
 	let playing = $state(true);
 
-	const dims = $derived(ASPECTS[aspect]);
-
 	// Live opts snapshot read by the active scene each frame (colours, preset,
 	// speed update live; text/dims changes rebuild the scene — see below).
 	function liveOpts() {
@@ -95,7 +93,7 @@
 	// text size — so the simulation reseeds from the new typography / dimensions.
 	// Colours, preset and speed are read live by the scene and don't rebuild.
 	$effect(() => {
-		void [mode, text, aspect, fontFrac, fontsReady];
+		void [mode, text, aspect, resolution, fontFrac, fontsReady];
 		const cv = canvasEl;
 		if (!cv) return;
 		scene = makeScene(mode, { W: cv.width, H: cv.height, getOpts: liveOpts, seed: 1337 });
@@ -197,8 +195,8 @@
 	<div class="studio">
 		<!-- Preview -->
 		<div class="preview-wrap">
-			<div class="preview-frame" class:portrait={dims.h > dims.w}>
-				<canvas bind:this={canvasEl} width={dims.w} height={dims.h}></canvas>
+			<div class="preview-frame" class:portrait={outDims.h > outDims.w}>
+				<canvas bind:this={canvasEl} width={outDims.w} height={outDims.h}></canvas>
 			</div>
 			<div class="preview-actions">
 				<button class="chip" onclick={() => (playing = !playing)}>
