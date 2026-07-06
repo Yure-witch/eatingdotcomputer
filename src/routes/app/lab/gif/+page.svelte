@@ -40,7 +40,7 @@
 	const activeScene = $derived(SCENES.find((s) => s.id === mode) ?? SCENES[0]);
 	const usesPreset = $derived(activeScene.usesPreset);
 	// Modes that actually consume the Reaction speed / Wobble slider.
-	const SIM_MODES = new Set(['bz', 'cca', 'flow', 'walk', 'cloth', 'meta', 'cmeta', 'blobc', 'blobc2', 'blobc3', 'blobc3n', 'blobc3f', 'blobc4']);
+	const SIM_MODES = new Set(['bz', 'cca', 'flow', 'walk', 'cloth', 'meta', 'cmeta', 'blobc', 'blobc2', 'blobc3', 'blobc3n', 'blobc3f', 'blobc4', 'blobc5', 'blobc6', 'blobc62', 'blobc63', 'blobc64', 'blobc65', 'blobc66']);
 	const WOBBLE_MODES = new Set(['meta', 'cmeta', 'blobc', 'blobc2', 'blobc3n']); // slider = wobble cycles per loop (blob3-c: decisions/sec)
 
 	// Background / colours
@@ -97,9 +97,9 @@
 		// The colour-metaball modes are designed around white paper + gray
 		// hairline type, with colour only in the revealed areas — set that
 		// stage on entry (still overridable via the colour controls).
-		if (id === 'cmeta' || id === 'blobc' || id === 'blobc2' || id.startsWith('blobc3') || id === 'blobc4') {
+		if (id === 'cmeta' || id === 'blobc' || id.startsWith('blobc')) {
 			bgType = 'solid'; bg = '#ffffff'; fg = '#9ba1a8';
-			reactionSpeed = 1; duration = (id.startsWith('blobc3') || id === 'blobc4') ? 6 : 4;
+			reactionSpeed = 1; duration = (id === 'cmeta' || id === 'blobc' || id === 'blobc2') ? 4 : 6;
 		}
 	}
 	// Set a colour from a typed hex string (any 3- or 6-digit hex, with/without #).
@@ -434,7 +434,7 @@
 						<input type="range" min="0.05" max="0.9" step="0.05" bind:value={cmAmount} />
 					</label>
 				{/if}
-				{#if mode === 'blobc2' || mode.startsWith('blobc3') || mode === 'blobc4'}
+				{#if mode === 'blobc2' || mode.startsWith('blobc3') || mode === 'blobc4' || mode === 'blobc64'}
 					<label class="slider">
 						<span>Gate <b>{cmGate.toFixed(3)}</b></span>
 						<input type="range" min="0" max="0.15" step="0.005" bind:value={cmGate} />
@@ -446,7 +446,7 @@
 						<input type="range" min="0.25" max="4" step="0.05" bind:value={b3Speed} />
 					</label>
 				{/if}
-				{#if mode.startsWith('blobc3') || mode === 'blobc4'}
+				{#if mode.startsWith('blobc3') || mode === 'blobc4' || mode === 'blobc5' || mode.startsWith('blobc6')}
 					<label class="slider">
 						<span>Repeats <b>{b3Rows}</b></span>
 						<input type="range" min="1" max="12" step="1" bind:value={b3Rows} />

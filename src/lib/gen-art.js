@@ -1287,7 +1287,7 @@ const sceneBlob2 = (env) => colorMetaScene(env, 2);
 //   cellular = false → "Blob 3-N": Blob 2's noise/pod movement — smooth pod
 //                      envelopes blooming on a loop-seamless schedule.
 // Falls back to the CPU Blob 2 engine if WebGL is unavailable.
-function blob3Scene(env, cellular, speedMul = 1, mass = false) {
+function blob3Scene(env, cellular, speedMul = 1, mass = false, letterQ = false, b6 = false, perf6 = false) {
 	const { W, H, getOpts, rng } = env;
 	// total sim tempo: Reaction speed × the mode's Speed slider × the variant's
 	// built-in multiplier (Blob 3-C Fast = 2×)
@@ -1319,6 +1319,16 @@ function blob3Scene(env, cellular, speedMul = 1, mass = false) {
 	let anchorX = 0, anchorY = 0; // low-passed nearest-text point (steering aid)
 	let headN = null, dropD = 0; // the permanent head disc + distance since last trail drop
 	let headDist = 0, tailDist = 0; // arclength of head travel + the CONTINUOUS tail point
+	// Blob 5 (letterQ): whole-letter swallow machinery
+	let lidTex = null, lvlTex = null, lvlBytes = null, letterList = [], nLetters = 1;
+	let agents = [], branchT = 3; // Blob 5's colony of invisible roamers
+	// Blob 6-5 fused letter field: low-res per-letter sprites stamped+blurred
+	// into ONE bitmap per frame
+	let gs6 = 6, gw6 = 2, gh6 = 2, sprites6 = null, accum6 = null, tmp6 = null, mBytes6 = null;
+	let accumC6 = null, tmpC6 = null; // cooling channel (departing letters)
+	let letterDtAcc = 0, fieldDirty = true; // perf6: letter machinery ticks at ~32Hz
+	let massTexPrev = null, firstTick6 = true; // perf6: last tick's field, for the GPU cross-fade
+	let lastTickDt6 = 1 / 32; // actual duration of the last tick (normalizes the blend clock)
 
 	const VSH = 'attribute vec2 aP; varying vec2 vUV; void main(){ vUV = aP * 0.5 + 0.5; gl_Position = vec4(aP, 0.0, 1.0); }';
 	const FSH = `
@@ -1333,10 +1343,63 @@ uniform float uGate, uSatK;
 uniform float uPh;         // TAU * loop phase
 uniform float uLump;       // lump spatial frequency (~1 / letter height)
 uniform vec2 uMOff;        // ~0.75 mass-texel, for the rounding taps
+uniform sampler2D uLid;    // Blob 5: nearest-letter Voronoi id (16-bit in L+A)
+uniform sampler2D uLvl;    // Blob 5: per-letter swallow level (Nx1)
+uniform float uNL;         // Blob 5: letter count
+uniform float uHeat;       // Blob 6-4: global temperature (uniform-borne)
+uniform sampler2D uMPrev;  // Blob 6-6: previous field tick (cross-fade source)
+uniform float uMMix;       // Blob 6-6: sub-tick blend fraction
 uniform vec2 uRes;
+vec2 lvlAt(vec2 uv) {      // Blob 5: (shape S, heat Q) of the letter owning uv
+	vec4 q = texture2D(uLid, uv);
+	float id = floor(q.r * 255.0 + 0.5) + floor(q.a * 255.0 + 0.5) * 256.0;
+	vec4 l2 = texture2D(uLvl, vec2((id + 0.5) / uNL, 0.5));
+	return vec2(l2.r, l2.a);
+}
 void main() {
 	vec2 st = vec2(vUV.x, 1.0 - vUV.y); // canvas orientation (y down)
+${b6 === 3 ? `
+	// WIDE 9-tap level blend (~0.4 letter-heights): per-pixel levels vary
+	// smoothly ACROSS letter borders, dissolving the Voronoi seams that a
+	// narrow feather left visible during arrivals and departures. Selection
+	// stays whole-letter (CPU-side); only the rendering blends.
+	float lh5 = (6.2832 / uLump) / 0.85;
+	vec2 r1t = (lh5 * 0.2) / uRes;
+	vec2 r2t = (lh5 * 0.38) / uRes;
+	vec2 SQ = 0.24 * lvlAt(st)
+		+ 0.10 * (lvlAt(st + vec2(r1t.x, 0.0)) + lvlAt(st - vec2(r1t.x, 0.0))
+			+ lvlAt(st + vec2(0.0, r1t.y)) + lvlAt(st - vec2(0.0, r1t.y)))
+		+ 0.09 * (lvlAt(st + r2t * vec2(0.707, 0.707)) + lvlAt(st + r2t * vec2(-0.707, 0.707))
+			+ lvlAt(st + r2t * vec2(0.707, -0.707)) + lvlAt(st + r2t * vec2(-0.707, -0.707)));
+	if (SQ.x <= 0.01) { OUT(vec4(0.0)); return; }
+	// DUAL FIELD: .r = open (true strokes, counters hollow), .a = solid
+	// (counters filled). Held letters are solid; a MELTING letter slides
+	// toward the open field — the D's belly opens a growing hole and the goo
+	// shrinks onto the stroke edges, exactly like an n's natural melt.
+	// Engulfing runs it backwards: the hole seals as the letter is taken.
+	vec4 nt = texture2D(uN, st);
+	float n = mix(nt.r, nt.a, smoothstep(0.2, 0.85, SQ.x));
+` : b6 === 5 ? `
+	vec4 nt5 = texture2D(uN, st);
+${perf6 ? `
+	// 6-6: the field ticks at 32Hz on the CPU; cross-fading the last two
+	// snapshots per frame makes the displayed field 60fps-continuous (the
+	// same trick as BZ's slow-motion glide) — melts stop stepping.
+	vec4 lf6 = mix(texture2D(uMPrev, st), texture2D(uM, st), uMMix);
+` : `
+	vec4 lf6 = texture2D(uM, st);
+`}
+	float letterF = lf6.a;
+	// OPENNESS = 1 - maturity share: high while ARRIVING and while DEPARTING,
+	// zero when fully held. It slides the geometry between the OPEN stroke
+	// skeleton and the SOLID slab — letters build up on their letterforms and
+	// seal shut; on exit the counters re-open and the goo drains along the
+	// skeleton. Symmetric scaffolding, all shape, no opacity.
+	float cool5 = 1.0 - min(1.0, lf6.r / max(letterF, 0.03));
+	float n = mix(nt5.a, nt5.r, smoothstep(0.15, 0.9, cool5));
+` : `
 	float n = texture2D(uN, st).a;
+`}
 	if (n <= 0.002) { OUT(vec4(0.0)); return; }
 	vec2 p = st * uRes;
 ${cellular ? `
@@ -1362,7 +1425,14 @@ ${cellular ? `
 	}
 `}
 	m = min(m, 1.0);
+${letterQ ? `
+	// Blob 5: NO early-out on the creature's field — the field is invisible
+	// here, but this cull ran BEFORE the letter lift, so the field's receding
+	// edge hard-clipped letters that were still mid-fade (the wiping edge on
+	// fade-out; fade-in was fine because the field covered the letter).
+` : `
 	if (m <= 0.02) { OUT(vec4(0.0)); return; }
+`}
 	// PATCHY SPREAD (Blob 1's unevenness): medium-scale strength patches along
 	// the strokes MULTIPLY the influence — so only parts of a letter blob
 	// first, coverage creeps patch by patch instead of sweeping a letter at a
@@ -1373,14 +1443,67 @@ ${cellular ? `
 	// mass revealed patch-by-patch reads as popping between nearby spots. The
 	// range stays wide for the static variants (their organic unevenness) but
 	// flattens to a gentle texture for the mover.
-	m = min(m * ${mass ? '(0.78 + 0.42 * bt.r)' : '(0.3 + 1.1 * bt.r)'}, 1.0);
+	m = min(m * ${b6 === 5 ? '1.0 /* no patch texture: magnetic goo is SMOOTH */' : mass ? '(0.78 + 0.42 * bt.r)' : '(0.3 + 1.1 * bt.r)'}, 1.0);
+${letterQ ? `
+	// WHOLE-LETTER SWALLOW (Blob 5): every pixel belongs to its nearest letter
+	// (Voronoi id texture); a touched letter's level lifts the influence over
+	// its cell, so arrival engulfs the whole glyph at once; release hands back
+	// to the creature's receding field. The lift wears a SNUG COAT — shaped by
+	// distance-to-glyph so it dies out well before the Voronoi border (a full-
+	// cell lift clipped at the border drew a hard straight seam between an
+	// engulfed letter and its bare neighbour) — and the id lookup is 5-tap
+	// averaged so any remaining transition is feathered, never razor-edged.
+${(b6 === 3 || b6 === 5) ? '' : `
+	// WIDE 9-tap level blend (~0.4 letter-heights): per-pixel levels vary
+	// smoothly ACROSS letter borders, dissolving the Voronoi seams that a
+	// narrow feather left visible during arrivals and departures. Selection
+	// stays whole-letter (CPU-side); only the rendering blends.
+	float lh5 = (6.2832 / uLump) / 0.85;
+	vec2 r1t = (lh5 * 0.2) / uRes;
+	vec2 r2t = (lh5 * 0.38) / uRes;
+	vec2 SQ = 0.24 * lvlAt(st)
+		+ 0.10 * (lvlAt(st + vec2(r1t.x, 0.0)) + lvlAt(st - vec2(r1t.x, 0.0))
+			+ lvlAt(st + vec2(0.0, r1t.y)) + lvlAt(st - vec2(0.0, r1t.y)))
+		+ 0.09 * (lvlAt(st + r2t * vec2(0.707, 0.707)) + lvlAt(st + r2t * vec2(-0.707, 0.707))
+			+ lvlAt(st + r2t * vec2(0.707, -0.707)) + lvlAt(st + r2t * vec2(-0.707, -0.707)));
+	if (SQ.x <= 0.01) { OUT(vec4(0.0)); return; }
+`}
+	// Blob 5, two channels: S (shape) runs the film->swell GULP on arrival and
+	// NEVER deflates on exit; Q (heat) drains on exit so the colours cool down
+	// the ramp (pink -> yellow -> deep red) at full opacity — the COLOUR
+	// transitions out, no visible mask, no translucent ghost.
+${b6 === 3 ? `
+	// Blob 6-3: territory follows TEMPERATURE — cold blobs hug the glyphs; as
+	// the shared heat climbs, the pool floods outward across the letter gaps
+	// toward the field's outer boundary, like molten material expanding.
+	float lo6 = mix(0.52, 0.04, SQ.y);
+	m = 0.95 * SQ.x * smoothstep(lo6, lo6 + 0.26, n);
+` : b6 === 5 ? `
+	// ONE SOLID MASS (fused field): every magnetized letter is stamped —
+	// weighted by its level — and blurred into a SINGLE bitmap on the CPU
+	// (uM); the shader just adds the agents' round bodies to it. One scalar
+	// field, one contour, one gradient. No per-letter quantity reaches the
+	// pixel, so seams, striations and partitions are structurally impossible;
+	// the mass morphs as letters magnetize on and off.
+	// letterF & cool5 sampled up top (they also drive the scaffold geometry)
+	m = min(m * 0.5 + letterF * 1.15, 1.0);
+` : `
+	m = 0.95 * SQ.x * smoothstep(${b6 ? '0.5, 0.78' : '0.62, 0.86'}, n); // ${b6 ? 'wide solid coat' : 'tight coat'}
+`}
+` : ''}
 	float sat = min(m * uSatK * (0.2 + 1.6 * n), 1.0); // magnetized influence
 	float aMul = 1.0;
+${letterQ ? `
+	// Blob 5: NO gate — letters already have discrete existence, and the
+	// gate's cutoff contour swept across the glyph as a hard wiping edge
+	// while the melt drained saturation.
+` : `
 	if (uGate > 0.001) {                                // existence gate
 		float g = clamp((sat - uGate) / uGate, 0.0, 1.0);
 		if (g <= 0.0) { OUT(vec4(0.0)); return; }
 		aMul = g * g * (3.0 - 2.0 * g);
 	}
+`}
 	float ss = sat * sat * (3.0 - 2.0 * sat);           // tight-hug S-curve
 	float reach = pow(ss, 1.6); // same low-end onset for every variant — the
 	// flat mass curve (an arrival-smoothing crutch from before the field was
@@ -1392,8 +1515,8 @@ ${cellular ? `
 	float w1 = sin(p.x * uLump + sin(uPh) * 1.7 + 2.1);
 	float w2 = sin((p.x * 0.55 + p.y * 0.83) * uLump * 1.31 + cos(uPh) * 1.3 + 4.7);
 	float w3 = sin((p.y * 0.92 - p.x * 0.31) * uLump * 0.77 + sin(uPh + 1.0) * 2.0 + 1.3);
-	float lump = ((w1 + w2 + w3) / 3.0) * (0.04 + 0.22 * reach);
-	float feather = clamp(reach * 0.5, 0.008, 0.05); // adaptive feather
+	float lump = ((w1 + w2 + w3) / 3.0) * ${b6 === 5 ? '(0.015 + 0.08 * reach) /* hushed: surface-tension smooth */' : '(0.04 + 0.22 * reach)'};
+	float feather = clamp(reach * 0.5, ${b6 === 5 ? '0.012' : letterQ ? '0.05' : '0.008'}, ${b6 === 5 ? '0.02' : letterQ ? '0.08' : '0.05'}); // 6-5: hairline AA only — a crisp fully-opaque edge; the fused field supplies all the softness the SHAPE needs
 	float v = clamp((n - (1.0 - reach) + lump) / feather, 0.0, 1.0);
 	if (v <= 0.0) { OUT(vec4(0.0)); return; }
 	float vv = v * v * (3.0 - 2.0 * v);
@@ -1404,7 +1527,7 @@ ${cellular ? `
 	// but the hue drive is MULTIPLIED by the same poisson bead texture, so the
 	// colour carries Blob 1's full-amplitude granularity.
 	float bn = bt.a;
-	float hb = m * uSatK * (0.1 + 2.2 * n) * (0.08 + 0.92 * bn); // deep dips between beads
+	float hb = m * uSatK * (0.1 + 2.2 * n)${b6 === 5 ? ' /* no bead marbling: it read as crunch */' : ' * (0.08 + 0.92 * bn)'}; // ${b6 === 5 ? 'smooth magnetic hue field' : 'deep dips between beads'}
 	float I = pow(clamp(hb * 0.3, 0.0, 1.0), 2.0);
 	I = min(1.0, I + clamp((n - 0.88) / 0.12, 0.0, 1.0) * 0.3);
 	// plus the big soft temperature patches (subtle, morphing over the loop)
@@ -1414,10 +1537,41 @@ ${cellular ? `
 	float c3 = sin((p.x + p.y) * uLump * 0.4 + 5.3);
 	float mot = (c1 * mA + c2 * mB + c3 * mC) * 0.333 + 0.35 * sin(uPh + 0.9);
 	I = clamp(I + mot * 0.05, 0.0, 1.0);
+${b6 === 2 ? `
+	// Blob 6-2: HEAT scales the intensity — a fresh cold blob sits in the
+	// gray/blue end and climbs the ramp as its shared temperature builds.
+	I *= (0.10 + 0.90 * SQ.y);
+` : ''}${b6 === 3 ? `
+	// Blob 6-3: HEAT SHIFTS the whole ramp instead of scaling it — the entire
+	// field (outer edge included) slides up the colour scale together, the
+	// core keeping a fixed lead. The edge itself cycles gray -> blue -> green
+	// -> yellow -> red as the blob matures, instead of being pinned at gray.
+	I = clamp(SQ.y * 0.9 + I * 0.35 - 0.05, 0.0, 1.0);
+` : ''}${b6 === 4 ? `
+	// Blob 6-4: same additive heat shift as 6-3, but the temperature arrives
+	// as a global uniform (Blob 4's continuous mass has no letter channels).
+	I = clamp(uHeat * 0.9 + I * 0.35 - 0.05, 0.0, 1.0);
+` : ''}${b6 === 5 ? `
+	// Blob 6-5: global temperature, MINUS the fused cooling channel — a
+	// departing region drops ~2 ramp stops as its lobe shrinks, at full
+	// opacity: the goo cools and contracts instead of fading.
+	I = clamp(uHeat * 0.9 + I * 0.35 - 0.05 - cool5 * 0.34, 0.0, 1.0);
+` : ''}
 	vec3 col;
+${b6 ? `
+	// Blob 6 temperature ramp: gray (cold rim) -> blue -> green -> yellow ->
+	// red -> pink (hottest core) — still sculpted by distance-to-letter.
+	if (I < 0.12) col = vec3(150.0, 150.0, 155.0);
+	else if (I < 0.32) { float f = (I - 0.12) / 0.2;  col = mix(vec3(150.0, 150.0, 155.0), vec3(60.0, 110.0, 255.0), f); }
+	else if (I < 0.52) { float f = (I - 0.32) / 0.2;  col = mix(vec3(60.0, 110.0, 255.0), vec3(40.0, 200.0, 120.0), f); }
+	else if (I < 0.72) { float f = (I - 0.52) / 0.2;  col = mix(vec3(40.0, 200.0, 120.0), vec3(255.0, 205.0, 40.0), f); }
+	else if (I < 0.88) { float f = (I - 0.72) / 0.16; col = mix(vec3(255.0, 205.0, 40.0), vec3(255.0, 60.0, 40.0), f); }
+	else { float f = min(1.0, (I - 0.88) / 0.12);     col = mix(vec3(255.0, 60.0, 40.0), vec3(255.0, 95.0, 200.0), f); }
+` : `
 	if (I < 0.18) col = vec3(255.0, 40.0, 40.0);
 	else if (I < 0.8) { float f = (I - 0.18) / 0.62; col = vec3(255.0, 40.0 + 165.0 * f, 40.0); }
 	else { float f = min(1.0, (I - 0.8) / 0.17); col = vec3(255.0, 205.0 - 110.0 * f, 40.0 + 160.0 * f); }
+`}
 	col = clamp(col * (0.9 + 0.2 * n) * (1.0 + 0.02 * mot) / 255.0, 0.0, 1.0);
 	float a = vv * aMul;
 	OUT(vec4(col * a, a)); // premultiplied
@@ -1452,11 +1606,20 @@ ${cellular ? `
 			res: gl.getUniformLocation(prog, 'uRes'),
 			n: gl.getUniformLocation(prog, 'uN'),
 			b: gl.getUniformLocation(prog, 'uB'),
-			m: gl.getUniformLocation(prog, 'uM')
+			m: gl.getUniformLocation(prog, 'uM'),
+			mprev: gl.getUniformLocation(prog, 'uMPrev'),
+			mmix: gl.getUniformLocation(prog, 'uMMix'),
+			lid: gl.getUniformLocation(prog, 'uLid'),
+			lvl: gl.getUniformLocation(prog, 'uLvl'),
+			nl: gl.getUniformLocation(prog, 'uNL'),
+			heat: gl.getUniformLocation(prog, 'uHeat')
 		};
 		gl.uniform1i(uni.n, 0);
 		gl.uniform1i(uni.b, 1);
 		gl.uniform1i(uni.m, 2);
+		if (uni.lid) gl.uniform1i(uni.lid, 4);
+		if (uni.lvl) gl.uniform1i(uni.lvl, 5);
+		if (uni.mprev) gl.uniform1i(uni.mprev, 6);
 		gl.uniform2f(uni.res, W, H);
 		gl.disable(gl.BLEND); // fragment outputs premultiplied straight into a cleared buffer
 	}
@@ -1499,6 +1662,8 @@ ${cellular ? `
 	function reset() {
 		const o = getOpts();
 		const L = wallLayout(o);
+		let lidBytesR = null; // Blob 5: packed Voronoi letter-id map (built below)
+		let saOrig = null;    // Blob 6-3: strokes-only mask, snapshotted before counter-filling
 		// Seed = the full wall in the hairline weight; everything else (cells,
 		// pods, beads, distance field) derives from this one bitmap, so all the
 		// blob machinery works across the whole wall — goo can bridge rows.
@@ -1507,6 +1672,31 @@ ${cellular ? `
 		sc.fillStyle = '#fff';
 		drawWall(sc, o, WGT);
 		const sa = sc.getImageData(0, 0, W, H).data;
+		if (b6) {
+			if (b6 === 3 || b6 === 5) {
+				// keep the OPEN (true-stroke) mask for the counter-opening melt
+				saOrig = new Uint8Array(W * H);
+				for (let i = 0; i < W * H; i++) saOrig[i] = sa[i * 4 + 3] > 128 ? 1 : 0;
+			}
+			// SOLID GLYPHS: flood the exterior from the border; any pixel not
+			// reached and not stroke is a COUNTER — fill it. Mutating the seed
+			// alpha here means every downstream field (cells, letter components,
+			// distance field, Voronoi, beads) sees solid hole-free letters.
+			const reach6 = new Uint8Array(W * H);
+			const q6 = new Int32Array(W * H);
+			let qh6 = 0, qt6 = 0;
+			const push6 = (i) => { if (!reach6[i] && sa[i * 4 + 3] <= 128) { reach6[i] = 1; q6[qt6++] = i; } };
+			for (let x = 0; x < W; x++) { push6(x); push6((H - 1) * W + x); }
+			for (let y = 0; y < H; y++) { push6(y * W); push6(y * W + W - 1); }
+			while (qh6 < qt6) {
+				const i = q6[qh6++], x = i % W, y = (i / W) | 0;
+				if (x > 0) push6(i - 1);
+				if (x < W - 1) push6(i + 1);
+				if (y > 0) push6(i - W);
+				if (y < H - 1) push6(i + W);
+			}
+			for (let i = 0; i < W * H; i++) if (sa[i * 4 + 3] <= 128 && !reach6[i]) sa[i * 4 + 3] = 255;
+		}
 		// stroke cells sampled straight off the seed bitmap (canvas px coords)
 		const stride = Math.max(2, Math.round(Math.max(W, H) / 420));
 		const cells = [];
@@ -1539,6 +1729,103 @@ ${cellular ? `
 			anchorX = c0[0]; anchorY = c0[1];
 			nodes.push(headN);
 			headDist = 0; tailDist = -letterH2 * 2; // short starting body
+			if (letterQ) {
+				// letters: connected components (8-conn) + centroids
+				const lab = new Int32Array(W * H).fill(-1);
+				const comps = [];
+				{
+					const q5 = new Int32Array(W * H);
+					for (let p0 = 0; p0 < W * H; p0++) {
+						if (lab[p0] >= 0 || sa[p0 * 4 + 3] <= 128) continue;
+						const id = comps.length;
+						const cp = { sx: 0, sy: 0, cnt: 0, minX: W, maxX: 0, minY: H, maxY: 0 };
+						comps.push(cp);
+						let qh5 = 0, qt5 = 0;
+						q5[qt5++] = p0; lab[p0] = id;
+						while (qh5 < qt5) {
+							const pp = q5[qh5++], px5 = pp % W, py5 = (pp / W) | 0;
+							cp.cnt++; cp.sx += px5; cp.sy += py5;
+							if (px5 < cp.minX) cp.minX = px5;
+							if (px5 > cp.maxX) cp.maxX = px5;
+							if (py5 < cp.minY) cp.minY = py5;
+							if (py5 > cp.maxY) cp.maxY = py5;
+							for (let dy5 = -1; dy5 <= 1; dy5++) for (let dx5 = -1; dx5 <= 1; dx5++) {
+								if (!dx5 && !dy5) continue;
+								const nx5 = px5 + dx5, ny5 = py5 + dy5;
+								if (nx5 < 0 || nx5 >= W || ny5 < 0 || ny5 >= H) continue;
+								const np = ny5 * W + nx5;
+								if (lab[np] < 0 && sa[np * 4 + 3] > 128) { lab[np] = id; q5[qt5++] = np; }
+							}
+						}
+					}
+				}
+				nLetters = Math.max(1, comps.length);
+				letterList = comps.map((cp, i) => ({
+					i,
+					cx: cp.sx / Math.max(1, cp.cnt), cy: cp.sy / Math.max(1, cp.cnt),
+					// touch radius ≈ half-diagonal of the glyph's bbox: contact
+					// with the letter's EDGE triggers the gulp, not just its core
+					rad: Math.hypot(cp.maxX - cp.minX, cp.maxY - cp.minY) * 0.5,
+					S: 0, Q: 0, on: false
+				}));
+				lvlBytes = new Uint8Array(nLetters * 2); // [S, Q] per letter
+				// nearest-letter Voronoi via chamfer id propagation, packed 16-bit
+				const vDist = new Float32Array(W * H).fill(1e12);
+				const vId = new Int32Array(W * H);
+				for (let p = 0; p < W * H; p++) if (lab[p] >= 0) { vDist[p] = 0; vId[p] = lab[p]; }
+				for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+					const p = y * W + x; let dd = vDist[p], di = vId[p];
+					if (x > 0 && vDist[p - 1] + 1 < dd) { dd = vDist[p - 1] + 1; di = vId[p - 1]; }
+					if (y > 0) {
+						if (vDist[p - W] + 1 < dd) { dd = vDist[p - W] + 1; di = vId[p - W]; }
+						if (x > 0 && vDist[p - W - 1] + 1.4 < dd) { dd = vDist[p - W - 1] + 1.4; di = vId[p - W - 1]; }
+						if (x < W - 1 && vDist[p - W + 1] + 1.4 < dd) { dd = vDist[p - W + 1] + 1.4; di = vId[p - W + 1]; }
+					}
+					vDist[p] = dd; vId[p] = di;
+				}
+				for (let y = H - 1; y >= 0; y--) for (let x = W - 1; x >= 0; x--) {
+					const p = y * W + x; let dd = vDist[p], di = vId[p];
+					if (x < W - 1 && vDist[p + 1] + 1 < dd) { dd = vDist[p + 1] + 1; di = vId[p + 1]; }
+					if (y < H - 1) {
+						if (vDist[p + W] + 1 < dd) { dd = vDist[p + W] + 1; di = vId[p + W]; }
+						if (x < W - 1 && vDist[p + W + 1] + 1.4 < dd) { dd = vDist[p + W + 1] + 1.4; di = vId[p + W + 1]; }
+						if (x > 0 && vDist[p + W - 1] + 1.4 < dd) { dd = vDist[p + W - 1] + 1.4; di = vId[p + W - 1]; }
+					}
+					vDist[p] = dd; vId[p] = di;
+				}
+				lidBytesR = new Uint8Array(W * H * 2);
+				for (let p = 0; p < W * H; p++) { const id = vId[p]; lidBytesR[p * 2] = id & 255; lidBytesR[p * 2 + 1] = id >> 8; }
+				if (b6 === 5) {
+					// low-res per-letter sprites for the fused field
+					gs6 = 6;
+					gw6 = Math.max(2, Math.ceil(W / gs6));
+					gh6 = Math.max(2, Math.ceil(H / gs6));
+					sprites6 = comps.map((cp) => {
+						const gx = Math.floor(cp.minX / gs6), gy = Math.floor(cp.minY / gs6);
+						const w6 = Math.floor(cp.maxX / gs6) - gx + 1;
+						const h6 = Math.floor(cp.maxY / gs6) - gy + 1;
+						return { gx, gy, w: w6, h: h6, d: new Float32Array(w6 * h6) };
+					});
+					const inv6 = 1 / (gs6 * gs6);
+					for (let p = 0; p < W * H; p++) {
+						const id = lab[p];
+						if (id < 0) continue;
+						const sp = sprites6[id];
+						const gx = Math.floor((p % W) / gs6) - sp.gx;
+						const gy = Math.floor(((p / W) | 0) / gs6) - sp.gy;
+						sp.d[gy * sp.w + gx] += inv6;
+					}
+					accum6 = new Float32Array(gw6 * gh6);
+					tmp6 = new Float32Array(gw6 * gh6);
+					accumC6 = new Float32Array(gw6 * gh6);
+					tmpC6 = new Float32Array(gw6 * gh6);
+					mBytes6 = new Uint8Array(gw6 * gh6 * 2); // [cooling, field]
+				}
+				// the colony starts as a single roamer on a random letter
+				const ca = cells[(rng() * cells.length) | 0];
+				agents = [makeAgent(ca[0], ca[1])];
+				branchT = 3;
+			}
 		}
 		clusters = [];
 		if (!cellular && !mass && cells.length) {
@@ -1711,7 +1998,21 @@ ${cellular ? `
 			return tex;
 		};
 		bTex = upload(gl.TEXTURE1, la, gl.LUMINANCE_ALPHA);
-		nTex = upload(gl.TEXTURE0, nBytes, gl.ALPHA);
+		if ((b6 === 3 || b6 === 5) && saOrig) {
+			// dual field: L = open (true strokes), A = solid (counters filled)
+			const D2 = new Float64Array(W * H);
+			for (let p = 0; p < W * H; p++) D2[p] = saOrig[p] ? 0 : 1e12;
+			edt2d(D2, W, H);
+			const maxReach2 = Math.max(6, letterH2 * 0.7);
+			const la0 = new Uint8Array(W * H * 2);
+			for (let p = 0; p < W * H; p++) {
+				la0[p * 2] = clamp(1 - Math.sqrt(D2[p]) / maxReach2, 0, 1) * 255;
+				la0[p * 2 + 1] = nBytes[p];
+			}
+			nTex = upload(gl.TEXTURE0, la0, gl.LUMINANCE_ALPHA);
+		} else {
+			nTex = upload(gl.TEXTURE0, nBytes, gl.ALPHA);
+		}
 		if (cellular) {
 			massTex = gl.createTexture();
 			gl.activeTexture(gl.TEXTURE2);
@@ -1721,6 +2022,44 @@ ${cellular ? `
 			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
 			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 			gl.uniform2f(uni.moff, 0.75 / gw2, 0.75 / gh2);
+		}
+		if (letterQ && b6 === 5) {
+			// mass texture pair: current tick + previous tick (cross-fade)
+			const mkMass = () => {
+				const tx6 = gl.createTexture();
+				gl.activeTexture(gl.TEXTURE2);
+				gl.bindTexture(gl.TEXTURE_2D, tx6);
+				gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+				gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+				gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+				gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+				return tx6;
+			};
+			massTex = mkMass();
+			massTexPrev = mkMass();
+			firstTick6 = true;
+		}
+		if (letterQ && lidBytesR) {
+			// Voronoi id map: NEAREST filtering is mandatory — LINEAR would
+			// interpolate between neighbouring letter IDS at cell borders.
+			lidTex = gl.createTexture();
+			gl.activeTexture(gl.TEXTURE4);
+			gl.bindTexture(gl.TEXTURE_2D, lidTex);
+			gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+			gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE_ALPHA, W, H, 0, gl.LUMINANCE_ALPHA, gl.UNSIGNED_BYTE, lidBytesR);
+			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+			lvlTex = gl.createTexture();
+			gl.activeTexture(gl.TEXTURE5);
+			gl.bindTexture(gl.TEXTURE_2D, lvlTex);
+			gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE_ALPHA, nLetters, 1, 0, gl.LUMINANCE_ALPHA, gl.UNSIGNED_BYTE, lvlBytes);
+			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+			if (uni.nl) gl.uniform1f(uni.nl, nLetters);
 		}
 		t = 0;
 	}
@@ -1773,6 +2112,212 @@ ${cellular ? `
 		const snap = alive.slice();
 		for (let i = 0; i < snap.length; i++) if (snap[i]) decide(i, press, snap);
 	}
+	// ── Blob 5: the colony of invisible roamers ──────────────────────────────
+	// Each agent carries Blob 4's full steering brain; the colony BRANCHES
+	// (a new agent splits off from an existing one and treks away) and prunes
+	// itself on lifespans. Capacity scales with how many letters there are.
+	function makeAgent(x, y) {
+		return {
+			x, y, heading: rng() * TAU, goal: null, goalT: 0,
+			ax: x, ay: y, hist: [], histT: 0,
+			life: 15 + rng() * 10, w: 1, dying: false, ph: rng() * TAU
+		};
+	}
+	function steerAgent(a, dt, spd) {
+		a.goalT -= dt * spd;
+		if (a.goalT <= 0 || !a.goal || Math.hypot(a.goal[0] - a.x, a.goal[1] - a.y) < letterH2 * 2.2) {
+			const minTrek = Math.max(letterH2 * 7, Math.min(W, H) * 0.35);
+			let bestG = null, bestS = -1e9, anyG = null, anyS = -1e9;
+			for (let k3 = 0; k3 < 24; k3++) {
+				const c = txCells[(rng() * txCells.length) | 0];
+				const dx3 = c[0] - a.x, dy3 = c[1] - a.y;
+				const d4 = Math.hypot(dx3, dy3);
+				const ali = Math.cos(Math.atan2(dy3, dx3) - a.heading);
+				// vertical appetite: destinations on OTHER rows score higher, so
+				// the colony dives and climbs the wall instead of commuting
+				// horizontally along its home line
+				const vert = Math.min(1, Math.abs(dy3) / (letterH2 * 2.5));
+				const s5 = (1.2 + ali) * (0.3 + Math.min(2, d4 / (W * 0.3))) * (1 + 0.45 * vert);
+				if (s5 > anyS) { anyS = s5; anyG = c; }
+				if (d4 < minTrek) continue;
+				if (s5 > bestS) { bestS = s5; bestG = c; }
+			}
+			a.goal = bestG || anyG;
+			a.goalT = 8 + rng() * 5;
+		}
+		let best = null, bd = 1e18;
+		const hx2 = Math.cos(a.heading), hy2 = Math.sin(a.heading);
+		for (let k2 = 0; k2 < 24; k2++) {
+			const c = txCells[(rng() * txCells.length) | 0];
+			const dx4 = c[0] - a.x, dy4 = c[1] - a.y;
+			const d5 = Math.hypot(dx4, dy4);
+			if (d5 < 1) continue;
+			const fwd = (dx4 * hx2 + dy4 * hy2) / d5;
+			if (fwd < 0.1) continue;
+			const gd = a.goal ? Math.hypot(a.goal[0] - c[0], a.goal[1] - c[1]) : 0;
+			const score = d5 * (1.6 - fwd) + gd * 0.5;
+			if (score < bd) { bd = score; best = c; }
+		}
+		if (best) {
+			const lp = Math.min(1, dt * 1.2);
+			a.ax += (best[0] - a.ax) * lp;
+			a.ay += (best[1] - a.ay) * lp;
+		}
+		const tgx = (a.goal ? a.goal[0] : a.ax) * 0.5 + a.ax * 0.5;
+		const tgy = (a.goal ? a.goal[1] : a.ay) * 0.5 + a.ay * 0.5;
+		const want = Math.atan2(tgy - a.y, tgx - a.x);
+		const dh = ((want - a.heading + Math.PI * 3) % TAU) - Math.PI;
+		const wander = Math.sin((t + a.ph) * spd * 0.9 + 2.1) * 0.55 + Math.sin((t + a.ph) * spd * 0.53 + 0.4) * 0.3;
+		a.heading += clamp(dh * 1.4 + wander, -1.7, 1.7) * dt * spd;
+		const v = letterH2 * 1.7 * spd * (1 + 0.12 * Math.sin((t + a.ph) * spd * 0.7 + 1.7));
+		a.x += Math.cos(a.heading) * v * dt;
+		a.y += Math.sin(a.heading) * v * dt;
+	}
+	function stepAgents(dt, o) {
+		const spd = simSpd(o);
+		if (!txCells.length) return;
+		// BRANCHING: only a BIG wall (5+ lines) earns multiple masses — anything
+		// smaller keeps the single-roamer intimacy. On big walls a new agent
+		// splits off from an existing one's position and treks away.
+		const rows5 = Math.max(1, Math.round(o.b3Rows || 1));
+		const maxA = rows5 >= 5 ? clamp(Math.round(nLetters / 12), 2, 4) : 1;
+		branchT -= dt * spd;
+		if (branchT <= 0) {
+			branchT = 6 + rng() * 5;
+			const live = agents.filter((a) => !a.dying);
+			if (live.length && live.length < maxA) {
+				const src = live[(rng() * live.length) | 0];
+				agents.push(makeAgent(src.x, src.y));
+			}
+		}
+		let liveCount = 0;
+		for (const a of agents) if (!a.dying) liveCount++;
+		for (let i2 = agents.length - 1; i2 >= 0; i2--) {
+			const a = agents[i2];
+			if (!a.dying) {
+				a.life -= dt * spd;
+				if (a.life <= 0 && liveCount > 1) { a.dying = true; liveCount--; }
+			}
+			if (a.dying) {
+				a.w -= dt * spd * 0.7; // influence dissolves in place; letters release
+				if (a.w <= 0) { agents.splice(i2, 1); continue; }
+			} else {
+				steerAgent(a, dt, spd);
+			}
+			// short trail of hold-points so letters linger held behind the head.
+			// CONTINUOUS HANDOFF (Blob 4's fix, ported): a new point is born at
+			// ZERO weight and matures exactly as the head's own gaussian recedes
+			// from it — full-weight drops pumped the rendered field at the
+			// ~4.5Hz drop cadence (the stutter 6-4 doesn't have).
+			a.histT += dt * spd;
+			if (!a.dying && a.histT >= 0.22) {
+				a.histT = 0;
+				a.hist.push({ x: a.x, y: a.y, w: 0, hand: true });
+				if (a.hist.length > 8) a.hist.shift();
+			}
+			const s2a = 2 * (letterH2 * 1.4) * (letterH2 * 1.4);
+			for (let h2 = a.hist.length - 1; h2 >= 0; h2--) {
+				const hp = a.hist[h2];
+				if (hp.hand && !a.dying) {
+					const dxh = hp.x - a.x, dyh = hp.y - a.y;
+					hp.w = Math.min(1, 1 - Math.exp(-(dxh * dxh + dyh * dyh) / s2a));
+					if (hp.w >= 0.95) { hp.w = 1; hp.hand = false; }
+				} else {
+					hp.hand = false;
+					hp.w -= dt * spd * 0.35;
+					if (hp.w <= 0.03) a.hist.splice(h2, 1);
+				}
+			}
+		}
+		// per-agent BLOB TEMPERATURE (Blob 6-2): cold at birth, warming over
+		// ~8s, breathing slowly — so every letter an agent holds shifts hue
+		// TOGETHER, and the per-letter clock becomes a subtle undertone.
+		for (const a of agents) {
+			a.age = (a.age || 0) + dt * spd;
+			a.heat = Math.min(1, a.age * 0.12) * (0.6 + 0.4 * Math.sin(t * spd * 0.3 + a.ph));
+		}
+		// Blob 6-3: ONE GLOBAL heat — every blob and every held letter share the
+		// same temperature (builds over ~8s from scene start, then breathes).
+		const heat6 = Math.min(1, t * spd * 0.12) * (0.6 + 0.4 * Math.sin(t * spd * 0.3 + 0.7));
+		// letter swallow levels (same dynamics as before, colony-driven field).
+		// perf6 (Blob 6-6): this whole section — the letters×agents influence
+		// loop and the level dynamics — ticks at ~32Hz with accumulated dt.
+		// Levels move over ~1s, so 32Hz is visually identical; the AGENTS (the
+		// fast-moving goo that must be 60fps) keep full rate above.
+		if (!letterList.length) return;
+		// (perf6 keeps ONLY the distance culling below — throttling the letter
+		// tick to 32Hz stuttered the melts even with GPU cross-fade smoothing;
+		// full-rate dynamics + culling is smooth AND cheap)
+		letterDtAcc += dt;
+		const dtL = letterDtAcc;
+		lastTickDt6 = Math.max(1e-3, dtL);
+		letterDtAcc = 0;
+		fieldDirty = true;
+		const R5 = letterH2 * (1.35 + 0.4 * Math.sin(t * spd * 0.5 + 0.7));
+		const s2h = 2 * R5 * R5, s2t = 2 * (R5 * 0.85) * (R5 * 0.85);
+		const cullD = R5 * 3.2; // beyond this, influence < 1% — skip the exps
+		for (const Lt of letterList) {
+			const wasOn = Lt.on;
+			let fTouch = 0, bestA = null, bestC = 0;
+			for (const a of agents) {
+				const adx = Lt.cx - a.x, ady = Lt.cy - a.y;
+				const cd = cullD + Lt.rad;
+				if (adx * adx + ady * ady > cd * cd * 2.2) continue; // cheap reject (covers hist spread)
+				const dc = Math.hypot(adx, ady);
+				const dEdge = Math.max(0, dc - Lt.rad);
+				const cHead = a.w * Math.exp(-(dEdge * dEdge) / s2h);
+				fTouch += cHead;
+				if (cHead > bestC) { bestC = cHead; bestA = a; }
+				for (const h2 of a.hist) {
+					const dh2 = Math.hypot(Lt.cx - h2.x, Lt.cy - h2.y);
+					const dE2 = Math.max(0, dh2 - Lt.rad);
+					const cH2 = 0.7 * a.w * h2.w * Math.exp(-(dE2 * dE2) / s2t);
+					fTouch += cH2;
+					if (cH2 > bestC) { bestC = cH2; bestA = a; }
+				}
+			}
+			if (!Lt.on && fTouch > 0.3) Lt.on = true;
+			else if (Lt.on && fTouch < 0.2) Lt.on = false;
+			// Blob 6-3: a freshly-engulfed letter starts COLD and runs a 0.6s
+			// eased sweep up to the shared global heat — through every colour
+			// on the ramp on its way there.
+			if ((b6 === 3 || b6 === 5) && !wasOn && Lt.on) Lt.ramp = 0;
+			const target5 = Lt.on ? 1 : 0;
+			// 6-5 rises languidly (~1.3s): the tongue's coverage GROWS over the
+			// letter instead of the whole selection popping in at gulp speed
+			const rate5 = target5 > Lt.S ? (b6 === 5 ? 0.9 : 4) : 2.0;
+			Lt.S += (target5 - Lt.S) * Math.min(1, dtL * spd * rate5);
+			lvlBytes[Lt.i * 2] = Lt.S * 255;
+			if (b6 === 3) {
+				// 0.6s smoothstepped run-up from cold to the GLOBAL heat; once
+				// arrived, the letter simply tracks the shared temperature
+				// (melting letters keep tracking it too — no colour divergence)
+				Lt.ramp = Math.min(1, (Lt.ramp ?? 1) + (dtL * spd) / 0.6);
+				const e6 = Lt.ramp * Lt.ramp * (3 - 2 * Lt.ramp);
+				Lt.H = heat6 * e6;
+				lvlBytes[Lt.i * 2 + 1] = Lt.H * 255;
+			} else if (b6 === 5) {
+				// the raw sweep progress ships to the shader; it drives BOTH the
+				// gloopy field-sculpted arrival mask and the colour ignition.
+				// ~1.5s so the flow-over is a slow, luxurious crawl.
+				Lt.ramp = Math.min(1, (Lt.ramp ?? 1) + (dtL * spd) / 1.5);
+				lvlBytes[Lt.i * 2 + 1] = Lt.ramp * 255;
+			} else if (b6 === 2) {
+				// heat = 78% the owning AGENT's shared temperature (the whole
+				// blob shifts together) + 22% per-letter hold time (a subtle
+				// undertone, no longer a legible per-letter clock); low-passed
+				// so ownership changes never jump the hue
+				if (Lt.on) Lt.hold = Math.min(1, (Lt.hold || 0) + dtL * spd * 0.22);
+				else Lt.hold = Math.max(0, (Lt.hold || 0) - dtL * spd * 0.6);
+				const tH = clamp((bestA ? bestA.heat : 0) * 0.78 + Lt.hold * 0.22, 0, 1);
+				Lt.H = (Lt.H || 0) + (tH - (Lt.H || 0)) * Math.min(1, dtL * spd * 2);
+				lvlBytes[Lt.i * 2 + 1] = Lt.H * 255;
+			} else {
+				lvlBytes[Lt.i * 2 + 1] = 255;
+			}
+		}
+	}
+
 	// ── Blob 4: the single-mass creature ─────────────────────────────────────
 	// New nodes appear at the leading edge (heading drifts, position snaps
 	// toward nearby letters); old nodes dissolve from the tail. Each node's
@@ -1938,7 +2483,11 @@ ${cellular ? `
 	}
 	function step(dt) {
 		t += dt;
-		if (mass) { stepMass(dt, getOpts()); return; }
+		if (mass) {
+			if (letterQ) stepAgents(dt, getOpts()); // Blob 5: the colony
+			else stepMass(dt, getOpts());           // Blob 4: the single mass
+			return;
+		}
 		if (!cellular || !alive) return;
 		const spd = simSpd(getOpts()); // avg decisions/sec per cell
 		let count = 0;
@@ -2007,6 +2556,12 @@ ${cellular ? `
 		gl.vertexAttribPointer(aPLoc, 2, gl.FLOAT, false, 0, 0);
 		gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, nTex);
 		gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, bTex);
+		if (letterQ && lvlTex) {
+			gl.activeTexture(gl.TEXTURE4); gl.bindTexture(gl.TEXTURE_2D, lidTex);
+			gl.activeTexture(gl.TEXTURE5); gl.bindTexture(gl.TEXTURE_2D, lvlTex);
+			gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+			gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE_ALPHA, nLetters, 1, 0, gl.LUMINANCE_ALPHA, gl.UNSIGNED_BYTE, lvlBytes);
+		}
 		const amount = clamp(o.cmAmount ?? 0.5, 0.05, 0.9);
 		if (cellular) {
 			// The rules decide WHERE the mass is; the breathing makes it ALWAYS
@@ -2034,7 +2589,98 @@ ${cellular ? `
 		} else {
 			const pods = podsBuf;
 			pods.fill(0);
-			if (mass) {
+			if (letterQ && b6 === 5) {
+				// Blob 6-5: ship the COLONY as round bodies, and FUSE all
+				// magnetized letters into one blurred low-res field (uM) —
+				// stamped fresh every frame from the letter levels.
+				let slot = 0;
+				const sig5 = letterH2 * 1.4;
+				for (const a of agents) {
+					if (slot >= 32) break;
+					pods[slot * 4] = a.x; pods[slot * 4 + 1] = a.y;
+					pods[slot * 4 + 2] = a.w; pods[slot * 4 + 3] = sig5;
+					slot++;
+					for (const h2 of a.hist) {
+						if (slot >= 32) break;
+						pods[slot * 4] = h2.x; pods[slot * 4 + 1] = h2.y;
+						pods[slot * 4 + 2] = 0.7 * a.w * h2.w; pods[slot * 4 + 3] = sig5 * 0.85;
+						slot++;
+					}
+				}
+				if (accum6 && fieldDirty) {
+					// stamp + blur + upload only when the letter tick ran (perf6:
+					// ~32Hz) — the fused field changes at level speed, not frame
+					// speed, and this was most of the per-frame CPU cost
+					fieldDirty = false;
+					// rotate: last tick's field becomes the cross-fade source
+					const swap6 = massTexPrev; massTexPrev = massTex; massTex = swap6;
+					accum6.fill(0);
+					accumC6.fill(0);
+					for (const Lt of letterList) {
+						if (Lt.S <= 0.006) continue;
+						const sp = sprites6[Lt.i];
+						if (!sp) continue;
+						// MATURITY weight (S²): openness = 1 - maturity/field drives
+						// the letterform scaffold + cooling in BOTH directions —
+						// arriving letters build up from their strokes and seal;
+						// departing ones re-open and drain. One formula, symmetric.
+						const mw6 = Lt.S * Lt.S;
+						for (let yy = 0; yy < sp.h; yy++) {
+							const gy = sp.gy + yy;
+							if (gy < 0 || gy >= gh6) continue;
+							for (let xx = 0; xx < sp.w; xx++) {
+								const gx = sp.gx + xx;
+								if (gx < 0 || gx >= gw6) continue;
+								const v6 = sp.d[yy * sp.w + xx];
+								accum6[gy * gw6 + gx] += Lt.S * v6;
+								accumC6[gy * gw6 + gx] += mw6 * v6;
+							}
+						}
+					}
+					// two 3x3 blur passes: the stamps FUSE into one smooth field
+					const bl6 = (src, dst) => {
+						for (let y = 0; y < gh6; y++) for (let x = 0; x < gw6; x++) {
+							let s6 = 0, c6 = 0;
+							for (let dy6 = -1; dy6 <= 1; dy6++) {
+								const yy = y + dy6;
+								if (yy < 0 || yy >= gh6) continue;
+								for (let dx6 = -1; dx6 <= 1; dx6++) {
+									const xx = x + dx6;
+									if (xx < 0 || xx >= gw6) continue;
+									s6 += src[yy * gw6 + xx]; c6++;
+								}
+							}
+							dst[y * gw6 + x] = s6 / c6;
+						}
+					};
+					bl6(accum6, tmp6);
+					bl6(tmp6, accum6);
+					bl6(accumC6, tmpC6);
+					bl6(tmpC6, accumC6);
+					for (let i = 0; i < accum6.length; i++) {
+						mBytes6[i * 2] = Math.min(255, accumC6[i] * 320);     // maturity-weighted field
+						mBytes6[i * 2 + 1] = Math.min(255, accum6[i] * 320); // field
+					}
+					gl.activeTexture(gl.TEXTURE2);
+					gl.bindTexture(gl.TEXTURE_2D, massTex);
+					gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+					gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE_ALPHA, gw6, gh6, 0, gl.LUMINANCE_ALPHA, gl.UNSIGNED_BYTE, mBytes6);
+					if (firstTick6) {
+						// seed the cross-fade source so frame 0 doesn't blend
+						// against an empty field
+						firstTick6 = false;
+						gl.bindTexture(gl.TEXTURE_2D, massTexPrev);
+						gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE_ALPHA, gw6, gh6, 0, gl.LUMINANCE_ALPHA, gl.UNSIGNED_BYTE, mBytes6);
+					}
+				}
+				// bind the pair + sub-tick blend EVERY frame (the cross-fade is
+				// what turns the 32Hz field into 60fps-continuous melts)
+				gl.activeTexture(gl.TEXTURE2);
+				gl.bindTexture(gl.TEXTURE_2D, massTex);
+				gl.activeTexture(gl.TEXTURE6);
+				gl.bindTexture(gl.TEXTURE_2D, massTexPrev);
+				if (uni.mmix) gl.uniform1f(uni.mmix, 1); // full-rate stamping — no cross-fade needed
+			} else if (mass) {
 				// Blob 4: newest-first so the HEAD always gets a slot even when
 				// the trail overflows the 32-pod budget (overflow = oldest, dim)
 				let slot = 0;
@@ -2061,6 +2707,10 @@ ${cellular ? `
 		gl.uniform1f(uni.satK, lerp(1.6, 4, amount));
 		gl.uniform1f(uni.ph, TAU * phase);
 		gl.uniform1f(uni.lump, lumpF);
+		if (uni.heat) {
+			const sh6 = simSpd(o);
+			gl.uniform1f(uni.heat, Math.min(1, t * sh6 * 0.12) * (0.6 + 0.4 * Math.sin(t * sh6 * 0.3 + 0.7)));
+		}
 		gl.viewport(0, 0, W, H);
 		gl.clearColor(0, 0, 0, 0);
 		gl.clear(gl.COLOR_BUFFER_BIT);
@@ -2073,6 +2723,32 @@ const sceneBlob3C = (env) => blob3Scene(env, true);
 const sceneBlob3N = (env) => blob3Scene(env, false);
 const sceneBlob3CF = (env) => blob3Scene(env, true, 2); // 2× expand/contract tempo
 const sceneBlob4 = (env) => blob3Scene(env, false, 1, true); // single-mass creature
+
+// Blob 5 — Blob 4 with WHOLE-LETTER swallowing: same creature, same goo,
+// same continuous release, but arrival is quantized to entire glyphs (see
+// the letterQ machinery inside blob3Scene).
+const sceneBlob5 = (env) => blob3Scene(env, false, 1, true, true);
+// Blob 6-1 — Blob 5 with SOLID engulfment (counters filled — a swallowed 'e'
+// is one solid slab), a wider chunkier coat, and the six-stop temperature
+// ramp (gray → blue → green → yellow → red → pink).
+const sceneBlob6 = (env) => blob3Scene(env, false, 1, true, true, 1);
+// Blob 6-2 — Blob 6-1 plus HEAT OVER TIME: letters arrive cold (gray/blue)
+// and warm through the ramp the longer they're held, cooling on release.
+const sceneBlob62 = (env) => blob3Scene(env, false, 1, true, true, 2);
+// Blob 6-3 — Blob 6-2 plus heat-driven TERRITORY: hot blobs flood outward
+// past the letters, pooling across gaps to the field's outer boundary.
+const sceneBlob63 = (env) => blob3Scene(env, false, 1, true, true, 3);
+// Blob 6-4 — Blob 4's continuous mass movement (partial letters) wearing
+// Blob 6-3's colour system (six-stop ramp + global heat shift).
+const sceneBlob64 = (env) => blob3Scene(env, false, 1, true, false, 4);
+// Blob 6-5 — Blob 6-3 with GLOOPY arrivals: the colony's invisible field
+// sculpts each activation, so the goo visibly flows over new letters from
+// the approach side instead of the whole glyph rising at once.
+const sceneBlob65 = (env) => blob3Scene(env, false, 1, true, true, 5);
+// Blob 6-6 — Blob 6-5 with the CPU throttled: letter machinery + field
+// stamping tick at ~32Hz (levels move over ~1s — visually identical) while
+// the agents and rendering keep full display rate. Same visuals, no lag.
+const sceneBlob66 = (env) => blob3Scene(env, false, 1, true, true, 5, true);
 
 // Halftone — a dense dot grid; dot RADIUS comes almost entirely from mask
 // coverage (so the letter shapes stay solid and legible — a size-pounding wave
@@ -2312,6 +2988,13 @@ export const SCENES = [
 	{ id: 'blobc3n', name: 'Blob 3-N',      make: sceneBlob3N,  usesPreset: false, smooth: true },
 	{ id: 'blobc3f', name: 'Blob 3-C Fast', make: sceneBlob3CF, usesPreset: false, smooth: true },
 	{ id: 'blobc4',  name: 'Blob 4',        make: sceneBlob4,   usesPreset: false, smooth: true },
+	{ id: 'blobc5',  name: 'Blob 5',        make: sceneBlob5,   usesPreset: false, smooth: true },
+	{ id: 'blobc6',  name: 'Blob 6-1',      make: sceneBlob6,   usesPreset: false, smooth: true },
+	{ id: 'blobc62', name: 'Blob 6-2',      make: sceneBlob62,  usesPreset: false, smooth: true },
+	{ id: 'blobc63', name: 'Blob 6-3',      make: sceneBlob63,  usesPreset: false, smooth: true },
+	{ id: 'blobc64', name: 'Blob 6-4',      make: sceneBlob64,  usesPreset: false, smooth: true },
+	{ id: 'blobc65', name: 'Blob 6-5',      make: sceneBlob65,  usesPreset: false, smooth: true },
+	{ id: 'blobc66', name: 'Blob 6-6',      make: sceneBlob66,  usesPreset: false, smooth: true },
 	{ id: 'dots',    name: 'Halftone',      make: sceneDots,    usesPreset: false, smooth: true },
 	{ id: 'mosaic',  name: 'Micro Type',    make: sceneMosaic,  usesPreset: false, smooth: true },
 	{ id: 'scatter', name: 'Particles',     make: sceneScatter, usesPreset: false, smooth: true },
