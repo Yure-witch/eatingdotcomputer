@@ -9,7 +9,13 @@
 // ctx.font (browsers interpolate the axis); `wdth` comes through ctx.fontStretch
 // (Safari 17.4+/Chrome 116+). Where fontStretch is unsupported, weight animation
 // alone still carries the effect.
-import { GIFEncoder, quantize, applyPalette } from 'gifenc';
+// gifenc ships ESM for browsers ("module" field) but CJS for Node ("main"), so
+// during SSR the named imports don't exist — go through the namespace. In the
+// browser the names are on the namespace itself (its `default` is GIFEncoder,
+// NOT the module — don't use it); under SSR the CJS exports object comes
+// through as `default`. (Encoding itself only ever runs in the browser.)
+import * as gifencNS from 'gifenc';
+const { GIFEncoder, quantize, applyPalette } = gifencNS.GIFEncoder ? gifencNS : gifencNS.default;
 
 const TAU = Math.PI * 2;
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -99,11 +105,12 @@ export const PRESETS = [
 	{
 		id: 'stagger', name: 'Cascade',
 		fn: (t, i, n, cyc) => {
-			// Each letter runs the same rise+thicken cycle, phase-offset so it
-			// cascades across the word and loops seamlessly.
+			// Each letter runs the same thicken+widen+fade cycle, phase-offset so it
+			// cascades across the word and loops seamlessly. ZERO vertical motion —
+			// letters never rise or fall, so the baseline is locked rock-steady.
 			const u = (t * cyc + i / Math.max(1, n)) % 1;
 			const s = 0.5 - 0.5 * Math.cos(TAU * u); // smooth 0→1→0
-			return { weight: lerp(160, 640, s), widthPct: lerp(88, 116, s), dy: lerp(0.12, 0, s), alpha: lerp(0.6, 1, s) };
+			return { weight: lerp(160, 640, s), widthPct: lerp(88, 116, s), dy: 0, alpha: lerp(0.6, 1, s) };
 		}
 	},
 	{
@@ -147,6 +154,28 @@ function paintBackground(ctx, o) {
 // Export the background painter so tiling / other scenes can reuse it.
 export function paintBg(ctx, o) { paintBackground(ctx, o); }
 
+// Fit scale is LOCKED per line across the whole loop: the animation is sampled
+// over the cycle once and the line fitted to its WIDEST frame (cached). Re-
+// fitting every frame made the drawn font px — and with it the 'middle'-
+// baseline offset, which is proportional to px — breathe with the wave, so the
+// entire line drifted up/down ~1px per frame in exported GIFs.
+const fitCache = new Map();
+function maxTotalWidth(ctx, letters, o, basePx, spacing) {
+	const n = letters.length, cyc = o.cycles || 1;
+	let max = 0;
+	for (let k = 0; k < 32; k++) {
+		let total = 0;
+		for (let i = 0; i < n; i++) {
+			const p = PRESET_MAP[o.preset](k / 32, i, n, cyc, o);
+			ctx.font = `${Math.round(p.weight)} ${basePx}px ${o.fontFamily}`;
+			if (o.hasStretch) ctx.fontStretch = p.widthPct + '%';
+			total += ctx.measureText(letters[i]).width + (i < n - 1 ? spacing : 0);
+		}
+		if (total > max) max = total;
+	}
+	return max;
+}
+
 // Draw ONE animated line of type. `layout` = { cx, cy, fontPx, fit }:
 //   cx, cy  — centre point
 //   fontPx  — base size
@@ -171,7 +200,22 @@ export function drawTypeLine(ctx, text, phase, o, layout) {
 		adv[i] = ctx.measureText(letters[i]).width;
 		total += adv[i] + (i < letters.length - 1 ? spacing : 0);
 	}
-	const scale = layout.fit ? (total > 0 ? Math.min(1.7, layout.fit / total) : 1) : 1;
+	let scale = 1;
+	if (layout.fit) {
+		// Cache key includes a reference measurement so a cache entry computed
+		// against the fallback font is invalidated once the real font loads.
+		ctx.font = `400 ${basePx}px ${o.fontFamily}`;
+		if (o.hasStretch) ctx.fontStretch = '100%';
+		const fp = ctx.measureText(text).width | 0;
+		const key = `${o.preset}|${cyc}|${text}|${basePx.toFixed(1)}|${layout.fit.toFixed(1)}|${o.fontFamily}|${o.hasStretch ? 1 : 0}|${o.tracking || 0}|${fp}`;
+		let maxW = fitCache.get(key);
+		if (maxW === undefined) {
+			maxW = maxTotalWidth(ctx, letters, o, basePx, spacing);
+			if (fitCache.size > 64) fitCache.clear();
+			fitCache.set(key, maxW);
+		}
+		scale = maxW > 0 ? Math.min(1.7, layout.fit / maxW) : 1;
+	}
 	const px = basePx * scale;
 	let x = layout.cx - (total * scale) / 2;
 

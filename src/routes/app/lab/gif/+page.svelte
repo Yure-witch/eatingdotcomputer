@@ -10,7 +10,9 @@
 	let preset = $state('spotlight');    // kinetic-type sub-preset
 	let cycles = $state(1);
 	let fontFrac = $state(0.30);
-	let repeats = $state(14);            // Step & Repeat: number of stacked lines
+	let repeats = $state(14);            // Step & Repeat: number of stacked lines (rows)
+	let tileCols = $state(1);            // Step & Repeat: number of side-by-side columns
+	let tileGap = $state(0.02);          // Step & Repeat: gap between columns (fraction of width)
 	let spread = $state(1.6);            // Step & Repeat: wave cycles down the stack
 	let reactionSpeed = $state(1.5);     // sim iterations/motion advanced per frame (BZ/CA/flow/walk/cloth)
 	let gifSpeed = $state(1);            // playback rate multiplier (frame delay)
@@ -18,9 +20,28 @@
 	let bzBands = $state(20);            // BZ: gradient steps (posterise the fade)
 	let bzSpacing = $state(0.4);         // BZ: distance between waves (refractory length)
 	let bzFade = $state(0.5);            // BZ: trailing tail length (0 = single line)
+	// Wave Wall (lorem) — travelling weight wave over a wall of repeated type.
+	let lwRows = $state(18);             // number of stacked text rows
+	let lwCols = $state(2);              // number of side-by-side text columns
+	let lwPeriod = $state(8);            // wave length, in glyph cells
+	let lwDiag = $state(1.2);            // per-row phase offset → diagonal sweep
+	let lwAmp = $state(1);               // weight punch (fraction of the wght range)
+	let lwLoops = $state(1);             // full wave periods per GIF loop (seamless)
+	let htSize = $state(1);              // Halftone: dot pitch multiplier
+	let moCell = $state(1);              // Micro Type: cell size multiplier
+	let scAmp = $state(1);               // Particles: scatter distance multiplier
+	let cmAmount = $state(0.5);          // Color Metaballs: influence strength / colour coverage
+	let cmGate = $state(0.12);           // Blob 2/3: existence gate (min influence before any blob shows)
+	let b3Rows = $state(1);              // Blob 3: step & repeat rows
+	let b3Cols = $state(1);              // Blob 3: step & repeat columns
+	let b3Gap = $state(0.02);            // Blob 3: column gap (fraction of width, can be negative)
+	let b3Speed = $state(1);             // Blob 3-C Fast: sim tempo multiplier
 
 	const activeScene = $derived(SCENES.find((s) => s.id === mode) ?? SCENES[0]);
 	const usesPreset = $derived(activeScene.usesPreset);
+	// Modes that actually consume the Reaction speed / Wobble slider.
+	const SIM_MODES = new Set(['bz', 'cca', 'flow', 'walk', 'cloth', 'meta', 'cmeta', 'blobc', 'blobc2', 'blobc3', 'blobc3n', 'blobc3f', 'blobc4']);
+	const WOBBLE_MODES = new Set(['meta', 'cmeta', 'blobc', 'blobc2', 'blobc3n']); // slider = wobble cycles per loop (blob3-c: decisions/sec)
 
 	// Background / colours
 	let bgType = $state('radial');
@@ -71,6 +92,16 @@
 		{ name: 'Vapor',   bg: '#120a2e', bg2: '#3a1a6e', fg: '#f0eaff', accent: '#ff6ac1', bgType: 'gradient' }
 	];
 	function applyPalette(p) { bg = p.bg; bg2 = p.bg2; fg = p.fg; accent = p.accent; bgType = p.bgType; }
+	function selectMode(id) {
+		mode = id;
+		// The colour-metaball modes are designed around white paper + gray
+		// hairline type, with colour only in the revealed areas — set that
+		// stage on entry (still overridable via the colour controls).
+		if (id === 'cmeta' || id === 'blobc' || id === 'blobc2' || id.startsWith('blobc3') || id === 'blobc4') {
+			bgType = 'solid'; bg = '#ffffff'; fg = '#9ba1a8';
+			reactionSpeed = 1; duration = (id.startsWith('blobc3') || id === 'blobc4') ? 6 : 4;
+		}
+	}
 	// Set a colour from a typed hex string (any 3- or 6-digit hex, with/without #).
 	function setHex(which, val) {
 		let s = String(val).trim();
@@ -90,8 +121,10 @@
 	// speed update live; text/dims changes rebuild the scene — see below).
 	function liveOpts() {
 		return {
-			text, subtitle: subtitle.trim(), preset, cycles, duration, spread, repeats, reactionSpeed,
+			text, subtitle: subtitle.trim(), preset, cycles, duration, spread, repeats, tileCols, tileGap, reactionSpeed,
 			bzRound, bzBands, bzSpacing, bzFade,
+			lwRows, lwCols, lwPeriod, lwDiag, lwAmp, lwLoops,
+			htSize, moCell, scAmp, cmAmount, cmGate, b3Rows, b3Cols, b3Gap, b3Speed,
 			bg, bg2, fg, accent, bgType,
 			fontFamily: "'Google Sans Flex'", fontFrac, hasStretch
 		};
@@ -104,7 +137,7 @@
 	// text size — so the simulation reseeds from the new typography / dimensions.
 	// Colours, preset and speed are read live by the scene and don't rebuild.
 	$effect(() => {
-		void [mode, text, aspect, resolution, fontFrac, fontsReady];
+		void [mode, text, aspect, resolution, fontFrac, fontsReady, b3Rows, b3Cols, b3Gap];
 		const cv = canvasEl;
 		if (!cv) return;
 		scene = makeScene(mode, { W: cv.width, H: cv.height, getOpts: liveOpts, seed: 1337 });
@@ -112,13 +145,18 @@
 	});
 	// Repaint on a colour / preset change even while paused.
 	$effect(() => {
-		void [bg, bg2, fg, accent, bgType, preset, cycles, spread, repeats, reactionSpeed, bzRound, bzBands, bzSpacing, bzFade];
+		void [bg, bg2, fg, accent, bgType, preset, cycles, spread, repeats, tileCols, tileGap, reactionSpeed, bzRound, bzBands, bzSpacing, bzFade, lwRows, lwCols, lwPeriod, lwDiag, lwAmp, lwLoops, htSize, moCell, scAmp, cmAmount, cmGate, b3Speed];
 		if (scene && previewCtx && !playing) scene.render(previewCtx);
 	});
 
 	onMount(() => {
 		hasStretch = supportsFontStretch();
-		previewCtx = canvasEl.getContext('2d', { willReadFrequently: true });
+		// NO willReadFrequently here: it forces a CPU-backed canvas, and then
+		// every drawImage from a WebGL canvas does a GPU→CPU readback per frame
+		// — which throttled the GPU blob modes to a few fps ("position updates
+		// every 0.2s"). The preview never reads pixels back; only encodeGif's
+		// own offscreen canvas needs that flag.
+		previewCtx = canvasEl.getContext('2d');
 		// Preload the variable font (both weight extremes) so the first frames
 		// aren't drawn in the fallback face.
 		(async () => {
@@ -139,12 +177,25 @@
 		const loop = (now) => {
 			const dt = Math.min((now - last) / 1000, 0.1); last = now;
 			if (playing && scene && previewCtx) {
-				const interval = 1 / Math.max(1, fps * gifSpeed); // seconds between displayed frames
-				accT += dt;
-				if (accT >= interval) {
-					accT = 0; // drop extra under lag rather than spiral
-					scene.step(1 / fps);
+				if (activeScene.smooth) {
+					// Continuous-time scene: run the PREVIEW at full display rate
+					// (step by real elapsed time × GIF speed). The export still
+					// bakes at the chosen fps — this only makes the live view silky.
+					scene.step(dt * gifSpeed);
 					scene.render(previewCtx);
+				} else {
+					const interval = 1 / Math.max(1, fps * gifSpeed); // seconds between displayed frames
+					accT += dt;
+					if (accT >= interval) {
+						// Carry the REMAINDER instead of zeroing: a zeroed accumulator
+						// made the real cadence wander between 3 and 4 display frames
+						// per step (50/66.7ms), which reads as micro-stutter on
+						// smoothly-translating scenes. Cap at one interval so lag
+						// can't spiral.
+						accT = Math.min(accT - interval, interval);
+						scene.step(1 / fps);
+						scene.render(previewCtx);
+					}
 				}
 			}
 			raf = requestAnimationFrame(loop);
@@ -234,7 +285,7 @@
 				<span class="group-label">Mode</span>
 				<div class="preset-grid">
 					{#each SCENES as s}
-						<button class="preset mode" class:on={mode === s.id} onclick={() => (mode = s.id)}>{s.name}</button>
+						<button class="preset mode" class:on={mode === s.id} onclick={() => selectMode(s.id)}>{s.name}</button>
 					{/each}
 				</div>
 			</div>
@@ -307,6 +358,11 @@
 						<span>Repeats <b>{repeats}</b></span>
 						<input type="range" min="3" max="30" step="1" bind:value={repeats} />
 					</label>
+				{:else if mode === 'lorem'}
+					<label class="slider">
+						<span>Rows <b>{lwRows}</b></span>
+						<input type="range" min="4" max="40" step="1" bind:value={lwRows} />
+					</label>
 				{:else}
 					<label class="slider">
 						<span>Text size <b>{Math.round(fontFrac * 100)}</b></span>
@@ -323,9 +379,9 @@
 						<span>Animation speed <b>{cycles}×</b></span>
 						<input type="range" min="1" max="4" step="1" bind:value={cycles} />
 					</label>
-				{:else}
+				{:else if SIM_MODES.has(mode)}
 					<label class="slider">
-						<span>Reaction speed <b>{reactionSpeed.toFixed(2)}</b></span>
+						<span>{WOBBLE_MODES.has(mode) ? 'Wobble' : 'Reaction speed'} <b>{WOBBLE_MODES.has(mode) ? Math.max(1, Math.round(reactionSpeed)) + '×' : reactionSpeed.toFixed(2)}</b></span>
 						<input type="range" min="0.2" max="6" step="0.1" bind:value={reactionSpeed} />
 					</label>
 				{/if}
@@ -335,8 +391,93 @@
 				</label>
 				{#if mode === 'tile'}
 					<label class="slider">
+						<span>Columns <b>{tileCols}</b></span>
+						<input type="range" min="1" max="5" step="1" bind:value={tileCols} />
+					</label>
+					{#if tileCols > 1}
+						<label class="slider">
+							<span>Column gap <b>{(tileGap * 100).toFixed(1)}%</b></span>
+							<input type="range" min="-0.12" max="0.12" step="0.005" bind:value={tileGap} />
+						</label>
+					{/if}
+					<label class="slider">
 						<span>Wave spread <b>{spread.toFixed(1)}</b></span>
 						<input type="range" min="0.4" max="5" step="0.1" bind:value={spread} />
+					</label>
+				{/if}
+				{#if mode === 'lorem'}
+					<label class="slider">
+						<span>Columns <b>{lwCols}</b></span>
+						<input type="range" min="1" max="5" step="1" bind:value={lwCols} />
+					</label>
+					<label class="slider">
+						<span>Wave speed <b>{lwLoops}×</b></span>
+						<input type="range" min="1" max="6" step="1" bind:value={lwLoops} />
+					</label>
+					<label class="slider">
+						<span>Wave length <b>{lwPeriod}</b></span>
+						<input type="range" min="2" max="24" step="1" bind:value={lwPeriod} />
+					</label>
+					<label class="slider">
+						<span>Diagonal <b>{lwDiag.toFixed(1)}</b></span>
+						<input type="range" min="0" max="4" step="0.1" bind:value={lwDiag} />
+					</label>
+					<label class="slider">
+						<span>Weight punch <b>{Math.round(lwAmp * 100)}</b></span>
+						<input type="range" min="0" max="100" value={Math.round(lwAmp * 100)}
+							oninput={(e) => (lwAmp = +e.currentTarget.value / 100)} />
+					</label>
+				{/if}
+				{#if mode === 'cmeta' || mode === 'blobc' || mode === 'blobc2' || mode.startsWith('blobc3') || mode === 'blobc4'}
+					<label class="slider">
+						<span>Color amount <b>{Math.round(cmAmount * 100)}%</b></span>
+						<input type="range" min="0.05" max="0.9" step="0.05" bind:value={cmAmount} />
+					</label>
+				{/if}
+				{#if mode === 'blobc2' || mode.startsWith('blobc3') || mode === 'blobc4'}
+					<label class="slider">
+						<span>Gate <b>{cmGate.toFixed(3)}</b></span>
+						<input type="range" min="0" max="0.15" step="0.005" bind:value={cmGate} />
+					</label>
+				{/if}
+				{#if mode === 'blobc3f'}
+					<label class="slider">
+						<span>Speed <b>{b3Speed.toFixed(2)}×</b></span>
+						<input type="range" min="0.25" max="4" step="0.05" bind:value={b3Speed} />
+					</label>
+				{/if}
+				{#if mode.startsWith('blobc3') || mode === 'blobc4'}
+					<label class="slider">
+						<span>Repeats <b>{b3Rows}</b></span>
+						<input type="range" min="1" max="12" step="1" bind:value={b3Rows} />
+					</label>
+					<label class="slider">
+						<span>Columns <b>{b3Cols}</b></span>
+						<input type="range" min="1" max="4" step="1" bind:value={b3Cols} />
+					</label>
+					{#if b3Cols > 1}
+						<label class="slider">
+							<span>Column gap <b>{(b3Gap * 100).toFixed(1)}%</b></span>
+							<input type="range" min="-0.12" max="0.12" step="0.005" bind:value={b3Gap} />
+						</label>
+					{/if}
+				{/if}
+				{#if mode === 'dots'}
+					<label class="slider">
+						<span>Dot size <b>{htSize.toFixed(2)}</b></span>
+						<input type="range" min="0.6" max="1.8" step="0.05" bind:value={htSize} />
+					</label>
+				{/if}
+				{#if mode === 'mosaic'}
+					<label class="slider">
+						<span>Cell size <b>{moCell.toFixed(2)}</b></span>
+						<input type="range" min="0.6" max="1.8" step="0.05" bind:value={moCell} />
+					</label>
+				{/if}
+				{#if mode === 'scatter'}
+					<label class="slider">
+						<span>Scatter <b>{scAmp.toFixed(2)}</b></span>
+						<input type="range" min="0.3" max="2" step="0.05" bind:value={scAmp} />
 					</label>
 				{/if}
 				{#if mode === 'bz'}
