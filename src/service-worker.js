@@ -25,6 +25,10 @@ self.addEventListener('fetch', (event) => {
 	const url = new URL(event.request.url);
 	if (url.origin !== self.location.origin) return;
 
+	// Dev: never intercept on localhost — let the browser hit the network directly so
+	// Vite/HMR updates always show up on a normal refresh (no stale-bundle caching).
+	if (url.hostname === 'localhost' || url.hostname === '127.0.0.1') return;
+
 	// HTML navigations: network-first so the app shell is always fresh after a deploy.
 	// Falls back to cache only if offline.
 	if (event.request.mode === 'navigate') {
