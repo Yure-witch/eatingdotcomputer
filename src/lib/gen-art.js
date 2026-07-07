@@ -1287,7 +1287,9 @@ const sceneBlob2 = (env) => colorMetaScene(env, 2);
 //   cellular = false → "Blob 3-N": Blob 2's noise/pod movement — smooth pod
 //                      envelopes blooming on a loop-seamless schedule.
 // Falls back to the CPU Blob 2 engine if WebGL is unavailable.
-function blob3Scene(env, cellular, speedMul = 1, mass = false, letterQ = false, b6 = false, perf6 = false) {
+// noisy (6-7): re-enable Blob 5's irregularity — patchy spread, full gloop
+// lump, bead-marbled hue — on top of the fused-field goo. Edge stays hairline.
+function blob3Scene(env, cellular, speedMul = 1, mass = false, letterQ = false, b6 = false, perf6 = false, noisy = false) {
 	const { W, H, getOpts, rng } = env;
 	// total sim tempo: Reaction speed × the mode's Speed slider × the variant's
 	// built-in multiplier (Blob 3-C Fast = 2×)
@@ -1309,7 +1311,7 @@ function blob3Scene(env, cellular, speedMul = 1, mass = false, letterQ = false, 
 	let lumpF = 0.05, t = 0, prog = null, uni = null, clusters = [], podR = 1;
 	let quadBuf = null, aPLoc = -1, nTex = null, bTex = null; // per-scene GL objects on the shared context
 	let wallCv = null, wallFg = null; // cached hairline wall (drawing it per frame caused GC/measureText frame spikes)
-	const podsBuf = new Float32Array(128); // 32 pod slots — headroom so FADING tail segments never get evicted mid-fade (the "sometimes pops while fading")
+	const podsBuf = new Float32Array(384); // 96 pod slots — headroom so FADING tail segments never get evicted mid-fade; Blob 8/9's swarm (5 heads x ~12 line-trail points + a dying agent's fading trail) overflowed 64 and dropped pods = flashing creatures
 	// the living mass (cellular variant): a coarse grid of letter-sized cells
 	let gw2 = 2, gh2 = 2, valid = null, alive = null, level = null, ageT = null, phB = null, rateB = null, mBytes = null, massTex = null, simT = 0, hasText = false;
 	let cellComp = null, compCells = null, swallows = [], capC = 10; // letter awareness
@@ -1322,10 +1324,13 @@ function blob3Scene(env, cellular, speedMul = 1, mass = false, letterQ = false, 
 	// Blob 5 (letterQ): whole-letter swallow machinery
 	let lidTex = null, lvlTex = null, lvlBytes = null, letterList = [], nLetters = 1;
 	let agents = [], branchT = 3; // Blob 5's colony of invisible roamers
+	let com9x = -1e9, com9y = 0; // 6-9: lagging (EMA) colony center of mass
 	// Blob 6-5 fused letter field: low-res per-letter sprites stamped+blurred
 	// into ONE bitmap per frame
 	let gs6 = 6, gw6 = 2, gh6 = 2, sprites6 = null, accum6 = null, tmp6 = null, mBytes6 = null;
 	let accumC6 = null, tmpC6 = null; // cooling channel (departing letters)
+	let accumD6 = null, tmpD6 = null; // 6-10: dwell channel (occupation time)
+	let heatF6 = null, tmpH6 = null, maxH6 = 0; // 6-11/12: persistent diffusing heat field + running max
 	let letterDtAcc = 0, fieldDirty = true; // perf6: letter machinery ticks at ~32Hz
 	let massTexPrev = null, firstTick6 = true; // perf6: last tick's field, for the GPU cross-fade
 	let lastTickDt6 = 1 / 32; // actual duration of the last tick (normalizes the blend clock)
@@ -1338,15 +1343,17 @@ varying vec2 vUV;
 uniform sampler2D uN;      // distance field: 1 on the letterform -> 0 at max reach
 uniform sampler2D uB;      // bead-noise texture — Blob-1-style colour speckle
 uniform sampler2D uM;      // cell-mass texture — the living blob organism (CPU sim)
-uniform vec4 uPods[32];    // pod/mass variants: x, y (px), amplitude, sigma
+uniform vec4 uPods[96];    // pod/mass variants: x, y (px), amplitude, sigma
 uniform float uGate, uSatK;
 uniform float uPh;         // TAU * loop phase
+uniform float uGPh;        // UNWRAPPED loop count (t/duration, monotonic) — global colour drift that never snaps; uPh wraps every loop and a scaled fract of it flicked ALL colours at once
 uniform float uLump;       // lump spatial frequency (~1 / letter height)
 uniform vec2 uMOff;        // ~0.75 mass-texel, for the rounding taps
 uniform sampler2D uLid;    // Blob 5: nearest-letter Voronoi id (16-bit in L+A)
 uniform sampler2D uLvl;    // Blob 5: per-letter swallow level (Nx1)
 uniform float uNL;         // Blob 5: letter count
 uniform float uHeat;       // Blob 6-4: global temperature (uniform-borne)
+uniform vec2 uCom9;        // 6-9: lagging colony center of mass (px)
 uniform sampler2D uMPrev;  // Blob 6-6: previous field tick (cross-fade source)
 uniform float uMMix;       // Blob 6-6: sub-tick blend fraction
 uniform vec2 uRes;
@@ -1380,7 +1387,39 @@ ${b6 === 3 ? `
 	vec4 nt = texture2D(uN, st);
 	float n = mix(nt.r, nt.a, smoothstep(0.2, 0.85, SQ.x));
 ` : b6 === 5 ? `
+${noisy ? `
+	// ROUNDER MASS (6-7): the goo's shape is a level set of the letter
+	// distance field, so it inherits every notch and crossbar. Averaging the
+	// field over a small disc melts concave glyph detail into convex blob
+	// contour — the mass reads as blobs that ATE letters, not as fat glyphs.
+	float lhR = (6.2832 / uLump) / 0.85;
+	vec2 rrA = (lhR * 0.3) / uRes;
+	vec2 rrD = rrA * 0.707;
+	vec4 nt5raw = texture2D(uN, st);
+	vec4 nt5 = 0.28 * nt5raw
+		+ 0.12 * (texture2D(uN, st + vec2(rrA.x, 0.0)) + texture2D(uN, st - vec2(rrA.x, 0.0))
+			+ texture2D(uN, st + vec2(0.0, rrA.y)) + texture2D(uN, st - vec2(0.0, rrA.y)))
+		+ 0.06 * (texture2D(uN, st + rrD) + texture2D(uN, st - rrD)
+			+ texture2D(uN, st + vec2(rrD.x, -rrD.y)) + texture2D(uN, st - vec2(rrD.x, -rrD.y)));
+${noisy >= 2 ? `
+	// 6-8: the OUTER contour departs from the letterforms by ~60%. A second
+	// disc average at ~1.1 letter-heights is so wide that glyph anatomy is
+	// gone from its level sets; blend toward it as the field thins, so the
+	// core still says "letters" while the perimeter says "blob". The 1.25
+	// gain offsets the zero-clamp dilution near the field's outer boundary.
+	vec2 rrB = (lhR * 1.1) / uRes;
+	vec2 rrBd = rrB * 0.707;
+	vec4 ntBig = 0.28 * texture2D(uN, st)
+		+ 0.12 * (texture2D(uN, st + vec2(rrB.x, 0.0)) + texture2D(uN, st - vec2(rrB.x, 0.0))
+			+ texture2D(uN, st + vec2(0.0, rrB.y)) + texture2D(uN, st - vec2(0.0, rrB.y)))
+		+ 0.06 * (texture2D(uN, st + rrBd) + texture2D(uN, st - rrBd)
+			+ texture2D(uN, st + vec2(rrBd.x, -rrBd.y)) + texture2D(uN, st - vec2(rrBd.x, -rrBd.y)));
+	float wEdge = 0.6 * (1.0 - smoothstep(0.35, 0.8, nt5.a));
+	nt5 = mix(nt5, min(ntBig * 1.25, vec4(1.0)), wEdge);
+` : ''}
+` : `
 	vec4 nt5 = texture2D(uN, st);
+`}
 ${perf6 ? `
 	// 6-6: the field ticks at 32Hz on the CPU; cross-fading the last two
 	// snapshots per frame makes the displayed field 60fps-continuous (the
@@ -1396,7 +1435,29 @@ ${perf6 ? `
 	// seal shut; on exit the counters re-open and the goo drains along the
 	// skeleton. Symmetric scaffolding, all shape, no opacity.
 	float cool5 = 1.0 - min(1.0, lf6.r / max(letterF, 0.03));
-	float n = mix(nt5.a, nt5.r, smoothstep(0.15, 0.9, cool5));
+${noisy && noisy !== 3 ? `
+	// DEPART LIKE 6-6: rounding blurred the open-stroke scaffold, so counters
+	// couldn't re-open and melts lost the tiny-hole -> contract-to-strokes
+	// ritual. As the letter cools, the geometry hands back to the RAW field —
+	// at full cool the scaffold is exactly 6-6's, holes and all. (Arrivals
+	// also begin letter-true, then round out as they seal: goo settling.)
+	nt5 = mix(nt5, nt5raw, smoothstep(0.1, 0.75, cool5)${noisy >= 4 ? ' * smoothstep(0.28, 0.6, nt5raw.a) /* 6-9: hand back only NEAR the glyph - counters re-open while the outer rim keeps its 60% blob departure */' : ''});
+` : ''}
+${noisy >= 5 ? `
+	// 6-10 DWELL HALO: the dwell channel is stamped per-letter, blurred into
+	// the fused field (so it fades smoothly across neighbours), then five
+	// WIDE taps here throw the radiance well beyond the glyphs — the longer
+	// a letter has been blobbed, the further its heat reaches.
+	vec2 rh10 = (lhR * ${noisy >= 7 ? '4.5' : '2.8'}) / uRes;
+	vec4 hT1 = texture2D(uM, st + vec2(rh10.x, 0.0));
+	vec4 hT2 = texture2D(uM, st - vec2(rh10.x, 0.0));
+	vec4 hT3 = texture2D(uM, st + vec2(0.0, rh10.y));
+	vec4 hT4 = texture2D(uM, st - vec2(0.0, rh10.y));
+	float dwellW10 = 0.3 * lf6.g + 0.175 * (hT1.g + hT2.g + hT3.g + hT4.g);
+	// wide MASS density from the same taps: where the blob is thick, its
+	// belly runs hot regardless of where the glyphs sit
+	float massW10 = 0.3 * lf6.a + 0.175 * (hT1.a + hT2.a + hT3.a + hT4.a);
+` : ''}	float n = mix(nt5.a, nt5.r, smoothstep(0.15, 0.9, cool5));
 ` : `
 	float n = texture2D(uN, st).a;
 `}
@@ -1416,7 +1477,7 @@ ${cellular ? `
 	// Influence = feathered circles (pod gaussians): either scheduled noise
 	// envelopes (Blob 3-N) or the persistent creature mass (Blob 4).
 	float m = 0.0;
-	for (int i = 0; i < 32; i++) {
+	for (int i = 0; i < 96; i++) {
 		vec4 q = uPods[i];
 		if (q.z > 0.0005) {
 			vec2 dd = p - q.xy;
@@ -1443,7 +1504,7 @@ ${letterQ ? `
 	// mass revealed patch-by-patch reads as popping between nearby spots. The
 	// range stays wide for the static variants (their organic unevenness) but
 	// flattens to a gentle texture for the mover.
-	m = min(m * ${b6 === 5 ? '1.0 /* no patch texture: magnetic goo is SMOOTH */' : mass ? '(0.78 + 0.42 * bt.r)' : '(0.3 + 1.1 * bt.r)'}, 1.0);
+	m = min(m * ${b6 === 5 && !noisy ? '1.0 /* no patch texture: magnetic goo is SMOOTH */' : mass ? '(0.78 + 0.42 * bt.r)' : '(0.3 + 1.1 * bt.r)'}, 1.0);
 ${letterQ ? `
 	// WHOLE-LETTER SWALLOW (Blob 5): every pixel belongs to its nearest letter
 	// (Voronoi id texture); a touched letter's level lifts the influence over
@@ -1486,13 +1547,23 @@ ${b6 === 3 ? `
 	// pixel, so seams, striations and partitions are structurally impossible;
 	// the mass morphs as letters magnetize on and off.
 	// letterF & cool5 sampled up top (they also drive the scaffold geometry)
-	m = min(m * 0.5 + letterF * 1.15, 1.0);
+	m = min(m * 0.5 + letterF * ${noisy === 14 || noisy >= 16 ? '1.45 /* Blob 11/12-2: widened field is flatter - extra gain keeps merged lobes solid */' : '1.15'}, 1.0);${noisy >= 7 ? ' // 6-12: heat-grown body REMOVED - m drives sat/reach, so the heat term was bulging the silhouette; structure now matches 6-11 exactly, heat is colour-only' : ''}
 ` : `
 	m = 0.95 * SQ.x * smoothstep(${b6 ? '0.5, 0.78' : '0.62, 0.86'}, n); // ${b6 ? 'wide solid coat' : 'tight coat'}
 `}
 ` : ''}
 	float sat = min(m * uSatK * (0.2 + 1.6 * n), 1.0); // magnetized influence
 	float aMul = 1.0;
+${noisy >= 13 ? `
+	// GLOBAL-DRIFT MODES: no mass, no paint. This shader branch has no
+	// early-out and no existence gate (removed for the melt look), so pixels
+	// at the glyph cores (n ~ 1) always clear the render threshold even at
+	// ZERO mass - a letter-surface sliver that the cycling global tint
+	// paints before first touch and forever after departure. Gate the
+	// alpha on actual mass; arrivals/departures are continuous in m, so
+	// the melt choreography is untouched.
+	aMul *= smoothstep(0.015, 0.06, m);
+` : ''}
 ${letterQ ? `
 	// Blob 5: NO gate — letters already have discrete existence, and the
 	// gate's cutoff contour swept across the glyph as a hard wiping edge
@@ -1515,8 +1586,24 @@ ${letterQ ? `
 	float w1 = sin(p.x * uLump + sin(uPh) * 1.7 + 2.1);
 	float w2 = sin((p.x * 0.55 + p.y * 0.83) * uLump * 1.31 + cos(uPh) * 1.3 + 4.7);
 	float w3 = sin((p.y * 0.92 - p.x * 0.31) * uLump * 0.77 + sin(uPh + 1.0) * 2.0 + 1.3);
-	float lump = ((w1 + w2 + w3) / 3.0) * ${b6 === 5 ? '(0.015 + 0.08 * reach) /* hushed: surface-tension smooth */' : '(0.04 + 0.22 * reach)'};
-	float feather = clamp(reach * 0.5, ${b6 === 5 ? '0.012' : letterQ ? '0.05' : '0.008'}, ${b6 === 5 ? '0.02' : letterQ ? '0.08' : '0.05'}); // 6-5: hairline AA only — a crisp fully-opaque edge; the fused field supplies all the softness the SHAPE needs
+	float lump = ((w1 + w2 + w3) / 3.0) * ${b6 === 5 && !noisy ? '(0.015 + 0.08 * reach) /* hushed: surface-tension smooth */' : '(0.04 + 0.22 * reach)'};
+${noisy ? `
+	// BIG-SCALE instability (6-7): three slow waves at ~5x the lump wavelength
+	// warp the entire silhouette, so the blob never quite settles. Amplitudes
+	// stay small — this is a sway, not a wobble; the fine gloop rides on top.
+	float g1 = sin(p.x * uLump * 0.19 + sin(uPh + 0.4) * 2.3 + 1.1);
+	float g2 = sin((p.x * 0.42 + p.y * 0.91) * uLump * 0.23 + cos(uPh + 2.0) * 1.9 + 3.8);
+	float g3 = sin((p.y * 0.78 - p.x * 0.63) * uLump * 0.16 + sin(uPh + 3.1) * 2.6 + 5.2);
+	lump += ((g1 + g2 + g3) / 3.0) * (0.02 + 0.04 * reach);
+` : ''}${noisy >= 4 ? `
+	// VISCOUS CORE (6-9): a lagging average of the colony's center of mass
+	// trails the blobs; near it the surface resists deformation — fine gloop
+	// and big sway are both damped, so the goo feels thick and settled where
+	// the body of the mass lives, and livelier out at the frontier.
+	vec2 dCom9 = p - uCom9;
+	float sigC9 = lhR * 2.2;
+	lump *= (1.0 - 0.65 * exp(-dot(dCom9, dCom9) / (2.0 * sigC9 * sigC9)));
+` : ''}	float feather = clamp(reach * 0.5, ${b6 === 5 ? '0.012' : letterQ ? '0.05' : '0.008'}, ${b6 === 5 ? '0.02' : letterQ ? '0.08' : '0.05'}); // 6-5: hairline AA only — a crisp fully-opaque edge; the fused field supplies all the softness the SHAPE needs
 	float v = clamp((n - (1.0 - reach) + lump) / feather, 0.0, 1.0);
 	if (v <= 0.0) { OUT(vec4(0.0)); return; }
 	float vv = v * v * (3.0 - 2.0 * v);
@@ -1527,7 +1614,7 @@ ${letterQ ? `
 	// but the hue drive is MULTIPLIED by the same poisson bead texture, so the
 	// colour carries Blob 1's full-amplitude granularity.
 	float bn = bt.a;
-	float hb = m * uSatK * (0.1 + 2.2 * n)${b6 === 5 ? ' /* no bead marbling: it read as crunch */' : ' * (0.08 + 0.92 * bn)'}; // ${b6 === 5 ? 'smooth magnetic hue field' : 'deep dips between beads'}
+	float hb = m * uSatK * ${noisy >= 5 ? '(0.3 + 0.55 * n + 1.5 * smoothstep(0.05, 0.5, letterF) + 0.9 * smoothstep(0.03, 0.4, dwellW10)) /* 6-10: heat rides the DIFFUSED fields, not glyph distance — it dissipates */' : noisy === 4 ? '(0.55 + 1.3 * n + 0.9 * smoothstep(0.12, 0.6, letterF)) /* 6-9: base nears stroke temp; thick mass closes the gap entirely */' : '(0.1 + 2.2 * n)'}${b6 === 5 && !noisy ? ' /* no bead marbling: it read as crunch */' : ' * (0.08 + 0.92 * bn)'}; // ${b6 === 5 && !noisy ? 'smooth magnetic hue field' : 'deep dips between beads'}
 	float I = pow(clamp(hb * 0.3, 0.0, 1.0), 2.0);
 	I = min(1.0, I + clamp((n - 0.88) / 0.12, 0.0, 1.0) * 0.3);
 	// plus the big soft temperature patches (subtle, morphing over the loop)
@@ -1555,7 +1642,69 @@ ${b6 === 2 ? `
 	// Blob 6-5: global temperature, MINUS the fused cooling channel — a
 	// departing region drops ~2 ramp stops as its lobe shrinks, at full
 	// opacity: the goo cools and contracts instead of fading.
+${noisy >= 6 ? `
+	// 6-11/6-12: TIME-INTEGRATED HEAT (lf6.b) — a persistent CPU field: letters
+	// inject, per-tick diffusion spreads it (the footprint grows without
+	// bound), slow decay cools. NO CAP anywhere: camp long enough and the
+	// ENTIRE blob climbs to pink and pastel. The diffusion's smoothness is
+	// what forbids steep jumps (white-pink beside gray), not a ceiling.
+	float d11 = pow(clamp((n - (1.0 - reach)) / max(reach, 0.05) / 0.72, 0.0, 1.0), 0.6);
+	float heat11 = ${noisy >= 10 ? 'fract(lf6.b * 2.0) /* 7-1/8/9: unwrapped 2-lap window - see pack comment; interpolation passes through TRUE gray */' : noisy === 8 ? 'lf6.b /* 7-0: wheel PHASE, not magnitude */' : noisy >= 7 ? 'pow(min(lf6.b * 1.05, 1.0), 0.85) * smoothstep(0.02, 0.07, lf6.b) /* 6-12: near-LINEAR response (was log) - the log map read anything past half-strength as near-maximum, so the hottest colour flooded instantly. Linear keeps the middle of the ramp populated: cores lead through green/yellow/red while surroundings trail behind, 6-7 style. Floor gate still bounds the lowest band */' : 'lf6.b * 1.16'};
+${noisy >= 7 ? `
+	// 6-12 BALLOON — the decisive break from the CPU field. ROOT CAUSE of
+	// every prior round: accum6/accumD6 are stamped ONLY inside the letter
+	// sprite boxes, so all injected heat was letter-shaped at birth and no
+	// field physics could ever escape that support. The balloon instead
+	// draws an explicit hot FRONT in letter-DISTANCE space (dN12 spans the
+	// entire halo out to the body edge): full heat behind the front, band
+	// gradient across it, base beyond. Its radius is driven by tenure
+	// signals (heat byte + wide dwell halo) that keep growing while
+	// letters are held, so it inflates from the strokes to the whole body
+	// over ~5-20s of residence, then deflates on departure as they decay.
+	float dN12 = 1.0 - n;
+	float drv12 = lf6.b + dwellW10 * 0.7;
+	float R12 = drv12 * 2.4 - 0.12;
+	${(noisy === 8 || noisy >= 10) ? '' : 'heat11 = max(heat11, (1.0 - smoothstep(R12 - 0.45, R12 + 0.05, dN12)) * min(1.0, drv12 * 1.6));'}
+${noisy == 7 ? `
+	// DEPARTURE COOLING (6-12 only — 7-0 cools via the 6-7 flat tax instead):
+	// when a letter starts leaving, its maturity drains and cool5 rises —
+	// that departure signal (gated by fused-mass presence so free plumes
+	// are untouched) pulls heat11 itself down the ramp.
+	heat11 *= 1.0 - smoothstep(0.3, 0.85, cool5) * smoothstep(0.02, 0.12, lf6.a) * 0.85;
+` : ''}
+` : ''}	I = clamp(${noisy === 17 ? 'fract(uGPh + lf6.b * 0.9 + smoothstep(0.05, 0.5, letterF) * 0.05 + dwellW10 * 0.12 + n * 0.05 + uHeat * 0.05 - clamp(cool5 * 1.2, 0.0, 1.0) * 0.17) /* Blob 12-3: keeps the 2-band cooling reversal (and its fresh-arrival mirror) */' : noisy >= 16 ? 'fract(uGPh + lf6.b * 0.9 + smoothstep(0.05, 0.5, letterF) * 0.05 + dwellW10 * 0.12 + n * 0.05 + uHeat * 0.05) /* Blob 12-2: global drift runs the wheel FORWARD like Blob 9 colour order, at HALF a lap per loop. This trades the tint loop-seam alignment away, but the swarm and heat field are not loop-periodic anyway, so the export seam was never frame-perfect in these modes. The earlier breathing drift retraced backwards, which read as the wrong cycle. Cooling letters REVERSE the scale ~2 bands (0.17 of the 12-stop wheel) as they drain - cool5 rises exactly while a letter fades, so the walk-back completes right before it disappears; fresh arrivals get the mirror effect, starting 2 back and catching up */' : noisy === 15 ? 'fract(uPh * 0.1591549 + lf6.b * 0.14 + smoothstep(0.05, 0.5, letterF) * 0.02 + dwellW10 * 0.027 + n * 0.01 - clamp(cool5 * 1.2, 0.0, 1.0) * 0.17) /* Blob 12: palette at ~1/3 speed - only the loop-locked global drift keeps full (minimum seamless) rate */' : noisy === 14 ? 'fract(uPh * 0.1591549 + lf6.b * 0.64 + smoothstep(0.05, 0.5, letterF) * 0.08 + dwellW10 * 0.11 + n * 0.04 - clamp(cool5 * 1.2, 0.0, 1.0) * 0.17) /* Blob 11: SLOWER palette - the global once-per-loop drift is kept (integer laps = seamless loop) but the fast movers (heat field, dwell lead) run at roughly half gain */' : noisy === 13 ? 'fract(uPh * 0.1591549 + lf6.b * 1.2 + smoothstep(0.05, 0.5, letterF) * 0.12 + dwellW10 * 0.2 + n * 0.06 - clamp(cool5 * 1.2, 0.0, 1.0) * 0.17) /* Blob 10: the WHOLE surface rides one global wheel cycle (uPh/2pi = exactly one lap per GIF loop, so it is seamless); the letter heat field adds a radiating phase lead ON TOP; and freshly-swallowed or departing ground (cool5 high, maturity low) renders ~2 bands BEHIND, catching up quickly as it matures - no fresh letter ever pops in at the current colour */' : (noisy === 8 || noisy >= 10) ? 'fract(heat11 + smoothstep(0.05, 0.5, letterF) * 0.12 + dwellW10 * 0.28 + n * 0.1 + uHeat * 0.05) /* 7-0 wheel phase lead, WIDENED: letterF has letter-stamp support (the old trap), so it keeps only a small crisp pop (~1 band); the bulk of the lead rides dwellW10, whose taps reach 4.5 half-heights - a ~3-band lead spread smoothly far past the strokes - plus a gentle n gradient so the rim is graded, not flat */' : noisy === 9 ? 'heat11 * 1.05 + uHeat * 0.15 - cool5 * 0.34 * (1.0 - smoothstep(0.05, 0.4, dwellW10)) /* 7-0-prev: 6-7\'s FLAT cooling, hold-protected. While letters are held, the wide dwell halo suppresses the tax so heat expands past the glyphs like 6-12; on departure dwellW10 drains and the full -0.34 sweeps the region down the ramp */' : noisy == 7 ? 'heat11 * 1.05 + uHeat * 0.15 - cool5 * 0.3 * smoothstep(0.02, 0.12, lf6.a) * (1.0 - heat11) /* 6-12: cooling is HEAT-SUBORDINATE. cool5 is low only where MATURITY built up, and maturity is letter-stamped - so even mass-gated, the flat tax was a letter-shaped ceiling keeping hot bands within the stroke skirt. Scaled by (1-heat11), a hot cell owes nothing regardless of maturity: pastel is reachable anywhere in the blob, while the cold departing body still cools and darkens exactly as before */' : 'heat11 * (0.55 + 0.45 * d11) * 1.25 + uHeat * 0.1 - cool5 * 0.3'}, 0.0, 1.0);
+${noisy >= 7 ? `
+	// 6-12 ARRIVAL IMPRINT: freshly-grabbed glyphs glow warm through the
+	// still-cold body — visible letters on first touch — then dissolve into
+	// the ambient field as the spreading heat catches up ((1 - heat11)
+	// gates the imprint out precisely as the surroundings reach it).
+${(noisy === 8 || noisy >= 10) ? '' : '\tI = clamp(I + smoothstep(0.84, 0.97, n) * 0.3 * (1.0 - min(1.0, lf6.b * 1.5)), 0.0, 1.0);'}
+` : ''}
+	I = clamp(I + ((w1 + w2 + w3) / 3.0) * 0.05 + (bn - 0.5) * 0.07, 0.0, 1.0);
+` : noisy === 5 ? `
+	// 6-10: conduction (as 6-9) PLUS tenure radiance — the wide-sampled
+	// dwell halo pushes heat far past the glyphs, strongest around letters
+	// that have been blobbed longest, blending smoothly between neighbours.
+	float dwell9 = 1.0 - cool5;
+	float mass9 = smoothstep(0.04, 0.42, letterF);
+	float warm9 = mass9 * (0.35 + 0.65 * dwell9);
+	float halo10 = smoothstep(0.015, 0.3, dwellW10);
+	I = clamp(uHeat * 0.9 + I * 0.35 - 0.05 - cool5 * 0.3 + warm9 * 0.4 + halo10 * 0.75, 0.0, 1.0);
+	// heat shimmer: the drifting gloop waves + bead grain jitter the
+	// temperature so isotherms never read as clean distance contours
+	I = clamp(I + ((w1 + w2 + w3) / 3.0) * 0.05 + (bn - 0.5) * 0.07, 0.0, 1.0);
+` : noisy === 4 ? `
+	// 6-9: letters are the heat SOURCE but heat CONDUCTS outward. The fused
+	// field is literally a diffusion of the letter stamps, so it doubles as
+	// the conduction map: warmth grows where material has built up (letterF)
+	// and where it has dwelt (maturity share), heating the whole surface.
+	float dwell9 = 1.0 - cool5;
+	float mass9 = smoothstep(0.06, 0.5, letterF); // saturates fast: A LOT of blob = hot
+	float warm9 = mass9 * (0.4 + 0.6 * dwell9);
+	I = clamp(uHeat * 0.9 + I * 0.35 - 0.05 - cool5 * 0.34 + warm9 * 0.45, 0.0, 1.0);
+` : `
 	I = clamp(uHeat * 0.9 + I * 0.35 - 0.05 - cool5 * 0.34, 0.0, 1.0);
+`}
 ` : ''}
 	vec3 col;
 ${b6 ? `
@@ -1566,13 +1715,51 @@ ${b6 ? `
 	else if (I < 0.52) { float f = (I - 0.32) / 0.2;  col = mix(vec3(60.0, 110.0, 255.0), vec3(40.0, 200.0, 120.0), f); }
 	else if (I < 0.72) { float f = (I - 0.52) / 0.2;  col = mix(vec3(40.0, 200.0, 120.0), vec3(255.0, 205.0, 40.0), f); }
 	else if (I < 0.88) { float f = (I - 0.72) / 0.16; col = mix(vec3(255.0, 205.0, 40.0), vec3(255.0, 60.0, 40.0), f); }
-	else { float f = min(1.0, (I - 0.88) / 0.12);     col = mix(vec3(255.0, 60.0, 40.0), vec3(255.0, 95.0, 200.0), f); }
+	else {
+${noisy >= 5 ? `
+		// 6-10 overheat: past hot pink lives PASTEL pink — only tenure-
+		// saturated zones (long-blobbed letters + their halo cores) reach it
+		if (I < 0.96) { float f = (I - 0.88) / 0.08; col = mix(vec3(255.0, 60.0, 40.0), vec3(255.0, 95.0, 200.0), f); }
+		else { float f = min(1.0, (I - 0.96) / 0.04); col = mix(vec3(255.0, 95.0, 200.0), vec3(255.0, 198.0, 221.0), f); }
+` : `
+		float f = min(1.0, (I - 0.88) / 0.12);     col = mix(vec3(255.0, 60.0, 40.0), vec3(255.0, 95.0, 200.0), f);
+`}	}
 ` : `
 	if (I < 0.18) col = vec3(255.0, 40.0, 40.0);
 	else if (I < 0.8) { float f = (I - 0.18) / 0.62; col = vec3(255.0, 40.0 + 165.0 * f, 40.0); }
 	else { float f = min(1.0, (I - 0.8) / 0.17); col = vec3(255.0, 205.0 - 110.0 * f, 40.0 + 160.0 * f); }
 `}
-	col = clamp(col * (0.9 + 0.2 * n) * (1.0 + 0.02 * mot) / 255.0, 0.0, 1.0);
+${(noisy === 8 || noisy >= 10) ? `
+	// 7-0 COLOUR WHEEL — temperature only climbs; the display LOOPS:
+	// gray -> blue -> green -> yellow -> red -> hot pink -> pastel pink ->
+	// pastel purple -> purple -> dark blue -> cyan -> light blue -> gray...
+	// The circle closes (both ends are gray), so the wrap is seamless.
+	float t12 = fract(I);
+	if (t12 < 0.09)      col = mix(vec3(150.0, 150.0, 155.0), vec3(60.0, 110.0, 255.0),  t12 / 0.09);
+	else if (t12 < 0.18) col = mix(vec3(60.0, 110.0, 255.0),  vec3(40.0, 200.0, 120.0), (t12 - 0.09) / 0.09);
+	else if (t12 < 0.27) col = mix(vec3(40.0, 200.0, 120.0),  vec3(255.0, 205.0, 40.0), (t12 - 0.18) / 0.09);
+	else if (t12 < 0.36) col = mix(vec3(255.0, 205.0, 40.0),  vec3(255.0, 60.0, 40.0),  (t12 - 0.27) / 0.09);
+	else if (t12 < 0.45) col = mix(vec3(255.0, 60.0, 40.0),   vec3(255.0, 95.0, 200.0), (t12 - 0.36) / 0.09);
+	else if (t12 < 0.54) col = mix(vec3(255.0, 95.0, 200.0),  vec3(255.0, 198.0, 221.0),(t12 - 0.45) / 0.09);
+	else if (t12 < 0.63) col = mix(vec3(255.0, 198.0, 221.0), vec3(205.0, 170.0, 235.0),(t12 - 0.54) / 0.09);
+	else if (t12 < 0.72) col = mix(vec3(205.0, 170.0, 235.0), vec3(125.0, 60.0, 195.0), (t12 - 0.63) / 0.09);
+	else if (t12 < 0.81) col = mix(vec3(125.0, 60.0, 195.0),  vec3(40.0, 65.0, 185.0),  (t12 - 0.72) / 0.09);
+	else if (t12 < 0.90) col = mix(vec3(40.0, 65.0, 185.0),   vec3(60.0, 220.0, 235.0), (t12 - 0.81) / 0.09);
+	else if (t12 < 0.97) col = mix(vec3(60.0, 220.0, 235.0),  vec3(140.0, 185.0, 255.0),(t12 - 0.90) / 0.07);
+	else                 col = mix(vec3(140.0, 185.0, 255.0), vec3(150.0, 150.0, 155.0),(t12 - 0.97) / 0.03);
+${noisy >= 10 ? `
+	// SEAM SQUEEZE (7-1/8/9): where fresh gray ground borders nearly-lapped
+	// ground, the whole wheel is compressed into a couple of pixels — the
+	// red filament. Two 1.5px taps measure the local phase gradient; over-
+	// compressed pixels fade to gray. Real bands (a lap spread over 40px+)
+	// sit far below the threshold and are untouched.
+	vec2 e12 = 1.5 / uRes;
+	float gA12 = texture2D(uM, st + vec2(e12.x, 0.0)).b;
+	float gB12 = texture2D(uM, st + vec2(0.0, e12.y)).b;
+	float grad12 = (abs(gA12 - lf6.b) + abs(gB12 - lf6.b)) * 2.0;
+	col = mix(col, vec3(150.0, 150.0, 155.0), smoothstep(0.1, 0.25, grad12));
+` : ''}
+` : ''}	col = clamp(col * ${noisy >= 6 ? '(0.99 + 0.02 * n) /* 6-11: near-flat - glyph shading re-drew the text */' : '(0.9 + 0.2 * n)'} * (1.0 + 0.02 * mot) / 255.0, 0.0, 1.0);
 	float a = vv * aMul;
 	OUT(vec4(col * a, a)); // premultiplied
 }`;
@@ -1600,6 +1787,7 @@ ${b6 ? `
 			gate: gl.getUniformLocation(prog, 'uGate'),
 			satK: gl.getUniformLocation(prog, 'uSatK'),
 			ph: gl.getUniformLocation(prog, 'uPh'),
+			gph: gl.getUniformLocation(prog, 'uGPh'),
 			lump: gl.getUniformLocation(prog, 'uLump'),
 			moff: gl.getUniformLocation(prog, 'uMOff'),
 			pods: gl.getUniformLocation(prog, 'uPods'),
@@ -1612,7 +1800,8 @@ ${b6 ? `
 			lid: gl.getUniformLocation(prog, 'uLid'),
 			lvl: gl.getUniformLocation(prog, 'uLvl'),
 			nl: gl.getUniformLocation(prog, 'uNL'),
-			heat: gl.getUniformLocation(prog, 'uHeat')
+			heat: gl.getUniformLocation(prog, 'uHeat'),
+			com9: gl.getUniformLocation(prog, 'uCom9')
 		};
 		gl.uniform1i(uni.n, 0);
 		gl.uniform1i(uni.b, 1);
@@ -1796,8 +1985,11 @@ ${b6 ? `
 				lidBytesR = new Uint8Array(W * H * 2);
 				for (let p = 0; p < W * H; p++) { const id = vId[p]; lidBytesR[p * 2] = id & 255; lidBytesR[p * 2 + 1] = id >> 8; }
 				if (b6 === 5) {
-					// low-res per-letter sprites for the fused field
-					gs6 = 6;
+					// per-letter sprites for the fused field. 3px grid: at 6px the
+					// melting contour (letter-field-only, unlike arrivals which the
+					// agents' full-res gaussians cover) crawled over visible grid
+					// stair-steps — a SPATIAL stutter no temporal fix could touch.
+					gs6 = 3;
 					gw6 = Math.max(2, Math.ceil(W / gs6));
 					gh6 = Math.max(2, Math.ceil(H / gs6));
 					sprites6 = comps.map((cp) => {
@@ -1819,7 +2011,10 @@ ${b6 ? `
 					tmp6 = new Float32Array(gw6 * gh6);
 					accumC6 = new Float32Array(gw6 * gh6);
 					tmpC6 = new Float32Array(gw6 * gh6);
-					mBytes6 = new Uint8Array(gw6 * gh6 * 2); // [cooling, field]
+					if (noisy >= 5) { accumD6 = new Float32Array(gw6 * gh6); tmpD6 = new Float32Array(gw6 * gh6); }
+					if (noisy >= 6) { heatF6 = new Float32Array(gw6 * gh6); tmpH6 = new Float32Array(gw6 * gh6); }
+					// 6-10 packs a third (dwell) channel, so the field goes RGBA
+					mBytes6 = new Uint8Array(gw6 * gh6 * (noisy >= 5 ? 4 : 2));
 				}
 				// the colony starts as a single roamer on a random letter
 				const ca = cells[(rng() * cells.length) | 0];
@@ -1922,9 +2117,16 @@ ${b6 ? `
 		const D = new Float64Array(W * H);
 		for (let p = 0; p < W * H; p++) D[p] = sa[p * 4 + 3] > 128 ? 0 : 1e12;
 		edt2d(D, W, H);
-		const maxReach = Math.max(6, letterH * 0.7);
+		// 6-12: boundary reverted to the 6-11 footprint (single 0.7 slope) —
+		// the 2.2-letter-height tail was the runway the runaway lowest band
+		// rode out on. Hot bands march WITHIN this boundary; the blob's total
+		// silhouette matches 6-11 exactly.
+		const maxReach = Math.max(6, letterH * ((noisy === 8 || noisy >= 10) ? 0.49 : 0.7)); // 7-0: blobbable halo 30% tighter
 		const nBytes = new Uint8Array(W * H);
-		for (let p = 0; p < W * H; p++) nBytes[p] = clamp(1 - Math.sqrt(D[p]) / maxReach, 0, 1) * 255;
+		for (let p = 0; p < W * H; p++) {
+			const dd = Math.sqrt(D[p]);
+			nBytes[p] = clamp(1 - dd / maxReach, 0, 1) * 255;
+		}
 		// Bead field for the colour marbling — built the way Blob 1 builds its
 		// influence beads: POISSON-thinned stroke cells (even spacing, near-
 		// uniform size/strength), drawn sharp then blurred once at ~0.55 bead
@@ -2003,10 +2205,11 @@ ${b6 ? `
 			const D2 = new Float64Array(W * H);
 			for (let p = 0; p < W * H; p++) D2[p] = saOrig[p] ? 0 : 1e12;
 			edt2d(D2, W, H);
-			const maxReach2 = Math.max(6, letterH2 * 0.7);
+			const maxReach2 = Math.max(6, letterH2 * ((noisy === 8 || noisy >= 10) ? 0.49 : 0.7));
 			const la0 = new Uint8Array(W * H * 2);
 			for (let p = 0; p < W * H; p++) {
-				la0[p * 2] = clamp(1 - Math.sqrt(D2[p]) / maxReach2, 0, 1) * 255;
+				const dd2 = Math.sqrt(D2[p]);
+				la0[p * 2] = clamp(1 - dd2 / maxReach2, 0, 1) * 255;
 				la0[p * 2 + 1] = nBytes[p];
 			}
 			nTex = upload(gl.TEXTURE0, la0, gl.LUMINANCE_ALPHA);
@@ -2143,7 +2346,7 @@ ${b6 ? `
 				if (s5 > bestS) { bestS = s5; bestG = c; }
 			}
 			a.goal = bestG || anyG;
-			a.goalT = 8 + rng() * 5;
+			a.goalT = (8 + rng() * 5) * (noisy >= 10 ? 0.7 : 1); // 7-1: colony re-decides 30% sooner - less hanging on
 		}
 		let best = null, bd = 1e18;
 		const hx2 = Math.cos(a.heading), hy2 = Math.sin(a.heading);
@@ -2170,24 +2373,125 @@ ${b6 ? `
 		const wander = Math.sin((t + a.ph) * spd * 0.9 + 2.1) * 0.55 + Math.sin((t + a.ph) * spd * 0.53 + 0.4) * 0.3;
 		a.heading += clamp(dh * 1.4 + wander, -1.7, 1.7) * dt * spd;
 		const v = letterH2 * 1.7 * spd * (1 + 0.12 * Math.sin((t + a.ph) * spd * 0.7 + 1.7));
-		a.x += Math.cos(a.heading) * v * dt;
-		a.y += Math.sin(a.heading) * v * dt;
+		if (noisy === 12 || noisy >= 16) {
+			// Blob 9/12-2: MANHATTAN motion — the steering brain runs unchanged, but
+			// actual travel snaps to up/down/left/right runs; every 0.35-0.85s
+			// the creature re-picks the cardinal nearest its desired heading,
+			// so paths are straight segments joined by 90-degree corners.
+			a.turnT = (a.turnT || 0) - dt * spd;
+			if (a.turnT <= 0 || a.card == null) {
+				a.turnT = 0.35 + rng() * 0.5;
+				a.card = Math.round(a.heading / (Math.PI / 2)) & 3;
+			}
+			const ca = a.card * (Math.PI / 2);
+			a.x += Math.cos(ca) * v * dt;
+			a.y += Math.sin(ca) * v * dt;
+		} else {
+			a.x += Math.cos(a.heading) * v * dt;
+			a.y += Math.sin(a.heading) * v * dt;
+		}
+	}
+	function stepCellWalker(a, dt, spd) {
+		// Blob 12: the creature walks the TEXT GRID itself — one cell per move,
+		// eased glide between cell centres. It remembers its last TWO moves and
+		// may not take the opposite of either (moved right -> no left for 2
+		// turns, etc.), so runs stay straight for longer, snake-style.
+		if (!a.cw) {
+			let bc = txCells[0], bd = 1e18;
+			for (const c of txCells) { const d9 = (c[0] - a.x) ** 2 + (c[1] - a.y) ** 2; if (d9 < bd) { bd = d9; bc = c; } }
+			a.cw = { from: bc, to: bc, prog: 1, mv: [], goal: null, goalT: 0 };
+		}
+		const cw = a.cw;
+		cw.goalT -= dt * spd;
+		if (cw.goalT <= 0 || !cw.goal) { cw.goal = txCells[(rng() * txCells.length) | 0]; cw.goalT = 9 + rng() * 6; }
+		cw.prog += dt * spd * 2.2 / (cw.len || 1); // ~0.45s per cell hopped (2-cell runs glide at the same pace)
+		if (cw.prog >= 1) {
+			const DIR = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+			const opts = [];
+			for (let d = 0; d < 4; d++) {
+				let best = null, bs = 1e18;
+				for (const c of txCells) {
+					const dx = c[0] - cw.to[0], dy = c[1] - cw.to[1];
+					const dist = Math.hypot(dx, dy);
+					if (dist < 1 || dist > letterH2 * 3.2) continue;
+					if ((dx * DIR[d][0] + dy * DIR[d][1]) / dist < 0.8) continue;
+					if (dist < bs) { bs = dist; best = c; }
+				}
+				if (best) opts.push({ d, c: best });
+			}
+			if (opts.length) {
+				const banned = new Set(cw.mv.map((m) => m ^ 1)); // 0<->1, 2<->3 are opposites
+				let pool = opts.filter((o) => !banned.has(o.d));
+				if (!pool.length) pool = opts; // cornered: reversal allowed as a last resort
+				let pick = pool[0], ps = -1e18;
+				for (const o of pool) {
+					const gx = cw.goal[0] - cw.to[0], gy = cw.goal[1] - cw.to[1];
+					const gd = Math.hypot(gx, gy) || 1;
+					const s = (o.c[0] - cw.to[0]) * (gx / gd) + (o.c[1] - cw.to[1]) * (gy / gd)
+						+ (cw.mv.length && cw.mv[cw.mv.length - 1] === o.d ? letterH2 * 0.6 : 0) // momentum
+						- ((cw.seen || []).includes(o.c) ? letterH2 * 2.5 : 0) // NO RETRACING if avoidable: recently-visited cells cost dearly but stay legal, so a cornered walker still moves
+						+ rng() * letterH2 * 0.5;
+					if (s > ps) { ps = s; pick = o; }
+				}
+				cw.from = cw.to;
+				let dest9 = pick.c, len9 = 1;
+				if (rng() < 0.5) {
+					// STRIDE 2: half the moves try to run a second cell in the
+					// same direction (skipped if that cell was recently visited)
+					let b2 = null, s2 = 1e18;
+					for (const c of txCells) {
+						const dx = c[0] - pick.c[0], dy = c[1] - pick.c[1];
+						const dist = Math.hypot(dx, dy);
+						if (dist < 1 || dist > letterH2 * 3.2) continue;
+						if ((dx * DIR[pick.d][0] + dy * DIR[pick.d][1]) / dist < 0.8) continue;
+						if (dist < s2) { s2 = dist; b2 = c; }
+					}
+					if (b2 && !(cw.seen || []).includes(b2)) { dest9 = b2; len9 = 2; }
+				}
+				cw.to = dest9; cw.prog = 0; cw.len = len9;
+				cw.mv.push(pick.d); if (cw.mv.length > 2) cw.mv.shift();
+				cw.seen = cw.seen || []; cw.seen.push(cw.from); if (cw.seen.length > 5) cw.seen.shift();
+			} else cw.prog = 1;
+		}
+		const e9 = cw.prog < 1 ? cw.prog * cw.prog * (3 - 2 * cw.prog) : 1;
+		a.x = cw.from[0] + (cw.to[0] - cw.from[0]) * e9;
+		a.y = cw.from[1] + (cw.to[1] - cw.from[1]) * e9;
+		a.heading = Math.atan2(cw.to[1] - cw.from[1], (cw.to[0] - cw.from[0]) || 1e-6);
 	}
 	function stepAgents(dt, o) {
 		const spd = simSpd(o);
+		if (noisy >= 4 && agents.length) {
+			// lagging center of mass: trails the colony like the goo's belly
+			let sx9 = 0, sy9 = 0, n9 = 0;
+			for (const a of agents) if (!a.dying) { sx9 += a.x; sy9 += a.y; n9++; }
+			if (n9) {
+				const mx9 = sx9 / n9, my9 = sy9 / n9;
+				if (com9x < -1e8) { com9x = mx9; com9y = my9; }
+				const k9 = Math.min(1, dt * spd * 0.5);
+				com9x += (mx9 - com9x) * k9; com9y += (my9 - com9y) * k9;
+			}
+		}
 		if (!txCells.length) return;
 		// BRANCHING: only a BIG wall (5+ lines) earns multiple masses — anything
 		// smaller keeps the single-roamer intimacy. On big walls a new agent
 		// splits off from an existing one's position and treks away.
 		const rows5 = Math.max(1, Math.round(o.b3Rows || 1));
-		const maxA = rows5 >= 5 ? clamp(Math.round(nLetters / 12), 2, 4) : 1;
+		const maxA = noisy >= 11 ? clamp(Math.round(nLetters / 8), 3, 5) : rows5 >= 5 ? clamp(Math.round(nLetters / 12), 2, 4) : 1; // Blob 8: always a small swarm (cap 5: heads + slow-fading line trails must fit the 64 pod slots)
 		branchT -= dt * spd;
 		if (branchT <= 0) {
-			branchT = 6 + rng() * 5;
+			branchT = noisy >= 11 ? 2.5 + rng() * 2 : 6 + rng() * 5;
 			const live = agents.filter((a) => !a.dying);
 			if (live.length && live.length < maxA) {
-				const src = live[(rng() * live.length) | 0];
-				agents.push(makeAgent(src.x, src.y));
+				const srcA = live[(rng() * live.length) | 0];
+				const na = makeAgent(srcA.x, srcA.y);
+				if (noisy >= 11) {
+					// Blob 8/9: a separate small mass POPPING in at full weight
+					// reads as a glitch — births start near-zero and swell in
+					// (~1.5s), heading roughly where the parent was going
+					na.w = 0.02;
+					na.heading = srcA.heading + (rng() - 0.5) * 0.8;
+				}
+				agents.push(na);
 			}
 		}
 		let liveCount = 0;
@@ -2202,7 +2506,8 @@ ${b6 ? `
 				a.w -= dt * spd * 0.7; // influence dissolves in place; letters release
 				if (a.w <= 0) { agents.splice(i2, 1); continue; }
 			} else {
-				steerAgent(a, dt, spd);
+				if (noisy === 15) stepCellWalker(a, dt, spd); else steerAgent(a, dt, spd);
+				if (a.w < 1) a.w = Math.min(1, a.w + dt * spd * 0.7); // birth swell-in
 			}
 			// short trail of hold-points so letters linger held behind the head.
 			// CONTINUOUS HANDOFF (Blob 4's fix, ported): a new point is born at
@@ -2210,12 +2515,15 @@ ${b6 ? `
 			// from it — full-weight drops pumped the rendered field at the
 			// ~4.5Hz drop cadence (the stutter 6-4 doesn't have).
 			a.histT += dt * spd;
-			if (!a.dying && a.histT >= 0.22) {
+			if (!a.dying && a.histT >= (noisy >= 11 ? 0.3 : 0.22)) {
 				a.histT = 0;
 				a.hist.push({ x: a.x, y: a.y, w: 0, hand: true });
-				if (a.hist.length > 8) a.hist.shift();
+				// NO shift(): hard-deleting the oldest point every 0.22s dropped
+				// ~40%-weight gaussians instantly — the rear field stepped at
+				// 4.5Hz (the "back at 5fps"). Births were made continuous by the
+				// handoff; deaths must be too: points only DECAY, never vanish.
 			}
-			const s2a = 2 * (letterH2 * 1.4) * (letterH2 * 1.4);
+			const s2a = 2 * (letterH2 * (noisy === 15 ? 0.4 : noisy >= 11 ? 0.55 : 1.4)) ** 2;
 			for (let h2 = a.hist.length - 1; h2 >= 0; h2--) {
 				const hp = a.hist[h2];
 				if (hp.hand && !a.dying) {
@@ -2224,7 +2532,7 @@ ${b6 ? `
 					if (hp.w >= 0.95) { hp.w = 1; hp.hand = false; }
 				} else {
 					hp.hand = false;
-					hp.w -= dt * spd * 0.35;
+					hp.w -= dt * spd * (noisy >= 11 ? 0.3 : noisy === 10 ? 0.72 : 0.55); // faster decay keeps the list bounded (~8/agent); 7-1: trails let go ~30% faster
 					if (hp.w <= 0.03) a.hist.splice(h2, 1);
 				}
 			}
@@ -2234,11 +2542,12 @@ ${b6 ? `
 		// TOGETHER, and the per-letter clock becomes a subtle undertone.
 		for (const a of agents) {
 			a.age = (a.age || 0) + dt * spd;
-			a.heat = Math.min(1, a.age * 0.12) * (0.6 + 0.4 * Math.sin(t * spd * 0.3 + a.ph));
+			// 6-8 (noisy===2) opens mid-temperature: the warm-up ramp starts at 0.5
+			a.heat = Math.min(1, (noisy >= 2 ? 0.5 : 0) + a.age * 0.12) * (0.6 + 0.4 * Math.sin(t * spd * 0.3 + a.ph));
 		}
 		// Blob 6-3: ONE GLOBAL heat — every blob and every held letter share the
 		// same temperature (builds over ~8s from scene start, then breathes).
-		const heat6 = Math.min(1, t * spd * 0.12) * (0.6 + 0.4 * Math.sin(t * spd * 0.3 + 0.7));
+		const heat6 = Math.min(1, (noisy >= 2 ? 0.5 : 0) + t * spd * 0.12) * (0.6 + 0.4 * Math.sin(t * spd * 0.3 + 0.7));
 		// letter swallow levels (same dynamics as before, colony-driven field).
 		// perf6 (Blob 6-6): this whole section — the letters×agents influence
 		// loop and the level dynamics — ticks at ~32Hz with accumulated dt.
@@ -2253,7 +2562,35 @@ ${b6 ? `
 		lastTickDt6 = Math.max(1e-3, dtL);
 		letterDtAcc = 0;
 		fieldDirty = true;
-		const R5 = letterH2 * (1.35 + 0.4 * Math.sin(t * spd * 0.5 + 0.7));
+		const R5 = letterH2 * (1.35 + 0.4 * Math.sin(t * spd * 0.5 + 0.7)) * (noisy === 15 ? 0.55 : noisy >= 11 ? 0.7 : 1);
+		if (noisy === 19) {
+			// Blob 12-5 BRIDGING: an unheld letter flanked by two TOUCH-held
+			// letters on roughly opposite sides (letter-gap-letter) gets
+			// engulfed too — the goo reaches across the gap. Only naturally
+			// held letters count as flankers, so bridges don't cascade.
+			const rB19 = letterH2 * 2.7;
+			for (const L of letterList) {
+				L.bridge = false;
+				if (L.onT) continue;
+				let found19 = false;
+				for (let i9 = 0; i9 < letterList.length && !found19; i9++) {
+					const A9 = letterList[i9];
+					if (!A9.onT) continue;
+					const ax9 = A9.cx - L.cx, ay9 = A9.cy - L.cy;
+					const da9 = Math.hypot(ax9, ay9);
+					if (da9 > rB19 || da9 < 1) continue;
+					for (let j9 = i9 + 1; j9 < letterList.length; j9++) {
+						const B9 = letterList[j9];
+						if (!B9.onT) continue;
+						const bx9 = B9.cx - L.cx, by9 = B9.cy - L.cy;
+						const db9 = Math.hypot(bx9, by9);
+						if (db9 > rB19 || db9 < 1) continue;
+						if ((ax9 * bx9 + ay9 * by9) / (da9 * db9) < -0.72) { found19 = true; break; }
+					}
+				}
+				L.bridge = found19;
+			}
+		}
 		const s2h = 2 * R5 * R5, s2t = 2 * (R5 * 0.85) * (R5 * 0.85);
 		const cullD = R5 * 3.2; // beyond this, influence < 1% — skip the exps
 		for (const Lt of letterList) {
@@ -2277,17 +2614,64 @@ ${b6 ? `
 				}
 			}
 			if (!Lt.on && fTouch > 0.3) Lt.on = true;
-			else if (Lt.on && fTouch < 0.2) Lt.on = false;
+			else if (Lt.on && fTouch < (noisy === 14 ? 0.34 : 0.2)) Lt.on = false; // Blob 11: letters give up earlier (same fade speed, stricter trigger)
+			if (noisy >= 10) {
+				// 7-1 FULL-CYCLE SHED: a letter held long enough to cycle the
+				// ENTIRE colour wheel (~14s) is forcibly released — the goo
+				// shrinks off it and the departed-ground decay cools it to
+				// gray. A ~6s refractory stops an instant re-grab; then the
+				// lap counter resets and the letter can run the wheel again.
+				if ((Lt.refr || 0) > 0) {
+					Lt.refr -= dtL * spd;
+					Lt.on = false;
+					if (Lt.refr <= 0) Lt.lap = 0;
+				} else if (Lt.on) {
+					Lt.lap = (Lt.lap || 0) + (dtL * spd) / 14;
+					if (Lt.lap >= 1) { Lt.refr = 6; Lt.on = false; }
+				}
+			}
 			// Blob 6-3: a freshly-engulfed letter starts COLD and runs a 0.6s
 			// eased sweep up to the shared global heat — through every colour
 			// on the ramp on its way there.
 			if ((b6 === 3 || b6 === 5) && !wasOn && Lt.on) Lt.ramp = 0;
+			if (noisy === 19) {
+				Lt.onT = Lt.on; // remember the TOUCH-driven state (flankers must be naturally held)
+				if (!Lt.on && Lt.bridge && !(Lt.refr > 0)) Lt.on = true; // reach across the gap
+			}
+			if (noisy >= 18) {
+				// Blob 12-4 recency: freshly-engulfed letters are BIG, settling
+				// over ~6s to a still-puffy baseline (they never get small)
+				if (!wasOn && Lt.on) Lt.rec = 1;
+				else Lt.rec = Math.max(0, (Lt.rec || 0) - (dtL * spd) / 6);
+			}
 			const target5 = Lt.on ? 1 : 0;
 			// 6-5 rises languidly (~1.3s): the tongue's coverage GROWS over the
 			// letter instead of the whole selection popping in at gulp speed
 			const rate5 = target5 > Lt.S ? (b6 === 5 ? 0.9 : 4) : 2.0;
 			Lt.S += (target5 - Lt.S) * Math.min(1, dtL * spd * rate5);
 			lvlBytes[Lt.i * 2] = Lt.S * 255;
+			if (noisy >= 5) {
+				// 6-10 dwell clock: ~9s of occupation to full radiance, draining
+				// at a third of that pace on release — heat is EARNED by tenure
+				if (Lt.on) Lt.dw = Math.min(1, (Lt.dw || 0) + (dtL * spd) / 9);
+				// (6-12 releases dwell ~3x faster than it holds elsewhere: departing
+				// letters should read as cooling, not as a lingering glow)
+				else Lt.dw = Math.max(0, (Lt.dw || 0) - (dtL * spd) / (noisy >= 7 ? 8 : 27));
+				if (noisy === 9) {
+					// 7-0-prev PER-LETTER OVERHEAT CYCLE (latched): ~5s at max arms
+					// a shed; shedding pushes dwell to a warm floor (~2.2s of
+					// visible cooling, injection collapsed, field vented), then the
+					// letter earns its way back up the 9s ramp. Full cycle ~12s.
+					if (Lt.shd) {
+						Lt.dw = Math.max(0.35, Lt.dw - dtL * spd * 0.3);
+						Lt.oh = Math.max(0, (Lt.oh || 0) - (dtL * spd) / 4);
+						if (Lt.dw <= 0.36) Lt.shd = false;
+					} else if (Lt.on && Lt.dw > 0.85) {
+						Lt.oh = Math.min(1, (Lt.oh || 0) + (dtL * spd) / 5);
+						if (Lt.oh >= 1) Lt.shd = true;
+					} else Lt.oh = Math.max(0, (Lt.oh || 0) - (dtL * spd) / 6);
+				}
+			}
 			if (b6 === 3) {
 				// 0.6s smoothstepped run-up from cold to the GLOBAL heat; once
 				// arrived, the letter simply tracks the shared temperature
@@ -2594,16 +2978,19 @@ ${b6 ? `
 				// magnetized letters into one blurred low-res field (uM) —
 				// stamped fresh every frame from the letter levels.
 				let slot = 0;
-				const sig5 = letterH2 * 1.4;
-				for (const a of agents) {
-					if (slot >= 32) break;
+				// Blob 8: SMALL masses — head ~1.5 letter-cells wide (scales with
+				// the letter size), trail pods thinner still so each mass draws a
+				// fading LINE across the text instead of pooling into one body
+				const sig5 = letterH2 * (noisy === 15 ? 0.4 : noisy >= 11 ? 0.55 : 1.4); // Blob 12: ~1x1-cell mask
+				for (const a of (noisy >= 18 ? [] : agents)) { // Blob 12-4: the walker is INVISIBLE - no pods; only its letter choices render
+					if (slot >= 96) break;
 					pods[slot * 4] = a.x; pods[slot * 4 + 1] = a.y;
 					pods[slot * 4 + 2] = a.w; pods[slot * 4 + 3] = sig5;
 					slot++;
 					for (const h2 of a.hist) {
-						if (slot >= 32) break;
+						if (slot >= 96) break;
 						pods[slot * 4] = h2.x; pods[slot * 4 + 1] = h2.y;
-						pods[slot * 4 + 2] = 0.7 * a.w * h2.w; pods[slot * 4 + 3] = sig5 * 0.85;
+						pods[slot * 4 + 2] = 0.7 * a.w * h2.w; pods[slot * 4 + 3] = sig5 * (noisy >= 11 ? 0.62 : 0.85);
 						slot++;
 					}
 				}
@@ -2616,6 +3003,31 @@ ${b6 ? `
 					const swap6 = massTexPrev; massTexPrev = massTex; massTex = swap6;
 					accum6.fill(0);
 					accumC6.fill(0);
+					if (noisy >= 5) accumD6.fill(0);
+					if (noisy >= 4) {
+						// MASS CONCENTRATION (6-9): every held letter measures the
+						// gaussian-weighted density of held letters around it, so
+						// ANY dense cluster — 2x2, 3x3, 5x2, ragged slabs — boosts
+						// material in proportion. The fused blur fills the gaps and
+						// the conduction model turns that material into heat, so
+						// warmth emanates from wherever the mass is concentrated.
+						for (const Lt of letterList) Lt.q9t = 0;
+						const hot9 = letterList.filter((L9) => L9.S > 0.35);
+						for (const L9 of hot9) {
+							let dens9 = 0;
+							for (const O9 of hot9) {
+								if (O9 === L9) continue;
+								const dx9 = O9.cx - L9.cx, dy9 = O9.cy - L9.cy;
+								const rr9 = Math.max(L9.rad, O9.rad) * 2.1; // ~one letter pitch
+								dens9 += O9.S * Math.exp(-(dx9 * dx9 + dy9 * dy9) / (2 * rr9 * rr9));
+							}
+							// a 2x2 member sees ~2-3 weighted neighbours (mid boost);
+							// a 3x3 core ~5-6 (saturated); lone letters ~0 (none)
+							L9.q9t = Math.min(1, dens9 / 4.5);
+						}
+						const kq9 = Math.min(1, lastTickDt6 * 1.4);
+						for (const Lt of letterList) Lt.q9 = (Lt.q9 || 0) + ((Lt.q9t || 0) - (Lt.q9 || 0)) * kq9;
+					}
 					for (const Lt of letterList) {
 						if (Lt.S <= 0.006) continue;
 						const sp = sprites6[Lt.i];
@@ -2625,6 +3037,7 @@ ${b6 ? `
 						// arriving letters build up from their strokes and seal;
 						// departing ones re-open and drain. One formula, symmetric.
 						const mw6 = Lt.S * Lt.S;
+				const g18 = noisy >= 18 ? 1.18 + 0.32 * (Lt.rec || 0) : 1;
 						for (let yy = 0; yy < sp.h; yy++) {
 							const gy = sp.gy + yy;
 							if (gy < 0 || gy >= gh6) continue;
@@ -2632,20 +3045,26 @@ ${b6 ? `
 								const gx = sp.gx + xx;
 								if (gx < 0 || gx >= gw6) continue;
 								const v6 = sp.d[yy * sp.w + xx];
-								accum6[gy * gw6 + gx] += Lt.S * v6;
-								accumC6[gy * gw6 + gx] += mw6 * v6;
+								const bq9 = noisy >= 4 && Lt.q9 ? 1 + 0.65 * Lt.q9 : 1;
+								accum6[gy * gw6 + gx] += Lt.S * v6 * bq9 * g18;
+								accumC6[gy * gw6 + gx] += mw6 * v6 * bq9 * g18;
+								if (noisy >= 5) accumD6[gy * gw6 + gx] += Lt.S * (Lt.dw || 0) * v6 * bq9 * (noisy === 9 ? 1 - 0.7 * (Lt.oh || 0) : 1);
+								// 7-0-prev shed VENT: drain the field under a shedding letter
+								if (noisy === 9 && Lt.shd) heatF6[gy * gw6 + gx] *= 1 - Math.min(0.5, 1.5 * lastTickDt6) * v6;
 							}
 						}
 					}
 					// two 3x3 blur passes: the stamps FUSE into one smooth field
-					const bl6 = (src, dst) => {
+					// st6: tap stride in cells — a dilated (a-trous) pass spreads
+					// st6^2 times the variance of a plain 3x3 at identical cost
+					const bl6 = (src, dst, st6 = 1) => {
 						for (let y = 0; y < gh6; y++) for (let x = 0; x < gw6; x++) {
 							let s6 = 0, c6 = 0;
 							for (let dy6 = -1; dy6 <= 1; dy6++) {
-								const yy = y + dy6;
+								const yy = y + dy6 * st6;
 								if (yy < 0 || yy >= gh6) continue;
 								for (let dx6 = -1; dx6 <= 1; dx6++) {
-									const xx = x + dx6;
+									const xx = x + dx6 * st6;
 									if (xx < 0 || xx >= gw6) continue;
 									s6 += src[yy * gw6 + xx]; c6++;
 								}
@@ -2657,20 +3076,152 @@ ${b6 ? `
 					bl6(tmp6, accum6);
 					bl6(accumC6, tmpC6);
 					bl6(tmpC6, accumC6);
-					for (let i = 0; i < accum6.length; i++) {
-						mBytes6[i * 2] = Math.min(255, accumC6[i] * 320);     // maturity-weighted field
-						mBytes6[i * 2 + 1] = Math.min(255, accum6[i] * 320); // field
+					if (noisy === 14 || noisy >= 16) {
+						// Blob 11/12-2: active letters throw a WIDER field — a stride-2
+						// then stride-1 pass on top roughly doubles the spread, so
+						// neighbouring active letters fuse into one blobby mass
+						bl6(accum6, tmp6, 2); bl6(tmp6, accum6);
+						bl6(accumC6, tmpC6, 2); bl6(tmpC6, accumC6);
 					}
+					if (noisy >= 5) { bl6(accumD6, tmpD6); bl6(tmpD6, accumD6); }
+					if (noisy >= 6) {
+						// PERSISTENT HEAT (6-11): dwelled letters INJECT heat; per-
+						// tick blurs DIFFUSE it — repeated blurs are a growing
+						// gaussian, so the footprint expands without bound; a slow
+						// decay cools. Camp long enough and the heat floods the
+						// entire blob. There is NO hard limit on the hot area.
+						// 6-12 (noisy 7): injection up, THREE diffusion passes at a
+						// faster blend (~7x the spread rate), decay down — heat
+						// escapes the glyph bounds almost immediately and keeps
+						// travelling outward.
+						const dtH = Math.max(1e-3, lastTickDt6);
+						const inj12 = noisy >= 14 ? 0.85 : noisy >= 10 ? 1.45 : noisy >= 7 ? 1.0 : 0.55; // Blob 11: slower heating too - colours drift, not race // 7-1: hotter - the full-cycle shed self-limits, so the wheel can spin faster // 6-12: was 3.0 - tuned blind against a dead shader arm; now that the arm is live, 3.0 saturated the field almost instantly
+						if (noisy >= 7) {
+							// WIDE SOURCE SKIRT: inject from a dilated copy of the
+							// dwell stamps too, so the hot plateau is BORN wider
+							// than the glyphs — hot bands start their march from
+							// out there instead of from the stroke edge
+							bl6(accumD6, tmpD6, 4);
+							// BODY WARMTH: the goo itself is a weak heat source wherever
+							// it has mass (accum6); letters/dwell are just the strongest
+							// source. A per-cell source is what GUARANTEES every part of
+							// the blob rises past the lowest band during its residence —
+							// no distance-defeating diffusion from the glyphs required.
+							// At typical body mass (~0.5) net gain is ~0.02/s after
+							// losses: the band ladder sweeps any patch of goo that sits
+							// still for ~15-25s.
+							for (let i = 0; i < heatF6.length; i++) heatF6[i] = Math.min((noisy === 8 || noisy >= 10) ? 40 : 1.15, heatF6[i] + ((accumD6[i] * 0.6 + tmpD6[i] * 0.55) * inj12 + accum6[i] * 0.025) * dtH); // 7-0: effectively uncapped - the wheel phase just keeps integrating
+						} else {
+							for (let i = 0; i < heatF6.length; i++) heatF6[i] = Math.min(1.15, heatF6[i] + accumD6[i] * dtH * inj12);
+						}
+						// 6-12: a-trous stride ladder — verified in 1-D simulation:
+						// [2,5,9] at this blend rate marches the HOT iso-lines
+						// (the visible bands) ~2.5x faster than [1,3,6] did; the
+						// faint envelope was never the problem
+						const str12 = noisy >= 7 ? [2, 5, 9] : [1];
+						const kD = Math.min(1, dtH * (noisy >= 7 ? 16 : 5));
+						// 6-12: losses LOWERED (0.02 -> 0.015 each) — 2-D sim: this is
+						// the knob that makes bands march instead of stall. With slow
+						// losses the whole field keeps fattening under injection, so
+						// the pink radius ~doubles over a minute and the hot band
+						// eventually floods the entire blob. The low tail this feeds
+						// is bounded by the shader floor gate, not by evaporation.
+						const dec = 1 - dtH * (noisy >= 7 ? 0.015 : 0.025);
+						for (const s12 of str12) {
+							bl6(heatF6, tmpH6, s12);
+							for (let i = 0; i < heatF6.length; i++) heatF6[i] += (tmpH6[i] - heatF6[i]) * kD;
+						}
+						if (noisy >= 7) {
+							// ADVECTION — the unshackling: heat is CARRIED by a slow
+							// divergence-free swirl (loop-phased sines). Letters stay
+							// the SOURCE of heat, but the isotherm GEOMETRY belongs
+							// to the flow — plumes and eddies, not glyph echoes.
+							const f1 = (Math.PI * 2) / Math.max(8, (letterH2 * 2.5) / gs6);
+							const f2 = f1 * 1.7;
+							const vA = (letterH2 / gs6) * 0.55 * dtH;
+							for (let y = 0; y < gh6; y++) for (let x = 0; x < gw6; x++) {
+								const vx = Math.sin(y * f1 + t * 0.7 + 1.3) + 0.6 * Math.sin((x + y) * f2 - t * 0.43);
+								const vy = Math.cos(x * f1 - t * 0.61) + 0.6 * Math.cos((x - y) * f2 + t * 0.5);
+								let sx = x - vx * vA, sy = y - vy * vA;
+								sx = sx < 0 ? 0 : sx > gw6 - 1.001 ? gw6 - 1.001 : sx;
+								sy = sy < 0 ? 0 : sy > gh6 - 1.001 ? gh6 - 1.001 : sy;
+								const x0 = sx | 0, y0 = sy | 0, fx = sx - x0, fy = sy - y0;
+								const i00 = y0 * gw6 + x0;
+								tmpH6[y * gw6 + x] = heatF6[i00] * (1 - fx) * (1 - fy) + heatF6[i00 + 1] * fx * (1 - fy)
+									+ heatF6[i00 + gw6] * (1 - fx) * fy + heatF6[i00 + gw6 + 1] * fx * fy;
+							}
+							const sw12 = heatF6; heatF6 = tmpH6; tmpH6 = sw12;
+						}
+						let mx12 = 0;
+						// EVAPORATION (6-12): a small linear subtraction — unlike
+						// multiplicative decay it has a FLOOR, so the faint far tail
+						// dies instead of creeping outward unchecked forever
+						const evap12 = (noisy === 8 || noisy >= 10) ? dtH * 0.03 : noisy >= 7 ? dtH * 0.015 : 0;
+						// 6-12: heat over ABANDONED ground (no current goo mass under it)
+						// decays ~5x faster — a departed site cools through the bands in
+						// ~10-15s instead of glowing for a minute after the colony leaves.
+						// 7-0 (wheel): occupied goo now decays GENTLY too — under full
+						// injection the phase settles ~a dozen laps instead of winding
+						// up forever, and any pause lets it drift back toward neutral;
+						// departed ground cools HARD, back to gray within ~10s.
+						const decGone = 1 - dtH * 0.08;
+						const dec8mass = 1 - dtH * 0.015;
+						const dec8gone = 1 - dtH * 0.10;
+						for (let i = 0; i < heatF6.length; i++) {
+							let h12 = heatF6[i] * ((noisy === 8 || noisy >= 10) ? (accum6[i] < 0.02 ? dec8gone : dec8mass) : (noisy >= 7 && accum6[i] < 0.02 ? decGone : dec));
+							h12 -= evap12; if (h12 < 0) h12 = 0;
+							heatF6[i] = h12;
+							if (h12 > mx12) mx12 = h12;
+						}
+						maxH6 = mx12;
+					}
+					for (let i = 0; i < accum6.length; i++) {
+						if (noisy >= 5) {
+							mBytes6[i * 4] = Math.min(255, accumC6[i] * 320);     // maturity
+							mBytes6[i * 4 + 1] = Math.min(255, accumD6[i] * 320); // dwell
+							if (noisy >= 6) mBytes6[i * 4 + 2] = noisy >= 7
+								// 6-12 SATURATED display: denominator CAPS at 0.35 instead of
+								// tracking the peak. Auto-gain defined the top band as "cells
+								// within a hair of the max" — and a diffusion field's max sits
+								// AT the letter sources, so the hottest band was letter-shaped
+								// by construction, untunable. With a fixed absolute bar, every
+								// cell past 0.35 renders the top band: the plateau is the
+								// GROWING region that has cleared the bar (2-D sim: 45px ->
+								// 267px over a minute from a 24px source), not the crest.
+								// Below-0.35 maxima still normalize relatively, so young sites
+								// show their full band ladder from the first seconds.
+								// ...UPDATE: the "relative while young" denominator made the
+								// very FIRST injected heat render top-band at its core —
+								// instant pastel. Scale is now strictly ABSOLUTE (bar 0.35):
+								// heat renders low bands first and earns its way up as the
+								// field genuinely accumulates, like 6-7's gradual climb.
+								? ((noisy === 8 || noisy >= 10)
+									// 7-0 WHEEL: byte = phase around the colour circle, one
+									// lap per 2.5 heat units. 7-1/8/9: UNWRAPPED over a 2-lap
+									// window (fract happens in the shader) - per-texel wrap
+									// put byte 255 beside byte 0 at every hot-gray/cold-gray
+									// boundary, and bilinear filtering swept the middle of
+									// the wheel: the 2px red filament in the gray seam
+									? (noisy >= 10 ? Math.min(255, (heatF6[i] / 5.0) * 255) : ((heatF6[i] / 2.5) % 1) * 255)
+									: Math.min(255, (heatF6[i] / 0.35) * Math.min(1, maxH6 / 0.22) * 235))
+								: Math.min(255, heatF6[i] * 220); // heat
+							mBytes6[i * 4 + 3] = Math.min(255, accum6[i] * 320);  // field
+						} else {
+							mBytes6[i * 2] = Math.min(255, accumC6[i] * 320);     // maturity-weighted field
+							mBytes6[i * 2 + 1] = Math.min(255, accum6[i] * 320); // field
+						}
+					}
+					const fmt6 = noisy >= 5 ? gl.RGBA : gl.LUMINANCE_ALPHA;
 					gl.activeTexture(gl.TEXTURE2);
 					gl.bindTexture(gl.TEXTURE_2D, massTex);
 					gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-					gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE_ALPHA, gw6, gh6, 0, gl.LUMINANCE_ALPHA, gl.UNSIGNED_BYTE, mBytes6);
+					gl.texImage2D(gl.TEXTURE_2D, 0, fmt6, gw6, gh6, 0, fmt6, gl.UNSIGNED_BYTE, mBytes6);
 					if (firstTick6) {
 						// seed the cross-fade source so frame 0 doesn't blend
 						// against an empty field
 						firstTick6 = false;
 						gl.bindTexture(gl.TEXTURE_2D, massTexPrev);
-						gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE_ALPHA, gw6, gh6, 0, gl.LUMINANCE_ALPHA, gl.UNSIGNED_BYTE, mBytes6);
+						gl.texImage2D(gl.TEXTURE_2D, 0, fmt6, gw6, gh6, 0, fmt6, gl.UNSIGNED_BYTE, mBytes6);
 					}
 				}
 				// bind the pair + sub-tick blend EVERY frame (the cross-fade is
@@ -2684,7 +3235,7 @@ ${b6 ? `
 				// Blob 4: newest-first so the HEAD always gets a slot even when
 				// the trail overflows the 32-pod budget (overflow = oldest, dim)
 				let slot = 0;
-				for (let i = nodes.length - 1; i >= 0 && slot < 32; i--, slot++) {
+				for (let i = nodes.length - 1; i >= 0 && slot < 96; i--, slot++) {
 					const nd = nodes[i];
 					pods[slot * 4] = nd.x; pods[slot * 4 + 1] = nd.y;
 					pods[slot * 4 + 2] = 0.9 * nd.w;
@@ -2706,10 +3257,12 @@ ${b6 ? `
 		gl.uniform1f(uni.gate, clamp(o.cmGate ?? 0.12, 0, 0.2));
 		gl.uniform1f(uni.satK, lerp(1.6, 4, amount));
 		gl.uniform1f(uni.ph, TAU * phase);
+		if (uni.gph) gl.uniform1f(uni.gph, (t / (o.duration || 4)) * 0.5); // half a wheel-lap per loop duration, never wrapping
 		gl.uniform1f(uni.lump, lumpF);
 		if (uni.heat) {
 			const sh6 = simSpd(o);
-			gl.uniform1f(uni.heat, Math.min(1, t * sh6 * 0.12) * (0.6 + 0.4 * Math.sin(t * sh6 * 0.3 + 0.7)));
+			gl.uniform1f(uni.heat, Math.min(1, (noisy >= 2 ? 0.5 : 0) + t * sh6 * 0.12) * (0.6 + 0.4 * Math.sin(t * sh6 * 0.3 + 0.7)));
+			if (uni.com9) gl.uniform2f(uni.com9, com9x < -1e8 ? -99999 : com9x, com9y);
 		}
 		gl.viewport(0, 0, W, H);
 		gl.clearColor(0, 0, 0, 0);
@@ -2749,12 +3302,810 @@ const sceneBlob65 = (env) => blob3Scene(env, false, 1, true, true, 5);
 // stamping tick at ~32Hz (levels move over ~1s — visually identical) while
 // the agents and rendering keep full display rate. Same visuals, no lag.
 const sceneBlob66 = (env) => blob3Scene(env, false, 1, true, true, 5, true);
+// Blob 6-7: 6-6 + Blob 5's noise (patchy spread, gloop lumps, marbled hue)
+const sceneBlob67 = (env) => blob3Scene(env, false, 1, true, true, 5, true, true);
+// Blob 6-8: 6-7 + the outer contour departs from the letterforms by ~60%
+const sceneBlob68 = (env) => blob3Scene(env, false, 1, true, true, 5, true, 2);
+// Blob 6-8-prev: 6-8 with the PRE-handback departure (melts on the rounded
+// field — no counter re-opening ritual). Kept for posterity.
+const sceneBlob68P = (env) => blob3Scene(env, false, 1, true, true, 5, true, 3);
+// Blob 6-9: 6-8 + heat conduction — letters as heat source, warmth spreads
+// with material buildup and dwell; less stroke/base temperature contrast
+const sceneBlob69 = (env) => blob3Scene(env, false, 1, true, true, 5, true, 4);
+// Blob 6-10: 6-9 + tenure radiance — a per-letter dwell clock is stamped as
+// a third field channel; long-blobbed letters glow hotter and much further
+const sceneBlob610 = (env) => blob3Scene(env, false, 1, true, true, 5, true, 5);
+// Blob 6-11: 6-10 but the heat gradient rides the blob BODY (rim cool, core
+// hot) — the full ramp spans the whole blob once tenure builds
+const sceneBlob611 = (env) => blob3Scene(env, false, 1, true, true, 5, true, 6);
+// Blob 6-12: 6-11 + arrival imprint (fresh glyphs glow through cold goo) and
+// ~7x diffusion — heat escapes the letters almost immediately
+const sceneBlob612 = (env) => blob3Scene(env, false, 1, true, true, 5, true, 7);
+// Blob 7-0: 6-12's body and expanding heat, but 6-7's COOLING — the flat
+// cool5 tax returns at full 6-7 strength, suppressed only while letters are
+// actively held (wide dwell halo), so heat still balloons past the glyphs
+// during residence and the whole region sweeps down the ramp on departure.
+const sceneBlob70 = (env) => blob3Scene(env, false, 1, true, true, 5, true, 8);
+// Blob 7-0-prev: the pre-wheel 7-0 — per-letter latched overheat cycle
+// (heat ~5s at max, shed ~2s to a warm floor, re-earn), 6-7-style flat
+// cooling with hold-protection, 0.7 halo. Kept for posterity.
+const sceneBlob70prev = (env) => blob3Scene(env, false, 1, true, true, 5, true, 9);
+// Blob 7-1: the wheel (7-0) + full-cycle shed (a letter that has run every
+// colour shrinks away and cools), 45% hotter, 30% more willing to let go.
+const sceneBlob71 = (env) => blob3Scene(env, false, 1, true, true, 5, true, 10);
+// Blob 8: the wheel colours on a SWARM — a few small independent masses
+// (~1.5 letter-cells wide, size follows the letters) whose long thin trails
+// draw fading lines through the text.
+const sceneBlob80 = (env) => blob3Scene(env, false, 1, true, true, 5, true, 11);
+// Blob 9: Blob 8's swarm + wheel, but the creatures travel ONLY in cardinal
+// runs (up/down/left/right, 90-degree corners) — Manhattan paths.
+const sceneBlob90 = (env) => blob3Scene(env, false, 1, true, true, 5, true, 12);
+// Blob 10: Blob 8's swarm, but the ENTIRE surface cycles the full colour
+// wheel once per loop; letter heat radiates on top; fresh ground starts two
+// bands behind and races to catch up.
+const sceneBlob100 = (env) => blob3Scene(env, false, 1, true, true, 5, true, 13);
+// Blob 11: Blob 10 + active letters throw a wider fused halo (neighbours
+// bunch together blobbily) while inactive areas trip their fade earlier.
+const sceneBlob110 = (env) => blob3Scene(env, false, 1, true, true, 5, true, 14);
+// Blob 12: creatures walk the text grid cell-by-cell (no reversing within
+// two moves), 1x1-cell influence mask, slowest colours.
+const sceneBlob120 = (env) => blob3Scene(env, false, 1, true, true, 5, true, 15);
+// Blob 12-2: Blob 9 (cardinal swarm) + Blob 11's blobby wide fusing of
+// active letters, with the text's temperature influence damped well down.
+const sceneBlob122 = (env) => blob3Scene(env, false, 1, true, true, 5, true, 16);
+// Blob 12-3: 12-2 with the 2-band cooling reversal kept (12-2 dropped it).
+const sceneBlob123 = (env) => blob3Scene(env, false, 1, true, true, 5, true, 17);
+// Blob 12-4: 12-2 with an INVISIBLE walker (only its letter choices show)
+// and recency-puffed letters - newest engulf biggest, all stay puffy.
+const sceneBlob124 = (env) => blob3Scene(env, false, 1, true, true, 5, true, 18);
+// Blob 12-5: 12-4 + gap bridging - a letter between two held letters gets
+// engulfed across the gap.
+const sceneBlob125 = (env) => blob3Scene(env, false, 1, true, true, 5, true, 19);
 
 // Halftone — a dense dot grid; dot RADIUS comes almost entirely from mask
 // coverage (so the letter shapes stay solid and legible — a size-pounding wave
 // was what made v1 unreadable) while the travelling wave mostly rides the
 // COLOUR plus a light size shimmer. Coverage is supersampled 4× per cell so
 // letter edges resolve into clean halftone gradients. Seamless loop.
+
+// CLOUDS — "the words are clouds": a raymarched volumetric cloud bank in
+// the shape of the text, drifting gently in a vibrant blue sky. The text
+// mask (blurred CPU-side into a puffy coverage field) extrudes into a 3D
+// density slab; 4-octave fbm sculpts the cauliflower detail; a march
+// toward the sun accumulates real self-shadowing (the heavy shading on
+// the puffs). Drift moves the noise domain in a CIRCLE, so the loop is
+// exact. WebGL fragment raymarch — no WebGPU needed, runs everywhere.
+function sceneClouds(env) {
+	const { W, H, getOpts } = env;
+	let t = 0, glcv = null, gl = null, prog = null, uni = {}, maskTex = null, maskKey = '', glyphFrac = 0.25;
+	const VS = 'attribute vec2 aP; void main(){ gl_Position = vec4(aP, 0.0, 1.0); }';
+	const FS = `
+precision highp float;
+uniform vec2 uRes;
+uniform float uPh;
+uniform float uGl;   // glyph size as a fraction of canvas height
+uniform float uSd;   // movement seed: offsets the whole noise domain
+uniform float uTilt; // vertical tilt: letters lean toward/away from the camera
+uniform float uWsp;  // wisp amount: trails + fibrous edge streaming
+uniform float uSolid; // 0 = gauzy vapour, 1 = solid white cloud
+uniform float uShad; // shadow depth: 0 = airy light shadows, 1 = heavy dark
+uniform float uSprd; // wisp spread: fibres stream further, sheets roam wider
+uniform float uHole; // inner veils: large translucent windows inside letters
+uniform float uToD;  // time of day: 0 dawn, 1/3 midday, 2/3 sunset, 1 night
+vec3 keyMix(vec3 a, vec3 b, vec3 c, vec3 d2, float t){
+	return t < 0.3333 ? mix(a, b, t * 3.0) : t < 0.6667 ? mix(b, c, (t - 0.3333) * 3.0) : mix(c, d2, clamp((t - 0.6667) * 3.0, 0.0, 1.0));
+}
+uniform vec3 uSun;   // light position (normalized in main)
+uniform sampler2D uMask;
+float hash(vec3 p){ p = fract(p * 0.3183099 + vec3(0.1, 0.2, 0.3)); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+float vnoise(vec3 x){
+	vec3 i = floor(x), f = fract(x);
+	f = f * f * (3.0 - 2.0 * f);
+	return mix(mix(mix(hash(i), hash(i + vec3(1,0,0)), f.x),
+	               mix(hash(i + vec3(0,1,0)), hash(i + vec3(1,1,0)), f.x), f.y),
+	           mix(mix(hash(i + vec3(0,0,1)), hash(i + vec3(1,0,1)), f.x),
+	               mix(hash(i + vec3(0,1,1)), hash(i + vec3(1,1,1)), f.x), f.y), f.z);
+}
+float fbm(vec3 p){ float a = 0.5, s = 0.0; for (int i = 0; i < 6; i++){ s += a * vnoise(p); p *= 2.17; a *= 0.5; } return s; }
+float fbm2(vec3 p){ float a = 0.5, s = 0.0; for (int i = 0; i < 2; i++){ s += a * vnoise(p); p *= 2.17; a *= 0.5; } return s; }
+float dens(vec3 p, vec3 dr){
+	vec4 mt = texture2D(uMask, vec2(p.x, 1.0 - p.y));
+	float m = mt.r;
+	float zl = mt.a - 0.5; // per-letter z-lean painted into the mask's alpha
+	// EDGE WISPS: faint fibrous echoes of the strokes streaming LEFTWARD —
+	// the letters shed wind-drawn hairs at their edges. Tall thin noise
+	// (fine in y, coarse in x) breaks the echo into separate fibres.
+	float sprd = 1.0 + 2.2 * uSprd;
+	float mR = texture2D(uMask, vec2(p.x + 0.055 * sprd, 1.0 - p.y)).r;
+	float mR2 = texture2D(uMask, vec2(p.x + 0.12 * sprd, 1.0 - p.y)).r;
+	float fib = vnoise(vec3(p.x * 8.0, p.y * 90.0, p.z * 9.0) + dr * 1.3);
+	m = max(m, uWsp * max(mR * 0.5, mR2 * 0.28) * fib * (0.35 + 0.65 * fib));
+	// GLYPH-RELATIVE scale: every noise wavelength is sized against the
+	// letters, not the canvas — big single words stay just as rough (their
+	// lobes grow with them), and small multi-word text keeps its counters
+	// (the E's gaps) because the features shrink to match
+	float sf = clamp(0.55 / max(uGl, 0.04), 0.75, 8.0);
+	float th = 0.04 + 0.05 * m + 0.13 * m * fbm2(vec3(p.x * 13.0 * sf, p.y * 13.0 * sf, 7.7) + dr);
+	float zt = p.z - (p.x - 0.5) * 0.24 - (p.y - 0.5) * 0.06 - zl * uTilt * 2.6; // per-LETTER lean, amplified — the slider now reaches genuinely violent tilts
+	float zf = 1.0 - smoothstep(0.0, th, abs(zt));
+	float ar = uRes.x / uRes.y;
+	// DOMAIN WARP: a second noise field bends the sampling coordinates of
+	// the first — billows curl and smear into wisps instead of staying round
+	vec3 q = vec3(p.x * 5.5 * ar * sf, p.y * 5.5 * sf, p.z * 4.0 * sf) + dr;
+	vec2 wrp = vec2(fbm2(q * 1.6 + 13.1), fbm2(q * 1.6 + 71.7)) - 0.5;
+	float n = fbm(q + vec3(wrp * 1.6, 0.0));
+	// COTTON CANDY: mid-scale lobes MULTIPLY the stroke body — the letter
+	// itself bulges and pinches along its length (cumulus lobing) instead
+	// of holding a constant tube radius that noise merely decorates
+	float lump = fbm2(q * 2.4 + 31.7);
+	float mB = m * (0.5 + 1.15 * lump);
+	// WIND-COMBED EROSION: the edge-eating noise is stretched horizontally
+	// (x sampled coarse, y fine), so the tearing forms streaky filaments
+	// dragged along the wind rather than round bites; a second finer comb
+	// shreds the very edges
+	float hf = vnoise(vec3(p.x * 13.0 * ar * sf, p.y * 40.0 * sf, p.z * 14.0 * sf) + dr * 1.6);
+	float hf2 = vnoise(vec3(p.x * 28.0 * ar * sf, p.y * 76.0 * sf, p.z * 24.0 * sf) + dr * 2.2);
+	float base = mB * (1.3 + 0.25 * clamp(sf - 1.0, 0.0, 1.0)) - 0.33 + (n - 0.5) * 1.35; // small text: strokes push back harder against the erosion
+	float edge = 1.0 - clamp(base * 2.0, 0.0, 1.0);
+	base -= (hf * 0.52 + hf2 * 0.3) * edge * (0.8 + 0.32 * clamp(sf - 1.0, 0.0, 4.0)); // erosion bites harder as the glyphs shrink
+	return clamp(base, 0.0, 1.0) * zf;
+}
+float densLo(vec3 p, vec3 dr){
+	vec4 mt = texture2D(uMask, vec2(p.x, 1.0 - p.y));
+	float m = mt.r;
+	float zl = mt.a - 0.5;
+	float sf = clamp(0.55 / max(uGl, 0.04), 0.75, 8.0);
+	float th = 0.05 + 0.17 * m;
+	float zt = p.z - (p.x - 0.5) * 0.24 - (p.y - 0.5) * 0.06 - zl * uTilt * 2.6;
+	float zf = 1.0 - smoothstep(0.0, th, abs(zt));
+	float n = fbm2(vec3(p.x * 5.5 * (uRes.x / uRes.y) * sf, p.y * 5.5 * sf, p.z * 4.0 * sf) + dr);
+	return clamp(m * 1.45 - 0.3 + (n - 0.5) * 0.95, 0.0, 1.0) * zf;
+}
+void main(){
+	vec2 uv = gl_FragCoord.xy / uRes;
+	// TIME OF DAY: every colour in the scene interpolates through four
+	// keyframes — dawn / midday / sunset / night — so the light's gradient
+	// lands on the sky AND on the clouds' lit + shadow tints together
+	vec3 skyT = keyMix(vec3(0.38, 0.47, 0.86), vec3(0.16, 0.45, 0.96), vec3(0.23, 0.2, 0.5), vec3(0.02, 0.035, 0.1), uToD);
+	vec3 skyH = keyMix(vec3(1.0, 0.78, 0.6), vec3(0.78, 0.9, 1.0), vec3(1.0, 0.55, 0.3), vec3(0.06, 0.08, 0.16), uToD);
+	vec3 glowC = keyMix(vec3(1.0, 0.72, 0.5), vec3(1.0, 0.97, 0.9), vec3(1.0, 0.5, 0.28), vec3(0.6, 0.7, 1.0), uToD);
+	float glowS = keyMix(vec3(0.3), vec3(0.12), vec3(0.36), vec3(0.05), uToD).x;
+	vec3 litC = keyMix(vec3(1.14, 0.98, 0.88), vec3(1.14, 1.12, 1.07), vec3(1.18, 0.88, 0.62), vec3(0.3, 0.36, 0.52), uToD);
+	vec3 shLo = keyMix(vec3(0.78, 0.68, 0.75), vec3(0.8, 0.84, 0.93), vec3(0.66, 0.48, 0.56), vec3(0.07, 0.09, 0.16), uToD);
+	vec3 shHi = keyMix(vec3(0.42, 0.3, 0.5), vec3(0.3, 0.38, 0.6), vec3(0.32, 0.2, 0.42), vec3(0.02, 0.03, 0.07), uToD);
+	vec3 sky = mix(skyH, skyT, pow(uv.y, 0.85));
+	sky += glowC * glowS * pow(max(0.0, 1.0 - distance(uv, vec2(0.2, 0.92)) * 1.3), 2.0);
+	// drift: a slow CIRCLE through noise space — returns exactly, so it loops
+	vec3 dr = vec3(cos(uPh) * 0.7 + uSd * 17.31, sin(uPh) * 0.24 + uSd * 9.17, sin(uPh + 1.7) * 0.15 + uSd * 5.43); // movement seed relocates the drift circle in noise space
+	vec3 ro = vec3(uv, 0.34);
+	vec3 rd = normalize(vec3((uv - 0.5) * 0.1, -1.0));
+	vec3 sun = normalize(uSun + vec3(0.0, 0.0, 0.0001)); // light position from the sliders
+	float T = 1.0;
+	vec3 acc = vec3(0.0);
+	const int N = 44; // finer march resolves the small-glyph texture
+	float dt2 = 0.68 / float(N);
+	for (int i = 0; i < N; i++){
+		vec3 p = ro + rd * (float(i) + 0.5) * dt2;
+		float d = dens(p, dr);
+		if (d > 0.004 && T > 0.02){
+			// march toward the sun for self-shadowing — the HEAVY shading
+			float sh = densLo(p + sun * 0.032, dr) + densLo(p + sun * 0.08, dr) * 0.6;
+			float li = exp(-sh * (1.0 + 2.2 * uShad)) * 0.9 + 0.1;
+			// CONTRAST remap: midtones push toward LIT, so integrated interior
+			// samples can't drag the sunlit fronts down into gray — lit faces
+			// saturate to true white (the lit colour sits past 1 and clamps)
+			float li2 = smoothstep(0.08, 0.75, li);
+			vec3 shCol = mix(shLo, shHi, uShad); // shadow slider blends within the time-of-day's own shadow palette
+			vec3 cc = mix(shCol, litC, li2);
+			cc += litC * 0.28 * li2 * li2; // crown tinted by the hour's light
+			// SPATIALLY-VARYING extinction: dense cores stay solid (the white
+			// crowns keep their body), thin zones go gauzy, and a large-scale
+			// patch noise sweeps whole AREAS of the text into translucency —
+			// some letters veiled, others puffed solid
+			float pat = vnoise(vec3(p.x * 3.2 * (uRes.x / uRes.y), p.y * 3.2, p.z * 2.0) + dr * 0.7 + 91.3);
+			float sig = mix(11.0, 30.0, smoothstep(0.12, 0.65, d)) * (0.55 + 0.75 * pat) * mix(0.55, 2.7, uSolid); // solidity: gauze to solid white
+			sig *= 1.0 - uHole * smoothstep(0.5, 0.85, pat) * 0.85; // INNER VEILS: the patch field carves big translucent windows straight through dense letter bodies
+			float a = 1.0 - exp(-d * sig * dt2);
+			acc += T * a * cc;
+			T *= 1.0 - a;
+		}
+	}
+	vec3 col = acc + sky * T;
+	gl_FragColor = vec4(col, 1.0);
+}`;
+	function initGL() {
+		glcv = document.createElement('canvas');
+		glcv.width = W; glcv.height = H;
+		gl = glcv.getContext('webgl', { antialias: false, preserveDrawingBuffer: true });
+		if (!gl) return;
+		const mk = (ty, s) => { const sh = gl.createShader(ty); gl.shaderSource(sh, s); gl.compileShader(sh); if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh)); return sh; };
+		prog = gl.createProgram();
+		gl.attachShader(prog, mk(gl.VERTEX_SHADER, VS));
+		gl.attachShader(prog, mk(gl.FRAGMENT_SHADER, FS));
+		gl.linkProgram(prog);
+		if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+		gl.useProgram(prog);
+		const buf = gl.createBuffer();
+		gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+		gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+		const loc = gl.getAttribLocation(prog, 'aP');
+		gl.enableVertexAttribArray(loc);
+		gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+		uni = { res: gl.getUniformLocation(prog, 'uRes'), ph: gl.getUniformLocation(prog, 'uPh'), gl2: gl.getUniformLocation(prog, 'uGl'), sd: gl.getUniformLocation(prog, 'uSd'), tilt: gl.getUniformLocation(prog, 'uTilt'), wsp: gl.getUniformLocation(prog, 'uWsp'), solid: gl.getUniformLocation(prog, 'uSolid'), shad: gl.getUniformLocation(prog, 'uShad'), sprd: gl.getUniformLocation(prog, 'uSprd'), hole: gl.getUniformLocation(prog, 'uHole'), tod: gl.getUniformLocation(prog, 'uToD'), sun: gl.getUniformLocation(prog, 'uSun'), mask: gl.getUniformLocation(prog, 'uMask') };
+		gl.uniform1i(uni.mask, 0);
+		gl.uniform2f(uni.res, W, H);
+		gl.viewport(0, 0, W, H);
+	}
+	function buildMask(o) {
+		const key = (o.text || '') + '|' + W + 'x' + H + '|' + (o.cloudSeedP || 0) + '|' + (o.cloudScatter ?? 1) + '|' + (o.cloudEnv ?? 0.6) + '|' + (o.cloudEnvAll ? 1 : 0) + '|' + (o.cloudWisp ?? 0.4) + '|' + (o.cloudSeedT || 0) + '|' + (o.cloudWispSpread ?? 0.3);
+		if (key === maskKey || !gl) return;
+		maskKey = key;
+		const mw = 512, mh = Math.max(2, Math.round(512 * H / W));
+		// custom mask painter: each WORD on its own line; every letter set
+		// slightly ASKEW (seeded rotation + bob, like real drifting clouds);
+		// a few letters get a wispy WIND TRAIL — a tapering smear dragged
+		// off to the left, which the blur + fbm turn into torn filaments.
+		const mcv = document.createElement('canvas'); mcv.width = mw; mcv.height = mh;
+		const mx = mcv.getContext('2d');
+		mx.fillStyle = '#000'; mx.fillRect(0, 0, mw, mh);
+		// z-lean canvas: mid-gray = neutral; each glyph is painted with a
+		// vertical gradient encoding ITS OWN random lean toward/away
+		const zcv = document.createElement('canvas'); zcv.width = mw; zcv.height = mh;
+		const zx = zcv.getContext('2d');
+		zx.fillStyle = 'rgb(128,128,128)'; zx.fillRect(0, 0, mw, mh);
+		let sd = (1337 + (o.cloudSeedP || 0) * 9973) >>> 0;
+		let sdT = (777 + (o.cloudSeedT || 0) * 7919) >>> 0;
+		const rndT = () => ((sdT = (sdT * 1664525 + 1013904223) >>> 0) / 4294967296);
+		const rnd = () => ((sd = (sd * 1664525 + 1013904223) >>> 0) / 4294967296);
+		const words = ((o.text || 'INTERACTIVE DESIGN CONCEPTS').trim().toUpperCase()).split(/\s+/).filter(Boolean);
+		if (words.length) {
+			let fontPx = mh * 0.2;
+			const fam = "'Google Sans Flex', 'Helvetica Neue', sans-serif";
+			mx.font = `600 ${fontPx}px ${fam}`;
+			let maxW = 0;
+			for (const w of words) maxW = Math.max(maxW, mx.measureText(w).width);
+			fontPx = Math.min(fontPx * (mw * 0.78) / maxW, (mh * 0.82) / (words.length * 1.18));
+			mx.font = `600 ${fontPx}px ${fam}`;
+			glyphFrac = fontPx / mh; // tells the shader how big the letters are
+			const lineH = fontPx * 1.18;
+			const y0 = mh / 2 - (lineH * words.length) / 2 + lineH / 2;
+			mx.fillStyle = '#fff';
+			mx.textBaseline = 'middle'; mx.textAlign = 'center';
+			const scat = o.cloudScatter ?? 1;
+			const env9 = o.cloudEnv ?? 0.6;
+			const envAll = !!o.cloudEnvAll;
+			if (envAll) {
+				// ENSEMBLE mode: one shared squash/stretch/lean warps the whole
+				// composition as a single cloud envelope
+				mx.save();
+				mx.translate(mw / 2, mh / 2);
+				mx.rotate((rnd() - 0.5) * 0.1 * env9);
+				mx.scale(1 + (rnd() - 0.5) * 0.55 * env9, 1 + (rnd() - 0.5) * 0.55 * env9);
+				mx.translate(-mw / 2, -mh / 2);
+			}
+			// FLAT WISP SHEETS: broad, very thin smears floating around the
+			// composition — they render as flat strata of vapour between the
+			// letter-clouds (low mask value = thin slab = wispy)
+			const nSheets = Math.round((2.5 + rnd() * 3) * (0.35 + 1.3 * (o.cloudWisp ?? 0.4)));
+			for (let s9 = 0; s9 < nSheets; s9++) {
+				const sx9 = mw * (0.1 + rnd() * 0.8), sy9 = mh * (0.12 + rnd() * 0.76);
+				const sw9 = fontPx * (2.4 + rnd() * 3.2) * (1 + 0.9 * (o.cloudWispSpread ?? 0.3)), sh9 = fontPx * (0.1 + rnd() * 0.16);
+				mx.save();
+				mx.translate(sx9, sy9);
+				mx.rotate((rnd() - 0.5) * 0.1);
+				const gr9 = mx.createLinearGradient(-sw9 / 2, 0, sw9 / 2, 0);
+				gr9.addColorStop(0, 'rgba(255,255,255,0)');
+				gr9.addColorStop(0.3, 'rgba(255,255,255,0.3)');
+				gr9.addColorStop(0.7, 'rgba(255,255,255,0.3)');
+				gr9.addColorStop(1, 'rgba(255,255,255,0)');
+				mx.fillStyle = gr9;
+				mx.beginPath();
+				mx.ellipse(0, 0, sw9 / 2, sh9 / 2, 0, 0, TAU);
+				mx.fill();
+				mx.restore();
+			}
+			mx.fillStyle = '#fff';
+			for (let li = 0; li < words.length; li++) {
+				const gs = Array.from(words[li]);
+				const widths = gs.map((g) => mx.measureText(g).width);
+				const total = widths.reduce((s, w2) => s + w2, 0);
+				// SCATTER: each line drifts off centre, and every letter gets a
+				// real vertical excursion + spacing wobble + its own size — no
+				// flat baseline, more like clumps that happen to line up
+				let x = mw / 2 - total / 2 + (rnd() - 0.5) * fontPx * 0.9 * scat;
+				const yy = y0 + li * lineH;
+				for (let gi = 0; gi < gs.length; gi++) {
+					const gx = x + widths[gi] / 2 + (rnd() - 0.5) * fontPx * 0.16 * scat;
+					const gy = yy + (rnd() - 0.5) * fontPx * 0.5 * scat;
+					const rot = (rnd() - 0.5) * 0.26 * scat;
+					const scl = 1.04 + (rnd() - 0.5) * 0.28 * scat;
+					if (rnd() < 0.1 + 0.6 * (o.cloudWisp ?? 0.4)) {
+						// wind trail: a tapering smear dragged off leftward
+						// (gradient in LOCAL coords — canvas gradients live in the
+						// transform space active at fill time)
+						const tl = fontPx * (1.6 + rnd() * 1.6) * (1 + 1.6 * (o.cloudWispSpread ?? 0.3)); // spread: trails drag further
+						mx.save();
+						mx.translate(gx, gy);
+						mx.rotate(rot * 0.4 + 0.04);
+						const gr = mx.createLinearGradient(0, 0, -tl, fontPx * 0.18);
+						gr.addColorStop(0, 'rgba(255,255,255,0.55)');
+						gr.addColorStop(1, 'rgba(255,255,255,0)');
+						mx.fillStyle = gr;
+						mx.beginPath();
+						mx.ellipse(-tl / 2, 0, tl / 2, fontPx * 0.16, 0, 0, TAU);
+						mx.fill();
+						mx.restore();
+						mx.fillStyle = '#fff';
+					}
+					// ENVELOPE DISTORT (per-letter mode): each glyph squashed,
+					// expanded or stretched on its own axes — the letterform's
+					// whole envelope deforms like a cloud mass, not just its edges
+					const ex9 = envAll ? 1 : 1 + (rnd() - 0.5) * 0.6 * env9;
+					const ey9 = envAll ? 1 : 1 + (rnd() - 0.5) * 0.6 * env9;
+					mx.save();
+					mx.translate(gx, gy);
+					mx.rotate(rot);
+					mx.scale(scl * ex9, scl * ey9);
+					mx.fillText(gs[gi], 0, 0);
+					mx.restore();
+					// this glyph's own lean, top vs bottom (positive or negative)
+					const tl9 = (rndT() - 0.5) * 2; // tilt has its OWN seed stream
+					zx.save();
+					zx.translate(gx, gy);
+					zx.rotate(rot);
+					zx.scale(scl * ex9, scl * ey9);
+					const zg = zx.createLinearGradient(0, -fontPx * 0.55, 0, fontPx * 0.55);
+					const gA = Math.round(128 + tl9 * 105), gB = Math.round(128 - tl9 * 105);
+					zg.addColorStop(0, `rgb(${gA},${gA},${gA})`);
+					zg.addColorStop(1, `rgb(${gB},${gB},${gB})`);
+					zx.font = mx.font;
+					zx.textBaseline = 'middle'; zx.textAlign = 'center';
+					zx.fillStyle = zg;
+					zx.fillText(gs[gi], 0, 0);
+					zx.restore();
+					x += widths[gi];
+				}
+			}
+			if (envAll) mx.restore(); // close the ensemble transform (scoped inside the block that opened it)
+		}
+		const mdata = mx.getImageData(0, 0, mw, mh).data;
+		const cov = new Float32Array(mw * mh);
+		for (let i = 0; i < cov.length; i++) cov[i] = mdata[i * 4] / 255;
+		// puff the coverage: three box blurs — the soft skirt is what lets
+		// the fbm carve puffs OUTSIDE the strokes (crisp masks read as text
+		// cut out of fog, not as clouds)
+		let a = Float32Array.from(cov), b = new Float32Array(mw * mh);
+		// blur radius scales with the TYPE SIZE: a fixed radius swallowed the
+		// counters (the E's gaps) whenever the text was small
+		const rBlur = Math.max(1, Math.round(glyphFrac * mh * 0.055));
+		for (let pass = 0; pass < 3; pass++) {
+			const r = rBlur;
+			for (let y = 0; y < mh; y++) for (let x = 0; x < mw; x++) {
+				let s = 0, c = 0;
+				for (let k = -r; k <= r; k++) { const xx = x + k; if (xx >= 0 && xx < mw) { s += a[y * mw + xx]; c++; } }
+				b[y * mw + x] = s / c;
+			}
+			for (let x = 0; x < mw; x++) for (let y = 0; y < mh; y++) {
+				let s = 0, c = 0;
+				for (let k = -r; k <= r; k++) { const yy = y + k; if (yy >= 0 && yy < mh) { s += b[yy * mw + x]; c++; } }
+				a[y * mw + x] = s / c;
+			}
+		}
+		// blur the z-lean field once (h+v) so leans blend smoothly between letters
+		const zdata = zx.getImageData(0, 0, mw, mh).data;
+		let zc = new Float32Array(mw * mh), zb = new Float32Array(mw * mh);
+		for (let i = 0; i < zc.length; i++) zc[i] = zdata[i * 4];
+		for (let y = 0; y < mh; y++) for (let x = 0; x < mw; x++) {
+			let s = 0, c = 0;
+			for (let k = -rBlur; k <= rBlur; k++) { const xx = x + k; if (xx >= 0 && xx < mw) { s += zc[y * mw + xx]; c++; } }
+			zb[y * mw + x] = s / c;
+		}
+		for (let x = 0; x < mw; x++) for (let y = 0; y < mh; y++) {
+			let s = 0, c = 0;
+			for (let k = -rBlur; k <= rBlur; k++) { const yy = y + k; if (yy >= 0 && yy < mh) { s += zb[yy * mw + x]; c++; } }
+			zc[y * mw + x] = s / c;
+		}
+		const bytes = new Uint8Array(mw * mh * 2);
+		for (let i = 0; i < mw * mh; i++) {
+			bytes[i * 2] = Math.min(255, a[i] * 340);
+			bytes[i * 2 + 1] = zc[i];
+		}
+		maskTex = maskTex || gl.createTexture();
+		gl.activeTexture(gl.TEXTURE0);
+		gl.bindTexture(gl.TEXTURE_2D, maskTex);
+		gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+		gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE_ALPHA, mw, mh, 0, gl.LUMINANCE_ALPHA, gl.UNSIGNED_BYTE, bytes);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+	}
+	function reset() { t = 0; maskKey = ''; if (!gl) initGL(); }
+	function step(dt) { t += dt; }
+	function render(ctx) {
+		const o = getOpts();
+		if (!gl) initGL();
+		if (!gl) { ctx.fillStyle = '#9cc7f5'; ctx.fillRect(0, 0, W, H); return; }
+		buildMask(o);
+		const phase = (((t / (o.duration || 12)) % 1) + 1) % 1;
+		gl.uniform1f(uni.ph, TAU * phase);
+		if (uni.gl2) gl.uniform1f(uni.gl2, glyphFrac); // glyph height as a fraction of canvas height (mask shares the canvas aspect)
+		if (uni.sd) gl.uniform1f(uni.sd, (o.cloudSeedM || 0) * 0.137);
+		if (uni.tilt) gl.uniform1f(uni.tilt, o.cloudTilt ?? 0.25);
+		if (uni.wsp) gl.uniform1f(uni.wsp, o.cloudWisp ?? 0.4);
+		if (uni.solid) gl.uniform1f(uni.solid, o.cloudSolid ?? 0);
+		if (uni.shad) gl.uniform1f(uni.shad, o.cloudShadow ?? 0.05);
+		if (uni.sprd) gl.uniform1f(uni.sprd, o.cloudWispSpread ?? 0.3);
+		if (uni.hole) gl.uniform1f(uni.hole, o.cloudVeil ?? 0.35);
+		if (uni.tod) gl.uniform1f(uni.tod, o.cloudTime ?? 0.3333);
+		if (uni.sun) gl.uniform3f(uni.sun, o.cloudLightX ?? -0.14, 0.3, o.cloudLightZ ?? 0.92);
+		gl.drawArrays(gl.TRIANGLES, 0, 3);
+		ctx.drawImage(glcv, 0, 0);
+	}
+	return { reset, step, render };
+}
+
+// COIN — a REAL 3D scene now: the stadium's two faces are 3D point rings
+// (z = +/-depth/2), rotated by a genuine Rodrigues rotation about an
+// in-plane diagonal axis, composed with a camera tilt (Rx), and
+// orthographically projected. The silhouette is the convex hull of the
+// projected solid — the exact outline a webgl-outlines pass would find.
+// OUTLINES ONLY, pure #0000ff: silhouette + type, nothing else.
+// The spin decelerates INTO each edge-on word-change frame and
+// accelerates away (easeInOut per edge-to-edge segment). Tilt and axis
+// are functions of the SEGMENT clock, so every transform happens at the
+// IDENTICAL pose — same apparent thickness, same bar angle, every time.
+// The tilt has a floor: the coin never faces the camera dead-on.
+function sceneCoin(env) {
+	const { W, H, getOpts } = env;
+	let t = 0, words = [], fontCss = '', ph = 0, polys = [], cacheKey = '';
+	function ensure(o) {
+		const key = (o.text || '') + '|' + W + 'x' + H;
+		if (key === cacheKey) return;
+		cacheKey = key;
+		words = ((o.text || 'INTERACTIVE DESIGN CONCEPTS').trim().toUpperCase()).split(/\s+/).filter(Boolean);
+		if (!words.length) words = ['COIN'];
+		const probe = document.createElement('canvas').getContext('2d');
+		let fontPx = Math.min(H * 0.18, W * 0.2);
+		const fam = "'Google Sans Flex', 'Helvetica Neue', Helvetica, sans-serif";
+		probe.font = `500 ${fontPx}px ${fam}`;
+		let maxW = 0;
+		for (const w of words) maxW = Math.max(maxW, probe.measureText(w).width);
+		const targetW = W * 0.72;
+		fontPx = fontPx * ((targetW - fontPx * 0.9) / maxW);
+		probe.font = `500 ${fontPx}px ${fam}`;
+		fontCss = probe.font;
+		ph = fontPx * 2.3;
+		// PER-WORD pills: each word gets its own width with the SAME side
+		// padding, so INTERACTIVE isn't cramped and DESIGN doesn't swim.
+		// The width change is invisible: it happens at the edge-on frame,
+		// where the silhouette is depth x height regardless of pill width.
+		polys = words.map((w) => {
+			const pw9 = probe.measureText(w).width + fontPx * 1.15;
+			const poly9 = [];
+			const r = ph / 2, hw = Math.max(0, pw9 / 2 - r);
+			for (let i = 0; i <= 30; i++) { const a = -Math.PI / 2 + (i / 30) * Math.PI; poly9.push([hw + r * Math.cos(a), r * Math.sin(a)]); }
+			for (let i = 0; i <= 30; i++) { const a = Math.PI / 2 + (i / 30) * Math.PI; poly9.push([-hw + r * Math.cos(a), r * Math.sin(a)]); }
+			return poly9;
+		});
+	}
+	function hull(pts) {
+		pts = pts.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+		const cross = (o2, a, b) => (a[0] - o2[0]) * (b[1] - o2[1]) - (a[1] - o2[1]) * (b[0] - o2[0]);
+		const lo = [];
+		for (const p of pts) { while (lo.length >= 2 && cross(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop(); lo.push(p); }
+		const up = [];
+		for (let i = pts.length - 1; i >= 0; i--) { const p = pts[i]; while (up.length >= 2 && cross(up[up.length - 2], up[up.length - 1], p) <= 0) up.pop(); up.push(p); }
+		lo.pop(); up.pop();
+		return lo.concat(up);
+	}
+	function reset() { t = 0; cacheKey = ''; }
+	function step(dt) { t += dt; }
+	function render(ctx) {
+		const o = getOpts();
+		ensure(o);
+		paintBg(ctx, o, W, H);
+		const blue = o.fg || '#0000ff';
+		const n = words.length;
+		const phase = (((t / (o.duration || 9)) % 1) + 1) % 1;
+		const seg = Math.floor(phase * n), f = phase * n - seg;
+		// ASYMMETRIC ease, face-to-face: ACCELERATE for the first third of
+		// the flip (quadratic, ~0.5s at default duration), hitting PEAK
+		// SPEED exactly at the edge-on frame where the word swaps, then a
+		// long quartic DECELERATION (~1s) into the readable face. Velocity
+		// is continuous at the junction (no jerk): fast change, slow face.
+		// back to the C1-smooth curve (the 45%-floor version had a velocity
+		// cliff right after the whip — the sudden unexpected slow-down).
+		// Same construction as the version that looked right, with the face
+		// drift nudged 15% -> 20% so the face keeps visibly turning, and the
+		// junction re-solved so the word-change stays on the whip's peak
+		// AND the velocity is continuous through it (p = 14 matches slopes).
+		// NEW easing construction: constant CRUISE (0.6 — twice the old face
+		// speed) + one raised-cosine WHIP bump mid-segment. The velocity
+		// profile is smooth everywhere (the bump's ends land at zero slope,
+		// so no cliffs are even possible), the swap sits exactly on the
+		// bump's peak, and the cruise floor can be anything without
+		// breaking the math: e(0.5) = 0.3 + 4.8*(w/2) = 0.5 precisely.
+		// ASYMMETRIC whip: sharp cosine attack (wa), long cosine tail (wd) —
+		// it snaps up to speed and then POURS smoothly back into the cruise
+		// instead of stopping on a dime. Amplitude and peak position are
+		// solved so the total still closes and the swap sits on the apex.
+		// EASING v2: cruise + your bezier. The slow "face" rotation runs at
+		// a brisker 0.55 (less linger), and the fast transition follows
+		// cubic-bezier(0.76, 0, 0.3, 0.89) exactly — evaluated by Newton
+		// solve — over a window starting earlier in the flip (0.40..0.72).
+		// The bezier starts with zero added velocity (y1 = 0), so it blends
+		// off the cruise with no kink.
+		const b9 = 0.55, s0 = 0.4, s1 = 0.72, D9 = 1 - b9;
+		const bzY = (g) => {
+			if (g <= 0) return 0;
+			if (g >= 1) return 1;
+			// y2 raised 0.89 -> 1.0: the original handle left a residual END
+			// slope, so the spin dropped ~30% the instant the bezier landed —
+			// the visible seam between words. With y2 = 1 the end tangent is
+			// exactly zero: the transition lands ON the cruise, kink-free.
+			const x1 = 0.76, x2 = 0.3, y2 = 1.0;
+			let t9 = g;
+			for (let i = 0; i < 5; i++) {
+				const it = 1 - t9;
+				const x = 3 * it * it * t9 * x1 + 3 * it * t9 * t9 * x2 + t9 * t9 * t9;
+				const dx = 3 * it * it * x1 + 6 * it * t9 * (x2 - x1) + 3 * t9 * t9 * (1 - x2);
+				if (Math.abs(dx) < 1e-6) break;
+				t9 -= (x - g) / dx;
+				if (t9 < 0) t9 = 0; else if (t9 > 1) t9 = 1;
+			}
+			const it = 1 - t9;
+			return 3 * it * t9 * t9 * y2 + t9 * t9 * t9;
+		};
+		const g9 = (f - s0) / (s1 - s0);
+		let e = b9 * f + D9 * bzY(g9);
+		// JUICE kept: net-zero sag-and-spring right after the bezier lands
+		const uJ0 = s1 + 0.03, uJ1 = Math.min(s1 + 0.22, 0.985);
+		if (f > uJ0 && f < uJ1) {
+			const wJ = uJ1 - uJ0;
+			const aw9 = (0.2 * b9) * wJ / Math.PI; // sag gentled: it was compounding the landing kink
+			const sJ = Math.sin(Math.PI * (f - uJ0) / wJ);
+			e -= aw9 * sJ * sJ;
+		}
+		const th = Math.PI * (seg + e); // segment boundaries at FACE-ON
+		// PITCH: vertical angle only, never dead-on — oscillating gently
+		// around its base (0.13..0.25 rad, never zero, never flipping), so
+		// the coin slowly noses up and down as it floats.
+		const pitch = 0.38 * Math.sin(TAU * phase + 0.5); // full nose-down THROUGH flat TO nose-up (+/-22 deg) - the sweep crosses zero only in passing, and the extra side view reads as dimension
+		const cp = Math.cos(pitch), sp = Math.sin(pitch);
+		const c9 = Math.cos(th), s9 = -Math.sin(th); // negated sine = spin the OTHER way
+		// M = Rx(pitch) * Ry(th) — clean vertical-axis flip, pitched camera
+		const M = [
+			[c9, 0, s9],
+			[sp * s9, cp, -sp * c9],
+			[-cp * s9, sp, cp * c9]
+		];
+		const depth = Math.min(W, H) * 0.2; // properly THICK
+		// float: two soft superposed bobs — ever so slight, organic
+		// float components at 3 + 6 cycles/loop = whole cycles PER WORD
+		// SEGMENT: every word rides the identical bob arc during its face
+		// window (INTERACTIVE was owning the trough of the old 1-cycle bob,
+		// sitting visibly lower than the others). Amplitudes trimmed so the
+		// full arc fits inside the 0.18 floor without the guard clipping it.
+		const cx = W / 2, cy = H / 2 + H * (0.034 * Math.sin(TAU * n * phase + 1.0) + 0.012 * Math.sin(TAU * 2 * n * phase + 3.1));
+		const proj = (x, y, z) => [
+			cx + M[0][0] * x + M[0][1] * y + M[0][2] * z,
+			cy + M[1][0] * x + M[1][1] * y + M[1][2] * z
+		];
+		const wi9 = ((Math.floor(th / Math.PI + 0.5) % n) + n) % n;
+		// FORM MORPH: the pill breathes from this word's width to the next
+		// word's across a short smoothstep window centred on the whip
+		// (~2*wa of the flip, ~8 frames at default speed) — the width
+		// change rides inside the fastest motion instead of popping at the
+		// swap (with pitch, the rim makes an instant change faintly visible)
+		const pA9 = polys[((seg % n) + n) % n], pB9 = polys[(((seg + 1) % n) + n) % n];
+		// the morph is pinned to the ROTATION ANGLE around edge-on: it only
+		// runs while the pill is within ~28deg of side-to-camera (where the
+		// face is foreshortened past ~50% and width is nearly unreadable),
+		// centred on the swap. Angle-driven = it inherits the whip's easing
+		// automatically AND hides the shape change behind the rim.
+		const wAng = 0.48; // radians either side of edge-on
+		const d9 = th - Math.PI * (seg + 0.5);
+		let mm9 = (d9 + wAng) / (2 * wAng);
+		mm9 = mm9 < 0 ? 0 : mm9 > 1 ? 1 : mm9 * mm9 * (3 - 2 * mm9);
+		const pts = [];
+		for (let i = 0; i < pA9.length; i++) {
+			const x9 = pA9[i][0] + (pB9[i][0] - pA9[i][0]) * mm9;
+			const y9 = pA9[i][1] + (pB9[i][1] - pA9[i][1]) * mm9;
+			pts.push(proj(x9, y9, depth / 2)); pts.push(proj(x9, y9, -depth / 2));
+		}
+		const lw = Math.max(1.2, W * 0.0028);
+		ctx.lineWidth = lw;
+		ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+		ctx.strokeStyle = blue;
+		const hu = hull(pts);
+		// EDGE GUARD: wide pills swing further vertically when pitched, so
+		// the bounce could kiss the frame. Measure the real silhouette and
+		// shift the whole coin to keep a margin — smooth, since the
+		// geometry (and thus the shift) evolves continuously.
+		let maxY9 = -1e9, minY9 = 1e9;
+		for (const p of hu) { if (p[1] > maxY9) maxY9 = p[1]; if (p[1] < minY9) minY9 = p[1]; }
+		// asymmetric margins: a roomier floor lifts the low bounce (the wide
+		// pill was still grazing), while the ceiling stays close. The floor
+		// is a SOFT cushion: the corrective shift fades in quadratically
+		// across a band around the margin (C1 — no slope kink), so the wide
+		// word's rescue blends into the sine arc instead of nudging suddenly.
+		const mgnT = H * 0.04, mgnB = H * 0.18, band9 = H * 0.05;
+		const pen9 = maxY9 - (H - mgnB);
+		let shY = pen9 <= -band9 ? 0 : pen9 >= band9 ? -pen9 : -((pen9 + band9) * (pen9 + band9)) / (4 * band9);
+		if (minY9 + shY < mgnT) shY = mgnT - minY9; // ceiling stays a hard stop (rarely hit)
+		ctx.beginPath();
+		ctx.moveTo(hu[0][0], hu[0][1] + shY);
+		for (let i = 1; i < hu.length; i++) ctx.lineTo(hu[i][0], hu[i][1] + shY);
+		ctx.closePath();
+		ctx.stroke();
+		// the word rides the FRONT face (z' > 0), never mirrored: if the
+		// back face is toward the camera, flip the face's local x-basis
+		const nz = M[2][2]; // face normal's screen-z
+		const wi = wi9;
+		const fs = nz >= 0 ? 1 : -1;
+		const e1 = [M[0][0] * fs, M[1][0] * fs];
+		const e2 = [M[0][1], M[1][1]];
+		const C = proj(0, 0, fs * depth / 2);
+		const det = e1[0] * e2[1] - e1[1] * e2[0];
+		if (Math.abs(det) > 0.015) {
+			ctx.save();
+			ctx.setTransform(e1[0], e1[1], e2[0], e2[1], C[0], C[1] + shY);
+			ctx.font = fontCss;
+			ctx.fillStyle = blue;
+			ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+			ctx.fillText(words[wi], 0, 0);
+			ctx.restore();
+		}
+	}
+	return { reset, step, render };
+}
+
+// GLASS01 — the letters of a justified lockup move INDEPENDENTLY, in
+// choreography: every glyph runs the same closed cardinal circuit (right,
+// down, left, up — ease-OUT into each stop, blink after landing) but with
+// a cascading per-glyph stagger, and alternate lines run the circuit in
+// opposite rotation. The lockup dissolves into staggered right-angle
+// drift and re-forms, wave after wave. One fixed pane of white frosted
+// glass (fine grain, sheen, hairline corners) diffuses whatever passes
+// beneath it. No colour in the glass — blue type on white.
+function sceneGlass01(env) {
+	const { W, H, getOpts } = env;
+	let t = 0, glyphs = [], fontCss = '', layer = null, layerCtx = null, grain = null, cacheKey = '';
+	const PANE = { x: 0.2, y: 0.16, w: 0.6, h: 0.68 };
+	const STEP_X = 0.055, STEP_Y = 0.07; // per-glyph glide distances
+	const MV = 0.5;        // share of each segment spent gliding
+	const STAGGER = 0.045; // subtle cascade — the rejoin still reads as one clean event
+	function layout(o) {
+		const words = ((o.text || 'INTERACTIVE DESIGN CONCEPTS').trim().toUpperCase()).split(/\s+/).filter(Boolean);
+		glyphs = [];
+		if (!words.length) return;
+		const probe = document.createElement('canvas').getContext('2d');
+		const blockW = W * 0.58;
+		let fontPx = Math.min(H * 0.16, W * 0.2);
+		const fam = "'Google Sans Flex', 'Helvetica Neue', Helvetica, sans-serif";
+		probe.font = `500 ${fontPx}px ${fam}`;
+		let maxW = 0;
+		for (const w of words) maxW = Math.max(maxW, probe.measureText(w).width);
+		fontPx = fontPx * (blockW / maxW);
+		const lineH0 = fontPx * 1.04;
+		fontPx = Math.min(fontPx, fontPx * (H * 0.6) / Math.max(lineH0 * words.length, 1));
+		probe.font = `500 ${fontPx}px ${fam}`;
+		fontCss = probe.font;
+		const lh2 = fontPx * 1.04;
+		const y0 = H / 2 - (lh2 * words.length) / 2 + lh2 / 2;
+		let k = 0;
+		for (let li = 0; li < words.length; li++) {
+			const gs = Array.from(words[li]);
+			const widths = gs.map((g) => probe.measureText(g).width);
+			const natural = widths.reduce((s, w) => s + w, 0);
+			let x = W / 2 - natural / 2; // natural tracking, centred — no justification
+			for (let gi = 0; gi < gs.length; gi++) {
+				glyphs.push({ ch: gs[gi], x, y: y0 + li * lh2, li, wi: gi, k: k++ });
+				x += widths[gi];
+			}
+		}
+	}
+	function makeGrain() {
+		const gw = Math.max(2, W >> 1), gh = Math.max(2, H >> 1);
+		const cv = document.createElement('canvas'); cv.width = gw; cv.height = gh;
+		const c2 = cv.getContext('2d');
+		const img = c2.createImageData(gw, gh);
+		let s = 1337 >>> 0;
+		const rnd = () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296);
+		for (let i = 0; i < gw * gh; i++) {
+			const v = 235 + rnd() * 20;
+			img.data[i * 4] = v; img.data[i * 4 + 1] = v; img.data[i * 4 + 2] = v;
+			img.data[i * 4 + 3] = 255;
+		}
+		c2.putImageData(img, 0, 0);
+		return cv;
+	}
+	function ensure(o) {
+		const key = (o.text || '') + '|' + W + 'x' + H;
+		if (key === cacheKey) return;
+		cacheKey = key;
+		layout(o);
+		layer = document.createElement('canvas'); layer.width = W; layer.height = H;
+		layerCtx = layer.getContext('2d');
+		grain = grain || makeGrain();
+	}
+	function reset() { t = 0; cacheKey = ''; }
+	function step(dt) { t += dt; }
+	// four movements per loop: split VERTICALLY (alternating letters up /
+	// down within each word), come back together, split HORIZONTALLY
+	// (alternating apart), come back together. Endpoint states per glyph:
+	// [home, v-split, home, h-split] -> loop closes at home.
+	function render(ctx) {
+		const o = getOpts();
+		ensure(o);
+		const phase = (((t / (o.duration || 14)) % 1) + 1) % 1;
+		const n = Math.max(1, glyphs.length);
+		// draw the CHOREOGRAPHED glyphs into the scratch layer
+		layerCtx.clearRect(0, 0, W, H);
+		layerCtx.font = fontCss;
+		layerCtx.fillStyle = o.fg || '#2247ec';
+		layerCtx.textBaseline = 'middle'; layerCtx.textAlign = 'left';
+		for (const g of glyphs) {
+			// cascade: each glyph runs the SAME circuit, slightly behind the
+			// one before it — the lockup peels apart and re-forms in waves
+			const ph = ((phase - (g.k / n) * STAGGER) % 1 + 1) % 1;
+			const seg = Math.floor(ph * 4), f = ph * 4 - seg;
+			const u = Math.min(1, f / MV);
+			const e = 1 - Math.pow(1 - u, 3); // ease-OUT into the stop
+			// alternating sign within the word (odd lines flip, so the whole
+			// composition breathes in counterpoint rather than in unison)
+			const sgn = ((g.wi % 2 ? -1 : 1) * (g.li % 2 ? -1 : 1));
+			// endpoint states: home -> v-split -> home -> h-split -> home
+			const SX = [0, 0, 0, sgn], SY = [0, sgn, 0, 0];
+			const fx = SX[seg], tx = SX[(seg + 1) % 4];
+			const fy = SY[seg], ty = SY[(seg + 1) % 4];
+			const dx = (fx + (tx - fx) * e) * STEP_X * W;
+			const dy = (fy + (ty - fy) * e) * STEP_Y * H;
+			// blink once, just after landing
+			let alpha = 1;
+			if (f > MV) {
+				const bf = (f - MV) / (1 - MV);
+				if (bf > 0.12 && bf < 0.44) {
+					const q = (bf - 0.12) / 0.32;
+					alpha = q < 0.35 ? 1 - q / 0.35 : q < 0.6 ? 0 : (q - 0.6) / 0.4;
+				}
+			}
+			layerCtx.globalAlpha = alpha;
+			layerCtx.fillText(g.ch, g.x + dx, g.y + dy);
+		}
+		layerCtx.globalAlpha = 1;
+		// composite: crisp layer, then the one frosted pane
+		paintBg(ctx, o, W, H);
+		ctx.drawImage(layer, 0, 0);
+		const px = PANE.x * W, py = PANE.y * H, pw = PANE.w * W, ph2 = PANE.h * H;
+		ctx.save();
+		ctx.beginPath(); ctx.rect(px, py, pw, ph2); ctx.clip();
+		ctx.fillStyle = 'rgba(255,255,255,0.9)';
+		ctx.fillRect(px, py, pw, ph2);
+		ctx.filter = `blur(${Math.max(1.4, W * 0.0038)}px)`;
+		ctx.drawImage(layer, 0, 0); // the moving type through the frost
+		ctx.filter = 'none';
+		ctx.globalAlpha = 0.16;
+		ctx.drawImage(grain, 0, 0, W, H);
+		ctx.globalAlpha = 0.06;
+		const gr = ctx.createLinearGradient(px, py, px + pw, py + ph2);
+		gr.addColorStop(0, '#ffffff'); gr.addColorStop(0.4, 'rgba(255,255,255,0)');
+		gr.addColorStop(0.93, 'rgba(255,255,255,0)'); gr.addColorStop(1, '#ffffff');
+		ctx.fillStyle = gr;
+		ctx.fillRect(px, py, pw, ph2);
+		ctx.globalAlpha = 1;
+		ctx.restore();
+		const lw = Math.max(1, W * 0.0009);
+		ctx.strokeStyle = 'rgba(30,38,55,0.14)';
+		ctx.lineWidth = lw;
+		ctx.strokeRect(px - lw / 2, py - lw / 2, pw + lw, ph2 + lw);
+		ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+		ctx.strokeRect(px + lw, py + lw, pw - lw * 2, ph2 - lw * 2);
+	}
+	return { reset, step, render };
+}
+
 function sceneDots(env) {
 	const { W, H, getOpts } = env;
 	let t, cov, mw, mh;
@@ -2995,6 +4346,28 @@ export const SCENES = [
 	{ id: 'blobc64', name: 'Blob 6-4',      make: sceneBlob64,  usesPreset: false, smooth: true },
 	{ id: 'blobc65', name: 'Blob 6-5',      make: sceneBlob65,  usesPreset: false, smooth: true },
 	{ id: 'blobc66', name: 'Blob 6-6',      make: sceneBlob66,  usesPreset: false, smooth: true },
+	{ id: 'blobc67', name: 'Blob 6-7',      make: sceneBlob67,  usesPreset: false, smooth: true },
+	{ id: 'blobc68', name: 'Blob 6-8',      make: sceneBlob68,  usesPreset: false, smooth: true },
+	{ id: 'blobc68p', name: 'Blob 6-8-prev', make: sceneBlob68P, usesPreset: false, smooth: true },
+	{ id: 'blobc69', name: 'Blob 6-9',      make: sceneBlob69,  usesPreset: false, smooth: true },
+	{ id: 'blobc610', name: 'Blob 6-10',    make: sceneBlob610, usesPreset: false, smooth: true },
+	{ id: 'blobc611', name: 'Blob 6-11',    make: sceneBlob611, usesPreset: false, smooth: true },
+	{ id: 'blobc612', name: 'Blob 6-12',    make: sceneBlob612, usesPreset: false, smooth: true },
+	{ id: 'blobc70',  name: 'Blob 7-0',     make: sceneBlob70,  usesPreset: false, smooth: true },
+	{ id: 'blobc70p', name: 'Blob 7-0-prev', make: sceneBlob70prev, usesPreset: false, smooth: true },
+	{ id: 'blobc71',  name: 'Blob 7-1',     make: sceneBlob71,  usesPreset: false, smooth: true },
+	{ id: 'blobc80',  name: 'Blob 8',       make: sceneBlob80,  usesPreset: false, smooth: true },
+	{ id: 'blobc90',  name: 'Blob 9',       make: sceneBlob90,  usesPreset: false, smooth: true },
+	{ id: 'blobc100', name: 'Blob 10',      make: sceneBlob100, usesPreset: false, smooth: true },
+	{ id: 'blobc110', name: 'Blob 11',      make: sceneBlob110, usesPreset: false, smooth: true },
+	{ id: 'blobc120', name: 'Blob 12',      make: sceneBlob120, usesPreset: false, smooth: true },
+	{ id: 'blobc122', name: 'Blob 12-2',    make: sceneBlob122, usesPreset: false, smooth: true },
+	{ id: 'blobc123', name: 'Blob 12-3',    make: sceneBlob123, usesPreset: false, smooth: true },
+	{ id: 'blobc124', name: 'Blob 12-4',    make: sceneBlob124, usesPreset: false, smooth: true },
+	{ id: 'blobc125', name: 'Blob 12-5',    make: sceneBlob125, usesPreset: false, smooth: true },
+	{ id: 'glass01',  name: 'GLASS01',      make: sceneGlass01, usesPreset: false, smooth: true },
+	{ id: 'coin',     name: 'Coin',         make: sceneCoin,    usesPreset: false, smooth: true },
+	{ id: 'clouds',   name: 'Clouds',       make: sceneClouds,  usesPreset: false, smooth: true },
 	{ id: 'dots',    name: 'Halftone',      make: sceneDots,    usesPreset: false, smooth: true },
 	{ id: 'mosaic',  name: 'Micro Type',    make: sceneMosaic,  usesPreset: false, smooth: true },
 	{ id: 'scatter', name: 'Particles',     make: sceneScatter, usesPreset: false, smooth: true },

@@ -1,6 +1,6 @@
 <script>
 	import { onMount } from 'svelte';
-	import { PRESETS, encodeGif, supportsFontStretch } from '$lib/gif-studio.js';
+	import { PRESETS, encodeGif, encodeWebP, supportsFontStretch } from '$lib/gif-studio.js';
 	import { SCENES, makeScene } from '$lib/gen-art.js';
 
 	// ── State ──────────────────────────────────────────────────────────────
@@ -36,11 +36,26 @@
 	let b3Cols = $state(1);              // Blob 3: step & repeat columns
 	let b3Gap = $state(0.02);            // Blob 3: column gap (fraction of width, can be negative)
 	let b3Speed = $state(1);             // Blob 3-C Fast: sim tempo multiplier
+	let cloudSeedM = $state(0);          // Clouds: movement seed (relocates the drift through noise space)
+	let cloudSeedP = $state(0);          // Clouds: placement seed (re-rolls the letter scatter + trails)
+	let cloudScatter = $state(1);        // Clouds: how far letters stray from clean typesetting
+	let cloudEnv = $state(0.6);          // Clouds: envelope distortion amount (squash/stretch)
+	let cloudEnvAll = $state(false);     // Clouds: distort the whole ensemble instead of per-letter
+	let cloudTilt = $state(0.25);        // Clouds: per-letter random lean magnitude (toward/away)
+	let cloudLightX = $state(-0.15);     // Clouds: light left <-> right
+	let cloudLightZ = $state(0.9);       // Clouds: light in front (+) <-> behind (-)
+	let cloudWisp = $state(0.4);         // Clouds: wisp amount (trails, sheets, fibrous edges)
+	let cloudSolid = $state(0);          // Clouds: 0 gauzy vapour -> 1 solid white
+	let cloudShadow = $state(0.05);      // Clouds: shadow depth
+	let cloudSeedT = $state(0);          // Clouds: tilt seed (re-rolls each letter's lean)
+	let cloudWispSpread = $state(0.3);   // Clouds: how far wisps stream and sheets roam
+	let cloudVeil = $state(0.35);        // Clouds: large translucent windows inside letters
+	let cloudTime = $state(0.3333);      // Clouds: time of day (0 dawn, 1/3 midday, 2/3 sunset, 1 night)
 
 	const activeScene = $derived(SCENES.find((s) => s.id === mode) ?? SCENES[0]);
 	const usesPreset = $derived(activeScene.usesPreset);
 	// Modes that actually consume the Reaction speed / Wobble slider.
-	const SIM_MODES = new Set(['bz', 'cca', 'flow', 'walk', 'cloth', 'meta', 'cmeta', 'blobc', 'blobc2', 'blobc3', 'blobc3n', 'blobc3f', 'blobc4', 'blobc5', 'blobc6', 'blobc62', 'blobc63', 'blobc64', 'blobc65', 'blobc66']);
+	const SIM_MODES = new Set(['bz', 'cca', 'flow', 'walk', 'cloth', 'meta', 'cmeta', 'blobc', 'blobc2', 'blobc3', 'blobc3n', 'blobc3f', 'blobc4', 'blobc5', 'blobc6', 'blobc62', 'blobc63', 'blobc64', 'blobc65', 'blobc66', 'blobc67', 'blobc68', 'blobc68p', 'blobc69', 'blobc610', 'blobc611', 'blobc612', 'blobc70', 'blobc70p', 'blobc71', 'blobc80', 'blobc90', 'blobc100', 'blobc110', 'blobc120', 'blobc122', 'blobc123', 'blobc124', 'blobc125']);
 	const WOBBLE_MODES = new Set(['meta', 'cmeta', 'blobc', 'blobc2', 'blobc3n']); // slider = wobble cycles per loop (blob3-c: decisions/sec)
 
 	// Background / colours
@@ -101,6 +116,20 @@
 			bgType = 'solid'; bg = '#ffffff'; fg = '#9ba1a8';
 			reactionSpeed = 1; duration = (id === 'cmeta' || id === 'blobc' || id === 'blobc2') ? 4 : 6;
 		}
+		if (id === 'glass01') {
+			// white paper, blue circular type — the sheets carry the colour story
+			bgType = 'solid'; bg = '#ffffff'; fg = '#2247ec';
+			duration = 14;
+		}
+		if (id === 'clouds') {
+			// the sky is painted by the shader; long gentle loop
+			duration = 12;
+		}
+		if (id === 'coin') {
+			// pure RGB blue wireframe pill on white
+			bgType = 'solid'; bg = '#ffffff'; fg = '#0000ff';
+			duration = 4.5; // 1.5s per flip: 0.5s accelerate + 1s decelerate
+		}
 	}
 	// Set a colour from a typed hex string (any 3- or 6-digit hex, with/without #).
 	function setHex(which, val) {
@@ -124,7 +153,7 @@
 			text, subtitle: subtitle.trim(), preset, cycles, duration, spread, repeats, tileCols, tileGap, reactionSpeed,
 			bzRound, bzBands, bzSpacing, bzFade,
 			lwRows, lwCols, lwPeriod, lwDiag, lwAmp, lwLoops,
-			htSize, moCell, scAmp, cmAmount, cmGate, b3Rows, b3Cols, b3Gap, b3Speed,
+			htSize, moCell, scAmp, cmAmount, cmGate, b3Rows, b3Cols, b3Gap, b3Speed, cloudSeedM, cloudSeedP, cloudScatter, cloudEnv, cloudEnvAll, cloudTilt, cloudLightX, cloudLightZ, cloudWisp, cloudSolid, cloudShadow, cloudSeedT, cloudWispSpread, cloudVeil, cloudTime,
 			bg, bg2, fg, accent, bgType,
 			fontFamily: "'Google Sans Flex'", fontFrac, hasStretch
 		};
@@ -132,6 +161,7 @@
 
 	let scene = null;
 	let previewCtx = null;
+	let previewT = 0; // sim-seconds the preview scene has advanced (for export-from-current-frame)
 
 	// (Re)build the scene when structural inputs change — mode, text, aspect,
 	// text size — so the simulation reseeds from the new typography / dimensions.
@@ -141,6 +171,7 @@
 		const cv = canvasEl;
 		if (!cv) return;
 		scene = makeScene(mode, { W: cv.width, H: cv.height, getOpts: liveOpts, seed: 1337 });
+		previewT = 0;
 		if (previewCtx) scene.render(previewCtx);
 	});
 	// Repaint on a colour / preset change even while paused.
@@ -182,6 +213,7 @@
 					// (step by real elapsed time × GIF speed). The export still
 					// bakes at the chosen fps — this only makes the live view silky.
 					scene.step(dt * gifSpeed);
+					previewT += dt * gifSpeed;
 					scene.render(previewCtx);
 				} else {
 					const interval = 1 / Math.max(1, fps * gifSpeed); // seconds between displayed frames
@@ -194,6 +226,7 @@
 						// can't spiral.
 						accT = Math.min(accT - interval, interval);
 						scene.step(1 / fps);
+						previewT += 1 / fps;
 						scene.render(previewCtx);
 					}
 				}
@@ -207,6 +240,8 @@
 	// ── Export ───────────────────────────────────────────────────────────────
 	let exporting = $state(false);
 	let progress = $state(0);
+	let fromCurrent = $state(false); // start the GIF at the preview's current frame instead of frame 0
+	let exportFmt = $state('gif');   // 'gif' | 'webp' (animated)
 
 	async function exportGif() {
 		if (exporting) return;
@@ -216,16 +251,32 @@
 			const frames = Math.max(2, Math.round(duration * fps));
 			// Fresh scene at export resolution, reset — encodeGif steps it per frame.
 			const exportScene = makeScene(mode, { W, H, getOpts: liveOpts, seed: 1337 });
-			const bytes = await encodeGif({
+			// "From current frame": replay the preview's elapsed sim-time into the
+			// fresh export scene so the GIF starts where the preview is now.
+			// Same seed + same step size = the same evolution (capped at 90s of
+			// pre-roll so a long-idle preview can't stall the export).
+			const preroll = fromCurrent ? Math.min(previewT, 90) : 0;
+			const preSteps = Math.round(preroll * fps);
+			for (let s = 0; s < preSteps; s++) {
+				exportScene.step(1 / fps);
+				if (s % 60 === 59) {
+					progress = (s / preSteps) * 0.25;
+					await new Promise((r) => setTimeout(r)); // let the progress bar paint
+				}
+			}
+			const pBase = preSteps ? 0.25 : 0;
+			const encode = exportFmt === 'webp' ? encodeWebP : encodeGif;
+			const bytes = await encode({
 				W, H, fps, frames, scene: exportScene,
 				delayMs: (1000 / fps) / gifSpeed,   // GIF speed = playback rate
-				onProgress: (p) => { progress = p; }
+				stepDt: duration / frames,          // frames tile the loop exactly — no off-speed seam
+				onProgress: (p) => { progress = pBase + p * (1 - pBase); }
 			});
-			const blob = new Blob([bytes], { type: 'image/gif' });
+			const blob = new Blob([bytes], { type: exportFmt === 'webp' ? 'image/webp' : 'image/gif' });
 			const url = URL.createObjectURL(blob);
 			const a = document.createElement('a');
 			a.href = url;
-			a.download = (text.trim() || 'title').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() + '.gif';
+			a.download = (text.trim() || 'title').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() + (exportFmt === 'webp' ? '.webp' : '.gif');
 			document.body.appendChild(a); a.click(); a.remove();
 			setTimeout(() => URL.revokeObjectURL(url), 2000);
 		} catch (e) {
@@ -372,7 +423,7 @@
 				{/if}
 				<label class="slider">
 					<span>Duration <b>{duration}s</b></span>
-					<input type="range" min="1" max="6" step="0.5" bind:value={duration} />
+					<input type="range" min="1" max="15" step="0.5" bind:value={duration} />
 				</label>
 				{#if usesPreset}
 					<label class="slider">
@@ -388,6 +439,79 @@
 				<label class="slider">
 					<span>GIF speed <b>{gifSpeed.toFixed(2)}×</b></span>
 					<input type="range" min="0.25" max="3" step="0.05" bind:value={gifSpeed} />
+				</label>
+				{#if mode === 'clouds'}
+					<label class="slider">
+						<span>Movement seed <b>{cloudSeedM}</b></span>
+						<input type="range" min="0" max="99" step="1" bind:value={cloudSeedM} />
+					</label>
+					<label class="slider">
+						<span>Placement seed <b>{cloudSeedP}</b></span>
+						<input type="range" min="0" max="99" step="1" bind:value={cloudSeedP} />
+					</label>
+					<label class="slider">
+						<span>Scatter <b>{cloudScatter.toFixed(2)}×</b></span>
+						<input type="range" min="0" max="2" step="0.05" bind:value={cloudScatter} />
+					</label>
+					<label class="slider">
+						<span>Envelope distort <b>{cloudEnv.toFixed(2)}</b></span>
+						<input type="range" min="0" max="1.5" step="0.05" bind:value={cloudEnv} />
+					</label>
+					<label class="check">
+						<input type="checkbox" bind:checked={cloudEnvAll} />
+						<span>Distort whole ensemble (instead of per-letter)</span>
+					</label>
+					<label class="slider">
+						<span>Letter tilt scatter <b>{cloudTilt.toFixed(2)}</b></span>
+						<input type="range" min="0" max="1.5" step="0.05" bind:value={cloudTilt} />
+					</label>
+					<label class="slider">
+						<span>Tilt seed <b>{cloudSeedT}</b></span>
+						<input type="range" min="0" max="99" step="1" bind:value={cloudSeedT} />
+					</label>
+					<label class="slider">
+						<span>Light ⟷ <b>{cloudLightX.toFixed(2)}</b></span>
+						<input type="range" min="-1" max="1" step="0.05" bind:value={cloudLightX} />
+					</label>
+					<label class="slider">
+						<span>Light depth <b>{cloudLightZ.toFixed(2)}</b></span>
+						<input type="range" min="-1" max="1" step="0.05" bind:value={cloudLightZ} />
+					</label>
+					<label class="slider">
+						<span>Wisps <b>{cloudWisp.toFixed(2)}</b></span>
+						<input type="range" min="0" max="1" step="0.05" bind:value={cloudWisp} />
+					</label>
+					<label class="slider">
+						<span>Solidity <b>{cloudSolid.toFixed(2)}</b></span>
+						<input type="range" min="0" max="1" step="0.05" bind:value={cloudSolid} />
+					</label>
+					<label class="slider">
+						<span>Shadow <b>{cloudShadow.toFixed(2)}</b></span>
+						<input type="range" min="0" max="1" step="0.05" bind:value={cloudShadow} />
+					</label>
+					<label class="slider">
+						<span>Wisp spread <b>{cloudWispSpread.toFixed(2)}</b></span>
+						<input type="range" min="0" max="1" step="0.05" bind:value={cloudWispSpread} />
+					</label>
+					<label class="slider">
+						<span>Inner veils <b>{cloudVeil.toFixed(2)}</b></span>
+						<input type="range" min="0" max="1" step="0.05" bind:value={cloudVeil} />
+					</label>
+					<label class="slider">
+						<span>Time of day <b>{cloudTime < 0.15 ? 'dawn' : cloudTime < 0.5 ? 'midday' : cloudTime < 0.85 ? 'sunset' : 'night'}</b></span>
+						<input type="range" min="0" max="1" step="0.01" bind:value={cloudTime} />
+					</label>
+				{/if}
+				<label class="check">
+					<input type="checkbox" bind:checked={fromCurrent} />
+					<span>Export from current frame</span>
+				</label>
+				<label class="check fmt">
+					<span>Format</span>
+					<select bind:value={exportFmt}>
+						<option value="gif">GIF</option>
+						<option value="webp">WebP (smaller, full colour)</option>
+					</select>
 				</label>
 				{#if mode === 'tile'}
 					<label class="slider">
@@ -446,7 +570,7 @@
 						<input type="range" min="0.25" max="4" step="0.05" bind:value={b3Speed} />
 					</label>
 				{/if}
-				{#if mode.startsWith('blobc3') || mode === 'blobc4' || mode === 'blobc5' || mode.startsWith('blobc6')}
+				{#if mode.startsWith('blobc3') || mode === 'blobc4' || mode === 'blobc5' || mode.startsWith('blobc6') || mode.startsWith('blobc7') || mode.startsWith('blobc8') || mode.startsWith('blobc9') || mode.startsWith('blobc1')}
 					<label class="slider">
 						<span>Repeats <b>{b3Rows}</b></span>
 						<input type="range" min="1" max="12" step="1" bind:value={b3Rows} />
@@ -630,6 +754,10 @@
 
 	.sliders { gap: 0.9rem; }
 	.slider { display: flex; flex-direction: column; gap: 0.3rem; }
+	.check { display: flex; align-items: center; gap: 0.45rem; font-size: 0.76rem; color: var(--muted-fg); cursor: pointer; }
+	.check input { accent-color: var(--ink); }
+	.check.fmt { justify-content: space-between; }
+	.check.fmt select { font: inherit; font-size: 0.76rem; color: var(--ink); background: transparent; border: 1px solid var(--line, #d5d8de); border-radius: 6px; padding: 0.15rem 0.35rem; }
 	.slider span { font-size: 0.76rem; color: var(--muted-fg); display: flex; justify-content: space-between; }
 	.slider b { color: var(--ink); }
 	.slider input[type='range'] { width: 100%; accent-color: var(--accent); }

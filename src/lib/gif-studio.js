@@ -269,7 +269,7 @@ export function supportsFontStretch() {
 // Frame 0 captures the reset state; each subsequent frame steps by 1/fps and
 // renders — so stateful simulations (reaction-diffusion, CA, cloth …) advance
 // deterministically. Returns a Uint8Array of GIF bytes.
-export async function encodeGif({ W, H, fps, frames, scene, delayMs, onProgress, signal }) {
+export async function encodeGif({ W, H, fps, frames, scene, delayMs, onProgress, signal, stepDt }) {
 	const gif = GIFEncoder();
 	const cv = document.createElement('canvas');
 	cv.width = W; cv.height = H;
@@ -277,7 +277,11 @@ export async function encodeGif({ W, H, fps, frames, scene, delayMs, onProgress,
 	// Playback delay per frame (GIF speed). Sim advance uses dt = 1/fps regardless,
 	// so GIF speed changes how fast frames PLAY, not how much reaction is baked.
 	const delay = Math.max(20, Math.round(delayMs || 1000 / fps));
-	const dt = 1 / fps;
+	// stepDt (usually duration/frames) makes the frames tile the loop EXACTLY:
+	// with dt = 1/fps and frames = round(duration*fps), any fractional product
+	// left a partial-phase gap at the seam — a few visibly off-speed frames
+	// every repeat, glaring on eased motion.
+	const dt = stepDt || 1 / fps;
 
 	for (let f = 0; f < frames; f++) {
 		if (signal?.aborted) throw new Error('aborted');
@@ -293,6 +297,64 @@ export async function encodeGif({ W, H, fps, frames, scene, delayMs, onProgress,
 	}
 	gif.finish();
 	return gif.bytes();
+}
+
+// Encode a looping ANIMATED WEBP from the same stateful `scene` contract.
+// Each frame is compressed by the browser's native still-WebP encoder
+// (canvas.toBlob('image/webp')), then the stills are muxed by hand into an
+// animated WebP container: RIFF/WEBP -> VP8X (ANIM flag) -> ANIM (loop
+// forever) -> one ANMF per frame wrapping the still's VP8/VP8L (+ALPH)
+// bitstream. Far smaller files than GIF at much higher colour fidelity.
+export async function encodeWebP({ W, H, fps, frames, scene, delayMs, onProgress, signal, stepDt, quality = 0.9 }) {
+	const cv = document.createElement('canvas');
+	cv.width = W; cv.height = H;
+	const ctx = cv.getContext('2d');
+	const delay = Math.max(20, Math.round(delayMs || 1000 / fps));
+	const dt = stepDt || 1 / fps; // see encodeGif: exact loop tiling
+	const frameChunks = [];
+	const toBlob = () => new Promise((res, rej) => cv.toBlob((b) => (b ? res(b) : rej(new Error('webp encode failed'))), 'image/webp', quality));
+	for (let f = 0; f < frames; f++) {
+		if (signal?.aborted) throw new Error('aborted');
+		if (f > 0) scene.step(dt);
+		scene.render(ctx);
+		const buf = new Uint8Array(await (await toBlob()).arrayBuffer());
+		// parse the still's RIFF: collect the image-data chunks (ALPH + VP8/VP8L)
+		if (String.fromCharCode(...buf.subarray(0, 4)) !== 'RIFF') throw new Error('not a WebP');
+		const chunks = [];
+		let p = 12;
+		while (p + 8 <= buf.length) {
+			const tag = String.fromCharCode(...buf.subarray(p, p + 4));
+			const size = buf[p + 4] | (buf[p + 5] << 8) | (buf[p + 6] << 16) | (buf[p + 7] << 24);
+			if (tag === 'VP8 ' || tag === 'VP8L' || tag === 'ALPH') chunks.push(buf.subarray(p, p + 8 + size + (size & 1)));
+			p += 8 + size + (size & 1);
+		}
+		if (!chunks.length) throw new Error('no image data in WebP frame');
+		frameChunks.push(chunks);
+		onProgress?.((f + 1) / frames);
+		if ((f & 3) === 0) await new Promise((r) => requestAnimationFrame(r));
+	}
+	// assemble the animation
+	const le32 = (n) => [n & 255, (n >> 8) & 255, (n >> 16) & 255, (n >> 24) & 255];
+	const le24 = (n) => [n & 255, (n >> 8) & 255, (n >> 16) & 255];
+	const parts = [];
+	// VP8X: animation flag (bit 1 of byte 0 = 0x02), canvas size minus one
+	parts.push([...'VP8X'].map((c) => c.charCodeAt(0)), le32(10), [0x02, 0, 0, 0, ...le24(W - 1), ...le24(H - 1)]);
+	// ANIM: white background, loop count 0 = forever
+	parts.push([...'ANIM'].map((c) => c.charCodeAt(0)), le32(6), [255, 255, 255, 255, 0, 0]);
+	for (const chunks of frameChunks) {
+		let inner = 0;
+		for (const c of chunks) inner += c.length;
+		// ANMF header: x/2, y/2, (w-1), (h-1) as 24-bit, duration 24-bit, flags (blend=0, dispose=0)
+		parts.push([...'ANMF'].map((c) => c.charCodeAt(0)), le32(16 + inner), [...le24(0), ...le24(0), ...le24(W - 1), ...le24(H - 1), ...le24(delay), 0]);
+		for (const c of chunks) parts.push(c);
+	}
+	let total = 4; // 'WEBP'
+	for (const pt of parts) total += pt.length;
+	const out = new Uint8Array(12 + total);
+	out.set([82, 73, 70, 70, ...le32(total), 87, 69, 66, 80], 0); // RIFF <size> WEBP
+	let q = 12;
+	for (const pt of parts) { out.set(pt, q); q += pt.length; }
+	return out;
 }
 
 // Build the renderFrame options bag from the studio's live opts + target dims.
