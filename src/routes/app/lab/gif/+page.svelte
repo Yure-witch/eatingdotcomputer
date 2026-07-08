@@ -50,7 +50,70 @@
 	let cloudSeedT = $state(0);          // Clouds: tilt seed (re-rolls each letter's lean)
 	let cloudWispSpread = $state(0.3);   // Clouds: how far wisps stream and sheets roam
 	let cloudVeil = $state(0.35);        // Clouds: large translucent windows inside letters
-	let cloudTime = $state(0.3333);      // Clouds: time of day (0 dawn, 1/3 midday, 2/3 sunset, 1 night)
+	let cloudTime = $state(0.3333);      // Clouds: SKY time of day (0 dawn, 1/3 midday, 2/3 sunset, 1 night)
+	let cloudTimeText = $state(0.3333);  // Clouds: TEXT time of day (cloud lit/shadow palette)
+	let cloudTimeLink = $state(true);    // Clouds: text follows the sky's hour
+	let cloudRain = $state(0);           // Clouds: rain streaks
+	let cloudSnow = $state(0);           // Clouds: snow flakes
+	let cloudFog = $state(0);            // Clouds: fog/mist veil
+	let garbleSeed = $state(0);          // Garble: re-rolls inks, offsets, glitches
+	let garbleInks = $state(3);          // Garble: number of overprint passes
+	let garbleScheme = $state('candy');  // Garble: ink scheme (from the reference sheets)
+	let garbleAmt = $state(0);           // Garble: how garbled — starts CLEAN, dial the chaos in
+	let garbleClean = $state(false);     // Garble: perfect even contour, no chaos
+	let garbleAnim = $state('static');   // Garble: animation mode
+	let garbleRecolor = $state(0);       // Garble: per-letter pen-swap chance
+	let garbleDrift = $state(0.35);      // Garble: drift-run frequency (circles misaligning in a row)
+	let garbleDriftMag = $state(0.5);    // Garble: drift displacement strength (0.5 = baseline)
+	let garbleDriftLen = $state(0.5);    // Garble: drift run length (0.5 = baseline)
+	let garbleVariety = $state(0.35);    // Garble: how differently each ink pass stamps (size/aspect/spacing)
+	let garbleLeading = $state(1.25);    // Garble: line spacing (em)
+	let garbleSize = $state('random');   // Garble: stamp radius category
+	let garbleShape = $state('random');  // Garble: stamp shape category
+	let garbleUniform = $state(false);   // Garble: all inks share one random stamp
+	let garbleSizePool = $state({ xxxs: true, xxs: true, xs: true, s: true, m: true, l: true, xl: true, xxl: true, xxxl: true });   // Garble: sizes allowed in Random
+	let garbleShapePool = $state({ xxxwide: true, xxwide: true, xwide: true, wide: true, round: true, tall: true, xtall: true, xxtall: true, xxxtall: true }); // Garble: shapes allowed in Random
+	let weatherBusy = $state(false);
+	let weatherNote = $state('');
+
+	// Match the scene to the real sky: browser geolocation -> Open-Meteo
+	// (no API key). Sun position maps to time-of-day, cloud cover to
+	// solidity, wind to wisps, and the WMO weather code to rain/snow/fog.
+	async function matchWeather() {
+		weatherBusy = true; weatherNote = '';
+		try {
+			const pos = await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, { timeout: 8000 }));
+			const { latitude, longitude } = pos.coords;
+			const r = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=weather_code,cloud_cover,is_day,wind_speed_10m&daily=sunrise,sunset&timezone=auto&forecast_days=1`);
+			const w = await r.json();
+			const code = w.current.weather_code, cover = w.current.cloud_cover ?? 50;
+			const now = Date.now();
+			const sr = new Date(w.daily.sunrise[0]).getTime(), ss = new Date(w.daily.sunset[0]).getTime();
+			const tw = 45 * 60 * 1000; // twilight width
+			if (now < sr - tw || now > ss + tw) cloudTime = 1;      // night
+			else if (now < sr) cloudTime = 0.02;                    // pre-dawn glow
+			else if (now > ss) cloudTime = 0.7;                     // dusk
+			else {
+				const f = (now - sr) / Math.max(1, ss - sr);
+				cloudTime = f < 0.5 ? 0.02 + f * 2 * 0.313 : 0.333 + (f - 0.5) * 2 * 0.334;
+			}
+			cloudTimeLink = true;
+			cloudSolid = Math.min(1, (cover / 100) * 0.75);
+			cloudWisp = Math.min(1, 0.25 + (w.current.wind_speed_10m || 0) / 40);
+			cloudRain = 0; cloudSnow = 0; cloudFog = 0;
+			if (code === 45 || code === 48) cloudFog = 0.8;
+			else if (code >= 51 && code <= 57) cloudRain = 0.35;
+			else if (code >= 61 && code <= 67) cloudRain = Math.min(1, 0.5 + (code - 61) * 0.08);
+			else if (code >= 71 && code <= 77) cloudSnow = 0.7;
+			else if (code >= 80 && code <= 82) cloudRain = 0.6 + (code - 80) * 0.2;
+			else if (code >= 85 && code <= 86) cloudSnow = 0.9;
+			else if (code >= 95) { cloudRain = 1; cloudShadow = 0.9; cloudSolid = 0.85; }
+			if (code === 3) cloudShadow = Math.max(cloudShadow, 0.35);
+			weatherNote = `matched — ${cover}% cover, code ${code}`;
+		} catch (e) {
+			weatherNote = 'could not match (' + (e?.message || 'location denied') + ')';
+		} finally { weatherBusy = false; }
+	}
 
 	const activeScene = $derived(SCENES.find((s) => s.id === mode) ?? SCENES[0]);
 	const usesPreset = $derived(activeScene.usesPreset);
@@ -121,6 +184,11 @@
 			bgType = 'solid'; bg = '#ffffff'; fg = '#2247ec';
 			duration = 14;
 		}
+		if (id === 'garble') {
+			// paper white, plotter inks carry the colour
+			bgType = 'solid'; bg = '#ffffff'; fg = '#111111';
+			duration = 8;
+		}
 		if (id === 'clouds') {
 			// the sky is painted by the shader; long gentle loop
 			duration = 12;
@@ -153,7 +221,9 @@
 			text, subtitle: subtitle.trim(), preset, cycles, duration, spread, repeats, tileCols, tileGap, reactionSpeed,
 			bzRound, bzBands, bzSpacing, bzFade,
 			lwRows, lwCols, lwPeriod, lwDiag, lwAmp, lwLoops,
-			htSize, moCell, scAmp, cmAmount, cmGate, b3Rows, b3Cols, b3Gap, b3Speed, cloudSeedM, cloudSeedP, cloudScatter, cloudEnv, cloudEnvAll, cloudTilt, cloudLightX, cloudLightZ, cloudWisp, cloudSolid, cloudShadow, cloudSeedT, cloudWispSpread, cloudVeil, cloudTime,
+			htSize, moCell, scAmp, cmAmount, cmGate, b3Rows, b3Cols, b3Gap, b3Speed, cloudSeedM, cloudSeedP, cloudScatter, cloudEnv, cloudEnvAll, cloudTilt, cloudLightX, cloudLightZ, cloudWisp, cloudSolid, cloudShadow, cloudSeedT, cloudWispSpread, cloudVeil, cloudTime, cloudTimeText, cloudTimeLink, cloudRain, cloudSnow, cloudFog, garbleSeed, garbleInks, garbleScheme, garbleAmt, garbleClean, garbleAnim, garbleRecolor, garbleDrift, garbleDriftMag, garbleDriftLen, garbleVariety, garbleLeading, garbleSize, garbleShape, garbleUniform,
+			garbleSizePool: Object.entries(garbleSizePool).filter(([, v]) => v).map(([k]) => k),
+			garbleShapePool: Object.entries(garbleShapePool).filter(([, v]) => v).map(([k]) => k),
 			bg, bg2, fg, accent, bgType,
 			fontFamily: "'Google Sans Flex'", fontFrac, hasStretch
 		};
@@ -440,6 +510,122 @@
 					<span>GIF speed <b>{gifSpeed.toFixed(2)}×</b></span>
 					<input type="range" min="0.25" max="3" step="0.05" bind:value={gifSpeed} />
 				</label>
+				{#if mode === 'garble'}
+					<label class="slider">
+						<span>Seed <b>{garbleSeed}</b></span>
+						<input type="range" min="0" max="99" step="1" bind:value={garbleSeed} />
+					</label>
+					<label class="slider">
+						<span>Inks <b>{garbleInks}</b></span>
+						<input type="range" min="1" max="10" step="1" bind:value={garbleInks} />
+					</label>
+					<label class="check fmt">
+						<span>Ink scheme</span>
+						<select bind:value={garbleScheme}>
+							<option value="candy">Candy rainbow</option>
+							<option value="sunviolet">Sun & violet</option>
+							<option value="emberpine">Ember & pine</option>
+							<option value="plum">Plum family</option>
+							<option value="teal">Clean teal</option>
+						</select>
+					</label>
+					<label class="slider">
+						<span>Garble <b>{garbleAmt.toFixed(2)}</b></span>
+						<input type="range" min="0" max="1" step="0.05" bind:value={garbleAmt} />
+					</label>
+					<label class="slider">
+						<span>Recolour <b>{garbleRecolor.toFixed(2)}</b></span>
+						<input type="range" min="0" max="1" step="0.05" bind:value={garbleRecolor} />
+					</label>
+					<label class="slider">
+						<span>Drift runs <b>{garbleDrift.toFixed(2)}</b></span>
+						<input type="range" min="0" max="1" step="0.05" bind:value={garbleDrift} />
+					</label>
+					<label class="slider">
+						<span>Drift amount <b>{garbleDriftMag.toFixed(2)}</b></span>
+						<input type="range" min="0" max="1" step="0.05" bind:value={garbleDriftMag} />
+					</label>
+					<label class="slider">
+						<span>Drift length <b>{garbleDriftLen.toFixed(2)}</b></span>
+						<input type="range" min="0" max="1" step="0.05" bind:value={garbleDriftLen} />
+					</label>
+					<label class="slider">
+						<span>Pen variety <b>{garbleVariety.toFixed(2)}</b></span>
+						<input type="range" min="0" max="1" step="0.05" bind:value={garbleVariety} />
+					</label>
+					<label class="slider">
+						<span>Leading <b>{garbleLeading.toFixed(2)}</b></span>
+						<input type="range" min="0.7" max="2" step="0.05" bind:value={garbleLeading} />
+					</label>
+					<label class="check fmt">
+						<span>Stamp size</span>
+						<select bind:value={garbleSize}>
+							<option value="random">Random per ink</option>
+							<option value="xxxs">XXX-small</option>
+							<option value="xxs">XX-small</option>
+							<option value="xs">X-small</option>
+							<option value="s">Small</option>
+							<option value="m">Medium</option>
+							<option value="l">Large</option>
+							<option value="xl">X-large</option>
+							<option value="xxl">XX-large</option>
+							<option value="xxxl">XXX-large</option>
+						</select>
+					</label>
+					{#if garbleSize === 'random'}
+						<div class="pool">
+							{#each Object.keys(garbleSizePool) as k}
+								<label><input type="checkbox" bind:checked={garbleSizePool[k]} />{k.toUpperCase()}</label>
+							{/each}
+						</div>
+					{/if}
+					<label class="check fmt">
+						<span>Stamp shape</span>
+						<select bind:value={garbleShape}>
+							<option value="random">Random per ink</option>
+							<option value="xxxwide">XXX-wide</option>
+							<option value="xxwide">XX-wide</option>
+							<option value="xwide">X-wide</option>
+							<option value="wide">Wide</option>
+							<option value="round">Round</option>
+							<option value="tall">Tall</option>
+							<option value="xtall">X-tall</option>
+							<option value="xxtall">XX-tall</option>
+							<option value="xxxtall">XXX-tall</option>
+						</select>
+					</label>
+					{#if garbleShape === 'random'}
+						<div class="pool">
+							{#each Object.keys(garbleShapePool) as k}
+								<label><input type="checkbox" bind:checked={garbleShapePool[k]} />{k}</label>
+							{/each}
+						</div>
+					{/if}
+					<label class="check">
+						<input type="checkbox" bind:checked={garbleUniform} />
+						<span>Uniform pens (all inks share one random stamp)</span>
+					</label>
+					<label class="check">
+						<input type="checkbox" bind:checked={garbleClean} />
+						<span>Clean contour (even strokes, no chaos)</span>
+					</label>
+					<label class="check fmt">
+						<span>Animation</span>
+						<select bind:value={garbleAnim}>
+							<option value="static">Static (full layout)</option>
+							<option value="layers">Layers (hard cuts)</option>
+							<option value="shuffle">Shuffle (re-seed strobe)</option>
+							<option value="draw">Draw (all sweep at once)</option>
+							<option value="cascade">Cascade (path-order delays)</option>
+							<option value="cascadelayers">Cascade by layers</option>
+							<option value="trace">Trace (letter by letter)</option>
+							<option value="tracelayers">Trace by letter & layer</option>
+							<option value="staggerstart">Stagger start (scheduled pen)</option>
+							<option value="wordpar">Trace words in parallel</option>
+							<option value="cascadewp">Cascade by layers (words parallel)</option>
+						</select>
+					</label>
+				{/if}
 				{#if mode === 'clouds'}
 					<label class="slider">
 						<span>Movement seed <b>{cloudSeedM}</b></span>
@@ -498,9 +684,35 @@
 						<input type="range" min="0" max="1" step="0.05" bind:value={cloudVeil} />
 					</label>
 					<label class="slider">
-						<span>Time of day <b>{cloudTime < 0.15 ? 'dawn' : cloudTime < 0.5 ? 'midday' : cloudTime < 0.85 ? 'sunset' : 'night'}</b></span>
+						<span>Sky time <b>{cloudTime < 0.15 ? 'dawn' : cloudTime < 0.5 ? 'midday' : cloudTime < 0.85 ? 'sunset' : 'night'}</b></span>
 						<input type="range" min="0" max="1" step="0.01" bind:value={cloudTime} />
 					</label>
+					<label class="check">
+						<input type="checkbox" bind:checked={cloudTimeLink} />
+						<span>Text follows sky time</span>
+					</label>
+					{#if !cloudTimeLink}
+						<label class="slider">
+							<span>Text time <b>{cloudTimeText < 0.15 ? 'dawn' : cloudTimeText < 0.5 ? 'midday' : cloudTimeText < 0.85 ? 'sunset' : 'night'}</b></span>
+							<input type="range" min="0" max="1" step="0.01" bind:value={cloudTimeText} />
+						</label>
+					{/if}
+					<label class="slider">
+						<span>Rain <b>{cloudRain.toFixed(2)}</b></span>
+						<input type="range" min="0" max="1" step="0.05" bind:value={cloudRain} />
+					</label>
+					<label class="slider">
+						<span>Snow <b>{cloudSnow.toFixed(2)}</b></span>
+						<input type="range" min="0" max="1" step="0.05" bind:value={cloudSnow} />
+					</label>
+					<label class="slider">
+						<span>Fog <b>{cloudFog.toFixed(2)}</b></span>
+						<input type="range" min="0" max="1" step="0.05" bind:value={cloudFog} />
+					</label>
+					<button class="weather-btn" onclick={matchWeather} disabled={weatherBusy}>
+						{weatherBusy ? 'Fetching sky…' : 'Match my weather'}
+					</button>
+					{#if weatherNote}<span class="weather-note">{weatherNote}</span>{/if}
 				{/if}
 				<label class="check">
 					<input type="checkbox" bind:checked={fromCurrent} />
@@ -758,6 +970,12 @@
 	.check input { accent-color: var(--ink); }
 	.check.fmt { justify-content: space-between; }
 	.check.fmt select { font: inherit; font-size: 0.76rem; color: var(--ink); background: transparent; border: 1px solid var(--line, #d5d8de); border-radius: 6px; padding: 0.15rem 0.35rem; }
+	.weather-btn { font: inherit; font-size: 0.76rem; color: var(--ink); background: transparent; border: 1px solid var(--line, #d5d8de); border-radius: 6px; padding: 0.3rem 0.5rem; cursor: pointer; }
+	.weather-btn:disabled { opacity: 0.5; cursor: default; }
+	.weather-note { font-size: 0.7rem; color: var(--muted-fg); }
+	.pool { display: flex; flex-wrap: wrap; gap: 0.35rem 0.6rem; padding-left: 0.2rem; }
+	.pool label { display: flex; align-items: center; gap: 0.2rem; font-size: 0.68rem; color: var(--muted-fg); cursor: pointer; }
+	.pool input { accent-color: var(--ink); }
 	.slider span { font-size: 0.76rem; color: var(--muted-fg); display: flex; justify-content: space-between; }
 	.slider b { color: var(--ink); }
 	.slider input[type='range'] { width: 100%; accent-color: var(--accent); }

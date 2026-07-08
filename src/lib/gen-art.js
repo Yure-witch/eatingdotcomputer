@@ -3368,6 +3368,675 @@ const sceneBlob125 = (env) => blob3Scene(env, false, 1, true, true, 5, true, 19)
 // COLOUR plus a light size shimmer. Coverage is supersampled 4× per cell so
 // letter edges resolve into clean halftone gradients. Seamless loop.
 
+// GARBLE — the type path drawn as a dense train of ellipse outlines, like
+// a pen plotter coiling a slinky along every stroke. Mostly one ink; extra
+// passes land slightly misregistered (deliberate "manual adjustment"
+// offsets), overprinting through multiply blending. Seeded glitches: the
+// plotter "speeds up" (ellipses spread + elongate) or wanders off the
+// path. All lines animate IN and back OUT together, loop-locked.
+function sceneGarble(env) {
+	const { W, H, getOpts } = env;
+	let t = 0, passes = [], cacheKey = '', loops9 = null, loopsMeta9 = [], loopsKey = '', geo9 = null;
+	// ink schemes lifted from the reference sheets:
+	// candy    — the rainbow marker page (one vivid hue per pass)
+	// sunviolet— yellow + violet + oxblood heavy overprint
+	// emberpine— orange + deep pine two-ink plate
+	// teal     — the single clean teal coil
+	// plum     — purple/magenta/blue cool family
+	const SCHEMES = {
+		candy: ['#7b2fbe', '#0e8a68', '#2a4fd8', '#e0621a', '#c22a8e', '#c9a30a'],
+		sunviolet: ['#e3b505', '#6a30c9', '#7a1420'],
+		emberpine: ['#e0621a', '#0e5f52'],
+		teal: ['#177e8a'],
+		plum: ['#7b2fbe', '#c22a8e', '#2a4fd8', '#4a1f7e']
+	};
+	function contours(cov, w, h, thr) {
+		const segs = [];
+		const V = (x, y) => (cov[y * w + x] >= thr ? 1 : 0);
+		const P = (x1, y1, x2, y2) => {
+			const a = cov[y1 * w + x1], b = cov[y2 * w + x2];
+			const tt = (thr - a) / ((b - a) || 1e-6);
+			return [x1 + (x2 - x1) * tt, y1 + (y2 - y1) * tt];
+		};
+		for (let y = 0; y < h - 1; y++) for (let x = 0; x < w - 1; x++) {
+			const c = V(x, y) | (V(x + 1, y) << 1) | (V(x + 1, y + 1) << 2) | (V(x, y + 1) << 3);
+			if (c === 0 || c === 15) continue;
+			const T = () => P(x, y, x + 1, y), R = () => P(x + 1, y, x + 1, y + 1);
+			const B = () => P(x, y + 1, x + 1, y + 1), L = () => P(x, y, x, y + 1);
+			const add = (a, b) => segs.push([a(), b()]);
+			if (c === 1 || c === 14) add(L, T);
+			else if (c === 2 || c === 13) add(T, R);
+			else if (c === 3 || c === 12) add(L, R);
+			else if (c === 4 || c === 11) add(R, B);
+			else if (c === 6 || c === 9) add(T, B);
+			else if (c === 7 || c === 8) add(L, B);
+			else if (c === 5) { add(L, T); add(R, B); }
+			else if (c === 10) { add(T, R); add(B, L); }
+		}
+		// chain segments into loops by quantized endpoints
+		const key = (p) => Math.round(p[0] * 2) + ',' + Math.round(p[1] * 2);
+		const adj = new Map();
+		for (let i = 0; i < segs.length; i++) {
+			for (const p of [segs[i][0], segs[i][1]]) {
+				const k = key(p);
+				if (!adj.has(k)) adj.set(k, []);
+				adj.get(k).push(i);
+			}
+		}
+		const used = new Uint8Array(segs.length);
+		const loops = [];
+		for (let i = 0; i < segs.length; i++) {
+			if (used[i]) continue;
+			const loop = [segs[i][0]];
+			let cur = i, end = segs[i][1];
+			used[i] = 1;
+			for (let guard = 0; guard < segs.length; guard++) {
+				loop.push(end);
+				const cands = adj.get(key(end)) || [];
+				let nxt = -1;
+				for (const j of cands) if (!used[j]) { nxt = j; break; }
+				if (nxt < 0) break;
+				used[nxt] = 1;
+				end = key(segs[nxt][0]) === key(end) ? segs[nxt][1] : segs[nxt][0];
+				cur = nxt;
+			}
+			if (loop.length > 6) loops.push(loop);
+		}
+		return loops;
+	}
+	function skeletonPaths(cov, w, h, thr) {
+		// Zhang-Suen thinning: the stroke collapses to its 1px CENTRELINE,
+		// so the coil follows one path per stroke instead of both outline
+		// sides of the glyph.
+		const img = new Uint8Array(w * h);
+		for (let i = 0; i < img.length; i++) img[i] = cov[i] >= thr ? 1 : 0;
+		const at = (x, y) => img[y * w + x];
+		let changed = true;
+		let guard = 0;
+		while (changed && guard++ < 60) {
+			changed = false;
+			for (let pass = 0; pass < 2; pass++) {
+				const del = [];
+				for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+					if (!at(x, y)) continue;
+					const p = [at(x, y - 1), at(x + 1, y - 1), at(x + 1, y), at(x + 1, y + 1), at(x, y + 1), at(x - 1, y + 1), at(x - 1, y), at(x - 1, y - 1)];
+					const B = p[0] + p[1] + p[2] + p[3] + p[4] + p[5] + p[6] + p[7];
+					if (B < 2 || B > 6) continue;
+					let A = 0;
+					for (let k = 0; k < 8; k++) if (!p[k] && p[(k + 1) % 8]) A++;
+					if (A !== 1) continue;
+					if (pass === 0) { if (p[0] * p[2] * p[4] !== 0 || p[2] * p[4] * p[6] !== 0) continue; }
+					else { if (p[0] * p[2] * p[6] !== 0 || p[0] * p[4] * p[6] !== 0) continue; }
+					del.push(y * w + x);
+				}
+				if (del.length) { changed = true; for (const i of del) img[i] = 0; }
+			}
+		}
+		// walk the skeleton graph into polylines: split at endpoints/junctions
+		const deg = new Uint8Array(w * h);
+		const DIRS = [[0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1]];
+		for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+			if (!at(x, y)) continue;
+			// degree = CONNECTED GROUPS of neighbours (crossing number), not a
+			// raw count: a diagonal step whose orthogonal neighbour is also
+			// set is ONE continuation, not a junction. Raw counting shredded
+			// smooth curves (the s!) into dozens of fake fragments.
+			let d2 = 0;
+			for (let k = 0; k < 8; k++) {
+				const a1 = at(x + DIRS[k][0], y + DIRS[k][1]);
+				const a2 = at(x + DIRS[(k + 1) % 8][0], y + DIRS[(k + 1) % 8][1]);
+				if (!a1 && a2) d2++;
+			}
+			deg[y * w + x] = d2;
+		}
+		const usedPix = new Uint8Array(w * h);
+		const paths = [];
+		const walk = (sx, sy) => {
+			const path = [[sx, sy]];
+			let cx2 = sx, cy2 = sy, px2 = -1, py2 = -1;
+			for (let g2 = 0; g2 < w * h; g2++) {
+				usedPix[cy2 * w + cx2] = 1;
+				let nx = -1, ny = -1;
+				for (const [dx, dy] of DIRS) {
+					const xx = cx2 + dx, yy = cy2 + dy;
+					if (!at(xx, yy) || (xx === px2 && yy === py2) || usedPix[yy * w + xx]) continue;
+					nx = xx; ny = yy; break;
+				}
+				if (nx < 0) break;
+				path.push([nx, ny]);
+				px2 = cx2; py2 = cy2; cx2 = nx; cy2 = ny;
+				if (deg[ny * w + nx] !== 2) { usedPix[ny * w + nx] = 1; break; }
+			}
+			return path;
+		};
+		// start at endpoints and junctions first, then sweep leftover loops
+		for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+			if (at(x, y) && !usedPix[y * w + x] && deg[y * w + x] !== 2) {
+				let p2 = walk(x, y);
+				while (p2.length >= 2) { paths.push(p2); usedPix[y * w + x] = 0; p2 = walk(x, y); }
+				usedPix[y * w + x] = 1;
+			}
+		}
+		for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+			if (at(x, y) && !usedPix[y * w + x]) {
+				const p2 = walk(x, y);
+				if (p2.length >= 2) paths.push(p2);
+			}
+		}
+		// light smoothing: the pixel walk staircases; two moving-average
+		// passes turn it into a fluent pen line
+		for (const p2 of paths) {
+			for (let it = 0; it < 2; it++) {
+				for (let i = 1; i < p2.length - 1; i++) {
+					p2[i] = [(p2[i - 1][0] + p2[i][0] * 2 + p2[i + 1][0]) / 4, (p2[i - 1][1] + p2[i][1] * 2 + p2[i + 1][1]) / 4];
+				}
+			}
+		}
+		return paths;
+	}
+	// quirky marker drawer: the pens someone actually owns. Neons live in a
+	// separate rarer pool so they stay a treat, not a theme.
+	const QUIRKY = ['#ff5fa2', '#00b3a4', '#ff7a1a', '#8fd400', '#b04ae0', '#0090e8', '#e8003d', '#ff3ec8', '#57d4b0', '#5c53e0'];
+	const NEONS = ['#e8f000', '#d4f50a', '#f0e800'];
+	function hueShift(hex, deg) {
+		const n = parseInt(hex.slice(1), 16);
+		let r = (n >> 16) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255;
+		const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2;
+		let h = 0, s2 = 0;
+		if (mx !== mn) {
+			const d = mx - mn;
+			s2 = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
+			h = mx === r ? ((g - b) / d + (g < b ? 6 : 0)) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+			h /= 6;
+		}
+		h = ((h + deg / 360) % 1 + 1) % 1;
+		const q = l < 0.5 ? l * (1 + s2) : l + s2 - l * s2, p = 2 * l - q;
+		const f = (tt) => {
+			tt = ((tt % 1) + 1) % 1;
+			if (tt < 1 / 6) return p + (q - p) * 6 * tt;
+			if (tt < 1 / 2) return q;
+			if (tt < 2 / 3) return p + (q - p) * (2 / 3 - tt) * 6;
+			return p;
+		};
+		const to2 = (v) => Math.round(v * 255).toString(16).padStart(2, '0');
+		return '#' + to2(f(h + 1 / 3)) + to2(f(h)) + to2(f(h - 1 / 3));
+	}
+	function labelComponents(cov, w, h, thr) {
+		// flood-fill labels: every glyph blob gets an id (a dot of an "i" is
+		// its own blob, as it should be)
+		const lab = new Int32Array(w * h).fill(-1);
+		let next = 0;
+		const stack = [];
+		for (let i0 = 0; i0 < w * h; i0++) {
+			if (cov[i0] < thr || lab[i0] >= 0) continue;
+			lab[i0] = next; stack.push(i0);
+			while (stack.length) {
+				const j = stack.pop();
+				const x = j % w, y = (j / w) | 0;
+				for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+					const xx = x + dx, yy = y + dy;
+					if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+					const k = yy * w + xx;
+					if (cov[k] >= thr && lab[k] < 0) { lab[k] = next; stack.push(k); }
+				}
+			}
+			next++;
+		}
+		return lab;
+	}
+	function mergePerGlyph(paths, lab, w) {
+		// route every glyph's skeleton fragments into ONE continuous pen
+		// path: greedy nearest-endpoint chaining with short bridges, the way
+		// a plotter operator would sequence a letter without lifting the pen
+		const groups = new Map();
+		for (const p of paths) {
+			const q = p[(p.length / 2) | 0];
+			const li = lab[Math.round(q[1]) * w + Math.round(q[0])] ?? -1;
+			if (!groups.has(li)) groups.set(li, []);
+			groups.get(li).push(p);
+		}
+		const merged = [];
+		for (const group of groups.values()) {
+			group.sort((a, b) => b.length - a.length);
+			const route = group.shift().slice();
+			while (group.length) {
+				const end = route[route.length - 1];
+				let bi = 0, bRev = false, bD = 1e18;
+				for (let i = 0; i < group.length; i++) {
+					const g = group[i];
+					const d1 = (g[0][0] - end[0]) ** 2 + (g[0][1] - end[1]) ** 2;
+					const d2 = (g[g.length - 1][0] - end[0]) ** 2 + (g[g.length - 1][1] - end[1]) ** 2;
+					if (d1 < bD) { bD = d1; bi = i; bRev = false; }
+					if (d2 < bD) { bD = d2; bi = i; bRev = true; }
+				}
+				const nxt = group.splice(bi, 1)[0];
+				if (bRev) nxt.reverse();
+				const st = nxt[0];
+				const bl = Math.hypot(st[0] - end[0], st[1] - end[1]);
+				const nB = Math.min(8, Math.ceil(bl / 2));
+				const up9 = bl > 3 ? 1 : 0; // micro-joins are CONTINUATION (inked); only real hops are pen-up travel
+				for (let k = 1; k <= nB; k++) route.push([end[0] + (st[0] - end[0]) * k / (nB + 1), end[1] + (st[1] - end[1]) * k / (nB + 1), up9]);
+				route.push(...nxt);
+			}
+			merged.push(route);
+		}
+		return merged;
+	}
+	function ensure(o, seedOff = 0) {
+		const seed = (o.garbleSeed || 0) + seedOff, inks = Math.max(1, Math.round(o.garbleInks ?? 3));
+		const clean = !!o.garbleClean;
+		const gAmt = clean ? 0 : (o.garbleAmt ?? 0.5);
+		const recAmt = o.garbleRecolor ?? 0;
+		const drftA = clean ? 0 : (o.garbleDrift ?? 0.35);
+		const dMag = o.garbleDriftMag ?? 0.5;  // 0.5 = current strength (x1)
+		const dLen = o.garbleDriftLen ?? 0.5;  // 0.5 = current run length (x1)
+		const vAmt = o.garbleVariety ?? 0.35;
+		const lead9 = o.garbleLeading ?? 1.25;
+		// discrete stamp categories: pick exactly, or draw from the pool
+		const SIZE_CAT = { xxxs: 0.12, xxs: 0.25, xs: 0.45, s: 0.7, m: 1, l: 1.45, xl: 2.0, xxl: 3.0, xxxl: 4.5 };
+		const SHAPE_CAT = { xxxwide: [1, 0.08], xxwide: [1, 0.16], xwide: [1, 0.3], wide: [1, 0.62], round: [1, 1], tall: [0.62, 1], xtall: [0.3, 1], xxtall: [0.16, 1], xxxtall: [0.08, 1] };
+		const sizeSel = o.garbleSize || 'random';
+		const shapeSel = o.garbleShape || 'random';
+		// the RANDOM pools are user-curated: only ticked categories can be drawn
+		const sizePool = o.garbleSizePool && o.garbleSizePool.length ? o.garbleSizePool : Object.keys(SIZE_CAT);
+		const shapePool = o.garbleShapePool && o.garbleShapePool.length ? o.garbleShapePool : Object.keys(SHAPE_CAT);
+		const uniform = !!o.garbleUniform;
+		const scheme = SCHEMES[o.garbleScheme] || SCHEMES.candy;
+		const key = (o.text || '') + '|' + W + 'x' + H + '|' + seed + '|' + inks + '|' + (o.garbleScheme || 'candy') + '|' + gAmt + '|' + (clean ? 1 : 0) + '|' + recAmt + '|' + drftA + '|' + dMag + '|' + dLen + '|' + vAmt + '|' + lead9 + '|' + sizeSel + '|' + shapeSel + '|' + (uniform ? 1 : 0) + '|' + sizePool.join('.') + '|' + shapePool.join('.');
+		if (key === cacheKey) return;
+		cacheKey = key;
+		let sd = (4242 + seed * 7919) >>> 0;
+		// murmur-style finalizer: nearby seeds (shuffle ticks step by 31) gave
+		// CORRELATED early LCG outputs — pass 0's stamp category barely moved
+		// between re-rolls. Hash-mixing decorrelates the stream from draw one.
+		sd ^= sd >>> 16; sd = Math.imul(sd, 0x85ebca6b) >>> 0;
+		sd ^= sd >>> 13; sd = Math.imul(sd, 0xc2b2ae35) >>> 0;
+		sd ^= sd >>> 16; sd >>>= 0;
+		const rnd = () => ((sd = (sd * 1664525 + 1013904223) >>> 0) / 4294967296);
+		const lKey = (o.text || '') + '|' + W + 'x' + H + '|' + lead9;
+		if (lKey !== loopsKey) {
+		// thin-weight text -> its contour hugs the stroke centreline, so the
+		// ellipse train reads as a TUBE along the letter path
+		const mw = 512, mh = Math.max(2, Math.round(512 * H / W));
+		const cv = document.createElement('canvas'); cv.width = mw; cv.height = mh;
+		const c2 = cv.getContext('2d');
+		c2.fillStyle = '#000'; c2.fillRect(0, 0, mw, mh);
+		const words = ((o.text || 'GARBLE').trim()).split(/\s+/).filter(Boolean);
+		let fontPx = mh * 0.22;
+		const fam = "'Google Sans Flex', 'Helvetica Neue', sans-serif";
+		c2.font = `300 ${fontPx}px ${fam}`;
+		let maxW = 0;
+		for (const w of words) maxW = Math.max(maxW, c2.measureText(w).width);
+		fontPx = Math.min(fontPx * (mw * 0.82) / maxW, (mh * 0.8) / (words.length * Math.max(lead9, 0.7)));
+		c2.font = `300 ${fontPx}px ${fam}`;
+		const lineH = fontPx * lead9; // LEADING on the slider — tight overlap to airy stack
+		const y0 = mh / 2 - (lineH * words.length) / 2 + lineH / 2;
+		c2.fillStyle = '#fff';
+		c2.textAlign = 'center'; c2.textBaseline = 'middle';
+		for (let li = 0; li < words.length; li++) c2.fillText(words[li], mw / 2, y0 + li * lineH);
+		const img = c2.getImageData(0, 0, mw, mh).data;
+		const cov = new Float32Array(mw * mh);
+		for (let i = 0; i < cov.length; i++) cov[i] = img[i * 4] / 255;
+		const lab9 = labelComponents(cov, mw, mh, 0.5);
+		const loops = mergePerGlyph(skeletonPaths(cov, mw, mh, 0.5), lab9, mw); // ONE continuous pen path per glyph
+		// components whose skeleton was too small to trace (the dot of an i,
+		// a period) still deserve ink: stamp their centroid
+		{
+			const seen = new Set();
+			for (const lp of loops) { const q = lp[(lp.length / 2) | 0]; seen.add(lab9[Math.round(q[1]) * mw + Math.round(q[0])]); }
+			const area = new Map(), cxm = new Map(), cym = new Map();
+			for (let y = 0; y < mh; y++) for (let x = 0; x < mw; x++) {
+				const L2 = lab9[y * mw + x];
+				if (L2 < 0) continue;
+				area.set(L2, (area.get(L2) || 0) + 1);
+				cxm.set(L2, (cxm.get(L2) || 0) + x);
+				cym.set(L2, (cym.get(L2) || 0) + y);
+			}
+			for (const [L2, a2] of area) {
+				if (seen.has(L2) || a2 < 4) continue;
+				const cx2 = cxm.get(L2) / a2, cy2 = cym.get(L2) / a2;
+				loops.push([[cx2 - 1, cy2], [cx2 + 1, cy2]]);
+			}
+		}
+		// sort glyphs into READING ORDER (line by line, left to right) — the
+		// skeleton tracer discovers them in scan order, which is not typing
+		// order (taller letters surface first)
+		const lineCs = words.map((_, li2) => y0 + li2 * lineH);
+		const keyed = loops.map((lp) => {
+			let sx = 0, sy = 0;
+			for (const p of lp) { sx += p[0]; sy += p[1]; }
+			const cx2 = sx / lp.length, cy2 = sy / lp.length;
+			let best = 0, bd = 1e18;
+			for (let k = 0; k < lineCs.length; k++) { const d2 = Math.abs(cy2 - lineCs[k]); if (d2 < bd) { bd = d2; best = k; } }
+			return { lp, k: best * 1e6 + cx2 };
+		});
+		keyed.sort((a, b) => a.k - b.k);
+		// per-glyph ordinal WITHIN its word/line — so modes can run words in
+		// parallel (letter 3 of every word at once)
+		const counts9 = {};
+		loopsMeta9 = keyed.map((q) => {
+			const li2 = Math.floor(q.k / 1e6);
+			counts9[li2] = (counts9[li2] ?? -1) + 1;
+			return counts9[li2];
+		});
+		loops9 = keyed.map((q) => q.lp);
+		geo9 = { sc: W / mw, rTube: Math.max(3, fontPx * (W / mw) * 0.1) };
+		loopsKey = lKey;
+		}
+		const loops = loops9;
+		const sc = geo9.sc, rTube = geo9.rTube;
+		// build ink passes: pass 0 is the faithful trace; extra passes are
+		// misregistered, sometimes partial, in other inks
+		const inkPool = scheme.slice();
+		for (let i = inkPool.length - 1; i > 0; i--) { const j = (rnd() * (i + 1)) | 0; [inkPool[i], inkPool[j]] = [inkPool[j], inkPool[i]]; }
+		passes = [];
+		const sizeKeys = sizePool, shapeKeys = shapePool;
+		// uniform: one seeded draw shared by every ink
+		const uSize = sizeKeys[(rnd() * sizeKeys.length) | 0];
+		const uShape = shapeKeys[(rnd() * shapeKeys.length) | 0];
+		for (let pi = 0; pi < inks; pi++) {
+			const off = pi === 0 ? [0, 0] : [(rnd() - 0.5) * rTube * 8 * gAmt, (rnd() - 0.5) * rTube * 6 * gAmt];
+			// ONE ellipse per pass: the same shape — same SIZE, same angle —
+			// copied and translated along the path. A stamped spring, never a
+			// snake. (Speed-glitch elongation is the one sanctioned exception.)
+			const passAng = (rnd() - 0.5) * 0.7;
+			// stamp category per pass: explicit selection wins; Random draws
+			// per ink — unless Uniform pens shares one draw across all inks
+			const sizeKey = sizeSel !== 'random' ? sizeSel : uniform ? uSize : sizeKeys[(rnd() * sizeKeys.length) | 0];
+			const shapeKey = shapeSel !== 'random' ? shapeSel : uniform ? uShape : shapeKeys[(rnd() * shapeKeys.length) | 0];
+			const base9 = rTube * SIZE_CAT[sizeKey];
+			const passRx = base9 * SHAPE_CAT[shapeKey][0], passRy = base9 * SHAPE_CAT[shapeKey][1];
+			const spaceMul = Math.max(0.4, 1 + (rnd() - 0.4) * 1.2 * vAmt); // variety slider still varies SPACING
+			const range = pi === 0 || rnd() > gAmt ? [0, 1] : [rnd() * 0.4, 0.6 + rnd() * 0.4];
+			const ells = [];
+			for (let gi9 = 0; gi9 < loops.length; gi9++) {
+				const loop = loops[gi9];
+				// RECOLOUR: with slider-scaled chance, this letter gets a pen
+				// swap for this pass — usually a colour-theory partner of the
+				// pass ink (triadic/complement), sometimes a quirky marker,
+				// and once in a while (semi-uncommon, deliberately) a neon.
+				let glyphCol = null, gT0 = 0, gT1 = 1;
+				if (rnd() < recAmt) {
+					const r2 = rnd();
+					if (r2 < 0.55) glyphCol = hueShift(inkPool[pi % inkPool.length], 120 + rnd() * 120);
+					else if (r2 < 0.88) glyphCol = QUIRKY[(rnd() * QUIRKY.length) | 0];
+					else glyphCol = NEONS[(rnd() * NEONS.length) | 0];
+					// usually a SECTION of the letter changes pen (30-40% of the
+					// path, mid-letter swap); sometimes the whole letter
+					if (rnd() < 0.65) {
+						const len9 = 0.3 + rnd() * 0.1;
+						gT0 = rnd() * (1 - len9);
+						gT1 = gT0 + len9;
+					}
+				}
+				// arc-length resample
+				let total = 0;
+				const cum = [0];
+				for (let i = 1; i < loop.length; i++) { total += Math.hypot(loop[i][0] - loop[i - 1][0], loop[i][1] - loop[i - 1][1]); cum.push(total); }
+				if (total < 4) continue;
+				let s = 0, armX = 0, armY = 0, run = 0, runDx = 0, runDy = 0; // arm offset + drift-run state
+				while (s < total) {
+					// find point at arc s
+					let lo = 0;
+					while (lo < cum.length - 2 && cum[lo + 1] < s) lo++;
+					const f = (s - cum[lo]) / Math.max(1e-6, cum[lo + 1] - cum[lo]);
+					const px = loop[lo][0] + (loop[lo + 1][0] - loop[lo][0]) * f;
+					const py = loop[lo][1] + (loop[lo + 1][1] - loop[lo][1]) * f;
+					const ds = rTube / sc * 0.55 * spaceMul;
+					// pen-up bridge segments advance the clock but leave no ink —
+					// they are TRAVEL moves, not letter strokes
+					if (loop[lo][2] || loop[lo + 1][2]) { s += ds; continue; }
+					// ARM BUMP: with a garble-scaled chance per circle, the plotter
+					// arm gets knocked. THIS circle snaps (drawn broken, jumping
+					// mid-arc from the old position to the new), and every LATER
+					// circle in this letter inherits the displacement — the arm is
+					// "forever moved" until the next letter re-homes it.
+					// DRIFT RUN: sometimes the arm isn't knocked but DRAGGED — a
+					// stretch of consecutive circles trends steadily off in one
+					// direction, and (per the arm model) the letter keeps the
+					// final displacement afterwards: half a letter smoothly
+					// warped away from itself
+					if (run <= 0 && rnd() < 0.05 * drftA) {
+						const steps9 = Math.max(2, Math.round((6 + rnd() * 18) * dLen * 2));
+						const ang9 = rnd() * TAU;
+						// magnitude rides the garble slider but keeps a floor from
+						// the drift slider, so runs read even at low garble; the
+						// drift-amount slider scales the whole displacement (0.5 = x1)
+						const mag9 = rTube * (2 + rnd() * 6) * Math.max(gAmt, drftA * 0.5) * dMag * 2;
+						run = steps9;
+						runDx = Math.cos(ang9) * mag9 / steps9;
+						runDy = Math.sin(ang9) * mag9 / steps9 * 0.7;
+					}
+					if (run > 0) { run--; armX += runDx; armY += runDy; }
+					let warp = null;
+					if (rnd() < 0.002 + 0.06 * gAmt * gAmt) {
+						const mag = rTube * (1.5 + rnd() * 5) * (0.4 + 0.6 * gAmt);
+						const dxB = (rnd() - 0.5) * 2 * mag, dyB = (rnd() - 0.5) * 1.4 * mag;
+						warp = { dx: dxB, dy: dyB, phi: (0.2 + rnd() * 0.55) * TAU, rot: (rnd() - 0.5) * 1.3, st: rnd() * TAU };
+						armX += dxB; armY += dyB;
+					}
+					const wob = clean ? 0 : 0.3 + 0.8 * gAmt;
+					ells.push({
+						x: px * sc + off[0] + armX, y: py * sc + off[1] + armY,
+						a: passAng + (rnd() - 0.5) * wob * 0.4,
+						rx: passRx, ry: passRy,
+						t: s / total, warp, r: rnd(), g: gi9, gw: loopsMeta9[gi9] || 0,
+						col: glyphCol && s / total >= gT0 && s / total <= gT1 ? glyphCol : null
+					});
+					s += ds;
+				}
+			}
+			// alpha tapers as the stack grows: many inks overprint translucent
+			// (the ghost-stack spirit), few inks stay bold
+			passes.push({ color: inkPool[pi % inkPool.length], alpha: pi === 0 ? 0.75 : Math.min(0.55, 3 / inks), ells, range });
+		}
+		passes.lw = Math.max(1, rTube * 0.16);
+		passes.gN = loops.length;
+		passes.gwMax = loopsMeta9.length ? Math.max.apply(null, loopsMeta9) + 1 : 1;
+		if (recAmt > 0) {
+			// COLOUR-AS-LAYER: with Recolour active, every circle regroups by
+			// its FINAL ink — each colour becomes its own layer, so drawing
+			// order (and every layer-based animation mode) is organised
+			// entirely by colour. Layer order = first appearance in pen order.
+			// SIMILAR colours share a layer: recoloured circles whose ink sits
+			// close to an existing layer's colour (RGB distance < ~70) merge
+			// into it and draw on the same frame — only genuinely new colours
+			// open new layers. Base pen inks seed the canon in pen order.
+			const canon = [];
+			const toRgb = (hex) => { const n = parseInt(hex.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
+			const findLayer = (hex) => {
+				const c = toRgb(hex);
+				for (const L of canon) {
+					const d = (L.rgb[0] - c[0]) ** 2 + (L.rgb[1] - c[1]) ** 2 + (L.rgb[2] - c[2]) ** 2;
+					if (d < 4900) return L;
+				}
+				const L = { color: hex, rgb: c, ells: [] };
+				canon.push(L);
+				return L;
+			};
+			for (const pass of passes) findLayer(pass.color);
+			for (let pi = 0; pi < passes.length; pi++) {
+				const pass = passes[pi];
+				for (const e of pass.ells) {
+					if (e.t < pass.range[0] || e.t > pass.range[1]) continue;
+					findLayer(e.col || pass.color).ells.push({ ...e, col: null, al: pass.alpha });
+				}
+			}
+			const lw9 = passes.lw, gN9 = passes.gN, gwMax9 = passes.gwMax;
+			passes = canon.filter((L) => L.ells.length).map((L) => ({ color: L.color, alpha: 1, ells: L.ells, range: [0, 1] }));
+			passes.lw = lw9; passes.gN = gN9; passes.gwMax = gwMax9;
+		}
+	}
+	function reset() { t = 0; cacheKey = ''; }
+	function step(dt) { t += dt; }
+	function render(ctx) {
+		const o = getOpts();
+		const dur = o.duration || 8;
+		const phase = (((t / dur) % 1) + 1) % 1;
+		const mode = o.garbleAnim || 'static';
+		// SHUFFLE: re-roll the composition seed every ~5 frames — the whole
+		// layout strobes between different configurations (skeleton cached,
+		// only the cheap pass build reruns)
+		ensure(o, mode === 'shuffle' ? Math.floor(phase * dur * 4) * 31 : 0);
+		paintBg(ctx, o, W, H);
+		const tSec = phase * dur;
+		const drawing = phase < 0.5;
+		const v = drawing ? phase * 2 : (phase - 0.5) * 2;
+		const nP = passes.length;
+		ctx.save();
+		ctx.globalCompositeOperation = 'multiply'; // overprint
+		ctx.lineWidth = passes.lw || 1.5;
+		for (let pi = 0; pi < nP; pi++) {
+			const pass = passes[pi];
+			// LAYERS: HARD CUTS at shuffle tempo — a new ink slams in every
+			// quarter second until all are stacked, then the full print holds
+			// for the rest of the loop
+			if (mode === 'layers' && pi >= 1 + Math.floor(tSec * 4)) continue;
+			const nG = passes.gN || 1;
+			if (mode === 'cascadelayers' && tSec < pi * 2.2) continue;
+			ctx.globalAlpha = pass.alpha;
+			for (const e of pass.ells) {
+				if (e.t < pass.range[0] || e.t > pass.range[1]) continue;
+				// per-circle sweep timing — SHARED LOGIC for the three drawing
+				// modes: staggered starts (0.5s window), individual sweep rates,
+				// so circles never all land on the same frame.
+				let sweep = 1;
+				if (mode === 'draw') sweep = (tSec - e.r * 0.5) / (0.8 + 0.5 * e.r); // ALL letters at once
+				else if (mode === 'cascade' || mode === 'cascadelayers') {
+					// CASCADE: every letter runs simultaneously, but within each
+					// letter the circles start in tight PATH ORDER (small delay
+					// circle-to-circle) with long overlapping sweeps — parallel
+					// travelling waves down every letter at once. The layers
+					// variant runs one ink's cascade after another.
+					const t0 = mode === 'cascadelayers' ? pi * 2.2 : 0;
+					const vC = Math.min(1, Math.max(0, (tSec - t0) / 2.2));
+					sweep = (vC - 0.55 * e.t) / (0.4 * (0.7 + 0.6 * e.r));
+				}
+				else if (mode === 'cascadewp') {
+					// CASCADE BY LAYERS x WORDS IN PARALLEL: each ink takes its
+					// turn; within the ink, letter k of EVERY word cascades at
+					// once (path-order circle delays, unhurried sweeps), then
+					// letter k+1 across all words — column by column, ink by ink.
+					// pacing ADAPTS to fit the loop: layers split the duration,
+					// letter columns split each layer (fixed slots overflowed the
+					// loop for many-ink long words — late layers never appeared)
+					const layerDur9 = (dur * 0.94) / nP;
+					const slot9 = Math.max(0.12, (layerDur9 - 1.1) / (passes.gwMax || 1));
+					const st9 = pi * layerDur9 + e.gw * slot9 + e.t * Math.min(0.5, slot9 * 0.85);
+					sweep = (tSec - st9) / (Math.max(0.22, slot9 * 0.85) * (0.75 + 0.5 * e.r));
+				}
+				else if (mode === 'wordpar') {
+					// WORDS IN PARALLEL: the k-th letter of EVERY word traces at
+					// the same moment — the I of INTERACTIVE with the D of DESIGN
+					// with the C of CONCEPTS — all inks drawing together, then
+					// letter k+1 across all words, and so on. Un-trace mirrors.
+					const units9 = passes.gwMax || 1;
+					const vG = drawing
+						? Math.min(1, Math.max(0, phase * 2 * units9 - e.gw))
+						: Math.min(1, Math.max(0, (phase - 0.5) * 2 * units9 - e.gw));
+					const s9 = (vG - 0.55 * e.t) / (0.4 * (0.7 + 0.6 * e.r));
+					sweep = drawing ? s9 : 1 - s9;
+				}
+				else if (mode === 'staggerstart') {
+					// STAGGER START: every circle's animation BEGINS at the exact
+					// moment the scheduled pen (layer -> letter -> path position)
+					// reaches it — but the sweep itself takes its own unhurried
+					// ~0.5-1s regardless of the schedule's pace. Starts are
+					// strictly ordered; completions overlap freely across
+					// letters and even layers. The pen's schedule, the ink's
+					// leisure.
+					const units9 = nP * nG;
+					const slot9 = pi * nG + e.g;
+					const startSec = (slot9 + e.t * 0.85) * (dur * 0.82) / units9;
+					sweep = (tSec - startSec) / (0.5 + 0.45 * e.r);
+				}
+				else if (mode === 'trace' || mode === 'tracelayers') {
+					// STRICT letter order: each letter's path traces to completion
+					// before the next letter begins (tracelayers: the whole
+					// letter sequence per ink, one ink after another). Un-trace
+					// mirrors across the second half of the loop.
+					const units = mode === 'trace' ? nG : nP * nG;
+					const slot = mode === 'trace' ? e.g : pi * nG + e.g;
+					const vG = drawing
+						? Math.min(1, Math.max(0, phase * 2 * units - slot))
+						: Math.min(1, Math.max(0, (phase - 0.5) * 2 * units - slot));
+					// overlapping sweeps: circle STARTS are staggered tightly
+					// along the path (~10ms apart) while each sweep itself runs
+					// LONG (~40% of the letter window) — many circles drawing at
+					// once, a smooth travelling wave instead of rapid-fire pops.
+					// Late circles may spill slightly past the slot; that reads
+					// as organic pen momentum, not a bug.
+					const s9 = (vG - 0.55 * e.t) / (0.4 * (0.7 + 0.6 * e.r));
+					sweep = drawing ? s9 : 1 - s9;
+				}
+				sweep = sweep < 0 ? 0 : sweep > 1 ? 1 : sweep;
+				if (sweep <= 0) continue;
+				ctx.strokeStyle = e.col || pass.color;
+				if (e.al !== undefined) ctx.globalAlpha = e.al; // colour-as-layer keeps each circle's source-ink opacity
+				strokeEll(ctx, e, sweep);
+			}
+		}
+		ctx.restore();
+	}
+	function strokeEll(ctx, e, sweep) {
+				if (!e.warp) {
+					ctx.beginPath();
+					ctx.ellipse(e.x, e.y, e.rx, e.ry, e.a, 0, TAU * sweep);
+					ctx.stroke();
+				} else if (sweep < 1) {
+					// mid-sweep warped circle: draw its first arc proportionally;
+					// the skid + landing arc pop in as the sweep completes
+					const wp = e.warp;
+					ctx.beginPath();
+					ctx.ellipse(e.x - wp.dx, e.y - wp.dy, e.rx, e.ry, e.a, wp.st, wp.st + wp.phi * Math.min(1, sweep * 1.6));
+					ctx.stroke();
+				} else {
+					// the SNAPPED circle: begins where the arm USED to be, breaks
+					// off mid-arc, and finishes warped at the new position — both
+					// halves drawn SQUIGGLY (the pen shaking through the shove),
+					// joined by a squiggly, broken skid line between break point
+					// and touch-down point
+					const wp = e.warp;
+					const arcPt = (cx0, cy0, rx0, ry0, a0, tt, k1) => {
+						const w9 = 1 + 0.11 * Math.sin(tt * 11 + k1) + 0.06 * Math.sin(tt * 21 + k1 * 1.7);
+						const lx = Math.cos(tt) * rx0 * w9, ly = Math.sin(tt) * ry0 * w9;
+						return [cx0 + lx * Math.cos(a0) - ly * Math.sin(a0), cy0 + lx * Math.sin(a0) + ly * Math.cos(a0)];
+					};
+					const drawArc = (cx0, cy0, rx0, ry0, a0, t0, t1, k1) => {
+						ctx.beginPath();
+						let last = null;
+						for (let i = 0; i <= 22; i++) {
+							const p9 = arcPt(cx0, cy0, rx0, ry0, a0, t0 + (t1 - t0) * i / 22, k1);
+							i ? ctx.lineTo(p9[0], p9[1]) : ctx.moveTo(p9[0], p9[1]);
+							last = p9;
+						}
+						ctx.stroke();
+						return last;
+					};
+					const brk = drawArc(e.x - wp.dx, e.y - wp.dy, e.rx, e.ry, e.a, wp.st, wp.st + wp.phi, wp.st * 3.1);
+					const land = arcPt(e.x, e.y, e.rx * 1.15, e.ry * 0.85, e.a + wp.rot, wp.st + wp.phi, wp.st * 5.3);
+					drawArc(e.x, e.y, e.rx * 1.15, e.ry * 0.85, e.a + wp.rot, wp.st + wp.phi, wp.st + TAU, wp.st * 5.3);
+					// the skid: squiggles along the shove, breaking twice where the
+					// pen left the paper
+					const nx9 = -(land[1] - brk[1]), ny9 = land[0] - brk[0];
+					const nl9 = Math.hypot(nx9, ny9) || 1;
+					const amp9 = Math.min(e.rx * 0.7, nl9 * 0.3);
+					for (const seg of [[0, 0.3], [0.42, 0.66], [0.78, 1]]) {
+						ctx.beginPath();
+						for (let i = 0; i <= 10; i++) {
+							const u = seg[0] + (seg[1] - seg[0]) * i / 10;
+							const per = Math.sin(u * Math.PI * (3.0 + wp.rot)) * (0.6 + 0.4 * Math.sin(wp.st + u * 9.0));
+							const X = brk[0] + (land[0] - brk[0]) * u + (nx9 / nl9) * per * amp9;
+							const Y = brk[1] + (land[1] - brk[1]) * u + (ny9 / nl9) * per * amp9;
+							i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y);
+						}
+						ctx.stroke();
+					}
+				}
+	}
+	return { reset, step, render };
+}
+
 // CLOUDS — "the words are clouds": a raymarched volumetric cloud bank in
 // the shape of the text, drifting gently in a vibrant blue sky. The text
 // mask (blurred CPU-side into a puffy coverage field) extrudes into a 3D
@@ -3391,7 +4060,11 @@ uniform float uSolid; // 0 = gauzy vapour, 1 = solid white cloud
 uniform float uShad; // shadow depth: 0 = airy light shadows, 1 = heavy dark
 uniform float uSprd; // wisp spread: fibres stream further, sheets roam wider
 uniform float uHole; // inner veils: large translucent windows inside letters
-uniform float uToD;  // time of day: 0 dawn, 1/3 midday, 2/3 sunset, 1 night
+uniform float uToD;  // SKY time of day: 0 dawn, 1/3 midday, 2/3 sunset, 1 night
+uniform float uToDT; // TEXT time of day (the clouds' lit/shadow palette)
+uniform float uRain; // rain amount
+uniform float uSnow; // snow amount
+uniform float uFog;  // fog/mist amount
 vec3 keyMix(vec3 a, vec3 b, vec3 c, vec3 d2, float t){
 	return t < 0.3333 ? mix(a, b, t * 3.0) : t < 0.6667 ? mix(b, c, (t - 0.3333) * 3.0) : mix(c, d2, clamp((t - 0.6667) * 3.0, 0.0, 1.0));
 }
@@ -3470,9 +4143,9 @@ void main(){
 	vec3 skyH = keyMix(vec3(1.0, 0.78, 0.6), vec3(0.78, 0.9, 1.0), vec3(1.0, 0.55, 0.3), vec3(0.06, 0.08, 0.16), uToD);
 	vec3 glowC = keyMix(vec3(1.0, 0.72, 0.5), vec3(1.0, 0.97, 0.9), vec3(1.0, 0.5, 0.28), vec3(0.6, 0.7, 1.0), uToD);
 	float glowS = keyMix(vec3(0.3), vec3(0.12), vec3(0.36), vec3(0.05), uToD).x;
-	vec3 litC = keyMix(vec3(1.14, 0.98, 0.88), vec3(1.14, 1.12, 1.07), vec3(1.18, 0.88, 0.62), vec3(0.3, 0.36, 0.52), uToD);
-	vec3 shLo = keyMix(vec3(0.78, 0.68, 0.75), vec3(0.8, 0.84, 0.93), vec3(0.66, 0.48, 0.56), vec3(0.07, 0.09, 0.16), uToD);
-	vec3 shHi = keyMix(vec3(0.42, 0.3, 0.5), vec3(0.3, 0.38, 0.6), vec3(0.32, 0.2, 0.42), vec3(0.02, 0.03, 0.07), uToD);
+	vec3 litC = keyMix(vec3(1.14, 0.98, 0.88), vec3(1.14, 1.12, 1.07), vec3(1.18, 0.88, 0.62), vec3(0.3, 0.36, 0.52), uToDT);
+	vec3 shLo = keyMix(vec3(0.78, 0.68, 0.75), vec3(0.8, 0.84, 0.93), vec3(0.66, 0.48, 0.56), vec3(0.07, 0.09, 0.16), uToDT);
+	vec3 shHi = keyMix(vec3(0.42, 0.3, 0.5), vec3(0.3, 0.38, 0.6), vec3(0.32, 0.2, 0.42), vec3(0.02, 0.03, 0.07), uToDT);
 	vec3 sky = mix(skyH, skyT, pow(uv.y, 0.85));
 	sky += glowC * glowS * pow(max(0.0, 1.0 - distance(uv, vec2(0.2, 0.92)) * 1.3), 2.0);
 	// drift: a slow CIRCLE through noise space — returns exactly, so it loops
@@ -3511,6 +4184,37 @@ void main(){
 		}
 	}
 	vec3 col = acc + sky * T;
+	// WEATHER EFFECTS — all loop-locked (integer sweeps of uPh per loop)
+	// fog/mist: wash the frame toward a pale veil
+	col = mix(col, mix(skyH, vec3(0.78, 0.8, 0.84), 0.6), uFog * 0.55);
+	// rain: sparse slanted streak columns, each falling an integer number
+	// of sweeps per loop; density rides the slider
+	if (uRain > 0.001) {
+		float rx = uv.x * 90.0 + uv.y * 16.0;
+		float cid = floor(rx);
+		float h1 = hash(vec3(cid, 1.7, 9.2));
+		float h2 = hash(vec3(cid, 4.3, 2.8));
+		float lane = smoothstep(0.35, 0.5, fract(rx)) * smoothstep(0.65, 0.5, fract(rx));
+		float spd = 4.0 + floor(h1 * 3.0);
+		float fall = fract(uv.y * 1.4 + h2 * 9.0 + (uPh / 6.2831853) * spd);
+		float drop = smoothstep(0.75, 0.98, fall) * step(h1, uRain * 0.75 + 0.05);
+		col = mix(col, vec3(0.6, 0.68, 0.82), drop * lane * 0.5);
+	}
+	// snow: individual flakes with per-flake integer fall rates and a sine
+	// sway — every flake returns to its start at the loop seam
+	if (uSnow > 0.001) {
+		float arx = uRes.x / uRes.y;
+		for (int i = 0; i < 22; i++) {
+			float fi = float(i);
+			float h1 = hash(vec3(fi, 3.3, 7.7));
+			float h2 = hash(vec3(fi, 9.1, 1.3));
+			float spd = 1.0 + floor(h1 * 2.0);
+			vec2 fp = vec2(fract(h1 + sin(uPh + h2 * 6.2831853) * 0.03), fract(h2 + (uPh / 6.2831853) * spd));
+			float dd2 = length((uv - fp) * vec2(arx, 1.0));
+			float flake = smoothstep(0.007 + h2 * 0.007, 0.002, dd2);
+			col = mix(col, vec3(1.0), flake * 0.85 * step(fi / 22.0, uSnow));
+		}
+	}
 	gl_FragColor = vec4(col, 1.0);
 }`;
 	function initGL() {
@@ -3531,7 +4235,7 @@ void main(){
 		const loc = gl.getAttribLocation(prog, 'aP');
 		gl.enableVertexAttribArray(loc);
 		gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-		uni = { res: gl.getUniformLocation(prog, 'uRes'), ph: gl.getUniformLocation(prog, 'uPh'), gl2: gl.getUniformLocation(prog, 'uGl'), sd: gl.getUniformLocation(prog, 'uSd'), tilt: gl.getUniformLocation(prog, 'uTilt'), wsp: gl.getUniformLocation(prog, 'uWsp'), solid: gl.getUniformLocation(prog, 'uSolid'), shad: gl.getUniformLocation(prog, 'uShad'), sprd: gl.getUniformLocation(prog, 'uSprd'), hole: gl.getUniformLocation(prog, 'uHole'), tod: gl.getUniformLocation(prog, 'uToD'), sun: gl.getUniformLocation(prog, 'uSun'), mask: gl.getUniformLocation(prog, 'uMask') };
+		uni = { res: gl.getUniformLocation(prog, 'uRes'), ph: gl.getUniformLocation(prog, 'uPh'), gl2: gl.getUniformLocation(prog, 'uGl'), sd: gl.getUniformLocation(prog, 'uSd'), tilt: gl.getUniformLocation(prog, 'uTilt'), wsp: gl.getUniformLocation(prog, 'uWsp'), solid: gl.getUniformLocation(prog, 'uSolid'), shad: gl.getUniformLocation(prog, 'uShad'), sprd: gl.getUniformLocation(prog, 'uSprd'), hole: gl.getUniformLocation(prog, 'uHole'), tod: gl.getUniformLocation(prog, 'uToD'), todt: gl.getUniformLocation(prog, 'uToDT'), rain: gl.getUniformLocation(prog, 'uRain'), snow: gl.getUniformLocation(prog, 'uSnow'), fog: gl.getUniformLocation(prog, 'uFog'), sun: gl.getUniformLocation(prog, 'uSun'), mask: gl.getUniformLocation(prog, 'uMask') };
 		gl.uniform1i(uni.mask, 0);
 		gl.uniform2f(uni.res, W, H);
 		gl.viewport(0, 0, W, H);
@@ -3738,6 +4442,10 @@ void main(){
 		if (uni.sprd) gl.uniform1f(uni.sprd, o.cloudWispSpread ?? 0.3);
 		if (uni.hole) gl.uniform1f(uni.hole, o.cloudVeil ?? 0.35);
 		if (uni.tod) gl.uniform1f(uni.tod, o.cloudTime ?? 0.3333);
+		if (uni.todt) gl.uniform1f(uni.todt, (o.cloudTimeLink ?? true) ? (o.cloudTime ?? 0.3333) : (o.cloudTimeText ?? 0.3333));
+		if (uni.rain) gl.uniform1f(uni.rain, o.cloudRain ?? 0);
+		if (uni.snow) gl.uniform1f(uni.snow, o.cloudSnow ?? 0);
+		if (uni.fog) gl.uniform1f(uni.fog, o.cloudFog ?? 0);
 		if (uni.sun) gl.uniform3f(uni.sun, o.cloudLightX ?? -0.14, 0.3, o.cloudLightZ ?? 0.92);
 		gl.drawArrays(gl.TRIANGLES, 0, 3);
 		ctx.drawImage(glcv, 0, 0);
@@ -3773,6 +4481,11 @@ function sceneCoin(env) {
 		for (const w of words) maxW = Math.max(maxW, probe.measureText(w).width);
 		const targetW = W * 0.72;
 		fontPx = fontPx * ((targetW - fontPx * 0.9) / maxW);
+		// FIXED default scale: cap at the size a longest-word-like
+		// "INTERACTIVE" would produce (~0.17 H), so short words keep the
+		// same framing instead of inflating to fill the width; genuinely
+		// long words still shrink to fit
+		fontPx = Math.min(fontPx, H * 0.17);
 		probe.font = `500 ${fontPx}px ${fam}`;
 		fontCss = probe.font;
 		ph = fontPx * 2.3;
@@ -4368,6 +5081,7 @@ export const SCENES = [
 	{ id: 'glass01',  name: 'GLASS01',      make: sceneGlass01, usesPreset: false, smooth: true },
 	{ id: 'coin',     name: 'Coin',         make: sceneCoin,    usesPreset: false, smooth: true },
 	{ id: 'clouds',   name: 'Clouds',       make: sceneClouds,  usesPreset: false, smooth: true },
+	{ id: 'garble',   name: 'Garble',       make: sceneGarble,  usesPreset: false, smooth: true },
 	{ id: 'dots',    name: 'Halftone',      make: sceneDots,    usesPreset: false, smooth: true },
 	{ id: 'mosaic',  name: 'Micro Type',    make: sceneMosaic,  usesPreset: false, smooth: true },
 	{ id: 'scatter', name: 'Particles',     make: sceneScatter, usesPreset: false, smooth: true },

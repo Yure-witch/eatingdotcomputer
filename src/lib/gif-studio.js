@@ -269,7 +269,64 @@ export function supportsFontStretch() {
 // Frame 0 captures the reset state; each subsequent frame steps by 1/fps and
 // renders — so stateful simulations (reaction-diffusion, CA, cloth …) advance
 // deterministically. Returns a Uint8Array of GIF bytes.
-export async function encodeGif({ W, H, fps, frames, scene, delayMs, onProgress, signal, stepDt }) {
+export async function encodeGif(opts) {
+	// WORKER path: quantization + palette indexing (the main-thread hogs)
+	// run in a dedicated worker; the main thread only renders frames and
+	// ships pixels over as transferables. Falls back to inline encoding
+	// wherever module workers are unavailable.
+	if (typeof Worker !== 'undefined') {
+		try {
+			return await encodeGifWorker(opts);
+		} catch (e) {
+			console.warn('[gif-studio] worker encode failed, falling back inline:', e);
+		}
+	}
+	return encodeGifInline(opts);
+}
+
+async function encodeGifWorker({ W, H, fps, frames, scene, delayMs, onProgress, signal, stepDt }) {
+	const worker = new Worker(new URL('./gif-worker.js', import.meta.url), { type: 'module' });
+	try {
+		const delay = Math.max(20, Math.round(delayMs || 1000 / fps));
+		const dt = stepDt || 1 / fps;
+		const cv = document.createElement('canvas');
+		cv.width = W; cv.height = H;
+		const ctx = cv.getContext('2d', { willReadFrequently: true });
+		let doneFrames = 0;
+		let resolveDone, rejectDone;
+		const donePromise = new Promise((res, rej) => { resolveDone = res; rejectDone = rej; });
+		worker.onmessage = (ev) => {
+			const m = ev.data;
+			if (m.type === 'progress') { doneFrames = m.f + 1; onProgress?.(doneFrames / frames); }
+			else if (m.type === 'done') resolveDone(m.bytes);
+			else if (m.type === 'error') rejectDone(new Error(m.message));
+		};
+		worker.onerror = (e) => rejectDone(new Error(e.message || 'worker error'));
+		worker.postMessage({ type: 'init', W, H });
+		for (let f = 0; f < frames; f++) {
+			if (signal?.aborted) throw new Error('aborted');
+			if (f > 0) scene.step(dt);
+			scene.render(ctx);
+			const { data } = ctx.getImageData(0, 0, W, H);
+			// transfer the pixels — zero-copy handoff to the worker
+			worker.postMessage({ type: 'frame', buf: data.buffer, delay, f }, [data.buffer]);
+			// BACKPRESSURE: stay at most 3 frames ahead of the encoder so
+			// memory stays flat and the tab stays smooth
+			while (f - doneFrames >= 3) {
+				if (signal?.aborted) throw new Error('aborted');
+				await new Promise((r) => setTimeout(r, 8));
+			}
+			// yield to the UI between renders
+			if ((f & 1) === 0) await new Promise((r) => requestAnimationFrame(r));
+		}
+		worker.postMessage({ type: 'finish' });
+		return await donePromise;
+	} finally {
+		worker.terminate();
+	}
+}
+
+async function encodeGifInline({ W, H, fps, frames, scene, delayMs, onProgress, signal, stepDt }) {
 	const gif = GIFEncoder();
 	const cv = document.createElement('canvas');
 	cv.width = W; cv.height = H;
