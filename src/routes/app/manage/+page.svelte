@@ -224,6 +224,22 @@
 		setTimeout(() => (testNotifStatus = null), 4000);
 	}
 
+	// Favicon preview: force the tab icon light or dark so both variants can
+	// be checked without changing the OS theme; 'system' restores the
+	// media-query favicon that follows the OS setting.
+	const FAVICON_MODES = [
+		{ key: 'system', label: '🖥️ Favicon: system', href: '/favicon.svg' },
+		{ key: 'dark', label: '🌚 Favicon: dark', href: '/favicon-dark.svg' },
+		{ key: 'light', label: '🌞 Favicon: light', href: '/favicon-light.svg' }
+	];
+	let faviconMode = $state(0);
+
+	function toggleFaviconPreview() {
+		faviconMode = (faviconMode + 1) % FAVICON_MODES.length;
+		const link = document.querySelector('link[rel="icon"][type="image/svg+xml"]');
+		if (link) link.href = FAVICON_MODES[faviconMode].href;
+	}
+
 	// ── Moderation state ──
 	let viewingDmConvId = $state(null);
 	let dmMessages = $state([]);
@@ -408,6 +424,9 @@
 			</div>
 			<div class="header-actions">
 				{#if activeTab === 'assignments'}
+					<button class="btn-secondary" onclick={toggleFaviconPreview}>
+						{FAVICON_MODES[faviconMode].label}
+					</button>
 					<button class="btn-secondary" onclick={sendTestNotification} disabled={testNotifStatus === 'sending'}>
 						{testNotifStatus ?? '🔔 Test notification'}
 					</button>

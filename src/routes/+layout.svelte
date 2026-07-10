@@ -1,5 +1,4 @@
 <script>
-	import favicon from '$lib/assets/favicon.svg';
 	import '../app.css';
 	import { updated } from '$app/stores';
 	import { onMount } from 'svelte';
@@ -230,9 +229,6 @@
 	}
 </script>
 
-<svelte:head>
-	<link rel="icon" href={favicon} />
-</svelte:head>
 
 {@render children()}
 

@@ -27,7 +27,11 @@
 		<meta name="apple-mobile-web-app-status-bar-style" content="black" />
 		<meta name="apple-mobile-web-app-title" content="eating.computer" />
 		<link rel="manifest" href="/manifest.json" />
-		<link rel="apple-touch-icon" href="/favicon.svg" />
+		<!-- SVG favicon auto-switches light/dark via prefers-color-scheme;
+		     PNG fallback for browsers without SVG favicon support. -->
+		<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+		<link rel="icon" href="/icon-192.png" type="image/png" sizes="192x192" />
+		<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
 		<!-- Telegram emoji sprite sheet + its manifest. Browser starts
 		     downloading these the instant the HTML is parsed, before any
 		     JS runs, so by the time the user opens the picker (or sees
