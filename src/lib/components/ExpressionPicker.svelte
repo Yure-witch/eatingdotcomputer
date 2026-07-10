@@ -11,6 +11,11 @@
 	import EmojiKitchen from './EmojiKitchen.svelte';
 	import CustomEmojiPanel from './CustomEmojiPanel.svelte';
 	import TelegramEmojiPanel from './TelegramEmojiPanel.svelte';
+	import { isTgHidden } from '$lib/tg-visibility.js';
+
+	// Per-user switch (users.hide_tg_emoji): drop the Telegram surfaces —
+	// the Animated tab and the Emotes Library sub-tab.
+	const tgHidden = isTgHidden();
 
 	let {
 		onSelectEmoji,        // (emoji: string) → from EmojiPicker
@@ -59,7 +64,7 @@
 	// GIFs + reaction images now live in their own MediaPicker, so this picker
 	// only has emoji / kitchen / emotes / animated. A stale saved 'gifs' or
 	// 'reactions' falls back to emoji.
-	const VALID_TABS = new Set(['emoji', 'kitchen', 'emotes', 'animated']);
+	const VALID_TABS = new Set(['emoji', 'kitchen', 'emotes', ...(tgHidden ? [] : ['animated'])]);
 	const _saved = typeof localStorage !== 'undefined' ? localStorage.getItem(TAB_KEY) : null;
 	let tab = $state(VALID_TABS.has(_saved) ? _saved : 'emoji');
 	$effect(() => {
@@ -75,7 +80,7 @@
 	// the 320 px mobile panel.
 	const EMOTES_SUB_KEY = 'exprEmotesSub';
 	const _savedSub = typeof localStorage !== 'undefined' ? localStorage.getItem(EMOTES_SUB_KEY) : null;
-	let emotesSub = $state(_savedSub === 'library' ? 'library' : 'uploaded');
+	let emotesSub = $state(_savedSub === 'library' && !tgHidden ? 'library' : 'uploaded');
 	$effect(() => {
 		try { localStorage.setItem(EMOTES_SUB_KEY, emotesSub); } catch {}
 	});
@@ -104,9 +109,11 @@
 		<button class="expr-tab" class:active={tab === 'emotes'} onclick={() => (tab = 'emotes')} title="Custom emotes">
 			<span class="msi msi-20" class:msi-fill={tab === 'emotes'}>sentiment_very_satisfied</span>
 		</button>
-		<button class="expr-tab" class:active={tab === 'animated'} onclick={() => (tab = 'animated')} title="Animated stickers">
-			<span class="msi msi-20" class:msi-fill={tab === 'animated'}>animated_images</span>
-		</button>
+		{#if !tgHidden}
+			<button class="expr-tab" class:active={tab === 'animated'} onclick={() => (tab = 'animated')} title="Animated stickers">
+				<span class="msi msi-20" class:msi-fill={tab === 'animated'}>animated_images</span>
+			</button>
+		{/if}
 		{#if onBackspace}
 			<!-- Backspace lives at the right end of the (bottom) category
 			     strip — bottom-right corner of the picker, like a native
@@ -128,10 +135,12 @@
 			     (CrazyEmoji / MadEmoji2 / HeartEmoji) which don't
 			     animate, so they belong here next to the rest of the
 			     non-animated emotes rather than under Animated. -->
-			<nav class="expr-subtabs" aria-label="Emote source">
-				<button class="expr-subtab" class:active={emotesSub === 'uploaded'} onclick={() => (emotesSub = 'uploaded')}>Uploaded</button>
-				<button class="expr-subtab" class:active={emotesSub === 'library'} onclick={() => (emotesSub = 'library')}>Library</button>
-			</nav>
+			{#if !tgHidden}
+				<nav class="expr-subtabs" aria-label="Emote source">
+					<button class="expr-subtab" class:active={emotesSub === 'uploaded'} onclick={() => (emotesSub = 'uploaded')}>Uploaded</button>
+					<button class="expr-subtab" class:active={emotesSub === 'library'} onclick={() => (emotesSub = 'library')}>Library</button>
+				</nav>
+			{/if}
 			{#if emotesSub === 'uploaded'}
 				<CustomEmojiPanel mode="emoji" onInsertEmoji={onInsertCustomEmoji} onInsertReaction={_noop} {isInstructor} {onClose} />
 			{:else}

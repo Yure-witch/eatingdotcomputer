@@ -104,10 +104,11 @@ export async function load({ locals, cookies }) {
 	let myAvatarKind = 'gen';
 	let myAvatarValue = null;
 	let myMemberOrder = [];
+	let myHideTgEmoji = false;
 	if (db) {
 		try {
 			const r = await db.execute({
-				sql: 'SELECT avatar_kind, avatar_value, member_order FROM users WHERE id = ?',
+				sql: 'SELECT avatar_kind, avatar_value, member_order, hide_tg_emoji FROM users WHERE id = ?',
 				args: [session.user.id]
 			});
 			const row = r.rows[0];
@@ -116,6 +117,7 @@ export async function load({ locals, cookies }) {
 			if (row?.member_order) {
 				try { const o = JSON.parse(row.member_order); if (Array.isArray(o)) myMemberOrder = o; } catch { /* ignore bad json */ }
 			}
+			myHideTgEmoji = Number(row?.hide_tg_emoji ?? 0) === 1;
 		} catch { /* non-fatal */ }
 	}
 	const currentUser = {
@@ -124,7 +126,8 @@ export async function load({ locals, cookies }) {
 		role: session.user.role ?? 'student',
 		avatarKind: myAvatarKind,
 		avatarValue: myAvatarValue,
-		memberOrder: myMemberOrder
+		memberOrder: myMemberOrder,
+		hideTgEmoji: myHideTgEmoji
 	};
 
 	// Fetch initial unread state from Firebase Admin (bypasses client auth/rules).

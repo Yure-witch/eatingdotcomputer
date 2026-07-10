@@ -18,7 +18,10 @@
 
 <main>
 	<div class="card">
-		<a class="wordmark" href="/">eating.computer</a>
+		<a class="brand" href="/">
+			<img class="mark" src="/favicon.svg" alt="" width="72" height="72" />
+			<span class="brand-name">eating.computer</span>
+		</a>
 
 		{#if errorMessage}
 			<p class="error">{errorMessage}</p>
@@ -46,8 +49,8 @@
 			<input type="hidden" name="providerId" value="credentials" />
 			<input type="hidden" name="redirectTo" value="/app" />
 			<label>
-				<span>Email</span>
-				<input type="email" name="email" required autocomplete="email" placeholder="you@example.com" />
+				<span>Email or username</span>
+				<input type="text" name="email" required autocomplete="username" placeholder="you@example.com" />
 			</label>
 
 			<label>
@@ -63,9 +66,11 @@
 <style>
 	main {
 		min-height: 100vh;
-		display: grid;
-		place-items: center;
-		padding: 2rem;
+		min-height: 100dvh;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 2rem 1.25rem;
 		background: var(--paper);
 	}
 
@@ -77,17 +82,32 @@
 		gap: 1rem;
 	}
 
-	.wordmark {
-		font-family: 'Avara', serif;
-		font-size: 1.5rem;
-		color: var(--ink);
+	.brand {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.9rem;
 		text-decoration: none;
-		margin-bottom: 0.5rem;
-		display: inline-block;
+		margin-bottom: 1rem;
 	}
 
-	.wordmark:hover {
-		opacity: 0.7;
+	.brand:hover {
+		opacity: 0.8;
+	}
+
+	.mark {
+		width: 72px;
+		height: 72px;
+		border-radius: 18px;
+	}
+
+	/* Named brand-name, not wordmark — app.css hides .wordmark on desktop
+	   (sidebar carries the logo there), but this page has no sidebar. */
+	.brand-name {
+		font-family: 'Avara', serif;
+		font-size: clamp(1.6rem, 6vw, 2rem);
+		color: var(--ink);
+		text-align: center;
 	}
 
 	form {

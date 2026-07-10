@@ -2,6 +2,8 @@
 // All text effect constants, PUA mappings, and the contentHtml renderer live here
 // so new effects only need to be added in one place.
 
+import { isTgHidden } from './tg-visibility.js';
+
 export const SCREEN_FXS = [
 	{ name: 'confetti',  label: 'Confetti', icon: '🎊' },
 	{ name: 'fireworks', label: 'Fireworks',icon: '🎆' },
@@ -329,6 +331,12 @@ export function createContentRenderer({ hljs = null, codeIcons = {}, getCeMap = 
 
 	function contentHtml(text, split = true) {
 		if (!text) return '';
+		// Per-user hide-Telegram-emoji switch: drop sticker tokens before any
+		// parsing so they never reach the DOM for this user.
+		if (isTgHidden() && (text.includes('[tg:') || text.includes('[tgc:'))) {
+			text = text.replace(/\[tg:[0-9a-f-]+\]/gi, '').replace(/\[tgc:[A-Za-z0-9_]+:\d+\]/g, '');
+			if (!text.trim()) return '';
+		}
 		const codeParts = processCodeBlocks(text);
 		if (codeParts) {
 			return codeParts.map(p => {

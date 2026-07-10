@@ -28,6 +28,13 @@
 
 	let { data, children } = $props();
 
+	// Hide-Telegram-emoji flag (App Store review account etc.) — must be set
+	// before children render so pickers and message HTML respect it on first
+	// paint. Browser-only: the module default (false) is never mutated on the
+	// server, so SSR can't leak the flag across users.
+	import { setTgHidden } from '$lib/tg-visibility.js';
+	if (browser) setTgHidden(data.currentUser?.hideTgEmoji);
+
 	// ── Nav items (Chat omitted — sidebar always shows channels/DMs) ──
 	// Icons are Material Symbols ligature names; the template renders
 	// them via <span class="msi"> + adds `msi-fill` when the row is

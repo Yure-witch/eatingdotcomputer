@@ -10,7 +10,7 @@ export const { handle, signIn, signOut } = SvelteKitAuth({
 		Google,
 		Credentials({
 			credentials: {
-				email: { label: 'Email', type: 'email' },
+				email: { label: 'Email or username', type: 'text' },
 				password: { label: 'Password', type: 'password' }
 			},
 			async authorize(credentials) {
@@ -19,9 +19,12 @@ export const { handle, signIn, signOut } = SvelteKitAuth({
 				const db = getDb();
 				if (!db) return null;
 
+				// The field is named `email` for historical reasons but accepts
+				// either an email address or a username.
+				const identifier = String(credentials.email);
 				const result = await db.execute({
-					sql: 'SELECT id, email, name, password_hash, role FROM users WHERE email = ?',
-					args: [String(credentials.email)]
+					sql: 'SELECT id, email, name, password_hash, role FROM users WHERE email = ? OR username = ?',
+					args: [identifier, identifier]
 				});
 
 				const user = result.rows[0];
