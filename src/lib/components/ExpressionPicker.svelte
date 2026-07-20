@@ -11,7 +11,11 @@
 	import EmojiKitchen from './EmojiKitchen.svelte';
 	import CustomEmojiPanel from './CustomEmojiPanel.svelte';
 	import TelegramEmojiPanel from './TelegramEmojiPanel.svelte';
+	import PickerStickyBtn from './PickerStickyBtn.svelte';
+	import SpriteSticker from './SpriteSticker.svelte';
 	import { isTgHidden } from '$lib/tg-visibility.js';
+	import { getExprRecents, addExprRecent, exprRecentKey } from '$lib/expr-recents.js';
+	import { ekTokenToUrl } from '$lib/message-render.js';
 
 	// Per-user switch (users.hide_tg_emoji): drop the Telegram surfaces —
 	// the Animated tab and the Emotes Library sub-tab.
@@ -64,7 +68,7 @@
 	// GIFs + reaction images now live in their own MediaPicker, so this picker
 	// only has emoji / kitchen / emotes / animated. A stale saved 'gifs' or
 	// 'reactions' falls back to emoji.
-	const VALID_TABS = new Set(['emoji', 'kitchen', 'emotes', ...(tgHidden ? [] : ['animated'])]);
+	const VALID_TABS = new Set(['recent', 'emoji', 'kitchen', 'emotes', ...(tgHidden ? [] : ['animated'])]);
 	const _saved = typeof localStorage !== 'undefined' ? localStorage.getItem(TAB_KEY) : null;
 	let tab = $state(VALID_TABS.has(_saved) ? _saved : 'emoji');
 	$effect(() => {
@@ -88,6 +92,43 @@
 	// Reactions tab only handles reactions; pass a no-op for emoji
 	// insertion. CustomEmojiPanel hides the unused side via `mode`.
 	const _noop = () => {};
+
+	// ── Shared recents ───────────────────────────────────────────────
+	// Every insert routes through these wrappers so the Recent tab sees
+	// all expression types from all surfaces. Recents replay through the
+	// same wrappers, which also bumps them back to the front.
+	function fireEmoji(e) {
+		// stamp the font mode the emoji is being sent in, so the Recent tab
+		// renders it the same way (re-sending refreshes the stamp)
+		let f = 'noto';
+		try { f = localStorage.getItem('emoji-font') || 'noto'; } catch { /* default */ }
+		addExprRecent({ t: 'emoji', v: e, f });
+		onSelectEmoji?.(e);
+	}
+	function fireKitchen(tok) { addExprRecent({ t: 'ek', v: tok }); onInsertKitchen?.(tok); }
+	function fireCe(em) {
+		if (em?.shortcode) addExprRecent({ t: 'ce', v: { shortcode: em.shortcode, url: em.url } });
+		onInsertCustomEmoji?.(em);
+	}
+	function fireTg(it) {
+		addExprRecent({ t: 'tg', v: { custom: !!it.custom, mode: it.mode, alt: it.alt, short: it.short, id: it.id, cp: it.cp } });
+		onInsertTgEmoji?.(it);
+	}
+	function fireRecent(it) {
+		if (it.t === 'emoji') fireEmoji(it.v);
+		else if (it.t === 'ek') fireKitchen(it.v);
+		else if (it.t === 'ce') fireCe(it.v);
+		else if (it.t === 'tg') fireTg(it.v);
+	}
+	// Kitchen recents may be [ek:] tokens (chat) — render via the sprite URL.
+	function ekThumb(tok) {
+		const m = /\[ek:([a-z0-9]+):([0-9a-f-]+):([0-9a-f-]+)\]/i.exec(tok);
+		return m ? ekTokenToUrl(m[1], m[2], m[3]) : tok;
+	}
+	let recents = $state([]);
+	$effect(() => {
+		if (tab === 'recent') recents = getExprRecents().filter((it) => it.t !== 'tg' || !tgHidden);
+	});
 </script>
 
 <div class="expr-panel" class:expr-panel-react={mode === 'react'}>
@@ -97,23 +138,27 @@
 		     through ExpressionPicker means recents + skin-tone +
 		     popular-tab state are shared with the compose picker (via
 		     EmojiPicker's own localStorage keys). -->
-		<EmojiPicker onSelect={onSelectEmoji} {onClose} />
+		<EmojiPicker onSelect={fireEmoji} {onClose} />
 	{:else}
 		<nav class="expr-tabs" aria-label="Expression categories">
+		<button class="expr-tab" class:active={tab === 'recent'} onclick={() => (tab = 'recent')} title="Recently used">
+			<span class="msi msi-20" class:msi-fill={tab === 'recent'}>history</span>
+		</button>
+		<!-- Order: emoji, telegram (animated), emoji kitchen, custom emotes -->
 		<button class="expr-tab" class:active={tab === 'emoji'} onclick={() => (tab = 'emoji')} title="Emoji">
 			<span class="msi msi-20" class:msi-fill={tab === 'emoji'}>mood</span>
-		</button>
-		<button class="expr-tab" class:active={tab === 'kitchen'} onclick={() => (tab = 'kitchen')} title="Emoji Kitchen">
-			<span class="msi msi-20" class:msi-fill={tab === 'kitchen'}>blender</span>
-		</button>
-		<button class="expr-tab" class:active={tab === 'emotes'} onclick={() => (tab = 'emotes')} title="Custom emotes">
-			<span class="msi msi-20" class:msi-fill={tab === 'emotes'}>sentiment_very_satisfied</span>
 		</button>
 		{#if !tgHidden}
 			<button class="expr-tab" class:active={tab === 'animated'} onclick={() => (tab = 'animated')} title="Animated stickers">
 				<span class="msi msi-20" class:msi-fill={tab === 'animated'}>animated_images</span>
 			</button>
 		{/if}
+		<button class="expr-tab" class:active={tab === 'kitchen'} onclick={() => (tab = 'kitchen')} title="Emoji Kitchen">
+			<span class="msi msi-20" class:msi-fill={tab === 'kitchen'}>blender</span>
+		</button>
+		<button class="expr-tab" class:active={tab === 'emotes'} onclick={() => (tab = 'emotes')} title="Custom emotes">
+			<span class="msi msi-20" class:msi-fill={tab === 'emotes'}>sentiment_very_satisfied</span>
+		</button>
 		{#if onBackspace}
 			<!-- Backspace lives at the right end of the (bottom) category
 			     strip — bottom-right corner of the picker, like a native
@@ -125,10 +170,38 @@
 	</nav>
 
 	<div class="expr-body">
-		{#if tab === 'emoji'}
-			<EmojiPicker onSelect={onSelectEmoji} {onClose} />
+		{#if tab === 'recent'}
+			{#if !recents.length}
+				<p class="expr-recent-empty">Emoji, emotes, mixes and stickers you use will show up here.</p>
+			{:else}
+				<div class="expr-recent-grid">
+					{#each recents as it (exprRecentKey(it))}
+						<button class="expr-recent-cell" onclick={() => fireRecent(it)}>
+							{#if it.t === 'emoji'}
+								<span class="expr-recent-emoji" class:er-noto={it.f === 'noto'} class:er-sys={it.f === 'system'}>{it.v}</span>
+							{:else if it.t === 'ek'}
+								<img src={ekThumb(it.v)} alt="" loading="lazy" />
+							{:else if it.t === 'ce'}
+								<img src={it.v.url} alt={it.v.shortcode} loading="lazy" />
+							{:else if it.t === 'tg'}
+								<!-- live cell on the inline-canvas Skottie pipeline (each
+								     cell owns its own canvas — no stage host needed, so
+								     it animates here just like in the TG panel; static
+								     packs auto-rest on their thumb frame) -->
+								<SpriteSticker
+									cp={it.v.custom ? null : it.v.cp}
+									short={it.v.custom ? it.v.short : null}
+									id={it.v.custom ? it.v.id : null}
+									size={34} loop={true} eager={true} title={it.v.alt || ''} />
+							{/if}
+						</button>
+					{/each}
+				</div>
+			{/if}
+		{:else if tab === 'emoji'}
+			<EmojiPicker onSelect={fireEmoji} {onClose} />
 		{:else if tab === 'kitchen'}
-			<EmojiKitchen onInsert={onInsertKitchen} {onClose} />
+			<EmojiKitchen onInsert={fireKitchen} {onClose} />
 		{:else if tab === 'emotes'}
 			<!-- Two sources, two sub-tabs. Uploaded = class custom
 			     emotes (R2). Library = the static Telegram packs
@@ -137,19 +210,27 @@
 			     non-animated emotes rather than under Animated. -->
 			{#if !tgHidden}
 				<nav class="expr-subtabs" aria-label="Emote source">
+					{#if onClose}
+						<!-- close rides the sub-tab row at the LEFT — the same
+						     PickerStickyBtn tile every other tab pins top-left -->
+						<PickerStickyBtn square onclick={onClose} title="Close" label="Close picker">
+							<span class="msi msi-20">close</span>
+						</PickerStickyBtn>
+					{/if}
 					<button class="expr-subtab" class:active={emotesSub === 'uploaded'} onclick={() => (emotesSub = 'uploaded')}>Uploaded</button>
 					<button class="expr-subtab" class:active={emotesSub === 'library'} onclick={() => (emotesSub = 'library')}>Library</button>
 				</nav>
 			{/if}
 			{#if emotesSub === 'uploaded'}
-				<CustomEmojiPanel mode="emoji" onInsertEmoji={onInsertCustomEmoji} onInsertReaction={_noop} {isInstructor} {onClose} />
+				<!-- inner panels skip their own ✕ when the sub-tab row carries it -->
+				<CustomEmojiPanel mode="emoji" onInsertEmoji={fireCe} onInsertReaction={_noop} {isInstructor} onClose={tgHidden ? onClose : null} />
 			{:else}
-				<TelegramEmojiPanel onInsert={onInsertTgEmoji} packFilter="static" {onClose} />
+				<TelegramEmojiPanel onInsert={fireTg} packFilter="static" onClose={null} />
 			{/if}
 		{:else if tab === 'animated'}
 			<!-- Animated stickers only — static packs live in the
 			     Emotes tab's Library sub-tab. -->
-			<TelegramEmojiPanel onInsert={onInsertTgEmoji} packFilter="animated" {onClose} />
+			<TelegramEmojiPanel onInsert={fireTg} packFilter="animated" {onClose} />
 		{/if}
 	</div>
 	{/if}
@@ -262,6 +343,7 @@
 
 	.expr-subtabs {
 		display: flex;
+		align-items: center;
 		gap: 0.25rem;
 		padding: 0.35rem 0.5rem;
 		border-bottom: 1px solid var(--border);
@@ -315,5 +397,34 @@
 		border-radius: 0 !important;
 		box-shadow: none !important;
 		background: transparent !important;
+	}
+
+	/* Recently used — one flat grid mixing every expression type */
+	.expr-recent-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(42px, 1fr));
+		gap: 0.2rem;
+		padding: 0.5rem;
+		overflow-y: auto;
+		height: 100%;
+		align-content: start;
+	}
+	.expr-recent-cell {
+		aspect-ratio: 1;
+		display: flex; align-items: center; justify-content: center;
+		background: none; border: none; border-radius: 8px;
+		cursor: pointer; padding: 0.2rem; min-width: 0;
+		transition: background 0.1s;
+	}
+	.expr-recent-cell:hover { background: var(--surface-2); }
+	.expr-recent-cell img { width: 100%; height: 100%; object-fit: contain; }
+	.expr-recent-emoji { font-size: 1.6rem; line-height: 1; }
+	/* each emoji renders in the font it was SENT in, regardless of the
+	   current global emoji-font setting */
+	.expr-recent-emoji.er-noto { font-family: 'Noto Color Emoji', sans-serif; }
+	.expr-recent-emoji.er-sys { font-family: 'Apple Color Emoji', 'Segoe UI Emoji', system-ui, sans-serif; }
+	.expr-recent-empty {
+		margin: 0; padding: 1.5rem 1rem; text-align: center;
+		color: var(--muted-fg); font-size: 0.85rem;
 	}
 </style>

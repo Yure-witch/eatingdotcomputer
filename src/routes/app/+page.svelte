@@ -359,9 +359,9 @@
 				     shows which numbers are already taken so it's
 				     easy to spot conflicts before submitting. -->
 				<div class="field week-field">
-					<label for="week">Week number</label>
+					<label for="week">Class number</label>
 					<div class="week-input-wrap">
-						<span class="week-prefix">Week</span>
+						<span class="week-prefix">Class</span>
 						<input
 							id="week"
 							name="week"
@@ -490,7 +490,7 @@
 				</div>
 
 				<div class="field">
-					<label for="topic_preview">Next week preview <span class="optional">(optional)</span></label>
+					<label for="topic_preview">Next class preview <span class="optional">(optional)</span></label>
 					<input type="hidden" name="topic_preview" value={topicPreviewValue} />
 					<FormattedInput bind:value={topicPreviewValue} placeholder="e.g. Introduction to Prototyping" singleLine disableSize />
 				</div>
@@ -501,7 +501,7 @@
 
 				<div class="create-actions">
 					<button type="submit" class="btn-primary">
-						{editingPlanId ? 'Save changes' : 'Publish week'}
+						{editingPlanId ? 'Save changes' : 'Publish class'}
 					</button>
 					{#if editingPlanId}
 						<button type="button" class="btn-secondary" onclick={cancelEdit}>Cancel edit</button>
@@ -518,7 +518,7 @@
 			{#if weekIndex.length > 0}
 				<section class="weeks-roster">
 					<header class="roster-header">
-						<h2 class="roster-title">Weeks already named</h2>
+						<h2 class="roster-title">Classes already named</h2>
 						<p class="roster-sub">Tap a row to drop its number into the form above.</p>
 					</header>
 					<ol class="roster-list">
@@ -527,7 +527,7 @@
 								<button type="button" class="roster-row" class:current={p.isCurrent}
 									onclick={() => weekValue = p.week}
 									title="Copy this week number into the form above">
-									<span class="roster-num">Week {p.week}</span>
+									<span class="roster-num">Class {p.week}</span>
 									<span class="roster-headline">{@html contentHtml(p.headline, false)}</span>
 									{#if p.dueDate}
 										<span class="roster-due">{formatDate(p.dueDate)}</span>
@@ -555,7 +555,7 @@
 					{#each [...data.allPlans].reverse() as plan}
 						<div class="overview-plan" class:is-current={plan.id === data.currentPlan?.id}>
 							<div class="overview-header">
-								<span class="overview-week">Week {plan.week}</span>
+								<span class="overview-week">Class {plan.week}</span>
 								<span class="overview-title">{@html contentHtml(plan.headline, false)}</span>
 								{#if plan.dueDate}
 									<span class="overview-due">{formatDate(plan.dueDate)}</span>
@@ -665,13 +665,23 @@
 
 			{#if data.currentPlan}
 				<div class="week-meta">
-					<span class="week-tag">Week {data.currentPlan.week}</span>
+					<span class="week-tag">Class {data.currentPlan.week}</span>
 					{#if data.currentPlan.dueDate}
 						<span class="due-date">Due {formatDate(data.currentPlan.dueDate)}</span>
 					{/if}
 				</div>
 
 				<h1 class="headline">{@html contentHtml(data.currentPlan.headline, false)}</h1>
+				{#if data.currentPlan.sylTitle}
+					<p class="week-syl-from" title="From the key syllabus">
+						<span class="msi msi-16">info</span>
+						From
+						{#if data.currentPlan.sylWeekOf}
+							{new Date(...data.currentPlan.sylWeekOf.split('-').map((v, i) => i === 1 ? v - 1 : +v)).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} ·
+						{/if}
+						{data.currentPlan.sylTitle}
+					</p>
+				{/if}
 
 				{#if data.currentPlan.items.length > 0}
 					<div class="checklist">
@@ -1001,6 +1011,14 @@
 		flex: 1; padding: 2.5rem 1.5rem; padding-top: calc(2.5rem + 52px); max-width: 680px;
 		width: 100%; margin: 0 auto; box-sizing: border-box;
 	}
+
+	.week-syl-from {
+		display: inline-flex; align-items: center; gap: 0.3rem;
+		margin: -0.35rem 0 1rem;
+		font-size: 0.8rem;
+		color: var(--muted-fg);
+	}
+	.week-syl-from .msi { opacity: 0.7; }
 
 	/* ── Week meta ── */
 	.week-meta { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.75rem; }

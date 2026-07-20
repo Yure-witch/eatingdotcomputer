@@ -1,6 +1,7 @@
 import { redirect } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
 import { getWeekPlans, getCompletionsForStudent, getVisibleSubmissionsForPlan } from '$lib/server/week-plans.js';
+import { getKeySyllabusWeeks } from '$lib/server/syllabus.js';
 
 /**
  * Past + future week plans. The home page (`/app`) shows the
@@ -22,6 +23,13 @@ export async function load({ locals, parent }) {
 	const isInstructor = session.user.role === 'instructor';
 
 	const plans = await getWeekPlans(classId);
+	// Default week subtitles come from the class's KEY syllabus: week N's
+	// subtitle is the key syllabus's week-N title (heading stays entered).
+	const sylWeeks = await getKeySyllabusWeeks(classId);
+	for (const pl of plans) {
+		pl.sylTitle = sylWeeks[pl.week]?.title || null;
+		pl.sylWeekOf = sylWeeks[pl.week]?.weekOf || null;
+	}
 	const today = new Date();
 	today.setHours(0, 0, 0, 0);
 
@@ -70,6 +78,8 @@ export async function load({ locals, parent }) {
 			id: p.id,
 			week: p.week,
 			headline: p.headline,
+			sylTitle: p.sylTitle ?? null,
+			sylWeekOf: p.sylWeekOf ?? null,
 			dueDate: p.dueDate,
 			important: !!p.important,
 			isCurrent: currentPlan ? p.id === currentPlan.id : false,

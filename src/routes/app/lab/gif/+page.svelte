@@ -20,6 +20,30 @@
 	let bzBands = $state(20);            // BZ: gradient steps (posterise the fade)
 	let bzSpacing = $state(0.4);         // BZ: distance between waves (refractory length)
 	let bzFade = $state(0.5);            // BZ: trailing tail length (0 = single line)
+	let sphereTilt = $state(10);         // Sphere: camera angle in degrees (+ = above, looking down)
+	let coinInk = $state('#0000ff');     // Coin/Sphere: text + line colour (gradient start)
+	let coinInk2 = $state('#ff2d2d');    // Coin/Sphere: gradient end colour
+	let coinInkGrad = $state(false);     // Coin/Sphere: gradient ink on the object
+	let coinInkAnim = $state(false);     // Coin/Sphere: rotate the gradient over the loop
+	let coinBg = $state('light');        // Coin/Sphere: 'light' | 'dark' | 'transparent'
+	let coinBodyMode = $state('auto');   // Coin/Sphere object body: 'auto' (match bg) | 'solid' | 'gradient'
+	let coinBodyColor = $state('#ffffff'); // Coin/Sphere body colour (gradient start)
+	let coinBodyColor2 = $state('#ffe3e3'); // Coin/Sphere body gradient end
+	let metalEnv = $state('sky');        // Liquid Metal reflection map: 'sky' | 'sunset' | 'forest'
+	let metalRipple = $state(0.5);       // Liquid Metal ripple strength (0 = still chrome)
+	let metalGoo = $state(0.5);          // Liquid Metal melt radius (0 = crisp glyphs, 1 = mercury puddle)
+	let metalBulge = $state(0.5);        // Liquid Metal centre dome toward the viewer
+	let metalNoise = $state(0);          // Liquid Metal drifting surface grain
+	let metalBlobs = $state(0);          // Liquid Metal orbiting metaball droplets (0 = off)
+	let orbSize = $state(1);             // Type Orbit: letter size multiplier
+	let orbWrongDelay = $state(false);   // Type Orbit: incoming word waits for the boundary (gap between out/in)
+	let flexSolo = $state(false);        // Flex: rows take turns animating instead of together
+	// Type Orbit swap easing — the whip's cubic-bezier handles (Coin default)
+	let orbX1 = $state(0.28);
+	let orbY1 = $state(0);
+	let orbX2 = $state(0.1);
+	let orbY2 = $state(1);
+	let metalFlow = $state(0.6);         // Liquid Metal: liquid behaviour — flow along strokes, bead at terminals
 	// Wave Wall (lorem) — travelling weight wave over a wall of repeated type.
 	let lwRows = $state(18);             // number of stacked text rows
 	let lwCols = $state(2);              // number of side-by-side text columns
@@ -57,12 +81,12 @@
 	let cloudSnow = $state(0);           // Clouds: snow flakes
 	let cloudFog = $state(0);            // Clouds: fog/mist veil
 	let garbleSeed = $state(0);          // Garble: re-rolls inks, offsets, glitches
-	let garbleInks = $state(3);          // Garble: number of overprint passes
+	let garbleInks = $state(4);          // Garble: number of overprint passes
 	let garbleScheme = $state('candy');  // Garble: ink scheme (from the reference sheets)
-	let garbleAmt = $state(0);           // Garble: how garbled — starts CLEAN, dial the chaos in
+	let garbleAmt = $state(0.6);         // Garble: how garbled
 	let garbleClean = $state(false);     // Garble: perfect even contour, no chaos
 	let garbleAnim = $state('static');   // Garble: animation mode
-	let garbleRecolor = $state(0);       // Garble: per-letter pen-swap chance
+	let garbleRecolor = $state(0.75);    // Garble: per-letter pen-swap chance
 	let garbleDrift = $state(0.35);      // Garble: drift-run frequency (circles misaligning in a row)
 	let garbleDriftMag = $state(0.5);    // Garble: drift displacement strength (0.5 = baseline)
 	let garbleDriftLen = $state(0.5);    // Garble: drift run length (0.5 = baseline)
@@ -71,8 +95,57 @@
 	let garbleSize = $state('random');   // Garble: stamp radius category
 	let garbleShape = $state('random');  // Garble: stamp shape category
 	let garbleUniform = $state(false);   // Garble: all inks share one random stamp
-	let garbleSizePool = $state({ xxxs: true, xxs: true, xs: true, s: true, m: true, l: true, xl: true, xxl: true, xxxl: true });   // Garble: sizes allowed in Random
-	let garbleShapePool = $state({ xxxwide: true, xxwide: true, xwide: true, wide: true, round: true, tall: true, xtall: true, xxtall: true, xxxtall: true }); // Garble: shapes allowed in Random
+	let garbleForm = $state('ellipse');  // Garble: stamp form (ellipse / quad / star)
+	let garbleFormStretch = $state(false); // Garble: allow stretched quads/stars
+	let garbleFormPool = $state({ ellipse: true, quad: true, star: true }); // Garble: forms allowed in Random/Mix
+
+	// Save/load a favourite Garble setup as JSON
+	function exportGarble() {
+		const s = {
+			garbleSeed, garbleInks, garbleScheme, garbleAmt, garbleClean, garbleAnim,
+			garbleRecolor, garbleDrift, garbleDriftMag, garbleDriftLen, garbleVariety,
+			garbleLeading, garbleSize, garbleShape, garbleUniform, garbleForm, garbleFormStretch,
+			garbleSizePool: { ...garbleSizePool }, garbleShapePool: { ...garbleShapePool }, garbleFormPool: { ...garbleFormPool }
+		};
+		const blob = new Blob([JSON.stringify(s, null, 2)], { type: 'application/json' });
+		const url = URL.createObjectURL(blob);
+		const a = document.createElement('a');
+		a.href = url; a.download = 'garble-settings.json';
+		document.body.appendChild(a); a.click(); a.remove();
+		setTimeout(() => URL.revokeObjectURL(url), 1000);
+	}
+	async function importGarble(ev) {
+		const file = ev.target.files?.[0];
+		ev.target.value = '';
+		if (!file) return;
+		try {
+			const s = JSON.parse(await file.text());
+			if (typeof s.garbleSeed === 'number') garbleSeed = s.garbleSeed;
+			if (typeof s.garbleInks === 'number') garbleInks = s.garbleInks;
+			if (typeof s.garbleScheme === 'string') garbleScheme = s.garbleScheme;
+			if (typeof s.garbleAmt === 'number') garbleAmt = s.garbleAmt;
+			if (typeof s.garbleClean === 'boolean') garbleClean = s.garbleClean;
+			if (typeof s.garbleAnim === 'string') garbleAnim = s.garbleAnim;
+			if (typeof s.garbleRecolor === 'number') garbleRecolor = s.garbleRecolor;
+			if (typeof s.garbleDrift === 'number') garbleDrift = s.garbleDrift;
+			if (typeof s.garbleDriftMag === 'number') garbleDriftMag = s.garbleDriftMag;
+			if (typeof s.garbleDriftLen === 'number') garbleDriftLen = s.garbleDriftLen;
+			if (typeof s.garbleVariety === 'number') garbleVariety = s.garbleVariety;
+			if (typeof s.garbleLeading === 'number') garbleLeading = s.garbleLeading;
+			if (typeof s.garbleSize === 'string') garbleSize = s.garbleSize;
+			if (typeof s.garbleShape === 'string') garbleShape = s.garbleShape;
+			if (typeof s.garbleUniform === 'boolean') garbleUniform = s.garbleUniform;
+			if (typeof s.garbleForm === 'string') garbleForm = s.garbleForm;
+			if (typeof s.garbleFormStretch === 'boolean') garbleFormStretch = s.garbleFormStretch;
+			if (s.garbleSizePool) for (const k of Object.keys(garbleSizePool)) garbleSizePool[k] = !!s.garbleSizePool[k];
+			if (s.garbleShapePool) for (const k of Object.keys(garbleShapePool)) garbleShapePool[k] = !!s.garbleShapePool[k];
+			if (s.garbleFormPool) for (const k of Object.keys(garbleFormPool)) garbleFormPool[k] = !!s.garbleFormPool[k];
+		} catch {
+			alert('Could not read that settings file.');
+		}
+	}
+	let garbleSizePool = $state({ xxxs: false, xxs: false, xs: true, s: true, m: false, l: false, xl: false, xxl: false, xxxl: false });   // Garble: sizes allowed in Random (user default: xs+s)
+	let garbleShapePool = $state({ xxxwide: false, xxwide: false, xwide: false, wide: false, round: true, tall: true, xtall: true, xxtall: false, xxxtall: false }); // Garble: shapes allowed in Random (user default: round/tall/xtall)
 	let weatherBusy = $state(false);
 	let weatherNote = $state('');
 
@@ -193,6 +266,32 @@
 			// the sky is painted by the shader; long gentle loop
 			duration = 12;
 		}
+		if (id === 'typeorb') {
+			// extruded type on black — white letters
+			bgType = 'solid'; bg = '#000000'; fg = '#ffffff';
+			duration = 5.8; // flight is real-time in the scene; extra time = longer word hold
+			// this mode always opens with the class lockup — whatever text
+			// another mode left behind, override it (edit after switching)
+			text = 'Interactive Design / Concepts | Thursdays / 6–10 PM 901 41CS';
+		}
+		if (id === 'flex') {
+			// variable-font lockup on paper white
+			bgType = 'solid'; bg = '#ffffff'; fg = '#111111';
+			duration = 4;
+			text = 'Interactive / Design Concepts';
+		}
+		if (id === 'bleed') {
+			// full-frame variable-type lockup, cropped 30% into the letters
+			bgType = 'solid'; bg = '#ffffff'; fg = '#111111';
+			duration = 5;
+			text = 'Interactive / Design Concepts';
+		}
+		if (id === 'grit') {
+			// gritty: white type on black, blur + grain occlusion
+			bgType = 'solid'; bg = '#000000'; fg = '#ffffff';
+			duration = 5;
+			text = 'Interactive / Design Concepts';
+		}
 		if (id === 'coin') {
 			// pure RGB blue wireframe pill on white
 			bgType = 'solid'; bg = '#ffffff'; fg = '#0000ff';
@@ -206,6 +305,9 @@
 		if (!/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(s)) return; // wait for a valid value
 		if (which === 'bg') bg = s; else if (which === 'fg') fg = s;
 		else if (which === 'accent') accent = s; else if (which === 'bg2') bg2 = s;
+		else if (which === 'coinInk') coinInk = s; else if (which === 'coinInk2') coinInk2 = s;
+		else if (which === 'coinBodyColor') coinBodyColor = s;
+		else if (which === 'coinBodyColor2') coinBodyColor2 = s;
 	}
 
 	// ── Canvas / preview ───────────────────────────────────────────────────
@@ -219,9 +321,10 @@
 	function liveOpts() {
 		return {
 			text, subtitle: subtitle.trim(), preset, cycles, duration, spread, repeats, tileCols, tileGap, reactionSpeed,
-			bzRound, bzBands, bzSpacing, bzFade,
+			bzRound, bzBands, bzSpacing, bzFade, sphereTilt, coinInk, coinInk2, coinInkGrad, coinInkAnim, coinBg, coinBodyMode, coinBodyColor, coinBodyColor2, metalEnv, metalRipple, metalGoo, metalBulge, metalNoise, metalBlobs, metalFlow, orbSize, orbWrongDelay, flexSolo, orbBez: [orbX1, orbY1, orbX2, orbY2],
 			lwRows, lwCols, lwPeriod, lwDiag, lwAmp, lwLoops,
-			htSize, moCell, scAmp, cmAmount, cmGate, b3Rows, b3Cols, b3Gap, b3Speed, cloudSeedM, cloudSeedP, cloudScatter, cloudEnv, cloudEnvAll, cloudTilt, cloudLightX, cloudLightZ, cloudWisp, cloudSolid, cloudShadow, cloudSeedT, cloudWispSpread, cloudVeil, cloudTime, cloudTimeText, cloudTimeLink, cloudRain, cloudSnow, cloudFog, garbleSeed, garbleInks, garbleScheme, garbleAmt, garbleClean, garbleAnim, garbleRecolor, garbleDrift, garbleDriftMag, garbleDriftLen, garbleVariety, garbleLeading, garbleSize, garbleShape, garbleUniform,
+			htSize, moCell, scAmp, cmAmount, cmGate, b3Rows, b3Cols, b3Gap, b3Speed, cloudSeedM, cloudSeedP, cloudScatter, cloudEnv, cloudEnvAll, cloudTilt, cloudLightX, cloudLightZ, cloudWisp, cloudSolid, cloudShadow, cloudSeedT, cloudWispSpread, cloudVeil, cloudTime, cloudTimeText, cloudTimeLink, cloudRain, cloudSnow, cloudFog, garbleSeed, garbleInks, garbleScheme, garbleAmt, garbleClean, garbleAnim, garbleRecolor, garbleDrift, garbleDriftMag, garbleDriftLen, garbleVariety, garbleLeading, garbleSize, garbleShape, garbleUniform, garbleForm, garbleFormStretch,
+			garbleFormPool: Object.entries(garbleFormPool).filter(([, v]) => v).map(([k]) => k),
 			garbleSizePool: Object.entries(garbleSizePool).filter(([, v]) => v).map(([k]) => k),
 			garbleShapePool: Object.entries(garbleShapePool).filter(([, v]) => v).map(([k]) => k),
 			bg, bg2, fg, accent, bgType,
@@ -246,7 +349,7 @@
 	});
 	// Repaint on a colour / preset change even while paused.
 	$effect(() => {
-		void [bg, bg2, fg, accent, bgType, preset, cycles, spread, repeats, tileCols, tileGap, reactionSpeed, bzRound, bzBands, bzSpacing, bzFade, lwRows, lwCols, lwPeriod, lwDiag, lwAmp, lwLoops, htSize, moCell, scAmp, cmAmount, cmGate, b3Speed];
+		void [bg, bg2, fg, accent, bgType, preset, cycles, spread, repeats, tileCols, tileGap, reactionSpeed, bzRound, bzBands, bzSpacing, bzFade, sphereTilt, coinInk, coinInk2, coinInkGrad, coinInkAnim, coinBg, coinBodyMode, coinBodyColor, coinBodyColor2, metalEnv, metalRipple, metalGoo, metalBulge, metalNoise, metalBlobs, metalFlow, orbSize, orbWrongDelay, flexSolo, orbX1, orbY1, orbX2, orbY2, lwRows, lwCols, lwPeriod, lwDiag, lwAmp, lwLoops, htSize, moCell, scAmp, cmAmount, cmGate, b3Speed];
 		if (scene && previewCtx && !playing) scene.render(previewCtx);
 	});
 
@@ -321,6 +424,10 @@
 			const frames = Math.max(2, Math.round(duration * fps));
 			// Fresh scene at export resolution, reset — encodeGif steps it per frame.
 			const exportScene = makeScene(mode, { W, H, getOpts: liveOpts, seed: 1337 });
+			// scenes with async init (three.js + font loads) expose ready() —
+			// wait it out or the first frames bake as bare background (black
+			// flash at the loop seam)
+			if (exportScene.ready) await exportScene.ready();
 			// "From current frame": replay the preview's elapsed sim-time into the
 			// fresh export scene so the GIF starts where the preview is now.
 			// Same seed + same step size = the same evolution (capped at 90s of
@@ -379,7 +486,8 @@
 		<!-- Preview -->
 		<div class="preview-wrap">
 			<div class="preview-frame" class:portrait={previewDims.h > previewDims.w}>
-				<canvas bind:this={canvasEl} width={previewDims.w} height={previewDims.h}></canvas>
+				<canvas bind:this={canvasEl} width={previewDims.w} height={previewDims.h}
+					class:checker={(mode === 'coin' || mode === 'sphere' || mode === 'metal') && coinBg === 'transparent'}></canvas>
 			</div>
 			<div class="preview-actions">
 				<button class="chip" onclick={() => (playing = !playing)}>
@@ -395,7 +503,7 @@
 		<div class="controls">
 			<label class="field">
 				<span>Title</span>
-				<input type="text" bind:value={text} placeholder="Your title" maxlength="40" />
+				<input type="text" bind:value={text} placeholder="Your title" maxlength="120" />
 			</label>
 			<label class="field">
 				<span>Subtitle <em>(optional)</em></span>
@@ -527,6 +635,11 @@
 							<option value="emberpine">Ember & pine</option>
 							<option value="plum">Plum family</option>
 							<option value="teal">Clean teal</option>
+							<option value="complementary">Complementary (seeded)</option>
+							<option value="analogous">Analogous (seeded)</option>
+							<option value="triadic">Triadic (seeded)</option>
+							<option value="tetradic">Tetradic (seeded)</option>
+							<option value="pentadic">Pentadic (seeded)</option>
 						</select>
 					</label>
 					<label class="slider">
@@ -605,10 +718,36 @@
 						<input type="checkbox" bind:checked={garbleUniform} />
 						<span>Uniform pens (all inks share one random stamp)</span>
 					</label>
+					<label class="check fmt">
+						<span>Stamp form</span>
+						<select bind:value={garbleForm}>
+							<option value="ellipse">Ellipse</option>
+							<option value="quad">Quadrilateral</option>
+							<option value="star">Star</option>
+							<option value="random">Random per ink</option>
+							<option value="mix">Mix (rotate per layer)</option>
+						</select>
+					</label>
+					{#if garbleForm === 'random' || garbleForm === 'mix'}
+						<div class="pool">
+							{#each Object.keys(garbleFormPool) as k}
+								<label><input type="checkbox" bind:checked={garbleFormPool[k]} />{k}</label>
+							{/each}
+						</div>
+					{/if}
+					<label class="check">
+						<input type="checkbox" bind:checked={garbleFormStretch} />
+						<span>Allow stretched quads/stars</span>
+					</label>
 					<label class="check">
 						<input type="checkbox" bind:checked={garbleClean} />
 						<span>Clean contour (even strokes, no chaos)</span>
 					</label>
+					<div class="pool">
+						<button class="weather-btn" onclick={exportGarble}>Export settings</button>
+						<button class="weather-btn" onclick={() => document.getElementById('garble-import').click()}>Import settings</button>
+						<input id="garble-import" type="file" accept="application/json,.json" style="display:none" onchange={importGarble} />
+					</div>
 					<label class="check fmt">
 						<span>Animation</span>
 						<select bind:value={garbleAnim}>
@@ -810,11 +949,148 @@
 						<input type="range" min="0.6" max="1.8" step="0.05" bind:value={moCell} />
 					</label>
 				{/if}
+				{#if mode === 'flex'}
+					<label class="orb-check">
+						<input type="checkbox" bind:checked={flexSolo} />
+						<span>one line at a time <em>&mdash; rows take turns squashing</em></span>
+					</label>
+				{/if}
 				{#if mode === 'scatter'}
 					<label class="slider">
 						<span>Scatter <b>{scAmp.toFixed(2)}</b></span>
 						<input type="range" min="0.3" max="2" step="0.05" bind:value={scAmp} />
 					</label>
+				{/if}
+				{#if mode === 'sphere'}
+					<label class="slider">
+						<span>Camera angle <b>{sphereTilt}°</b></span>
+						<input type="range" min="-60" max="60" step="1" bind:value={sphereTilt} />
+					</label>
+				{/if}
+				{#if mode === 'typeorb'}
+					<label class="slider">
+						<span>Type size <b>{orbSize.toFixed(2)}×</b></span>
+						<input type="range" min="0.4" max="2" step="0.05" bind:value={orbSize} />
+					</label>
+					<p class="orb-hint">
+						<b>|</b> groups words to display together &nbsp;·&nbsp; <b>/</b> forces a line break
+						(lines auto-wrap at two words, or after a 10+ letter word)
+					</p>
+					<label class="orb-check">
+						<input type="checkbox" bind:checked={orbWrongDelay} />
+						<span>wrongDelay <em>— outgoing word leaves first, incoming waits for the turn</em></span>
+					</label>
+					<div class="orb-bez">
+						<div class="orb-bez-head">
+							<span>Easing</span>
+							<code>cubic-bezier({orbX1.toFixed(2)}, {orbY1.toFixed(2)}, {orbX2.toFixed(2)}, {orbY2.toFixed(2)})</code>
+							<button class="orb-bez-reset" onclick={() => { orbX1 = 0.28; orbY1 = 0; orbX2 = 0.1; orbY2 = 1; }}>↺</button>
+						</div>
+						<svg class="orb-bez-curve" viewBox="0 0 100 100" preserveAspectRatio="none">
+							<line x1="0" y1="100" x2={orbX1 * 100} y2={100 - orbY1 * 100} class="obz-handle" />
+							<line x1="100" y1="0" x2={orbX2 * 100} y2={100 - orbY2 * 100} class="obz-handle" />
+							<path d={`M 0 100 C ${orbX1 * 100} ${100 - orbY1 * 100}, ${orbX2 * 100} ${100 - orbY2 * 100}, 100 0`} class="obz-path" />
+							<circle cx={orbX1 * 100} cy={100 - orbY1 * 100} r="3.5" class="obz-dot" />
+							<circle cx={orbX2 * 100} cy={100 - orbY2 * 100} r="3.5" class="obz-dot" />
+						</svg>
+						<label class="slider"><span>x1 <b>{orbX1.toFixed(2)}</b></span><input type="range" min="0" max="1" step="0.01" bind:value={orbX1} /></label>
+						<label class="slider"><span>y1 <b>{orbY1.toFixed(2)}</b></span><input type="range" min="-0.5" max="1.5" step="0.01" bind:value={orbY1} /></label>
+						<label class="slider"><span>x2 <b>{orbX2.toFixed(2)}</b></span><input type="range" min="0" max="1" step="0.01" bind:value={orbX2} /></label>
+						<label class="slider"><span>y2 <b>{orbY2.toFixed(2)}</b></span><input type="range" min="-0.5" max="1.5" step="0.01" bind:value={orbY2} /></label>
+					</div>
+				{/if}
+				{#if mode === 'metal'}
+					<div class="theme-row">
+						<span>Reflections</span>
+						<div class="theme-btns">
+							<button class:on={metalEnv === 'sky'} onclick={() => (metalEnv = 'sky')}>Blue sky</button>
+							<button class:on={metalEnv === 'sunset'} onclick={() => (metalEnv = 'sunset')}>Sunset</button>
+							<button class:on={metalEnv === 'forest'} onclick={() => (metalEnv = 'forest')}>Trees</button>
+						</div>
+					</div>
+					<label class="slider">
+						<span>Ripple <b>{metalRipple.toFixed(2)}</b></span>
+						<input type="range" min="0" max="1" step="0.02" bind:value={metalRipple} />
+					</label>
+					<label class="slider">
+						<span>Goo <b>{metalGoo.toFixed(2)}</b></span>
+						<input type="range" min="0" max="1" step="0.02" bind:value={metalGoo} />
+					</label>
+					<label class="slider">
+						<span>Bulge <b>{metalBulge.toFixed(2)}</b></span>
+						<input type="range" min="0" max="1" step="0.02" bind:value={metalBulge} />
+					</label>
+					<label class="slider">
+						<span>Noise <b>{metalNoise.toFixed(2)}</b></span>
+						<input type="range" min="0" max="1" step="0.02" bind:value={metalNoise} />
+					</label>
+					<label class="slider">
+						<span>Flow <b>{metalFlow.toFixed(2)}</b></span>
+						<input type="range" min="0" max="1" step="0.02" bind:value={metalFlow} />
+					</label>
+					<label class="slider">
+						<span>Metaballs <b>{metalBlobs.toFixed(2)}</b></span>
+						<input type="range" min="0" max="1" step="0.02" bind:value={metalBlobs} />
+					</label>
+					<div class="theme-row">
+						<span>Background</span>
+						<div class="theme-btns">
+							<button class:on={coinBg === 'light'} onclick={() => (coinBg = 'light')}>Light</button>
+							<button class:on={coinBg === 'dark'} onclick={() => (coinBg = 'dark')}>Dark</button>
+							<button class:on={coinBg === 'transparent'} onclick={() => (coinBg = 'transparent')}>Transparent</button>
+						</div>
+					</div>
+				{/if}
+				{#if mode === 'coin' || mode === 'sphere'}
+					<div class="theme-row">
+						<span>Ink</span>
+						<div class="theme-btns">
+							<button class:on={!coinInkGrad} onclick={() => (coinInkGrad = false)}>Solid</button>
+							<button class:on={coinInkGrad} onclick={() => (coinInkGrad = true)}>Gradient</button>
+						</div>
+					</div>
+					<div class="color-field">
+						<span>{coinInkGrad ? 'Gradient start' : 'Text + lines'}</span>
+						<span class="ci"><input type="color" bind:value={coinInk} /><input class="hex" value={coinInk} maxlength="7" oninput={(e) => setHex('coinInk', e.currentTarget.value)} /></span>
+					</div>
+					{#if coinInkGrad}
+						<div class="color-field">
+							<span>Gradient end</span>
+							<span class="ci"><input type="color" bind:value={coinInk2} /><input class="hex" value={coinInk2} maxlength="7" oninput={(e) => setHex('coinInk2', e.currentTarget.value)} /></span>
+						</div>
+						<label class="check"><input type="checkbox" bind:checked={coinInkAnim} /> Animate gradient</label>
+					{/if}
+					<div class="theme-row">
+						<span>Background</span>
+						<div class="theme-btns">
+							<button class:on={coinBg === 'light'} onclick={() => (coinBg = 'light')}>Light</button>
+							<button class:on={coinBg === 'dark'} onclick={() => (coinBg = 'dark')}>Dark</button>
+							<button class:on={coinBg === 'transparent'} onclick={() => (coinBg = 'transparent')}>Transparent</button>
+						</div>
+					</div>
+					<div class="theme-row">
+						<span>Object body</span>
+						<div class="theme-btns">
+							<button class:on={coinBodyMode === 'auto'} onclick={() => (coinBodyMode = 'auto')}>Match bg</button>
+							<button class:on={coinBodyMode === 'solid'} onclick={() => (coinBodyMode = 'solid')}>Solid</button>
+							<button class:on={coinBodyMode === 'gradient'} onclick={() => (coinBodyMode = 'gradient')}>Gradient</button>
+						</div>
+					</div>
+					{#if coinBodyMode !== 'auto'}
+						<div class="color-field">
+							<span>{coinBodyMode === 'gradient' ? 'Body gradient start' : 'Body colour'}</span>
+							<span class="ci"><input type="color" bind:value={coinBodyColor} /><input class="hex" value={coinBodyColor} maxlength="7" oninput={(e) => setHex('coinBodyColor', e.currentTarget.value)} /></span>
+						</div>
+					{/if}
+					{#if coinBodyMode === 'gradient'}
+						<div class="color-field">
+							<span>Body gradient end</span>
+							<span class="ci"><input type="color" bind:value={coinBodyColor2} /><input class="hex" value={coinBodyColor2} maxlength="7" oninput={(e) => setHex('coinBodyColor2', e.currentTarget.value)} /></span>
+						</div>
+						{#if !coinInkGrad}
+							<label class="check"><input type="checkbox" bind:checked={coinInkAnim} /> Animate gradient</label>
+						{/if}
+					{/if}
 				{/if}
 				{#if mode === 'bz'}
 					<label class="slider">
@@ -836,7 +1112,10 @@
 				{/if}
 				<label class="slider">
 					<span>Smoothness <b>{fps}fps</b></span>
-					<input type="range" min="10" max="30" step="2" bind:value={fps} />
+					<!-- 50fps ceiling: GIF delays are centiseconds and browsers
+					     clamp <20ms to 100ms — 50fps (exactly 2cs) is the fastest
+					     rate that plays back true in every decoder -->
+					<input type="range" min="10" max="50" step="2" bind:value={fps} />
 				</label>
 			</div>
 		</div>
@@ -941,6 +1220,25 @@
 	.swatch-fg { position: absolute; top: 6px; left: 6px; width: 14px; height: 4px; border-radius: 2px; }
 
 	.color-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem 0.7rem; }
+	/* Coin/Sphere background theme buttons */
+	.theme-row { display: flex; flex-direction: column; gap: 0.22rem; }
+	.theme-row > span { font-size: 0.72rem; font-weight: 600; color: var(--ink); }
+	.theme-btns { display: flex; gap: 0.3rem; }
+	.theme-btns button {
+		flex: 1; font: inherit; font-size: 0.74rem; color: var(--ink);
+		background: transparent; border: 1px solid var(--line, #d5d8de);
+		border-radius: 7px; padding: 0.3rem 0.2rem; cursor: pointer;
+	}
+	.theme-btns button.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); font-weight: 600; }
+	/* transparent-bg preview: checkerboard shows through the cleared canvas */
+	canvas.checker {
+		background-image:
+			linear-gradient(45deg, #d8d8d8 25%, transparent 25%, transparent 75%, #d8d8d8 75%),
+			linear-gradient(45deg, #d8d8d8 25%, transparent 25%, transparent 75%, #d8d8d8 75%);
+		background-color: #f2f2f2;
+		background-size: 16px 16px;
+		background-position: 0 0, 8px 8px;
+	}
 	.color-field { display: flex; flex-direction: column; gap: 0.22rem; }
 	.color-field > span { font-size: 0.72rem; font-weight: 600; color: var(--ink); }
 	.color-field em { color: var(--muted-fg); font-weight: 400; font-style: normal; }
@@ -966,6 +1264,27 @@
 
 	.sliders { gap: 0.9rem; }
 	.slider { display: flex; flex-direction: column; gap: 0.3rem; }
+	.orb-hint {
+		margin: 0; font-size: 0.7rem; line-height: 1.45; color: var(--muted-fg);
+	}
+	.orb-hint b { color: var(--ink); font-family: monospace; }
+	.orb-check { display: flex; align-items: center; gap: 0.45rem; font-size: 0.75rem; color: var(--ink); cursor: pointer; }
+	.orb-check em { color: var(--muted-fg); font-style: normal; font-size: 0.7rem; }
+	.orb-bez { display: flex; flex-direction: column; gap: 0.35rem; }
+	.orb-bez-head {
+		display: flex; align-items: center; gap: 0.4rem;
+		font-size: 0.72rem; font-weight: 600; color: var(--ink);
+	}
+	.orb-bez-head code { font-size: 0.66rem; color: var(--muted-fg); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+	.orb-bez-reset { background: none; border: none; color: var(--muted-fg); cursor: pointer; font-size: 0.75rem; padding: 0 0.15rem; }
+	.orb-bez-reset:hover { color: var(--ink); }
+	.orb-bez-curve {
+		width: 100%; height: 84px;
+		background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
+	}
+	.orb-bez-curve .obz-path { fill: none; stroke: var(--ink); stroke-width: 2.5; vector-effect: non-scaling-stroke; }
+	.orb-bez-curve .obz-handle { stroke: var(--muted-fg); stroke-width: 1; opacity: 0.55; vector-effect: non-scaling-stroke; }
+	.orb-bez-curve .obz-dot { fill: var(--accent); }
 	.check { display: flex; align-items: center; gap: 0.45rem; font-size: 0.76rem; color: var(--muted-fg); cursor: pointer; }
 	.check input { accent-color: var(--ink); }
 	.check.fmt { justify-content: space-between; }

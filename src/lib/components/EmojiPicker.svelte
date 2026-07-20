@@ -35,7 +35,7 @@
 	let data         = $state(null);
 	let loading      = $state(true);
 	let query        = $state('');
-	let activeGroup  = $state(0);   // -2 = popular, -1 = recent, 0..N-1 = group index
+	let activeGroup  = $state(-1);  // -2 = popular, -1 = recent, 0..N-1 = group index (all flow inline)
 	let tabsEl       = $state(null); // category strip — auto-scrolled to keep the active tab in view
 	let skinTone     = $state('');  // '' | '1F3FB'–'1F3FF', set by picking a variant
 	let gender       = $state('');  // '' | 'female' | 'male', set by picking a variant
@@ -696,24 +696,16 @@
 		const t = skinTone, g = gender, ds = dualSelections, dirs = dirSelections;
 		return semanticOnlyItems.map(item => ({ item, e: resolveEmoji(item, t, g, ds, dirs) }));
 	});
-	let resolvedPopularItems = $derived.by(() => {
-		const t = skinTone, g = gender, ds = dualSelections, dirs = dirSelections;
-		return (data?.popular ?? []).map(raw => {
-			const item = findItem(raw);
-			return { raw, item, resolved: item ? resolveEmoji(item, t, g, ds, dirs) : raw };
-		});
-	});
+	// (Popular now renders as a flow section — see flowingSections.)
 
 	// ── Inline flow model ──────────────────────────────────────────
-	// Popular (-2) and Recent (-1) are "standalone" — they aggregate
-	// across categories so they don't belong in the inline scroll.
-	// Every Unicode group (0..N-1) flows in a single virtualized
-	// container with section headers; clicking a tab snaps to that
-	// section's offset, and scroll position updates the highlighted
-	// tab to whichever section is currently in view. No auto-advance
-	// — the user navigates by scrolling like they would a single
-	// long page.
-	const isStandaloneGroup = (g) => g < 0;
+	// EVERYTHING flows in one scroll: Recently used first, Popular
+	// second, then every Unicode group — text section labels separate
+	// them. Clicking a tab snaps to that section's offset, and scroll
+	// position updates the highlighted tab to whichever section is
+	// currently in view. No auto-advance — the user navigates by
+	// scrolling like they would a single long page. (Recent/Popular
+	// used to be standalone grid swaps; the user wants one continuum.)
 
 	// Resolve every group's items once (cheap; same memoisation
 	// pattern as `resolvedGroupItems`). Each section knows its
@@ -724,6 +716,21 @@
 		const t = skinTone, g = gender, ds = dualSelections, dirs = dirSelections;
 		const sections = [];
 		let cellOffset = 0;
+		// Recent stores RAW glyphs (already skin-toned); item may be null
+		// for variants — cells fall back to pickRaw for those.
+		if (recent.length) {
+			const items = recent.map((e) => ({ item: findItem(e), e }));
+			sections.push({ groupIdx: -1, name: 'Recently used', icon: '🕐', items, cellStart: cellOffset });
+			cellOffset += items.length;
+		}
+		if (data.popular?.length) {
+			const items = data.popular.map((raw) => {
+				const item = findItem(raw);
+				return { item, e: item ? resolveEmoji(item, t, g, ds, dirs) : raw };
+			});
+			sections.push({ groupIdx: -2, name: 'Popular', icon: '⭐', items, cellStart: cellOffset });
+			cellOffset += items.length;
+		}
 		for (let i = 0; i < data.groups.length; i++) {
 			const grp = data.groups[i];
 			const items = grp.items.map((item) => ({ item, e: resolveEmoji(item, t, g, ds, dirs) }));
@@ -786,7 +793,7 @@
 	// user was leaving.
 	let _suppressActiveSync = false;
 	function syncActiveFromScroll() {
-		if (isStandaloneGroup(activeGroup) || query.trim() || !flowingGeometry.length) return;
+		if (query.trim() || !flowingGeometry.length) return;
 		if (_suppressActiveSync) return;
 		const top = gridScrollTop + 4;
 		// Walk forward, remember the LAST section whose pxStart is
@@ -838,15 +845,12 @@
 	// offset; we set `activeGroup` first (suppressing the scroll
 	// reset effect) so the tab highlight is instant.
 	function pickTab(g) {
-		if (isStandaloneGroup(g)) {
-			activeGroup = g;
-			return;
-		}
 		_suppressActiveSync = true;
 		activeGroup = g;
 		queueMicrotask(() => {
 			const target = flowingGeometry.find((x) => x.groupIdx === g);
-			if (target && gridEl) gridEl.scrollTo({ top: target.pxStart, behavior: 'instant' });
+			// Recent/Popular tabs with no section yet (nothing used) → top
+			if (gridEl) gridEl.scrollTo({ top: target ? target.pxStart : 0, behavior: 'instant' });
 		});
 	}
 
@@ -855,7 +859,7 @@
 		// Only reset scroll on tab changes that aren't part of the
 		// flow (standalone ↔ flowing transitions, or search toggles).
 		// Flowing-to-flowing tab clicks are handled by pickTab().
-		if (isStandaloneGroup(activeGroup) || query.trim()) {
+		if (query.trim()) {
 			gridEl?.scrollTo(0, 0);
 			gridScrollTop = 0;
 		}
@@ -927,10 +931,11 @@
 		{:else}
 			<!-- Only the category buttons scroll; the controls above stay fixed. -->
 			<div class="tabs" role="tablist" bind:this={tabsEl}>
-				<button role="tab" class="tab tab-text" class:active={activeGroup === -2} title="Most used"
-					onclick={() => pickTab(-2)}>#</button>
+				<!-- Tab order mirrors the flow: Recent, Popular, then groups -->
 				<button role="tab" class="tab tab-text" class:active={activeGroup === -1} title="Recently used"
 					onclick={() => pickTab(-1)}>🕐</button>
+				<button role="tab" class="tab tab-text" class:active={activeGroup === -2} title="Popular"
+					onclick={() => pickTab(-2)}>#</button>
 				{#if data}
 					{#each data.groups as g, i}
 						<button role="tab" class="tab" class:active={activeGroup === i} title={g.name}
@@ -1015,39 +1020,6 @@
 					<div class="semantic-section-label">✦ thinking…</div>
 				{/if}
 			{/if}
-		{:else if activeGroup === -2}
-			<div class="grid" class:noto={fontStyle === 'noto'}>
-				{#each resolvedPopularItems as { raw, item, resolved }}
-					<button class="cell" class:has-variants={item?.t?.length}
-						onpointerdown={(ev) => { if (item) startLp(ev, item); }}
-						onpointermove={moveLp}
-						onpointerup={cancelLp}
-						onpointerleave={cancelLp}
-						oncontextmenu={(ev) => { if (item) openVariants(ev, item); }}
-						onmouseenter={() => preview = { e: resolveEmoji(item, skinTone, gender), n: item ? resolvedName(item) : '', sc: item ? resolvedShortcode(item) : '' }}
-						onmouseleave={() => preview = null}
-						onclick={() => { if (lpFired) { lpFired = false; return; } item ? pickItem(item) : pickRaw(raw); }}>{resolved}</button>
-				{/each}
-			</div>
-		{:else if activeGroup === -1}
-			{#if recent.length === 0}
-				<div class="state-msg">No recently used emoji yet.</div>
-			{:else}
-				<div class="grid" class:noto={fontStyle === 'noto'}>
-					{#each recent as e}
-						{@const item = findItem(e)}
-						<button class="cell" class:has-variants={item?.t?.length}
-							onpointerdown={(ev) => { if (item) startLp(ev, item); }}
-							onpointermove={moveLp}
-							onpointerup={cancelLp}
-							onpointerleave={cancelLp}
-							oncontextmenu={(ev) => { if (item) openVariants(ev, item); }}
-							onmouseenter={() => preview = { e, n: item?.n ?? '', sc: item?.sc?.[0] ? ':' + item.sc[0] + ':' : '' }}
-							onmouseleave={() => preview = null}
-							onclick={() => { if (lpFired) { lpFired = false; return; } pickRaw(e); }}>{e}</button>
-					{/each}
-				</div>
-			{/if}
 		{:else if flowingSections.length}
 			<!-- Flowing list. Every Unicode group is in one scroll
 			     container; section headers separate them. Each section
@@ -1064,16 +1036,18 @@
 					<div class="section-block">
 						<div class="section-label">{section.name}</div>
 						<div class="grid" class:noto={fontStyle === 'noto'}>
-							{#each section.items as { item, e } (item.cp)}
-								<button class="cell" class:has-variants={item.t?.length} title={item.n}
-									onpointerdown={(ev) => startLp(ev, item)}
+							<!-- item may be null in the Recent section (raw glyphs
+							     with baked skin tones) — those insert via pickRaw -->
+							{#each section.items as { item, e } (item?.cp ?? e)}
+								<button class="cell" class:has-variants={item?.t?.length} title={item?.n}
+									onpointerdown={(ev) => { if (item) startLp(ev, item); }}
 									onpointermove={moveLp}
 									onpointerup={cancelLp}
 									onpointerleave={cancelLp}
-									oncontextmenu={(ev) => openVariants(ev, item)}
-									onmouseenter={() => preview = { e: resolveEmoji(item, skinTone, gender), n: resolvedName(item), sc: resolvedShortcode(item) }}
+									oncontextmenu={(ev) => { if (item) openVariants(ev, item); }}
+									onmouseenter={() => preview = item ? { e: resolveEmoji(item, skinTone, gender), n: resolvedName(item), sc: resolvedShortcode(item) } : { e, n: '', sc: '' }}
 									onmouseleave={() => preview = null}
-									onclick={() => { if (lpFired) { lpFired = false; return; } pickItem(item); }}>
+									onclick={() => { if (lpFired) { lpFired = false; return; } item ? pickItem(item) : pickRaw(e); }}>
 									{e}
 								</button>
 							{/each}
@@ -1381,12 +1355,17 @@
 		cursor: pointer;
 		border-radius: 50%;
 		flex-shrink: 0;
-		opacity: 0.4;
-		transition: opacity 0.12s, background 0.12s;
+		transition: background 0.12s;
 		padding: 0;
 	}
-	.tab:hover { opacity: 0.75; background: var(--surface-2); }
-	.tab.active { opacity: 1; background: var(--surface-2); }
+	/* No opacity fade on unselected tabs — full-colour glyphs, with the
+	   same M3 state-layer hover + secondary-container active treatment
+	   as the ExpressionPicker/Kitchen strips, so every bar matches. */
+	.tab:hover:not(.active) { background: color-mix(in srgb, var(--md-sys-color-on-surface, var(--ink)) 7%, transparent); }
+	.tab.active {
+		background: var(--md-sys-color-secondary-container, var(--surface-2));
+		color: var(--md-sys-color-on-secondary-container, var(--ink));
+	}
 	.tab-text { font-size: 0.85rem; font-weight: 700; letter-spacing: -0.02em; }
 
 	/* Inline search input (shown when the 🔍 control is toggled) grows to fill

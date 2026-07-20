@@ -11,6 +11,7 @@
 	import { invalidateAll, afterNavigate, goto, preloadData } from '$app/navigation';
 	import ProfileHover from '$lib/components/ProfileHover.svelte';
 	import Avatar from '$lib/components/Avatar.svelte';
+	import GemmaIcon from '$lib/components/GemmaIcon.svelte';
 	import BottomNav from '$lib/components/BottomNav.svelte';
 	import ConvSkeleton from '$lib/components/ConvSkeleton.svelte';
 	import AppHeader from '$lib/components/AppHeader.svelte';
@@ -196,6 +197,17 @@
 	let _pagerVisibleRoute = $state(null); // route of the panel currently in view (live, for nav highlight)
 	let _pagerFraction = $state(0);        // live fractional scroll position (for the sliding highlight)
 	let _gestureStartIdx = 0;          // panel index when the current touch gesture began (one-swipe-per-panel clamp)
+	// ── Manual conv-swipe drive ─────────────────────────────────────
+	// A horizontal pan that STARTS inside the conversation's vertical
+	// message list doesn't chain to the pager on mobile web (the list's
+	// overscroll containment eats it), so home/lab swiped fine but a chat
+	// wouldn't swipe out. When we detect a horizontal gesture on the conv
+	// panel with the native pager not moving, we drive scrollLeft by hand
+	// and snap to the nearest panel on release.
+	let _pgManual = false;       // currently hand-driving the pager
+	let _pgManualX = 0;          // finger x when manual drive engaged
+	let _pgManualScroll = 0;     // pager scrollLeft when manual drive engaged
+	let _pgSnapOff = false;      // scroll-snap disabled during manual drive
 	let _suppressCommitUntil = 0;      // performance.now() until which scroll-settle nav-commits are ignored
 	let _goSecGen = 0;                 // generation token for nav-icon jumps (latest tap wins)
 	// Extend (never shorten) the window during which a stray momentum/anchoring
@@ -232,9 +244,23 @@
 		_suppressCommitUntil = 0;    //   • a prior action's commit-suppression window —
 		                             //     else THIS gesture's nav-commit is blocked and
 		                             //     it snaps back ("multiple swipes break").
+		// Safety: if a manual conv-swipe ended exactly on its start position,
+		// scrollend never fired and snap stayed paused — restore it now.
+		if (_pgSnapOff && !_pgManual) { pagerEl.style.scrollSnapType = ''; _pgSnapOff = false; }
 		_gestureStartIdx = Math.round(pagerEl.scrollLeft / (pagerEl.clientWidth || 1));
 		const t = e.touches?.[0];
 		if (t) { _pgStX = _pgPrevX = t.clientX; _pgStY = t.clientY; _pgPrevT = e.timeStamp; _pgVelX = 0; _pgHoriz = false; }
+	}
+	// True if the touch began inside an element that scrolls horizontally
+	// itself (code blocks etc.) — those keep their native pan.
+	function _inHorizScroller(el) {
+		for (let n = el; n && n !== pagerEl; n = n.parentElement) {
+			if (n.scrollWidth > n.clientWidth + 2) {
+				const ox = getComputedStyle(n).overflowX;
+				if (ox === 'auto' || ox === 'scroll') return true;
+			}
+		}
+		return false;
 	}
 	function onPagerTouchMove(e) {
 		const t = e.touches?.[0]; if (!t) return;
@@ -245,6 +271,25 @@
 			const adx = Math.abs(t.clientX - _pgStX), ady = Math.abs(t.clientY - _pgStY);
 			if (adx > 8 && adx > ady) _pgHoriz = true;
 		}
+		// Manual conv-swipe: engage once the gesture is clearly horizontal but
+		// the native pager hasn't moved (the message list swallowed the pan).
+		if (!_pgManual && _pgHoriz && _onConvMobile && pagerEl) {
+			const cw = pagerEl.clientWidth || 1;
+			const nativeMoved = Math.abs(pagerEl.scrollLeft - _gestureStartIdx * cw) > 2;
+			if (!nativeMoved && Math.abs(t.clientX - _pgStX) > 16 && !_inHorizScroller(e.target)) {
+				_pgManual = true;
+				_pgManualX = t.clientX;
+				_pgManualScroll = pagerEl.scrollLeft;
+				// snap fights per-frame scrollLeft writes — pause it until settled
+				pagerEl.style.scrollSnapType = 'none';
+				_pgSnapOff = true;
+			}
+		}
+		if (_pgManual && pagerEl) {
+			const cw = pagerEl.clientWidth || 1;
+			const max = (PANELS.length - 1) * cw;
+			pagerEl.scrollLeft = Math.max(0, Math.min(max, _pgManualScroll + (_pgManualX - t.clientX)));
+		}
 	}
 	function onPagerTouchEnd() {
 		_pagerTouching = false;
@@ -253,7 +298,63 @@
 		// and the route commits on `scrollend` once the snap actually settles (see
 		// onPagerScrollEnd). No JS animation to go framy, no custom easing to feel
 		// off. (`_pgVelX`/`_pgHoriz` are still tracked above for future use.)
+		//
+		// EXCEPT the manual conv-swipe: hand-driven scrollLeft has no native
+		// momentum, so pick the target panel (position + flick velocity) and
+		// glide there; scrollend then commits the route as usual.
+		if (_pgManual && pagerEl) {
+			_pgManual = false;
+			const cw = pagerEl.clientWidth || 1;
+			let idx = pagerEl.scrollLeft / cw;
+			if (_pgVelX < -0.3) idx = Math.ceil(idx);
+			else if (_pgVelX > 0.3) idx = Math.floor(idx);
+			else idx = Math.round(idx);
+			const minIdx = _convActiveOrEntering ? 0 : 1;
+			idx = Math.max(minIdx, Math.min(PANELS.length - 1, idx));
+			pagerEl.scrollTo({ left: idx * cw, behavior: 'smooth' });
+		}
 	}
+	// ── Manual conv-swipe: WHEEL path (trackpad horizontal scroll) ──
+	// Same blockage as touch: a horizontal wheel stream over the message
+	// list never chains out to the pager, so narrow desktop windows
+	// couldn't scroll out of a conversation while home/lab panned fine.
+	// Drive scrollLeft from deltaX (trackpad momentum arrives as decaying
+	// deltas, so the glide feel carries over), then snap to the nearest
+	// panel once the stream goes idle — scrollend commits the route.
+	let _pgWheelT = null;
+	function _onPagerWheel(e) {
+		if (!_onConvMobile || !pagerEl) return;
+		if (Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return; // vertical → message list keeps it
+		if (_inHorizScroller(e.target)) return;               // code blocks keep their pan
+		e.preventDefault();
+		if (!_pgSnapOff) { pagerEl.style.scrollSnapType = 'none'; _pgSnapOff = true; }
+		const cw = pagerEl.clientWidth || 1;
+		const max = (PANELS.length - 1) * cw;
+		pagerEl.scrollLeft = Math.max(0, Math.min(max, pagerEl.scrollLeft + e.deltaX));
+		clearTimeout(_pgWheelT);
+		_pgWheelT = setTimeout(() => {
+			if (!pagerEl) return;
+			const minIdx = _convActiveOrEntering ? 0 : 1;
+			const idx = Math.max(minIdx, Math.min(PANELS.length - 1, Math.round(pagerEl.scrollLeft / cw)));
+			if (Math.abs(pagerEl.scrollLeft - idx * cw) < 1) {
+				// already parked — restore snap and commit directly (no scroll,
+				// so scrollend won't fire)
+				pagerEl.style.scrollSnapType = '';
+				_pgSnapOff = false;
+				commitPagerRoute();
+			} else {
+				pagerEl.scrollTo({ left: idx * cw, behavior: 'smooth' });
+			}
+		}, 140);
+	}
+	// Svelte marks wheel handlers passive — attach by hand so preventDefault
+	// works (we fully own the horizontal axis while in a conversation).
+	$effect(() => {
+		if (!pagerEl) return;
+		pagerEl.addEventListener('wheel', _onPagerWheel, { passive: false });
+		return () => pagerEl.removeEventListener('wheel', _onPagerWheel);
+	});
+
 	// Fires when ALL scrolling (drag + momentum + snap) has fully settled — the
 	// precise moment to commit the route. Committing earlier (the 80ms debounce)
 	// could fire mid-snap and, with the heavy conversation tearing down, freeze the
@@ -261,6 +362,12 @@
 	// parked on a real panel first.
 	function onPagerScrollEnd() {
 		if (!pagerEl) return;
+		// Manual conv-swipe paused scroll-snap; restore it now that the track
+		// has settled on a real panel (restoring earlier would yank the glide).
+		if (_pgSnapOff && !_pgManual) {
+			pagerEl.style.scrollSnapType = '';
+			_pgSnapOff = false;
+		}
 		// Entering a conversation: the slide/snap onto the conv panel (and the header
 		// reflow) is now complete, so drop the loading overlay — one rAF lets the
 		// reflow paint first. Checked even during the programmatic entry slide.
@@ -744,6 +851,20 @@
 		// jump, hard-set scrollLeft to the panel, and commit the route. (An eased
 		// scroll here could collide with a swipe animation still settling, which
 		// caused the transform fighting.) Returns true so the <a> can preventDefault.
+		// ✕ in the chat header: SLIDE back to the chat menu with the same
+		// glide a swipe has (native smooth scroll → scroll-snap settle →
+		// scrollend commits /app/chat), instead of a hard route jump.
+		slideToChatMenu() {
+			if (!isPagerActive || !pagerEl || !_onConvMobile) return false;
+			const idx = PANELS.findIndex((p) => p.chatMenu);
+			if (idx < 0) return false;
+			_cancelProgrammaticScroll();
+			_repinGen++;
+			clearTimeout(_pagerSnapT);
+			const t = pagerEl.children?.[idx]?.offsetLeft ?? idx * (pagerEl.clientWidth || 1);
+			pagerEl.scrollTo({ left: t, behavior: 'smooth' });
+			return true;
+		},
 		goToSection(route) {
 			if (!isPagerActive || !pagerEl) return false;
 			const idx = PANELS.findIndex((p) => p.route === route);
@@ -1835,6 +1956,20 @@
 					</a>
 				</div>
 			{/if}
+
+			<div class="member-row">
+				<a class="conv-item" href="/app/chat/gemma" class:active={$page.url.pathname === '/app/chat/gemma'} draggable="false">
+					<span class="avatar-wrap">
+						<GemmaIcon size={_isMobile ? 40 : 26} />
+						<span class="presence-dot"></span>
+					</span>
+					<div class="member-text">
+						<span class="member-name">Gemma</span>
+						<span class="conv-last conv-last-empty">AI — tap to chat</span>
+					</div>
+					<span class="role-badge">AI</span>
+				</a>
+			</div>
 
 			{#each orderedUsers as u (u.id)}
 				{@const isOnline = onlineIds.has(u.id)}

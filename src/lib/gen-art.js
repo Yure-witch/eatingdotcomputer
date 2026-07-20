@@ -111,6 +111,69 @@ function paintBg(ctx, o, W, H) {
 	ctx.fillRect(0, 0, W, H);
 }
 
+// Coin/Sphere backdrop: fixed light/dark paper, or full transparency for
+// sticker-style exports (WebP keeps real alpha; GIF gets binary alpha).
+// Falls back to the normal palette bg when the theme opt is absent.
+// Returns the solid bg colour, or null when transparent.
+function paintThemeBg(ctx, o, W, H) {
+	const m = o.coinBg;
+	if (m === 'transparent') { ctx.clearRect(0, 0, W, H); return null; }
+	if (m === 'dark' || m === 'light') {
+		const c = m === 'dark' ? '#0c0c0c' : '#ffffff';
+		ctx.fillStyle = c; ctx.fillRect(0, 0, W, H);
+		return c;
+	}
+	paintBg(ctx, o, W, H);
+	return o.bg;
+}
+
+// Paint the Coin/Sphere ink (lines + text) in the solid picker colour, or
+// through a 2-stop gradient ON THE OBJECT (not the background). A gradient
+// can't be set as the style directly — face text draws under per-glyph
+// transforms which would warp it — so the ink is drawn as a mask on a cached
+// layer and the gradient composited through it (source-in), screen-aligned.
+// Animated = the gradient axis turns one full revolution per loop, so GIF
+// exports stay seamless. `L` is a per-scene {cv, ctx} cache object.
+// The Coin/Sphere 2-stop gradient: screen-aligned diagonal; when animation is
+// on the axis turns one full revolution per loop (seamless). Shared by the
+// ink mask (paintInk) and the gradient body fill so both stay in lockstep.
+function inkGradient(c, c1, c2, o, W, H, phase) {
+	const ang = o.coinInkAnim ? TAU * phase : Math.PI / 4;
+	const r = Math.max(W, H) * 0.55, gx = Math.cos(ang) * r, gy = Math.sin(ang) * r;
+	const g = c.createLinearGradient(W / 2 - gx, H / 2 - gy, W / 2 + gx, H / 2 + gy);
+	g.addColorStop(0, c1);
+	g.addColorStop(1, c2);
+	return g;
+}
+
+// Object body fill for Coin/Sphere: 'solid' → its own flat colour,
+// 'gradient' → its own 2-stop gradient (same axis + animation as the ink
+// gradient), 'auto' → whatever the caller's theme default is (null = none).
+function bodyFill(c, o, W, H, phase, autoFill) {
+	if (o.coinBodyMode === 'solid') return o.coinBodyColor || '#ffffff';
+	if (o.coinBodyMode === 'gradient')
+		return inkGradient(c, o.coinBodyColor || '#ffffff', o.coinBodyColor2 || '#ffe3e3', o, W, H, phase);
+	return autoFill;
+}
+
+function paintInk(ctx, drawInk, o, W, H, phase, L) {
+	if (!o.coinInkGrad) { drawInk(ctx, o.coinInk || o.fg || '#0000ff'); return; }
+	if (!L.cv || L.cv.width !== W || L.cv.height !== H) {
+		L.cv = document.createElement('canvas'); L.cv.width = W; L.cv.height = H;
+		L.ctx = L.cv.getContext('2d');
+	}
+	const c = L.ctx;
+	c.setTransform(1, 0, 0, 1, 0, 0);
+	c.globalCompositeOperation = 'source-over';
+	c.clearRect(0, 0, W, H);
+	drawInk(c, '#000');
+	c.globalCompositeOperation = 'source-in';
+	c.fillStyle = inkGradient(c, o.coinInk || '#0000ff', o.coinInk2 || '#ff2d2d', o, W, H, phase);
+	c.fillRect(0, 0, W, H);
+	c.globalCompositeOperation = 'source-over';
+	ctx.drawImage(L.cv, 0, 0);
+}
+
 // ── text → mask ──────────────────────────────────────────────────────────────
 function drawFittedText(ctx, text, W, H, fontPx, fontFamily, weight, hasStretch, stroke = false) {
 	const letters = Array.from(text || '');
@@ -227,6 +290,8 @@ function sceneBZ(env) {
 	// so N itself must stay a pure time quantity or spacing double-scales.
 	function curN() { return clamp(Math.round(lerp(6, 80, clamp(getOpts().bzSpacing ?? 0.4, 0, 1))), 6, 84); }
 	let gw, gh, state, next, source, blocked, nearD, moat, stateA, rowP, small, sctx, sdata, phase;
+	// Crisp-line mode (fade = 0) buffers — see renderCrisp().
+	let outImg = null, outW = 0, outH = 0, fieldS = null, fieldT = null, fieldM = null;
 	function reset() {
 		const o = getOpts();
 		const long = Math.max(W, H);
@@ -292,7 +357,7 @@ function sceneBZ(env) {
 		}
 		small = document.createElement('canvas'); small.width = gw; small.height = gh;
 		sctx = small.getContext('2d'); sdata = sctx.createImageData(gw, gh);
-		level = -99; phase = 0;
+		level = -99; phase = 0; fieldM = null;
 		// Warm up one full wave period so frame 0 already shows rings.
 		const warm = curN() + 4;
 		for (let k = 0; k < warm; k++) iterate();
@@ -343,6 +408,69 @@ function sceneBZ(env) {
 		// Re-ignite the letters every step → they pace target waves at period N.
 		for (let i = 0; i < gw * gh; i++) if (source[i]) state[i] = 1;
 	}
+	// CRISP-LINE MODE (fade = 0). The tail-less front is a ~radius-wide band at
+	// GRID resolution; pushing it through the small-canvas blur-upscale is what
+	// made it read low-res. Instead: build the front as a scalar field, bilinear-
+	// sample it per OUTPUT pixel and smoothstep around the ridge — an SDF-style
+	// iso-line with clean anti-aliased edges at any export size. No stateA
+	// cross-fade here: a hard threshold turns intensity cross-fades into flicker
+	// (a mid-fade front dims below the cut), so this mode snaps to the latest CA
+	// state. The moat fade-in near the letters is preserved by sampling the
+	// (already smooth) BFS distance as a second field and scaling alpha AFTER
+	// the threshold — folding it into the field would re-harden it into a pop.
+	function renderCrisp(ctx, bg, fg) {
+		const cw = ctx.canvas.width, ch = ctx.canvas.height, n = gw * gh;
+		if (!fieldS || fieldS.length !== n) { fieldS = new Float32Array(n); fieldT = new Float32Array(n); }
+		if (!fieldM || fieldM.length !== n) {
+			fieldM = new Float32Array(n);
+			for (let i = 0; i < n; i++) fieldM[i] = nearD[i] < moat ? nearD[i] / moat : 1;
+		}
+		for (let i = 0; i < n; i++) fieldS[i] = state[i] === 1 ? 1 : 0;
+		// One separable 1-2-1 pass rounds the grid stair-steps so the iso-line
+		// follows curves, not cells. (A 1-cell ridge peaks at 0.5 after this —
+		// the thresholds below sit under that so thin fronts keep a solid core.)
+		for (let y = 0; y < gh; y++) {
+			const yc = y * gw;
+			for (let x = 0; x < gw; x++) {
+				const l = fieldS[yc + (x > 0 ? x - 1 : 0)], c = fieldS[yc + x], r = fieldS[yc + (x < gw - 1 ? x + 1 : x)];
+				fieldT[yc + x] = (l + 2 * c + r) * 0.25;
+			}
+		}
+		for (let x = 0; x < gw; x++) {
+			for (let y = 0; y < gh; y++) {
+				const u = fieldT[(y > 0 ? y - 1 : 0) * gw + x], c = fieldT[y * gw + x], d = fieldT[(y < gh - 1 ? y + 1 : y) * gw + x];
+				fieldS[y * gw + x] = (u + 2 * c + d) * 0.25;
+			}
+		}
+		if (!outImg || outW !== cw || outH !== ch) { outImg = ctx.createImageData(cw, ch); outW = cw; outH = ch; }
+		const px = outImg.data;
+		const T0 = 0.2, T1 = 0.42, inv = 1 / (T1 - T0);
+		let j = 0;
+		for (let y = 0; y < ch; y++) {
+			let gy = ((y + 0.5) * gh) / ch - 0.5;
+			if (gy < 0) gy = 0; else if (gy > gh - 1.001) gy = gh - 1.001;
+			const y0 = gy | 0, fy = gy - y0, r0 = y0 * gw, r1 = r0 + gw;
+			for (let x = 0; x < cw; x++, j += 4) {
+				let gx = ((x + 0.5) * gw) / cw - 0.5;
+				if (gx < 0) gx = 0; else if (gx > gw - 1.001) gx = gw - 1.001;
+				const x0 = gx | 0, fx = gx - x0;
+				const v = (fieldS[r0 + x0] * (1 - fx) + fieldS[r0 + x0 + 1] * fx) * (1 - fy)
+				        + (fieldS[r1 + x0] * (1 - fx) + fieldS[r1 + x0 + 1] * fx) * fy;
+				let a = (v - T0) * inv;
+				a = a <= 0 ? 0 : a >= 1 ? 1 : a * a * (3 - 2 * a);
+				if (a > 0) {
+					const m = (fieldM[r0 + x0] * (1 - fx) + fieldM[r0 + x0 + 1] * fx) * (1 - fy)
+					        + (fieldM[r1 + x0] * (1 - fx) + fieldM[r1 + x0 + 1] * fx) * fy;
+					a *= m;
+				}
+				px[j] = bg[0] + (fg[0] - bg[0]) * a;
+				px[j + 1] = bg[1] + (fg[1] - bg[1]) * a;
+				px[j + 2] = bg[2] + (fg[2] - bg[2]) * a;
+				px[j + 3] = 255;
+			}
+		}
+		ctx.putImageData(outImg, 0, 0);
+	}
 	function render(ctx) {
 		const o = getOpts();
 		const N = curN();
@@ -353,19 +481,19 @@ function sceneBZ(env) {
 		// GRADIENT STEPS posterise that tail so you can see the banding. LUT covers
 		// 0..MAXN so a just-lowered N (stale states) never indexes past the end.
 		const fade = clamp(o.bzFade ?? 0.5, 0, 1);
+		if (fade <= 0.02) {
+			// Single-line mode → full-res anti-aliased iso-line (see renderCrisp).
+			renderCrisp(ctx, bg, fg);
+		} else {
 		const bands = clamp(Math.round(o.bzBands || 20), 2, N);
 		const lut = new Array(MAXN);
 		lut[0] = bg;
 		for (let s = 1; s < MAXN; s++) {
 			const a = clamp((s - 1) / (N - 1), 0, 1);         // 0 fresh front → 1 old
+			const u = a / fade;                               // position within the tail
 			let bright;
-			if (fade <= 0.02) {
-				bright = s === 1 ? 1 : 0;                     // single emanating line
-			} else {
-				const u = a / fade;                           // position within the tail
-				if (u >= 1) bright = 0;                       // beyond the tail → background
-				else { const uu = Math.round(u * (bands - 1)) / (bands - 1); bright = Math.pow(1 - uu, 1.3); }
-			}
+			if (u >= 1) bright = 0;                           // beyond the tail → background
+			else { const uu = Math.round(u * (bands - 1)) / (bands - 1); bright = Math.pow(1 - uu, 1.3); }
 			const hue = a < 0.25 ? mix3(fg, ac, a / 0.25) : ac;
 			lut[s] = mix3(bg, hue, bright);
 		}
@@ -397,6 +525,7 @@ function sceneBZ(env) {
 		ctx.filter = b ? `blur(${b}px)` : 'none';
 		ctx.drawImage(small, 0, 0, gw, gh, 0, 0, ctx.canvas.width, ctx.canvas.height);
 		ctx.filter = 'none';
+		}
 		// Crisp type overlay — the ONLY letter paint (the sim layer renders the
 		// source region as background, plus a short fade-in clearance around it,
 		// so nothing grid-res ever touches the letter edge). Hairline stroke just
@@ -3637,12 +3766,15 @@ function sceneGarble(env) {
 		const SHAPE_CAT = { xxxwide: [1, 0.08], xxwide: [1, 0.16], xwide: [1, 0.3], wide: [1, 0.62], round: [1, 1], tall: [0.62, 1], xtall: [0.3, 1], xxtall: [0.16, 1], xxxtall: [0.08, 1] };
 		const sizeSel = o.garbleSize || 'random';
 		const shapeSel = o.garbleShape || 'random';
+		const formSel = o.garbleForm || 'ellipse';
+		const formStretch = !!o.garbleFormStretch;
+		const formPool = o.garbleFormPool && o.garbleFormPool.length ? o.garbleFormPool : ['ellipse', 'quad', 'star'];
 		// the RANDOM pools are user-curated: only ticked categories can be drawn
 		const sizePool = o.garbleSizePool && o.garbleSizePool.length ? o.garbleSizePool : Object.keys(SIZE_CAT);
 		const shapePool = o.garbleShapePool && o.garbleShapePool.length ? o.garbleShapePool : Object.keys(SHAPE_CAT);
 		const uniform = !!o.garbleUniform;
 		const scheme = SCHEMES[o.garbleScheme] || SCHEMES.candy;
-		const key = (o.text || '') + '|' + W + 'x' + H + '|' + seed + '|' + inks + '|' + (o.garbleScheme || 'candy') + '|' + gAmt + '|' + (clean ? 1 : 0) + '|' + recAmt + '|' + drftA + '|' + dMag + '|' + dLen + '|' + vAmt + '|' + lead9 + '|' + sizeSel + '|' + shapeSel + '|' + (uniform ? 1 : 0) + '|' + sizePool.join('.') + '|' + shapePool.join('.');
+		const key = (o.text || '') + '|' + W + 'x' + H + '|' + seed + '|' + inks + '|' + (o.garbleScheme || 'candy') + '|' + gAmt + '|' + (clean ? 1 : 0) + '|' + recAmt + '|' + drftA + '|' + dMag + '|' + dLen + '|' + vAmt + '|' + lead9 + '|' + sizeSel + '|' + shapeSel + '|' + formSel + '|' + (formStretch ? 1 : 0) + '|' + formPool.join('.') + '|' + (uniform ? 1 : 0) + '|' + sizePool.join('.') + '|' + shapePool.join('.');
 		if (key === cacheKey) return;
 		cacheKey = key;
 		let sd = (4242 + seed * 7919) >>> 0;
@@ -3727,7 +3859,31 @@ function sceneGarble(env) {
 		const sc = geo9.sc, rTube = geo9.rTube;
 		// build ink passes: pass 0 is the faithful trace; extra passes are
 		// misregistered, sometimes partial, in other inks
-		const inkPool = scheme.slice();
+		// COLOUR-THEORY schemes are GENERATED from a seeded base hue — every
+		// seed re-rolls the whole harmony around a new anchor. Saturation and
+		// lightness jitter slightly per swatch for the marker-drawer feel.
+		const HARM = { complementary: [0, 180], analogous: [-30, 0, 30, 60], triadic: [0, 120, 240], tetradic: [0, 90, 180, 270], pentadic: [0, 72, 144, 216, 288] };
+		const hsl2hex = (h, s2, l) => {
+			h = (((h % 360) + 360) % 360) / 360;
+			const q = l < 0.5 ? l * (1 + s2) : l + s2 - l * s2, p = 2 * l - q;
+			const f = (tt) => {
+				tt = ((tt % 1) + 1) % 1;
+				if (tt < 1 / 6) return p + (q - p) * 6 * tt;
+				if (tt < 1 / 2) return q;
+				if (tt < 2 / 3) return p + (q - p) * (2 / 3 - tt) * 6;
+				return p;
+			};
+			const to2 = (v) => Math.round(v * 255).toString(16).padStart(2, '0');
+			return '#' + to2(f(h + 1 / 3)) + to2(f(h)) + to2(f(h - 1 / 3));
+		};
+		let inkPool;
+		const schemeName = o.garbleScheme || 'candy';
+		if (HARM[schemeName]) {
+			const baseH = rnd() * 360;
+			inkPool = HARM[schemeName].map((d) => hsl2hex(baseH + d, 0.68 + rnd() * 0.22, 0.38 + rnd() * 0.16));
+		} else {
+			inkPool = scheme.slice();
+		}
 		for (let i = inkPool.length - 1; i > 0; i--) { const j = (rnd() * (i + 1)) | 0; [inkPool[i], inkPool[j]] = [inkPool[j], inkPool[i]]; }
 		passes = [];
 		const sizeKeys = sizePool, shapeKeys = shapePool;
@@ -3745,7 +3901,17 @@ function sceneGarble(env) {
 			const sizeKey = sizeSel !== 'random' ? sizeSel : uniform ? uSize : sizeKeys[(rnd() * sizeKeys.length) | 0];
 			const shapeKey = shapeSel !== 'random' ? shapeSel : uniform ? uShape : shapeKeys[(rnd() * shapeKeys.length) | 0];
 			const base9 = rTube * SIZE_CAT[sizeKey];
-			const passRx = base9 * SHAPE_CAT[shapeKey][0], passRy = base9 * SHAPE_CAT[shapeKey][1];
+			let passRx = base9 * SHAPE_CAT[shapeKey][0], passRy = base9 * SHAPE_CAT[shapeKey][1];
+			// STAMP FORM: ellipse / quadrilateral / star (random draws per ink).
+			// Quads and stars lean REGULAR — 85% snap to equal proportions —
+			// unless the stretch checkbox frees them to use the full shape range
+			// 'mix' GUARANTEES the spread: layer 1 ellipses, layer 2 quads,
+			// layer 3 stars, then round again — unlike random, which can deal
+			// three of a kind
+			const form9 = formSel === 'mix' ? formPool[pi % formPool.length]
+				: formSel === 'random' ? formPool[(rnd() * formPool.length) | 0] : formSel;
+			const fIdx = form9 === 'quad' ? 1 : form9 === 'star' ? 2 : 0;
+			if (fIdx && !formStretch && rnd() < 0.85) { passRx = base9; passRy = base9; }
 			const spaceMul = Math.max(0.4, 1 + (rnd() - 0.4) * 1.2 * vAmt); // variety slider still varies SPACING
 			const range = pi === 0 || rnd() > gAmt ? [0, 1] : [rnd() * 0.4, 0.6 + rnd() * 0.4];
 			const ells = [];
@@ -3819,7 +3985,7 @@ function sceneGarble(env) {
 					ells.push({
 						x: px * sc + off[0] + armX, y: py * sc + off[1] + armY,
 						a: passAng + (rnd() - 0.5) * wob * 0.4,
-						rx: passRx, ry: passRy,
+						rx: passRx, ry: passRy, f: fIdx,
 						t: s / total, warp, r: rnd(), g: gi9, gw: loopsMeta9[gi9] || 0,
 						col: glyphCol && s / total >= gT0 && s / total <= gT1 ? glyphCol : null
 					});
@@ -3979,6 +4145,7 @@ function sceneGarble(env) {
 		ctx.restore();
 	}
 	function strokeEll(ctx, e, sweep) {
+				if (!e.warp && e.f) { polyStamp(ctx, e, sweep, e.f === 1 ? 4 : 10); return; }
 				if (!e.warp) {
 					ctx.beginPath();
 					ctx.ellipse(e.x, e.y, e.rx, e.ry, e.a, 0, TAU * sweep);
@@ -4033,6 +4200,35 @@ function sceneGarble(env) {
 						ctx.stroke();
 					}
 				}
+	}
+	function polyStamp(ctx, e, sweep, nV) {
+		// quadrilateral or 5-point star stamped as a closed outline; sweep
+		// draws a fraction of the perimeter (same reveal language as arcs)
+		let pts;
+		if (nV === 4) pts = [[-e.rx, -e.ry], [e.rx, -e.ry], [e.rx, e.ry], [-e.rx, e.ry]];
+		else {
+			pts = [];
+			for (let i = 0; i < 10; i++) {
+				const a = -Math.PI / 2 + (i * Math.PI) / 5;
+				const r = i % 2 ? 0.45 : 1;
+				pts.push([Math.cos(a) * e.rx * r, Math.sin(a) * e.ry * r]);
+			}
+		}
+		const ca = Math.cos(e.a), sa = Math.sin(e.a);
+		const P = pts.map(([x, y]) => [e.x + x * ca - y * sa, e.y + x * sa + y * ca]);
+		P.push(P[0]);
+		const segL = [];
+		let tot = 0;
+		for (let i = 0; i < P.length - 1; i++) { const L = Math.hypot(P[i + 1][0] - P[i][0], P[i + 1][1] - P[i][1]); segL.push(L); tot += L; }
+		let rem = tot * Math.min(1, sweep);
+		ctx.beginPath();
+		ctx.moveTo(P[0][0], P[0][1]);
+		for (let i = 0; i < segL.length && rem > 0; i++) {
+			if (rem >= segL[i]) { ctx.lineTo(P[i + 1][0], P[i + 1][1]); rem -= segL[i]; }
+			else { const f = rem / segL[i]; ctx.lineTo(P[i][0] + (P[i + 1][0] - P[i][0]) * f, P[i][1] + (P[i + 1][1] - P[i][1]) * f); rem = 0; }
+		}
+		if (sweep >= 1) ctx.closePath();
+		ctx.stroke();
 	}
 	return { reset, step, render };
 }
@@ -4467,6 +4663,7 @@ void main(){
 function sceneCoin(env) {
 	const { W, H, getOpts } = env;
 	let t = 0, words = [], fontCss = '', ph = 0, polys = [], cacheKey = '';
+	const inkL = {}; // gradient-ink layer cache (see paintInk)
 	function ensure(o) {
 		const key = (o.text || '') + '|' + W + 'x' + H;
 		if (key === cacheKey) return;
@@ -4517,8 +4714,7 @@ function sceneCoin(env) {
 	function render(ctx) {
 		const o = getOpts();
 		ensure(o);
-		paintBg(ctx, o, W, H);
-		const blue = o.fg || '#0000ff';
+		paintThemeBg(ctx, o, W, H);
 		const n = words.length;
 		const phase = (((t / (o.duration || 9)) % 1) + 1) % 1;
 		const seg = Math.floor(phase * n), f = phase * n - seg;
@@ -4628,9 +4824,6 @@ function sceneCoin(env) {
 			pts.push(proj(x9, y9, depth / 2)); pts.push(proj(x9, y9, -depth / 2));
 		}
 		const lw = Math.max(1.2, W * 0.0028);
-		ctx.lineWidth = lw;
-		ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-		ctx.strokeStyle = blue;
 		const hu = hull(pts);
 		// EDGE GUARD: wide pills swing further vertically when pitched, so
 		// the bounce could kiss the frame. Measure the real silhouette and
@@ -4647,31 +4840,1010 @@ function sceneCoin(env) {
 		const pen9 = maxY9 - (H - mgnB);
 		let shY = pen9 <= -band9 ? 0 : pen9 >= band9 ? -pen9 : -((pen9 + band9) * (pen9 + band9)) / (4 * band9);
 		if (minY9 + shY < mgnT) shY = mgnT - minY9; // ceiling stays a hard stop (rarely hit)
-		ctx.beginPath();
-		ctx.moveTo(hu[0][0], hu[0][1] + shY);
-		for (let i = 1; i < hu.length; i++) ctx.lineTo(hu[i][0], hu[i][1] + shY);
-		ctx.closePath();
-		ctx.stroke();
 		// the word rides the FRONT face (z' > 0), never mirrored: if the
 		// back face is toward the camera, flip the face's local x-basis
 		const nz = M[2][2]; // face normal's screen-z
-		const wi = wi9;
 		const fs = nz >= 0 ? 1 : -1;
 		const e1 = [M[0][0] * fs, M[1][0] * fs];
 		const e2 = [M[0][1], M[1][1]];
 		const C = proj(0, 0, fs * depth / 2);
 		const det = e1[0] * e2[1] - e1[1] * e2[0];
-		if (Math.abs(det) > 0.015) {
-			ctx.save();
-			ctx.setTransform(e1[0], e1[1], e2[0], e2[1], C[0], C[1] + shY);
-			ctx.font = fontCss;
-			ctx.fillStyle = blue;
-			ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-			ctx.fillText(words[wi], 0, 0);
-			ctx.restore();
+		// solid/gradient body: fill the silhouette with its own paint BEFORE
+		// the ink pass (on the main ctx — the ink's gradient mask must not
+		// recolour it), so the coin reads as an opaque pill on a transparent
+		// backdrop ('auto' → no fill: wireframe straight on the bg, as ever)
+		const body = bodyFill(ctx, o, W, H, phase, null);
+		if (body) {
+			ctx.fillStyle = body;
+			ctx.beginPath();
+			ctx.moveTo(hu[0][0], hu[0][1] + shY);
+			for (let i = 1; i < hu.length; i++) ctx.lineTo(hu[i][0], hu[i][1] + shY);
+			ctx.closePath();
+			ctx.fill();
 		}
+		const drawInk = (c, ink) => {
+			c.lineWidth = lw;
+			c.lineJoin = 'round'; c.lineCap = 'round';
+			c.strokeStyle = ink;
+			c.beginPath();
+			c.moveTo(hu[0][0], hu[0][1] + shY);
+			for (let i = 1; i < hu.length; i++) c.lineTo(hu[i][0], hu[i][1] + shY);
+			c.closePath();
+			c.stroke();
+			if (Math.abs(det) > 0.015) {
+				c.save();
+				c.setTransform(e1[0], e1[1], e2[0], e2[1], C[0], C[1] + shY);
+				c.font = fontCss;
+				c.fillStyle = ink;
+				c.textAlign = 'center'; c.textBaseline = 'middle';
+				c.fillText(words[wi9], 0, 0);
+				c.restore();
+			}
+		};
+		paintInk(ctx, drawInk, o, W, H, phase, inkL);
 	}
 	return { reset, step, render };
+}
+
+// Sphere — the Coin lockup mapped onto a slowly turning globe. Each
+// space-separated word is its own line of latitude (spacebar = newline, as in
+// Clouds), and the whole phrase repeats around the globe as ONE aligned
+// lockup — a shared repeat count, every line on the same longitudes. The sphere
+// turns rigidly — exactly one revolution per loop under a FIXED camera (no
+// wobble), so the GIF closes seamlessly. The sphere is OPAQUE:
+// the disc is filled with the bg colour (so it reads as a solid object even
+// over gradient backdrops) and only front-hemisphere glyphs draw. The camera
+// sits ABOVE the globe — negative tilt pitches the north pole toward view —
+// and the rim circle is the only other ink: Coin's line-art economy.
+function sceneSphere(env) {
+	const { W, H, getOpts } = env;
+	let t = 0, cacheKey = '', fontCss = '', lines = [], R = 1;
+	const inkL = {}; // gradient-ink layer cache (see paintInk)
+	function ensure(o) {
+		const key = (o.text || '') + '|' + W + 'x' + H;
+		if (key === cacheKey) return;
+		cacheKey = key;
+		const words = ((o.text || 'INTERACTIVE DESIGN CONCEPTS').trim().toUpperCase()).split(/\s+/).filter(Boolean);
+		if (!words.length) words.push('SPHERE');
+		R = Math.min(W, H) * 0.38;
+		const probe = document.createElement('canvas').getContext('2d');
+		const fam = "'Google Sans Flex', 'Helvetica Neue', Helvetica, sans-serif";
+		probe.font = '500 100px ' + fam;
+		const w100 = words.map((w) => probe.measureText(w).width);
+		const n = words.length;
+		const maxLat = 0.92; // line stack stays within ±53°, where parallels are still roomy
+		// Font caps: Coin-ish base size, the line stack inside ±maxLat, and the
+		// longest word around the worst-case (shortest) parallel it could sit on.
+		let fontPx = Math.min(
+			R * 0.3,
+			(2 * maxLat * R) / (1.38 * Math.max(n - 1, 1)),
+			(TAU * R * Math.cos(maxLat) * 0.9 * 100) / Math.max(...w100)
+		);
+		// Second pass with REAL latitudes: each line only needs its own
+		// parallel (the worst-case bound over-shrinks equator lines). Shrinking
+		// fontPx also shrinks latStep, so one pass is conservative-safe.
+		let latStep = (fontPx * 1.38) / R;
+		for (let li = 0; li < n; li++) {
+			const lat = (li - (n - 1) / 2) * latStep;
+			const room = TAU * R * Math.cos(lat) * 0.9;
+			const need = fontPx * (w100[li] / 100 + 1.1);
+			if (need > room) fontPx *= room / need;
+		}
+		latStep = (fontPx * 1.38) / R;
+		probe.font = `500 ${fontPx}px ${fam}`;
+		fontCss = probe.font;
+		// The PHRASE repeats as one unit: a single repeat count shared by every
+		// line (the most the tightest line allows), all lines aligned to the
+		// same longitudes — per-line counts left each parallel tiling on its
+		// own rhythm, which shredded the lockup.
+		let K = 12;
+		for (let li = 0; li < n; li++) {
+			const lat = (li - (n - 1) / 2) * latStep;
+			const span = (fontPx * (w100[li] / 100 + 1.1)) / (R * Math.cos(lat));
+			K = Math.min(K, Math.floor(TAU / span));
+		}
+		K = Math.max(1, K);
+		lines = words.map((word, li) => {
+			const lat = (li - (n - 1) / 2) * latStep; // y-down: first word on top
+			const cosL = Math.cos(lat);
+			const glyphs = Array.from(word);
+			const gw2 = glyphs.map((g) => probe.measureText(g).width);
+			let x = -gw2.reduce((s, w) => s + w, 0) / 2;
+			const offs = gw2.map((w) => { const c = x + w / 2; x += w; return c; });
+			return { lat, cosL, k: K, glyphs, offs };
+		});
+	}
+	function reset() { t = 0; cacheKey = ''; }
+	function step(dt) { t += dt; }
+	function render(ctx) {
+		const o = getOpts();
+		ensure(o);
+		const solidBg = paintThemeBg(ctx, o, W, H);
+		const phase = (((t / (o.duration || 9)) % 1) + 1) % 1;
+		const spin = TAU * phase; // one revolution per loop — seamless
+		// Fixed camera, simple orbit — the only motion is the spin. The panel's
+		// Camera angle slider is in degrees, POSITIVE = above the globe looking
+		// down (hence the sign flip into y-down sphere coords).
+		const tilt = (-(o.sphereTilt ?? 10) * Math.PI) / 180;
+		const ct = Math.cos(tilt), st = Math.sin(tilt);
+		// M = Rx(tilt), applied to y-down sphere coords
+		const M = [
+			[1, 0, 0],
+			[0, ct, -st],
+			[0, st, ct]
+		];
+		const mul = (x, y, z) => [
+			M[0][0] * x + M[0][1] * y + M[0][2] * z,
+			M[1][0] * x + M[1][1] * y + M[1][2] * z,
+			M[2][0] * x + M[2][1] * y + M[2][2] * z
+		];
+		const cx = W / 2, cy = H / 2;
+		// Each glyph is a flat billboard on its tangent plane: local x along the
+		// east tangent, local y along the down tangent, both orthographically
+		// projected — text bends around the sphere and foreshortens toward the
+		// rim for free, exactly like Coin's face text under setTransform.
+		const drawPass = (c) => {
+			for (const L of lines) {
+				const sinLat = Math.sin(L.lat), cosL = L.cosL;
+				for (let r = 0; r < L.k; r++) {
+					const lon0 = spin + (TAU * r) / L.k;
+					for (let gi = 0; gi < L.glyphs.length; gi++) {
+						const lon = lon0 + L.offs[gi] / (R * cosL);
+						const sinLo = Math.sin(lon), cosLo = Math.cos(lon);
+						const u = mul(cosL * sinLo, sinLat, cosL * cosLo);
+						if (u[2] <= 0.04) continue; // back hemisphere — hidden
+						const east = mul(cosLo, 0, -sinLo);
+						const down = mul(-sinLat * sinLo, cosL, -sinLat * cosLo);
+						if (Math.abs(east[0] * down[1] - east[1] * down[0]) < 0.03) continue;
+						// rim fade so glyphs melt out instead of popping off the edge
+						c.globalAlpha = Math.min(1, (u[2] - 0.04) / 0.2);
+						c.setTransform(east[0], east[1], down[0], down[1], cx + u[0] * R, cy + u[1] * R);
+						c.fillText(L.glyphs[gi], 0, 0);
+					}
+				}
+			}
+			c.setTransform(1, 0, 0, 1, 0, 0);
+			c.globalAlpha = 1;
+		};
+		// body: solid/gradient fills the disc with its own paint (so the globe
+		// can be an opaque object on a transparent backdrop); 'auto' matches the
+		// theme bg — which means hollow (rim + text only) on transparent
+		const body = bodyFill(ctx, o, W, H, phase, solidBg);
+		if (body) {
+			ctx.fillStyle = body;
+			ctx.beginPath(); ctx.arc(cx, cy, R, 0, TAU); ctx.fill();
+		}
+		const drawInk = (c, ink) => {
+			c.lineWidth = Math.max(1.2, W * 0.0028); // Coin's hairline
+			c.strokeStyle = ink;
+			c.beginPath(); c.arc(cx, cy, R, 0, TAU); c.stroke();
+			c.font = fontCss;
+			c.textAlign = 'center'; c.textBaseline = 'middle';
+			c.fillStyle = ink;
+			drawPass(c);
+		};
+		paintInk(ctx, drawInk, o, W, H, phase, inkL);
+	}
+	return { reset, step, render };
+}
+
+// Liquid Metal — molten chrome typography. The text (spacebar = newline, as
+// in Clouds) is blurred into a smooth heightfield; a WebGL shader shades it
+// as liquid metal: screen-space normals, then a one-bounce "raytrace" — the
+// reflected eye ray samples a procedural environment map (blue sky / sunset /
+// forest) — plus fresnel rim and a hot studio glint. GPU-fast at any export
+// size. Ripples and a subtle domain wobble use INTEGER wave counts of the
+// loop phase, so the liquid crawls seamlessly. Background light / dark /
+// transparent (premultiplied alpha straight out of the shader).
+function sceneMetal(env) {
+	const { W, H, getOpts } = env;
+	let t = 0, glcv = null, gl = null, uni = null, maskTex = null, maskKey = '', failed = false;
+	const VS = `attribute vec2 aP; varying vec2 vUv; void main(){ vUv = aP*0.5+0.5; gl_Position = vec4(aP,0.,1.); }`;
+	const FS = `
+precision highp float;
+varying vec2 vUv;
+uniform sampler2D uMask; // R = goo silhouette, G = stroke-tube distance, B = local ink mass
+uniform vec2 uRes;
+uniform float uPh, uRip, uEnvK, uMode; // uMode: 0 = solid bg, 1 = transparent
+uniform float uBulge, uNoise, uBlob, uFlow;
+uniform vec3 uBg;
+
+// terminal-ness: inside the ink but with LOW surrounding mass = stroke ends
+// and outer extremities — where a real liquid gathers and beads
+float termQ(vec4 tx){ return smoothstep(0.5, 0.18, tx.b) * smoothstep(0.2, 0.42, tx.r); }
+float swellAt(vec4 tx, vec2 uv){
+	return termQ(tx) * (0.5 + 0.5 * sin(uPh * 2.0 + uv.x * 9.0 + uv.y * 5.0)) * uFlow;
+}
+
+float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
+float vnoise(vec2 p){
+	vec2 i = floor(p), f = fract(p);
+	vec2 u = f*f*(3.0-2.0*f);
+	return mix(mix(hash(i), hash(i+vec2(1,0)), u.x), mix(hash(i+vec2(0,1)), hash(i+vec2(1,1)), u.x), u.y);
+}
+float fbm(vec2 p){ return vnoise(p)*0.55 + vnoise(p*2.13)*0.28 + vnoise(p*4.41)*0.17; }
+
+// Metaball droplets — the blob-family trick: gaussian balls on loop-locked
+// orbits (integer laps per revolution) around the text band. Their field
+// ADDS to the letter field before thresholding, so a droplet nearing a
+// glyph necks into it and fuses, metaball-style.
+float blobField(vec2 uv){
+	if (uBlob < 0.01) return 0.0;
+	float ar = uRes.x / uRes.y;
+	float s = 0.0;
+	for (int i = 0; i < 6; i++) {
+		float fi = float(i);
+		float k = 1.0 + mod(fi, 2.0);             // 1 or 2 laps per loop
+		float ph = uPh * k + fi * 2.399;
+		vec2 c = vec2(0.16 + 0.68 * fract(fi * 0.618 + 0.21),
+		              0.5 + (fract(fi * 0.317 + 0.11) - 0.5) * 0.44)
+		       + vec2(cos(ph), sin(ph)) * vec2(0.11, 0.15) * (0.6 + 0.5 * fract(fi * 0.83));
+		vec2 d = (uv - c) * vec2(ar, 1.0);
+		float r = (0.024 + 0.03 * fract(fi * 0.53)) * (0.55 + uBlob * 0.9);
+		s += exp(-dot(d, d) / (r * r));
+	}
+	return s * uBlob;
+}
+
+// height = rounded letter body + dome bulge + terminal swell + noise + ripples
+float hgt(vec2 uv){
+	vec4 tx = texture2D(uMask, uv);
+	float bf = blobField(uv);
+	float sw = swellAt(tx, uv);
+	float body = smoothstep(0.12, 0.62, tx.r + bf + sw * 0.22);
+	// Bulge: the distance-transform tube channel crests along each stroke's
+	// centreline — taller and rounder right where the letter is; droplets
+	// bring their own gaussian dome; swelling terminals rise like beads
+	float h = body * (1.0 + uBulge * (tx.g * 1.1 + min(bf, 1.2) * 0.5) + sw * 0.9);
+	// drifting grain — the drift orbit is circular in uPh, so it loops
+	h += (fbm(uv * 34.0 + vec2(cos(uPh), sin(uPh)) * 0.08) - 0.5) * uNoise * 0.22 * body;
+	float r = sin(uv.x*44.0 + uv.y*17.0 + uPh*2.0)
+	        + sin(uv.x*21.0 - uv.y*33.0 - uPh)
+	        + sin(uv.y*29.0 + uv.x*9.0 + uPh*3.0);
+	return h + r * 0.014 * uRip * body;
+}
+
+vec3 envMap(vec3 d){
+	float el = clamp(d.y, -1.0, 1.0); // +1 = zenith
+	float az = atan(d.x, d.z);
+	if (uEnvK < 0.5) {
+		// BLUE SKY: zenith blue to bright horizon, soft cumulus, warm ground
+		vec3 c = mix(vec3(0.98, 0.99, 1.0), vec3(0.18, 0.44, 0.94), smoothstep(-0.05, 0.75, el));
+		float cl = fbm(vec2(az*1.6, el*3.0 + 7.0));
+		c = mix(c, vec3(1.0), smoothstep(0.55, 0.8, cl) * smoothstep(0.0, 0.35, el) * 0.9);
+		return mix(vec3(0.72, 0.66, 0.58), c, smoothstep(-0.35, -0.02, el));
+	} else if (uEnvK < 1.5) {
+		// SUNSET: violet dome, molten orange horizon band, sun bloom
+		vec3 c = mix(vec3(1.0, 0.52, 0.16), vec3(0.26, 0.1, 0.42), smoothstep(0.0, 0.8, el));
+		c = mix(vec3(1.0, 0.86, 0.5), c, smoothstep(0.0, 0.22, abs(el - 0.04)));
+		float sun = pow(max(0.0, cos(az - 0.7)) * max(0.0, 1.0 - abs(el - 0.06) * 7.0), 24.0);
+		c += vec3(1.0, 0.8, 0.45) * sun * 1.6;
+		return mix(vec3(0.12, 0.05, 0.1), c, smoothstep(-0.4, -0.02, el));
+	}
+	// FOREST: pale sky over an azimuth-varying treeline, layered leaf greens
+	vec3 sky = mix(vec3(0.85, 0.93, 0.98), vec3(0.55, 0.75, 0.95), smoothstep(0.1, 0.8, el));
+	float tl = fbm(vec2(az*3.2, 3.3)) * 0.22 + 0.08;
+	float below = smoothstep(tl + 0.03, tl - 0.06, el);
+	vec3 trees = mix(vec3(0.04, 0.13, 0.05), vec3(0.32, 0.52, 0.2), fbm(vec2(az*5.0, el*7.0)));
+	return mix(sky, trees, below);
+}
+
+void main(){
+	// gentle domain wobble -> the letters themselves slosh (loop-locked)
+	vec2 uv = vUv + vec2(sin(vUv.y*9.0 + uPh), cos(vUv.x*7.0 + uPh)) * (0.004 * uRip + 0.004 * uFlow);
+	// LIQUID FLOW: peristaltic width-waves travelling ALONG each stroke —
+	// the tube channel's gradient gives the across-stroke axis, so straight
+	// runs visibly stretch and neck while the wave streams down them
+	vec4 t0 = texture2D(uMask, uv);
+	if (uFlow > 0.005) {
+		// wide-baseline gradient = smooth tangents (a tight baseline made the
+		// direction field noisy at junctions -> ragged edges)
+		vec2 e2 = vec2(5.0) / uRes;
+		vec2 gv = vec2(texture2D(uMask, uv + vec2(e2.x, 0.0)).g - texture2D(uMask, uv - vec2(e2.x, 0.0)).g,
+		               texture2D(uMask, uv + vec2(0.0, e2.y)).g - texture2D(uMask, uv - vec2(0.0, e2.y)).g);
+		float gl2 = length(gv);
+		if (gl2 > 3e-2) {
+			vec2 nrm = gv / gl2;
+			vec2 tang = vec2(-nrm.y, nrm.x);
+			uv += nrm * sin(dot(uv, tang) * 28.0 + uPh * 2.0) * 0.005 * uFlow * smoothstep(0.05, 0.5, t0.g);
+		}
+	}
+	vec4 tm = texture2D(uMask, uv);
+	float m = tm.r + swellAt(tm, uv) * 0.22 + blobField(uv);
+	float a = smoothstep(0.36, 0.52, m);
+	if (a < 0.004) {
+		gl_FragColor = (uMode > 0.5) ? vec4(0.0) : vec4(uBg, 1.0);
+		return;
+	}
+	vec2 e = vec2(1.4) / uRes;
+	float hx = hgt(uv + vec2(e.x, 0.0)) - hgt(uv - vec2(e.x, 0.0));
+	float hy = hgt(uv + vec2(0.0, e.y)) - hgt(uv - vec2(0.0, e.y));
+	vec3 n = normalize(vec3(vec2(-hx, -hy) * 9.0, 1.0));
+	// one-bounce raytrace: reflect the (orthographic) eye ray off the surface
+	vec3 r = vec3(2.0 * n.z * n.x, 2.0 * n.z * n.y, 2.0 * n.z * n.z - 1.0);
+	vec3 col = envMap(normalize(r));
+	float fr = pow(1.0 - n.z, 3.0);          // fresnel rim = the chrome edge pop
+	col = col * (0.86 + fr * 0.5) + fr * 0.18;
+	float sp = pow(max(dot(normalize(r), normalize(vec3(0.35, 0.75, 0.4))), 0.0), 60.0);
+	col += sp * 0.9;                          // hot studio glint
+	col = pow(col, vec3(0.92));
+	gl_FragColor = (uMode > 0.5) ? vec4(col * a, a) : vec4(mix(uBg, col, a), 1.0);
+}`;
+	function initGL() {
+		glcv = document.createElement('canvas');
+		glcv.width = W; glcv.height = H;
+		gl = glcv.getContext('webgl', { alpha: true, premultipliedAlpha: true, antialias: false, preserveDrawingBuffer: true });
+		if (!gl) { failed = true; return; }
+		const mk = (ty, s) => { const sh = gl.createShader(ty); gl.shaderSource(sh, s); gl.compileShader(sh); if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh)); return sh; };
+		const prog = gl.createProgram();
+		gl.attachShader(prog, mk(gl.VERTEX_SHADER, VS));
+		gl.attachShader(prog, mk(gl.FRAGMENT_SHADER, FS));
+		gl.linkProgram(prog);
+		if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+		gl.useProgram(prog);
+		const buf = gl.createBuffer();
+		gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+		gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+		const loc = gl.getAttribLocation(prog, 'aP');
+		gl.enableVertexAttribArray(loc);
+		gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+		uni = {
+			ph: gl.getUniformLocation(prog, 'uPh'), rip: gl.getUniformLocation(prog, 'uRip'),
+			envk: gl.getUniformLocation(prog, 'uEnvK'), mode: gl.getUniformLocation(prog, 'uMode'),
+			bg: gl.getUniformLocation(prog, 'uBg'),
+			bulge: gl.getUniformLocation(prog, 'uBulge'), noise: gl.getUniformLocation(prog, 'uNoise'),
+			blob: gl.getUniformLocation(prog, 'uBlob'), flow: gl.getUniformLocation(prog, 'uFlow')
+		};
+		gl.uniform1i(gl.getUniformLocation(prog, 'uMask'), 0);
+		gl.uniform2f(gl.getUniformLocation(prog, 'uRes'), W, H);
+		maskTex = gl.createTexture();
+		gl.activeTexture(gl.TEXTURE0);
+		gl.viewport(0, 0, W, H);
+	}
+	function buildMask(o) {
+		const key = (o.text || '') + '|' + W + 'x' + H + '|' + (o.metalGoo ?? 0.5);
+		if (key === maskKey || !gl) return;
+		maskKey = key;
+		const mw = 1024, mh = Math.max(2, Math.round(mw * H / W));
+		const mcv = document.createElement('canvas'); mcv.width = mw; mcv.height = mh;
+		const mx = mcv.getContext('2d');
+		mx.fillStyle = '#000'; mx.fillRect(0, 0, mw, mh);
+		const words = ((o.text || 'LIQUID METAL').trim().toUpperCase()).split(/\s+/).filter(Boolean);
+		let fontPx = mh * 0.3;
+		const fam = "'Google Sans Flex', 'Helvetica Neue', sans-serif";
+		mx.font = `800 ${fontPx}px ${fam}`;
+		let maxW = 0;
+		for (const w of words) maxW = Math.max(maxW, mx.measureText(w).width);
+		fontPx = Math.min(fontPx * (mw * 0.86) / maxW, (mh * 0.8) / (Math.max(words.length, 1) * 1.12));
+		mx.font = `800 ${fontPx}px ${fam}`;
+		mx.fillStyle = '#fff'; mx.textAlign = 'center'; mx.textBaseline = 'middle';
+		const lineH = fontPx * 1.12, y0 = mh / 2 - (lineH * words.length) / 2 + lineH / 2;
+		for (let i = 0; i < words.length; i++) mx.fillText(words[i], mw / 2, y0 + i * lineH);
+		// blur = the rounded liquid height profile (and the gooey silhouette)
+		const bcv = document.createElement('canvas'); bcv.width = mw; bcv.height = mh;
+		const bx = bcv.getContext('2d');
+		// Goo = the melt radius: low keeps letterforms crisp-ish, high fuses
+		// neighbouring glyphs into one mercury puddle
+		bx.filter = `blur(${Math.max(2, fontPx * (0.03 + (o.metalGoo ?? 0.5) * 0.11))}px)`;
+		bx.drawImage(mcv, 0, 0);
+		// second channel: interior DISTANCE TRANSFORM of the crisp glyphs
+		// (two-pass chamfer) shaped into a rounded tube — the Bulge dome
+		// follows the letterforms, cresting along each stroke's centreline
+		// instead of the old wide blur's whole-word swell
+		const td = mx.getImageData(0, 0, mw, mh).data;
+		const dist = new Float32Array(mw * mh);
+		for (let i = 0; i < mw * mh; i++) dist[i] = td[i * 4] > 127 ? 1e9 : 0;
+		for (let y = 0; y < mh; y++) {
+			for (let x = 0; x < mw; x++) {
+				const i = y * mw + x;
+				let d = dist[i];
+				if (d === 0) continue;
+				if (x > 0) d = Math.min(d, dist[i - 1] + 1);
+				if (y > 0) {
+					d = Math.min(d, dist[i - mw] + 1);
+					if (x > 0) d = Math.min(d, dist[i - mw - 1] + 1.41421356);
+					if (x < mw - 1) d = Math.min(d, dist[i - mw + 1] + 1.41421356);
+				}
+				dist[i] = d;
+			}
+		}
+		for (let y = mh - 1; y >= 0; y--) {
+			for (let x = mw - 1; x >= 0; x--) {
+				const i = y * mw + x;
+				let d = dist[i];
+				if (x < mw - 1) d = Math.min(d, dist[i + 1] + 1);
+				if (y < mh - 1) {
+					d = Math.min(d, dist[i + mw] + 1);
+					if (x < mw - 1) d = Math.min(d, dist[i + mw + 1] + 1.41421356);
+					if (x > 0) d = Math.min(d, dist[i + mw - 1] + 1.41421356);
+				}
+				dist[i] = d;
+			}
+		}
+		// third channel: LOCAL INK MASS (a wide blur) — stroke terminals and
+		// outer extremities have less ink around them than mid-stroke, which
+		// is how the shader finds where the liquid should gather and bead
+		const gcv = document.createElement('canvas'); gcv.width = mw; gcv.height = mh;
+		const gx2 = gcv.getContext('2d');
+		gx2.filter = `blur(${fontPx * 0.3}px)`;
+		gx2.drawImage(mcv, 0, 0);
+		const md2 = gx2.getImageData(0, 0, mw, mh).data;
+		const sd2 = bx.getImageData(0, 0, mw, mh).data;
+		const pack = bx.createImageData(mw, mh);
+		// rounded-tube cross-section: sin ramps steeply off the edge and
+		// flattens at the crest (zero slope) — half-width ≈ the stroke's
+		const dmax = fontPx * 0.16;
+		for (let i = 0; i < mw * mh; i++) {
+			pack.data[i * 4] = sd2[i * 4];
+			pack.data[i * 4 + 1] = Math.round(Math.sin(Math.min(dist[i] / dmax, 1) * Math.PI / 2) * 255);
+			pack.data[i * 4 + 2] = md2[i * 4];
+			pack.data[i * 4 + 3] = 255;
+		}
+		bx.putImageData(pack, 0, 0);
+		gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+		gl.bindTexture(gl.TEXTURE_2D, maskTex);
+		gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bcv);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+	}
+	function reset() { t = 0; maskKey = ''; }
+	function step(dt) { t += dt; }
+	function render(ctx) {
+		const o = getOpts();
+		if (!gl && !failed) { try { initGL(); } catch { failed = true; gl = null; } }
+		if (!gl) {
+			// no-WebGL fallback: flat type so the mode still shows something
+			paintThemeBg(ctx, o, W, H);
+			ctx.fillStyle = '#9aa0a6';
+			drawFittedText(ctx, o.text || 'LIQUID METAL', W, H, H * (o.fontFrac || 0.3), o.fontFamily, 800, o.hasStretch);
+			return;
+		}
+		buildMask(o);
+		const phase = (((t / (o.duration || 8)) % 1) + 1) % 1;
+		const transparent = o.coinBg === 'transparent';
+		const bg = o.coinBg === 'dark' ? [0.05, 0.05, 0.06] : [0.955, 0.95, 0.935];
+		gl.uniform1f(uni.ph, TAU * phase);
+		gl.uniform1f(uni.rip, o.metalRipple ?? 0.5);
+		gl.uniform1f(uni.bulge, o.metalBulge ?? 0.5);
+		gl.uniform1f(uni.noise, o.metalNoise ?? 0);
+		gl.uniform1f(uni.blob, o.metalBlobs ?? 0);
+		gl.uniform1f(uni.flow, o.metalFlow ?? 0.5);
+		gl.uniform1f(uni.envk, { sky: 0, sunset: 1, forest: 2 }[o.metalEnv] ?? 0);
+		gl.uniform1f(uni.mode, transparent ? 1 : 0);
+		gl.uniform3f(uni.bg, bg[0], bg[1], bg[2]);
+		gl.drawArrays(gl.TRIANGLES, 0, 3);
+		ctx.clearRect(0, 0, W, H);
+		ctx.drawImage(glcv, 0, 0);
+	}
+	return { reset, step, render };
+}
+
+// Type Orbit — three.js: extruded ALL-CAPS letters on a turning sphere.
+// The flow is word→word, Slack of dead air: during each segment's SWAP
+// window the incoming word's letters whip out of orbit into a lockup while
+// the outgoing word's letters pour back — they pass each other mid-air —
+// and every OTHER letter simultaneously morphs to a fresh Fibonacci lattice
+// of the remaining count, so the sphere always reads evenly filled.
+// The lockup is anchored IN SPHERE SPACE: it finishes assembly facing the
+// camera, rides the rotation, and its letters finish leaving exactly as it
+// reaches 90° (perpendicular). Letters are assigned lattice slots in
+// word-interleaved order, so no word ever occupies one patch of the sphere.
+// Segment rotation is a quarter-turn whose orientation resets inside each
+// swap morph — so the loop closes seamlessly for any word count.
+// Whip easing = Coin's cubic-bezier(0.76, 0, 0.3, 1). Colours ride the
+// standard pickers (black bg / white type set on mode entry).
+function sceneTypeOrb(env) {
+	const { W, H, getOpts } = env;
+	let t = 0, failed = false, loading = false;
+	let T = null, initP = null;
+	let buildKey = '';
+
+	// Swap-whip easing: a full cubic-bezier, Newton-solved. Default
+	// (0.28, 0, 0.1, 1): the "beautiful glide" — quick launch, then nearly
+	// half the flight spent floating into place (the normalized shape the
+	// stretched entry flights had: windup-compressed 0.65 → 0.28).
+	// Panel's Easing controls override it live via o.orbBez = [x1,y1,x2,y2].
+	function bez(g, x1, y1, x2, y2) {
+		if (g <= 0) return 0;
+		if (g >= 1) return 1;
+		let u = g;
+		for (let i = 0; i < 5; i++) {
+			const iu = 1 - u;
+			const x = 3 * iu * iu * u * x1 + 3 * iu * u * u * x2 + u * u * u;
+			const dx = 3 * iu * iu * x1 + 6 * iu * u * (x2 - x1) + 3 * u * u * (1 - x2);
+			if (Math.abs(dx) < 1e-6) break;
+			u -= (x - g) / dx;
+			if (u < 0) u = 0; else if (u > 1) u = 1;
+		}
+		const iu = 1 - u;
+		return 3 * iu * iu * u * y1 + 3 * iu * u * u * y2 + u * u * u;
+	}
+
+	// Fibonacci-lattice slot i of n on the unit sphere — always even
+	function slot(i, n) {
+		const y = 1 - (2 * (i + 0.5)) / Math.max(1, n);
+		const r = Math.sqrt(Math.max(0, 1 - y * y));
+		const th = i * 2.399963229728653;
+		return [Math.cos(th) * r, y, Math.sin(th) * r];
+	}
+
+	async function init() {
+		loading = true;
+		try {
+			const THREE = await import('three');
+			const { TextGeometry } = await import('three/examples/jsm/geometries/TextGeometry.js');
+			const { FontLoader } = await import('three/examples/jsm/loaders/FontLoader.js');
+			const fontJson = await fetch('/fonts/helvetiker_bold.typeface.json').then((r) => r.json());
+			const font = new FontLoader().parse(fontJson);
+			const glcv = document.createElement('canvas');
+			glcv.width = W; glcv.height = H;
+			const renderer = new THREE.WebGLRenderer({ canvas: glcv, antialias: true, preserveDrawingBuffer: true });
+			renderer.setPixelRatio(1);
+			renderer.setSize(W, H, false);
+			const scene = new THREE.Scene();
+			const camera = new THREE.PerspectiveCamera(40, W / H, 0.1, 100);
+			camera.position.set(0, 0, 8.4);
+			scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+			const key = new THREE.DirectionalLight(0xffffff, 1.6);
+			key.position.set(2, 3, 4);
+			scene.add(key);
+			const rim = new THREE.DirectionalLight(0xffffff, 0.5);
+			rim.position.set(-3, -1, -2);
+			scene.add(rim);
+			// UNLIT: letters render as flat solid colour (no shading at all)
+			const mat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+			T = { THREE, TextGeometry, renderer, scene, camera, mat, font, glcv, letters: [], v: null };
+		} catch (e) {
+			console.warn('[typeorb] three init failed', e);
+			failed = true;
+		}
+		loading = false;
+	}
+
+	function build(o) {
+		const key = (o.text || '') + '|' + W + 'x' + H + '|' + (o.orbSize ?? 1);
+		if (!T || key === buildKey) return;
+		buildKey = key;
+		for (const L of T.letters) { T.scene.remove(L.mesh); L.mesh.geometry.dispose(); }
+		T.letters = [];
+		// GROUPS: with a `|` anywhere in the text, `|` is the transition
+		// delimiter instead of space — everything between pipes displays as
+		// ONE unit (internal spaces become gaps in the lockup). Without a
+		// pipe, each space-separated word is its own unit, as before.
+		const raw = (o.text || 'ORBIT TYPE').trim().toUpperCase();
+		// "|" splits the text into display GROUPS (each group shows at once);
+		// "/" inside a group forces a line break after the word before it.
+		const words = (raw.includes('|')
+			? raw.split('|').map((g) => g.trim().replace(/\s+/g, ' '))
+			: raw.split(/\s+/)
+		).filter((g) => g.replace(/\//g, '').trim().length);
+		if (!words.length) words.push('ORBIT');
+		const glyphCount = words.join('').replace(/[ /]/g, '').length;
+		// requested size (slider) — capped below so the widest group always
+		// fits the sphere's usable chord instead of escaping the frame
+		let sizeMul = o.orbSize ?? 1;
+		if (T.fitCap && T.fitCapKey === raw) sizeMul = Math.min(sizeMul, T.fitCap);
+		const size = Math.max(0.12, 0.46 - glyphCount * 0.004) * sizeMul;
+		let li = 0;
+		const occCount = {};                  // per-character occurrence counter
+		const byWord = words.map(() => []);   // glyph letters only (sphere slots)
+		const layout = words.map(() => []);   // glyphs + space gaps (lockup layout)
+		words.forEach((w, wi) => {
+			for (const ch of w) {
+				if (ch === ' ') { layout[wi].push({ space: size * 0.62 }); continue; }
+				if (ch === '/') { layout[wi].push({ br: true }); continue; }
+				const geo = new T.TextGeometry(ch, {
+					font: T.font, size, depth: size * 0.049, curveSegments: 6,
+					bevelEnabled: true, bevelThickness: size * 0.035, bevelSize: size * 0.02, bevelSegments: 2
+				});
+				geo.center();
+				geo.computeBoundingBox();
+				const mesh = new T.THREE.Mesh(geo, T.mat);
+				T.scene.add(mesh);
+				const occ = occCount[ch] = (occCount[ch] || 0) + 1;
+				const L = { mesh, ch, wi, i: li++, occ, w: geo.boundingBox.max.x - geo.boundingBox.min.x };
+				T.letters.push(L);
+				byWord[wi].push(L);
+				layout[wi].push(L);
+			}
+		});
+		T.words = words;
+		T.layout = layout;
+		// WORD-INTERLEAVED lattice order: one letter from each word in turn,
+		// so every word's letters spread across the entire sphere instead of
+		// clustering in one band (lattice indices sweep top→bottom).
+		const order = [];
+		for (let round = 0, more = true; more; round++) {
+			more = false;
+			for (const list of byWord) {
+				if (round < list.length) { order.push(list[round]); more = true; }
+			}
+		}
+		// Per segment k the ORBIT SET is every letter except word k, laid on a
+		// fresh even lattice of that count — the redistribution you see during
+		// each swap. segIdx[k]: letterIdx → { j, m }.
+		T.segIdx = words.map((_, k) => {
+			const list = order.filter((L) => L.wi !== k);
+			const map = new Map();
+			list.forEach((L, j) => map.set(L.i, { j, m: list.length }));
+			return map;
+		});
+		// lockup layout per group: max TWO words per line, lines stacked and
+		// centred (multi-word pipe groups wrap instead of running wide)
+		const GAP0 = 0.12 * (o.orbSize ?? 1);
+		const lineH = size * 1.5;
+		T.wordX = [];
+		T.wordRaw = [];
+		for (const list of layout) {
+			// split the entry list into words at the space markers; a `/`
+			// break marker flags the preceding word to end its line
+			const wordsIn = [[]];
+			for (const E of list) {
+				if (E.br) {
+					// the break belongs to the PRECEDING word — if a space
+					// already closed it, reach back one (「WORD / NEXT」)
+					const curW = wordsIn.at(-1);
+					const target = curW.length ? curW : wordsIn[wordsIn.length - 2];
+					if (target) target.br = true;
+					if (curW.length) wordsIn.push([]);
+				}
+				else if (E.space != null) { if (wordsIn.at(-1).length) wordsIn.push([]); }
+				else wordsIn.at(-1).push(E);
+			}
+			if (!wordsIn.at(-1).length) wordsIn.pop();
+			// chunk into lines: max 2 words per line; a word longer than 10
+			// glyphs OR a `/` break closes its line — auto-wraps that would
+			// happen anyway still happen, `/` only ADDS breaks
+			const lines = [];
+			let cur = [];
+			for (const w2 of wordsIn) {
+				cur.push(w2);
+				if (cur.length === 2 || w2.length > 10 || w2.br) { lines.push(cur); cur = []; }
+			}
+			if (cur.length) lines.push(cur);
+			// word gap must read clearly wider than the letter gap
+			const spaceW = size * 1.15;
+			const lineWidth = (ws) =>
+				ws.reduce((a, w2) => a + w2.reduce((b, E) => b + E.w, 0) + GAP0 * Math.max(0, w2.length - 1), 0)
+				+ spaceW * Math.max(0, ws.length - 1);
+			const y0 = ((lines.length - 1) * lineH) / 2;
+			const xs = new Map();
+			let maxW = 0;
+			lines.forEach((ws, li) => {
+				const lw = lineWidth(ws);
+				maxW = Math.max(maxW, lw);
+				let x = -lw / 2;
+				ws.forEach((w2, wj) => {
+					for (const E of w2) { xs.set(E.i, { x: x + E.w / 2, y: y0 - li * lineH }); x += E.w + GAP0; }
+					x += spaceW - GAP0;
+				});
+			});
+			T.wordX.push(xs);
+			// fit against BOTH axes: width of the widest line, and the stack height
+			T.wordRaw.push(Math.max(maxW, lines.length * lineH));
+		}
+		// FIT CAP: widest group must sit within the sphere (chord = 0.74·2R).
+		// Width scales linearly with size, so one corrective rebuild suffices.
+		const CHORD = 2 * 2.5 * 0.95; // full diameter, minus a hair
+		const widest = Math.max(...T.wordRaw);
+		if (widest > CHORD && !T._refitting) {
+			T.fitCap = ((o.orbSize ?? 1) * CHORD) / widest * 0.98;
+			T.fitCapKey = raw;
+			T._refitting = true;
+			buildKey = '';
+			build(o);
+			T._refitting = false;
+		}
+	}
+
+	function reset() { t = 0; buildKey = ''; }
+	function step(dt) { t += dt; }
+
+	// Exporters await this before capturing frame 0 — otherwise the async
+	// three.js/font init leaves the first frames as bare background (the
+	// "black frame at the loop seam" in exported GIFs).
+	function ready() {
+		if (!T && !failed && !loading) initP = init();
+		return initP || Promise.resolve();
+	}
+
+	function render(ctx) {
+		const o = getOpts();
+		if (!T && !failed && !loading) initP = init();
+		if (!T) {
+			ctx.fillStyle = o.bg || '#000';
+			ctx.fillRect(0, 0, W, H);
+			if (failed) {
+				ctx.fillStyle = o.fg || '#fff';
+				drawFittedText(ctx, (o.text || '').toUpperCase(), W, H, H * 0.2, o.fontFamily, 800, o.hasStretch);
+			}
+			return;
+		}
+		build(o);
+		const { THREE, renderer, letters, words } = T;
+		if (!T.v) {
+			T.v = {
+				a: new THREE.Vector3(), b: new THREE.Vector3(), c: new THREE.Vector3(),
+				zero: new THREE.Vector3(0, 0, 0),
+				up: new THREE.Vector3(0, 1, 0), xAxis: new THREE.Vector3(1, 0, 0),
+				zAxis: new THREE.Vector3(0, 0, 1),
+				t1: new THREE.Vector3(), t2: new THREE.Vector3(), t3: new THREE.Vector3(),
+				m: new THREE.Matrix4(),
+				qa: new THREE.Quaternion(), qb: new THREE.Quaternion(),
+				qFlip: new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI),
+				qTilt: null, qTmp: new THREE.Quaternion()
+			};
+		}
+		const v = T.v;
+		renderer.setClearColor(new THREE.Color(o.bg || '#000000'));
+		T.mat.color.set(o.fg || '#ffffff');
+
+		const phase = (((t / (o.duration || 4)) % 1) + 1) % 1;
+		const nW = words.length;
+		const seg = Math.min(nW - 1, Math.floor(phase * nW));
+		const segPrev = (seg + nW - 1) % nW;
+		const f = phase * nW - seg;
+
+		const R = 2.5;
+		const TILT = 0; // camera dead-level with the sphere's centre
+		// One quarter-turn per segment: the word rides from face-on to EXACTLY
+		// 90° as its swap-out completes — the transition happens right at
+		// perpendicular, never past it. Speed comes from the loop duration
+		// (shorter segments = faster words AND faster sphere together).
+		const Q = Math.PI / 2;
+		// Flight time is REAL-TIME rather than a segment fraction:
+		// lengthening the loop duration adds pure word-hold dwell instead of
+		// slowing the whip. 0.625s flight + up to 0.18s stagger = the whole
+		// transition wave lasts ~0.8s, for EVERY letter (in, out, reshuffle).
+		// Capped at 0.6 of the segment so short durations still leave hold.
+		const segSec = (o.duration || 5.8) / nW;
+		const FLIGHT = Math.min(0.6, 0.625 / segSec);
+		const alpha = Q * f;            // this segment's rotation so far
+		const [bx1, by1, bx2, by2] = o.orbBez ?? [0.28, 0, 0.1, 1];
+		// Per-letter stagger: each glyph launches up to 180ms late (a
+		// deterministic hash of its index — no Math.random, the loop must be
+		// reproducible). Late letters fly their FULL flight and simply land
+		// later — the swap WINDOW stretches to cover the last landing rather
+		// than compressing anyone's flight into a snappier (boomier) one.
+		const maxDF = Math.min(0.2, 0.18 / segSec);
+		const WINDOW = FLIGHT + maxDF;  // first launch → last landing
+		const eL = (i, tf) => {
+			if (tf >= WINDOW) return 1;
+			const h = Math.sin(i * 127.1 + 311.7) * 43758.5453;
+			const d = (h - Math.floor(h)) * maxDF;
+			const g = (tf - d) / FLIGHT;
+			return bez(g < 0 ? 0 : g > 1 ? 1 : g, bx1, by1, bx2, by2);
+		};
+		// The outgoing word starts leaving ~0.5s BEFORE its segment ends —
+		// its letters begin pouring back into the (next segment's) lattice
+		// while the word is still riding, and the flight continues
+		// seamlessly across the boundary. Capped so it never overlaps the
+		// entry window.
+		// Exit lead: regular mode leaves 0.9s before the boundary (word is
+		// only ~57° around — comfortably short of perpendicular — when its
+		// dissolve begins); wrongDelay keeps the original 0.5s.
+		const LEAD = Math.min((o.orbWrongDelay ? 0.5 : 0.9) / segSec, (1 - WINDOW) * 0.9);
+		// Normally the incoming word launches at the SAME moment the
+		// outgoing word starts leaving (both LEAD before the boundary) —
+		// they cross mid-air. o.orbWrongDelay = the "wrongDelay" look: the
+		// incoming word waits for the boundary, leaving a gap of empty
+		// sphere between the exit and the entrance.
+		// ONE wave: entry, exit and redistribution all launch at the same
+		// instant (LEAD before the boundary), fly the same WINDOW, and land
+		// together. No stretched flights — a longer entry reads as a second,
+		// later wave (its easing windup scales with the flight).
+		const ELEAD = o.orbWrongDelay ? 0 : LEAD;
+		// The transition INTO the word takes a bit longer: entry flies 25%
+		// more time than the exit/reshuffle wave, and its curve puts ~40%
+		// of the ease into deceleration (settle v<0.5 = 40% of flight; x2
+		// tightened 0.1 → 0.08). x1 is windup-matched to the exit wave in
+		// ABSOLUTE time so all waves still visibly launch together. In
+		// wrongDelay this reduces exactly to the shared eL.
+		const FL_IN = o.orbWrongDelay ? FLIGHT : FLIGHT * 1.25;
+		const IN_X2 = o.orbWrongDelay ? bx2 : bx2 * 0.8;
+		const eIn = (i, tf) => {
+			if (tf >= FL_IN + maxDF) return 1;
+			const h = Math.sin(i * 127.1 + 311.7) * 43758.5453;
+			const d = (h - Math.floor(h)) * maxDF;
+			const g = (tf - d) / FL_IN;
+			return bez(g < 0 ? 0 : g > 1 ? 1 : g, bx1 * (FLIGHT / FL_IN), by1, IN_X2, by2);
+		};
+		const AW = WINDOW - ELEAD + (FL_IN - FLIGHT); // entry completes here
+		const RLEAD = ELEAD;            // redistribution: same clock
+		if (!v.qTilt) v.qTilt = new THREE.Quaternion().setFromAxisAngle(v.xAxis, TILT);
+
+		// lockup geometry: the word's plane passes through the sphere's
+		// CENTRE — the text's midpoint sits exactly on the orbit's midpoint,
+		// spinning in place about the vertical axis. Letters keep their
+		// natural size (no resizing), so the lockup is just the raw word.
+		const lockScale = () => 1;
+		// RATE doubles the rigid sphere rotation (lattice + word ride share
+		// one clock). SHIFT pulls both word anchors back by 1/5 of a
+		// segment-rotation: assembly completes with the word still 36° shy
+		// of the camera, it sweeps THROUGH straight-on during the hold, and
+		// the hold ends at ~83° — never assembled past perpendicular.
+		const RATE = 2;
+		// Anchor pull-back. Default mode's early entry lands the word ~31°
+		// deeper than wrongDelay's, so its timeline is rotated 1/6 of a
+		// segment-rotation FORWARD to land closer to the camera (~37° vs
+		// nearly perpendicular). Exit still starts pre-perpendicular (~82°).
+		const SHIFT = (RATE * Q) / 5 - (o.orbWrongDelay ? 0 : (RATE * Q) / 6);
+		// The word's ride line. OFF = 0 → WR equals the sphere rate exactly
+		// (rigid ride, text turns at the same speed as the orbiting
+		// letters); a nonzero OFF pulls landing/exit-start angles shallower
+		// by riding slower. Sphere-rate ride ⇒ landing ~-62°, exit ~72°.
+		const RQ = RATE * Q;
+		const T_LAND = AW;              // landing time (may be pre-boundary)
+		const T_EXIT = 1 - LEAD;        // exit-start time
+		// Asymmetric offsets: landing sits 1/6 turn forward (~-32° instead
+		// of ~-62°); exit-start stays put (~72°) — so the ride runs at ~78%
+		// of sphere rate between the same two moments.
+		const OFF_LAND = o.orbWrongDelay ? 0 : RQ / 6;
+		const OFF_EXIT = 0;
+		const yawA = RQ * (T_LAND - WINDOW) - SHIFT + OFF_LAND; // landing yaw
+		const yawE = RQ * (T_EXIT - WINDOW) - SHIFT - OFF_EXIT; // exit-start yaw
+		const WR = (yawE - yawA) / (T_EXIT - T_LAND);      // word ride rate
+		const wordYaw = (g) => yawA + WR * (g - T_LAND);
+		const yawIn = wordYaw(f);       // active word
+		const yawOut = wordYaw(f + 1);  // word leaving (same line, +1 seg)
+
+		// DIR = -1: the sphere orbits the OTHER way; every yaw (orbit spin and
+		// the word's ride) negates together so the exit still lands at 90°.
+		const DIR = -1;
+		const SPIN_TURNS = -5; // uniform pinwheel (negative = reversed); integer only or the seam pops
+		if (nW === 1) {
+			// Single group: there is no other word to swap with (and the
+			// orbit lattice for "everyone except the word" would be empty) —
+			// hold the lockup at centre, one full spin per loop (seamless).
+			for (const L of letters) lockPoseSingle(L, TAU * phase);
+			renderer.render(T.scene, T.camera);
+			ctx.drawImage(T.glcv, 0, 0);
+			return;
+		}
+		function orbitPose(L, k, a, pos, quat) {
+			// Lattice rides the SAME clock as the active word (one rigid
+			// sphere, no speed split), both doubled by RATE.
+			a *= 2;
+			// guard: a letter can miss a segment map during text edits mid-frame
+			const { j, m } = T.segIdx[k]?.get(L.i) ?? { j: L.i, m: T.letters.length };
+			const sl = slot(j, m);
+			v.t1.set(sl[0], sl[1], sl[2]); // canonical outward normal n̂
+			pos.copy(v.t1).multiplyScalar(R).applyAxisAngle(v.up, DIR * a).applyQuaternion(v.qTilt);
+			// Tangent frame built at the CANONICAL slot (glyph +z = outward,
+			// +y = as upright as the sphere allows), then rotated RIGIDLY with
+			// the ball. The old per-frame lookAt kept letters screen-upright,
+			// which whirls near the poles (the lookAt-up singularity) — pole
+			// letters looked like they spun way faster than equator ones.
+			v.t2.set(0, 1, 0).addScaledVector(v.t1, -sl[1]).normalize(); // ŷ
+			v.t3.crossVectors(v.t2, v.t1);                               // x̂ = ŷ × ẑ
+			v.m.makeBasis(v.t3, v.t2, v.t1);
+			quat.setFromRotationMatrix(v.m);
+			quat.premultiply(v.qTmp.setFromAxisAngle(v.up, DIR * a));
+			quat.premultiply(v.qTilt);
+			// Pinwheel in the tangent plane (about the glyph's own normal, so
+			// the face always points at/away from the centre — an A stays an
+			// A, never edge-on). Riding the ball adds a latitude-dependent
+			// roll of DIR·a·(up·n̂); subtract it so every letter's APPARENT
+			// spin rate is identical from pole to equator.
+			// Same-rate pinwheel, but each COPY of a glyph starts at a
+			// golden-angle step from the last (occ x 137.5deg): consecutive
+			// copies of the same letter are maximally out of phase, never
+			// clones. A small index hash de-syncs different glyphs too.
+			// Constant per letter -> loop seam unaffected.
+			const h0 = Math.sin(L.i * 91.7 + 133.3) * 43758.5453;
+			const off = ((L.occ ?? L.i) * 0.6180339887 % 1) * TAU + (h0 - Math.floor(h0)) * 0.9;
+			const roll = TAU * SPIN_TURNS * phase - DIR * a * sl[1] + off;
+			quat.multiply(v.qTmp.setFromAxisAngle(v.zAxis, roll));
+		}
+		function lockPoseSingle(L, yaw) {
+			const P = T.wordX[0].get(L.i) ?? { x: 0, y: 0 };
+			L.mesh.position.set(P.x, P.y, 0)
+				.applyAxisAngle(v.up, DIR * yaw).applyQuaternion(v.qTilt);
+			L.mesh.quaternion.setFromAxisAngle(v.up, DIR * yaw).premultiply(v.qTilt);
+			L.mesh.scale.setScalar(1);
+		}
+		function lockPose(L, k, yaw, pos, quat) {
+			const P = T.wordX[k].get(L.i) ?? { x: 0, y: 0 };
+			pos.set(P.x, P.y, 0).applyAxisAngle(v.up, DIR * yaw).applyQuaternion(v.qTilt);
+			quat.setFromAxisAngle(v.up, DIR * yaw).premultiply(v.qTilt);
+		}
+
+		const segNext = (seg + 1) % nW;
+		for (const L of letters) {
+			let px, py, pz, sc;
+			const qa = v.qa, qb = v.qb;
+			if (L.wi === seg && f < AW) {
+				// incoming word: lattice → riding lockup (launched ELEAD
+				// before the boundary; see the segNext branch below)
+				const e = eIn(L.i, f + ELEAD);
+				orbitPose(L, segPrev, Q + alpha, v.a, qa);      // old system, still turning
+				lockPose(L, seg, yawIn, v.b, qb);
+				px = v.a.x + (v.b.x - v.a.x) * e;
+				py = v.a.y + (v.b.y - v.a.y) * e;
+				pz = v.a.z + (v.b.z - v.a.z) * e;
+				qa.slerp(qb, e);
+				sc = 1;
+			} else if (L.wi === segNext && f > 1 - ELEAD) {
+				// EARLY ENTRY: the next word launches out of the lattice
+				// pre-boundary, simultaneous with the current word's early
+				// exit — they cross mid-air. Target is next segment's
+				// lockup continued backward (alpha − Q).
+				const e = eIn(L.i, f - (1 - ELEAD));
+				orbitPose(L, seg, alpha, v.a, qa);
+				lockPose(L, segNext, wordYaw(f - 1), v.b, qb);
+				px = v.a.x + (v.b.x - v.a.x) * e;
+				py = v.a.y + (v.b.y - v.a.y) * e;
+				pz = v.a.z + (v.b.z - v.a.z) * e;
+				qa.slerp(qb, e);
+				sc = 1;
+			} else if (L.wi === seg && f > 1 - LEAD) {
+				// EARLY EXIT: the word starts dissolving into the NEXT
+				// segment's lattice before the boundary. The lattice target
+				// at angle alpha−Q is exactly where next segment's alpha=0
+				// picks up, so the flight is continuous across the seam.
+				const e = eL(L.i, f - (1 - LEAD));
+				lockPose(L, seg, yawIn, v.a, qa);
+				orbitPose(L, segNext, alpha - Q, v.b, qb);
+				px = v.a.x + (v.b.x - v.a.x) * e;
+				py = v.a.y + (v.b.y - v.a.y) * e;
+				pz = v.a.z + (v.b.z - v.a.z) * e;
+				qa.slerp(qb, e);
+				sc = 1;
+			} else if (L.wi === seg) {
+				// holding: assembled, riding the rotation
+				lockPose(L, seg, yawIn, v.a, qa);
+				px = v.a.x; py = v.a.y; pz = v.a.z;
+				sc = 1;
+			} else if (L.wi === segPrev && f < WINDOW) {
+				// outgoing word, continuing the exit that began LEAD before
+				// the boundary — it crosses the incoming word mid-air
+				const e = eL(L.i, f + LEAD);
+				lockPose(L, segPrev, yawOut, v.a, qa);
+				orbitPose(L, seg, alpha, v.b, qb);
+				px = v.a.x + (v.b.x - v.a.x) * e;
+				py = v.a.y + (v.b.y - v.a.y) * e;
+				pz = v.a.z + (v.b.z - v.a.z) * e;
+				qa.slerp(qb, e);
+				sc = 1;
+			} else if (f < WINDOW) {
+				// everyone else: morph old even lattice → new even lattice
+				// (began RLEAD before the boundary — see the branch below)
+				const e = eL(L.i, f + RLEAD);
+				orbitPose(L, segPrev, Q + alpha, v.a, qa);
+				orbitPose(L, seg, alpha, v.b, qb);
+				px = v.a.x + (v.b.x - v.a.x) * e;
+				py = v.a.y + (v.b.y - v.a.y) * e;
+				pz = v.a.z + (v.b.z - v.a.z) * e;
+				qa.slerp(qb, e);
+				sc = 1;
+			} else if (f > 1 - RLEAD) {
+				// pre-boundary redistribution: the lattice starts reshuffling
+				// the moment the words launch — target is the next segment's
+				// lattice continued backward (alpha − Q), seam-continuous
+				const e = eL(L.i, f - (1 - RLEAD));
+				orbitPose(L, seg, alpha, v.a, qa);
+				orbitPose(L, segNext, alpha - Q, v.b, qb);
+				px = v.a.x + (v.b.x - v.a.x) * e;
+				py = v.a.y + (v.b.y - v.a.y) * e;
+				pz = v.a.z + (v.b.z - v.a.z) * e;
+				qa.slerp(qb, e);
+				sc = 1;
+			} else {
+				orbitPose(L, seg, alpha, v.a, qa);
+				px = v.a.x; py = v.a.y; pz = v.a.z;
+				sc = 1;
+			}
+			L.mesh.position.set(px, py, pz);
+			L.mesh.quaternion.copy(qa);
+			L.mesh.scale.setScalar(sc);
+		}
+
+		renderer.render(T.scene, T.camera);
+		ctx.drawImage(T.glcv, 0, 0);
+	}
+	return { reset, step, render, ready };
 }
 
 // GLASS01 — the letters of a justified lockup move INDEPENDENTLY, in
@@ -5036,6 +6208,863 @@ function sceneEcho(env) {
 }
 
 // ── registry ─────────────────────────────────────────────────────────────────
+
+// Flex — Google Sans Flex variable-type lockup. Line one spans the measure
+// at the font's widest (wdth 150 via font-stretch); every line below is
+// fitted to EXACTLY the same measure by searching the width axis for the
+// variation whose exact-fit size sits closest to 0.6x the headline. The
+// animation is squash & stretch: weight breathes on the REAL wght axis
+// (100..700 continuous) while the glyphs squash through per-glyph vector
+// transforms (the font's width axis is keyword-quantised in canvas, so the
+// vectors carry the continuous motion). Per-glyph slots are re-normalised
+// to the measure every frame, so the lockup never stops fitting exactly.
+// '/' splits lines. One sine per loop -> seamless.
+// Google Sans Flex, registered once per width stop as pinned families
+// "GSF-w{v}" (stretch descriptor maps the wdth axis). Needed because
+// Chrome's canvas honours font-stretch in measureText but NOT fillText.
+// fine-grained stops (every 5 wdth units) — coarse steps read as sudden
+// letterform pops when the width animates; at 5 units the switch is
+// invisible under the pinned-geometry compensation
+const GSF_STOPS = Array.from({ length: 26 }, (_, i) => 25 + i * 5);
+const gsfFam = (v) => '"GSF-w' + v + '"';
+let _gsfP = null;
+function loadGSF() {
+	if (!_gsfP) _gsfP = (async () => {
+		try {
+			const cssURL = 'https://fonts.googleapis.com/css2?family=Google+Sans+Flex:wdth,wght@25..150,100..700&display=swap';
+			const css = await (await fetch(cssURL)).text();
+			const urls = [...css.matchAll(/url\((https:[^)]+\.woff2)\)/g)].map((m) => m[1]);
+			const buf = await (await fetch(urls[urls.length - 1])).arrayBuffer();
+			await Promise.all(GSF_STOPS.map(async (v) => {
+				const f = new FontFace('GSF-w' + v, buf.slice(0), { stretch: v + '%', weight: '100 700' });
+				await f.load();
+				document.fonts.add(f);
+			}));
+		} catch (e) { console.warn('[gsf] font init failed', e); }
+	})();
+	return _gsfP;
+}
+
+function sceneFlex(env) {
+	const { W, H, getOpts } = env;
+	// Chrome's canvas honours font-stretch in measureText but NOT in
+	// fillText — so the wdth axis is unusable via the shorthand. Instead
+	// the GSF woff2 is registered once per width stop as its own family
+	// with a pinned `stretch` descriptor (which maps the wdth axis), so
+	// measurement and drawing always agree. Weight is fixed at 500.
+	const STOPS = GSF_STOPS;
+	const famOf = gsfFam;
+	let t = 0, fontsReady = false, readyP = null;
+	let fitKey = '', fit = null;
+	const mcv = document.createElement('canvas');
+	const mctx = mcv.getContext('2d');
+
+	function ready() {
+		if (!readyP) readyP = loadGSF().then(() => { fontsReady = true; });
+		return readyP;
+	}
+
+
+	function reset() { t = 0; fitKey = ''; ready(); }
+	function step(dt) { t += dt; }
+
+	const meas = (word, stop, wght, size) => {
+		mctx.font = wght + ' ' + size + 'px ' + famOf(stop);
+		return mctx.measureText(word).width;
+	};
+
+	// Type Orbit's whip: Newton-solved cubic-bezier (shares o.orbBez, so
+	// the panel's Easing editor drives this mode too)
+	function bez(g, x1, y1, x2, y2) {
+		if (g <= 0) return 0;
+		if (g >= 1) return 1;
+		let u = g;
+		for (let i = 0; i < 5; i++) {
+			const iu = 1 - u;
+			const x = 3 * iu * iu * u * x1 + 3 * iu * u * u * x2 + u * u * u;
+			const dx = 3 * iu * iu * x1 + 6 * iu * u * (x2 - x1) + 3 * u * u * (1 - x2);
+			if (Math.abs(dx) < 1e-6) break;
+			u -= (x - g) / dx;
+			if (u < 0) u = 0; else if (u > 1) u = 1;
+		}
+		const iu = 1 - u;
+		return 3 * iu * iu * u * y1 + 3 * iu * u * u * y2 + u * u * u;
+	}
+
+	// RIGID BOX LOCKUP. One point size everywhere. Rows ('/' splits) stack
+	// inside a fixed outer boundary; interior borders slide. Each row gets
+	// the width-axis stop whose natural span is closest to the measure —
+	// the FONT does the fitting; the animation squashes vectors.
+	function doFit(rows, M) {
+		const size = Math.max(8, (100 * M) / Math.max(1, meas(rows[0].join(' '), 150, 500, 100)));
+		mctx.font = '500 ' + size + 'px ' + famOf(100);
+		const mH = mctx.measureText('H');
+		const capH = (mH.actualBoundingBoxAscent || size * 0.72);
+		const spaceW = size * 0.24;
+		const R = rows.map((words) => {
+			let best = null;
+			for (const stop of STOPS) {
+				const ws = words.map((w) => meas(w, stop, 500, size));
+				const tot = ws.reduce((a, b) => a + b, 0) + spaceW * (words.length - 1);
+				if (!best || Math.abs(tot - M) < Math.abs(best.tot - M)) best = { stop, ws, tot };
+			}
+			const k = (M - spaceW * (words.length - 1)) / Math.max(1, best.tot - spaceW * (words.length - 1));
+			return { stop: best.stop, words, natW: best.ws, baseW: best.ws.map((w) => w * k) };
+		});
+		// box height: the HERO row at natural cap height + every other row
+		// crushed to 0.35 of it — so a hero at "regular size" genuinely
+		// dominates the fixed box
+		let gap = capH * 0.22;
+		let B = capH * (1 + 0.35 * (R.length - 1)) + gap * (R.length - 1);
+		// the composition runs 1.5x taller than the natural cap-height
+		// stack — rows render vertically stretched at base
+		B *= 1.5; gap *= 1.5;
+		const availH = H * 0.8;
+		let sizeK = 1;
+		if (B > availH) { sizeK = availH / B; B = availH; gap *= sizeK; }
+		return { R, size: size * sizeK, capH: capH * sizeK, spaceW: spaceW * sizeK, gap, B };
+	}
+
+	function render(ctx) {
+		const o = getOpts();
+		if (o.bgType === 'transparent') ctx.clearRect(0, 0, W, H);
+		else paintBg(ctx, o, W, H);
+		if (!fontsReady) { ready(); return; }
+		const raw = (o.text || 'Interactive / Design Concepts').toUpperCase();
+		const rows = raw.split('/').map((r) => r.trim().split(/\s+/).filter(Boolean)).filter((r) => r.length);
+		if (!rows.length) return;
+		const M = W * 0.88;
+		const key = raw + '|' + W + 'x' + H;
+		if (fitKey !== key) { fit = doFit(rows, M); fitKey = key; }
+		const dur = o.duration || 4;
+		const p = (((t / dur) % 1) + 1) % 1;
+
+		ctx.fillStyle = o.fg || '#111111';
+		ctx.textBaseline = 'alphabetic';
+		ctx.textAlign = 'left';
+
+		// HERO-BEAT choreography. One beat per hero; a hero is a single-
+		// word row (it sits at REGULAR size and its row takes most of the
+		// fixed box, flattening the others) or one word of a multi-word row
+		// (its row grows to regular height — every word in it rises — while
+		// the hero also expands horizontally, crushing its siblings).
+		// Beats whip hero -> hero with Type Orbit's bezier; each hero is a
+		// held keyframe, so every word gets its unmodified moment.
+		// o.flexSolo inserts a NEUTRAL keyframe between heroes.
+		const heroes = [];
+		fit.R.forEach((row, i) => {
+			if (row.words.length === 1) heroes.push({ i, q: -1 });
+			else row.words.forEach((_, q) => heroes.push({ i, q }));
+		});
+		const nR = fit.R.length;
+		const stateOf = (k) => {
+			let hero = null;
+			if (o.flexSolo) { if (k % 2 === 1) hero = heroes[(k - 1) / 2]; }
+			else hero = heroes[k % heroes.length];
+			const hshare = fit.R.map((_, i) => (!hero ? 1 : i === hero.i ? 1 : 0.35));
+			const mults = fit.R.map((row, i) => row.words.map((_, q) => {
+				if (!hero || hero.i !== i || hero.q < 0) return 1;
+				return q === hero.q ? 1.75 : 0.3;
+			}));
+			return { hshare, mults };
+		};
+		const segs = o.flexSolo ? heroes.length * 2 : heroes.length;
+		const HOLD = 0.45;
+		const sN = Math.floor(p * segs), u = p * segs - sN;
+		const SA = stateOf(sN), SB = stateOf((sN + 1) % segs);
+		const [bx1, by1, bx2, by2] = o.orbBez ?? [0.28, 0, 0.1, 1];
+		const m = u < HOLD ? 0 : bez((u - HOLD) / (1 - HOLD), bx1, by1, bx2, by2);
+		const mix = (a, b) => a + (b - a) * m;
+
+		const boxTop = (H - fit.B) / 2;
+		const boxLeft = (W - M) / 2;
+		const hsRaw = fit.R.map((_, i) => mix(SA.hshare[i], SB.hshare[i]));
+		const hScale = (fit.B - fit.gap * (nR - 1)) / (hsRaw.reduce((a, b) => a + b, 0) * fit.capH);
+
+		let y = boxTop;
+		for (let i = 0; i < nR; i++) {
+			const row = fit.R[i];
+			const rowH = hsRaw[i] * fit.capH * hScale;
+			const n = row.words.length;
+			const cw = row.baseW.map((w, q) => w * mix(SA.mults[i][q], SB.mults[i][q]));
+			const wScale = (M - fit.spaceW * (n - 1)) / cw.reduce((a, b) => a + b, 0);
+			let x = boxLeft;
+			for (let q = 0; q < n; q++) {
+				const cellW = cw[q] * wScale;
+				const nat = row.natW[q] || 1;
+				ctx.font = '500 ' + fit.size + 'px ' + famOf(row.stop);
+				ctx.save();
+				ctx.translate(x, y);
+				ctx.scale(cellW / nat, rowH / fit.capH);
+				ctx.fillText(row.words[q], 0, fit.capH);
+				ctx.restore();
+				x += cellW + fit.spaceW;
+			}
+			y += rowH + fit.gap;
+		}
+	}
+	return { reset, step, render, ready };
+}
+
+
+// Full Bleed — the lockup fills the WHOLE frame and the camera sits ~30%
+// INSIDE the letters' edges (everything drawn at 1.3x about centre, so the
+// composition crops past the frame). All caps, rows are full-width bands.
+// The wdth axis breathes per row (nearest pinned GSF stop each frame)
+// while every word's box is pinned — the outer edges never move, the
+// letterforms morph in the middle — and a slight italic lean oscillates
+// via a baseline skew (GSF's ital axis is binary, so the lean is vector).
+function sceneBleed(env) {
+	const { W, H, getOpts } = env;
+	let t = 0, fontsReady = false, readyP = null;
+	let fitKey = '', fit = null;
+	const mcv = document.createElement('canvas');
+	const mctx = mcv.getContext('2d');
+
+	function ready() {
+		if (!readyP) readyP = loadGSF().then(() => { fontsReady = true; });
+		return readyP;
+	}
+	function reset() { t = 0; fitKey = ''; ready(); }
+	function step(dt) { t += dt; }
+
+	const meas = (word, stop, size) => {
+		mctx.font = '500 ' + size + 'px ' + gsfFam(stop);
+		return mctx.measureText(word).width;
+	};
+
+	function doFit(rows) {
+		const size = 100;
+		const spaceW = size * 0.22;
+		mctx.font = '500 ' + size + 'px ' + gsfFam(100);
+		const capH = mctx.measureText('H').actualBoundingBoxAscent || size * 0.72;
+		// each row spans the FULL frame width; word boxes fixed from the
+		// wdth-100 proportions (per-frame width breathing re-fits into them)
+		const R = rows.map((words) => {
+			const nat = words.map((w) => meas(w, 100, size));
+			const tot = nat.reduce((a, b) => a + b, 0) + spaceW * (words.length - 1);
+			const k = W / Math.max(1, tot);
+			return { words, chars: words.map((w) => [...w]), cells: nat.map((w) => w * k), space: spaceW * k };
+		});
+		const gapPx = H * 0.02;
+		const bandH = (H - gapPx * (rows.length - 1)) / rows.length;
+		return { R, capH, bandH, gapPx, size };
+	}
+
+	function render(ctx) {
+		const o = getOpts();
+		if (o.bgType === 'transparent') ctx.clearRect(0, 0, W, H);
+		else paintBg(ctx, o, W, H);
+		if (!fontsReady) { ready(); return; }
+		const raw = (o.text || 'Interactive / Design Concepts').toUpperCase();
+		const rows = raw.split('/').map((r) => r.trim().split(/\s+/).filter(Boolean)).filter((r) => r.length);
+		if (!rows.length) return;
+		const key = raw + '|' + W + 'x' + H;
+		if (fitKey !== key) { fit = doFit(rows); fitKey = key; }
+		const dur = o.duration || 5;
+		const p = (((t / dur) % 1) + 1) % 1;
+
+		ctx.save();
+		// the camera sits 30% inside the letters: draw at 1.3x about centre
+		ctx.translate(W / 2, H / 2); ctx.scale(1.3, 1.3); ctx.translate(-W / 2, -H / 2);
+		ctx.fillStyle = o.fg || '#111111';
+		ctx.textBaseline = 'alphabetic';
+		ctx.textAlign = 'left';
+
+		let y = 0;
+		for (let i = 0; i < fit.R.length; i++) {
+			const row = fit.R[i];
+			// width breathing: pick the nearest pinned stop each frame; the
+			// fixed cells re-absorb it so edges stay put
+			const wTarget = 100 + 40 * Math.sin(TAU * p + i * Math.PI);
+			const stop = GSF_STOPS.reduce((a, b) => (Math.abs(b - wTarget) < Math.abs(a - wTarget) ? b : a));
+			ctx.font = '500 ' + fit.size + 'px ' + gsfFam(stop);
+			mctx.font = ctx.font;
+			const sy = fit.bandH / fit.capH;
+			let x = 0;
+			let gj = i * 97; // per-letter phase seed, offset per row
+			for (let q = 0; q < row.words.length; q++) {
+				const cs = row.chars[q];
+				const adv = cs.map((c) => mctx.measureText(c).width);
+				const natSum = adv.reduce((a, b) => a + b, 0) || 1;
+				const kx = row.cells[q] / natSum;
+				let lx = 0;
+				for (let j = 0; j < cs.length; j++) {
+					// RANDOM letters italicise: every letter leans on its own
+					// hashed phase (one cycle per loop — seamless), so at any
+					// moment a different scattered subset reads as italic
+					const h = Math.sin(gj * 127.1 + 311.7) * 43758.5453;
+					const ph = (h - Math.floor(h)) * TAU;
+					const lean = Math.tan((8 * Math.PI / 180) * Math.sin(TAU * p + ph));
+					ctx.save();
+					ctx.translate(x + lx, y + fit.bandH);
+					ctx.transform(1, 0, lean, 1, 0, 0);
+					ctx.scale(kx, sy);
+					ctx.fillText(cs[j], 0, 0);
+					ctx.restore();
+					lx += adv[j] * kx;
+					gj++;
+				}
+				x += row.cells[q] + row.space;
+			}
+			y += fit.bandH + fit.gapPx;
+		}
+		ctx.restore();
+	}
+	return { reset, step, render, ready };
+}
+
+
+// Grit — black bg, white type, EXTREME out-of-focus patches + animated
+// grain occlusion. The lockup is drawn twice: sharp (with soft blob-shaped
+// holes) and heavily blurred (visible ONLY inside those blobs — true
+// out-of-focus areas, not glow). Blobs drift on integer-frequency
+// lissajous loops and the blur radius itself animates; chunky phase-seeded
+// noise is punched out of the type on top. Seamless: all motion is
+// phase-periodic, grain is stochastic per frame (flicker is the point).
+function sceneGrit(env) {
+	const { W, H, getOpts, noise } = env;
+	let t = 0, fontsReady = false, readyP = null;
+	let fitKey = '', fit = null;
+	let LA = null, LB = null, LM = null, LG = null, LT = null, LH = null, LX = null;
+	let LP = null, grainCv = null, grainKey = '';
+	const mcv = document.createElement('canvas');
+	const mctx = mcv.getContext('2d');
+
+	function ready() {
+		if (!readyP) readyP = loadGSF().then(buildPlate).then(() => { fontsReady = true; });
+		return readyP;
+	}
+
+	// NATURAL grit via the browser's own turbulence API: SVG feTurbulence
+	// (fractal noise) at near-pixel frequency, hard-thresholded to WHITE,
+	// clustered under soft blob masks, plus solid horizontal/vertical
+	// streaks — then the whole plate goes through blur->contrast passes so
+	// every edge (grit and streaks alike) comes out organic and white.
+	async function buildPlate() {
+		try {
+			const mkc = (w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return { c, x: c.getContext('2d') }; };
+			const sc = W / 300;
+			// ANALOG grain recipe: real film grain is CLUMPY (low-freq
+			// turbulence), MULTI-SCALE (fine dust over the clumps), SOFT
+			// (no hard pixels) and TONAL (marks vary in brightness). Two
+			// turbulence fields with gentle thresholds, then a soft pass.
+			const turbSVG = (freq, oct, seed, slope, icept) =>
+				'<svg xmlns="http://www.w3.org/2000/svg" width="' + W + '" height="' + H + '">' +
+				'<filter id="g" x="0%" y="0%" width="100%" height="100%">' +
+				'<feTurbulence type="fractalNoise" baseFrequency="' + freq.toFixed(3) + '" numOctaves="' + oct + '" seed="' + seed + '" stitchTiles="stitch"/>' +
+				'<feColorMatrix type="saturate" values="0"/>' +
+				'<feComponentTransfer>' +
+				'<feFuncR type="linear" slope="' + slope + '" intercept="' + icept + '"/>' +
+				'<feFuncG type="linear" slope="' + slope + '" intercept="' + icept + '"/>' +
+				'<feFuncB type="linear" slope="' + slope + '" intercept="' + icept + '"/>' +
+				'<feFuncA type="linear" slope="0" intercept="1"/>' +
+				'</feComponentTransfer>' +
+				'</filter><rect width="100%" height="100%" filter="url(#g)"/></svg>';
+			const loadSVG = (svgStr) => new Promise((res, rej) => {
+				const im = new Image();
+				im.onload = () => res(im); im.onerror = rej;
+				im.src = 'data:image/svg+xml;utf8,' + encodeURIComponent(svgStr);
+			});
+			const sc0 = W / 300;
+			// clumpy silver-halide field + fine dust on top
+			// top-tail thresholds: midpoint thresholds give connected
+			// maze/dither (digital); only the peaks -> discrete soft grains
+			const img = await loadSVG(turbSVG(0.45 / Math.max(1, sc0), 4, 11, 5, -3.1));
+			const img2 = await loadSVG(turbSVG(0.85 / Math.max(1, sc0), 3, 29, 6.5, -3.9));
+			// turbulence layer: fine speckle, clustered — NEVER blurred
+			// (blur+contrast on 1px speckle wipes it out; it stays raw)
+			const px = mkc(W, H);
+			px.x.fillStyle = '#000'; px.x.fillRect(0, 0, W, H);
+			px.x.drawImage(img, 0, 0, W, H);
+			px.x.globalCompositeOperation = 'screen';
+			px.x.globalAlpha = 0.7;
+			px.x.drawImage(img2, 0, 0, W, H);
+			px.x.globalAlpha = 1;
+			px.x.globalCompositeOperation = 'source-over';
+			// cluster the grit under soft blobs (+ a faint field of dust)
+			const hh0 = (a) => { const v = Math.sin(a * 12.9898 + 78.233) * 43758.5453; return v - Math.floor(v); };
+			const mask = mkc(W, H);
+			mask.x.fillStyle = '#181818'; mask.x.fillRect(0, 0, W, H);
+			for (let k = 0; k < 16; k++) {
+				const rr = sc * (14 + 70 * Math.pow(hh0(k * 7.7 + 3), 2));
+				const cx = W * hh0(k * 3.1 + 1), cy = H * hh0(k * 5.3 + 2);
+				const gr = mask.x.createRadialGradient(cx, cy, 0, cx, cy, rr);
+				gr.addColorStop(0, '#fff');
+				gr.addColorStop(1, 'rgba(255,255,255,0)');
+				mask.x.fillStyle = gr;
+				mask.x.fillRect(cx - rr, cy - rr, rr * 2, rr * 2);
+			}
+			px.x.globalCompositeOperation = 'multiply';
+			px.x.drawImage(mask.c, 0, 0);
+			px.x.globalCompositeOperation = 'source-over';
+			// re-whiten the surviving speckle (mask multiply dimmed it) —
+			// via a temp canvas: self-drawImage through a filter is flaky
+			const tmp = mkc(W, H);
+			tmp.x.fillStyle = '#000'; tmp.x.fillRect(0, 0, W, H);
+			// soft pass: sub-pixel blur rounds every grain, mild lift keeps
+			// the marks tonal — analog, never binary
+			tmp.x.filter = 'blur(' + (0.5 * sc0).toFixed(2) + 'px) brightness(2.0) contrast(1.3)';
+			tmp.x.drawImage(px.c, 0, 0);
+			tmp.x.filter = 'none';
+			px.x.globalCompositeOperation = 'copy';
+			px.x.drawImage(tmp.c, 0, 0);
+			px.x.globalCompositeOperation = 'source-over';
+			// SHAPE MODULATORS: randomly placed circles, squares and
+			// starbursts, blurred beyond recognition — the dark set
+			// multiplies grit AWAY, the light set gates IN a denser
+			// turbulence field. Soft continents of more/less grit.
+			const shapePath = (g, ty, cx, cy, r, rot) => {
+				g.beginPath();
+				if (ty === 0) g.arc(cx, cy, r, 0, TAU);
+				else if (ty === 1) {
+					g.save(); g.translate(cx, cy); g.rotate(rot);
+					g.rect(-r, -r, r * 2, r * 2);
+					g.restore();
+				} else {
+					for (let i = 0; i < 20; i++) {
+						const rr = i % 2 ? r * 0.42 : r;
+						const a = rot + (i / 20) * TAU;
+						const X = cx + Math.cos(a) * rr, Y = cy + Math.sin(a) * rr;
+						if (i) g.lineTo(X, Y); else g.moveTo(X, Y);
+					}
+					g.closePath();
+				}
+			};
+			const mkMask = (off, fill, bg) => {
+				const raw = mkc(W, H), m = mkc(W, H);
+				raw.x.fillStyle = bg; raw.x.fillRect(0, 0, W, H);
+				raw.x.fillStyle = fill;
+				for (let k = 0; k < 8; k++) {
+					const ty = Math.floor(hh0(k * 3.7 + off) * 3);
+					const r = W * (0.05 + 0.16 * Math.pow(hh0(k * 5.3 + off + 1), 1.5));
+					shapePath(raw.x, ty, W * hh0(k * 7.1 + off + 2), H * hh0(k * 9.7 + off + 3), r, hh0(k * 11.1 + off + 4) * TAU);
+					raw.x.fill();
+				}
+				m.x.fillStyle = bg; m.x.fillRect(0, 0, W, H);
+				m.x.filter = 'blur(' + (W * 0.05).toFixed(1) + 'px)';
+				m.x.drawImage(raw.c, 0, 0);
+				m.x.filter = 'none';
+				return m;
+			};
+			const sub = mkMask(100, '#000', '#fff');
+			px.x.globalCompositeOperation = 'multiply';
+			px.x.drawImage(sub.c, 0, 0);
+			px.x.globalCompositeOperation = 'source-over';
+			const addM = mkMask(200, '#fff', '#000');
+			const dense = mkc(W, H);
+			dense.x.fillStyle = '#000'; dense.x.fillRect(0, 0, W, H);
+			dense.x.filter = 'blur(' + (0.4 * sc0).toFixed(2) + 'px) brightness(1.8)';
+			dense.x.drawImage(img, 0, 0, W, H);
+			dense.x.filter = 'none';
+			dense.x.globalCompositeOperation = 'multiply';
+			dense.x.drawImage(addM.c, 0, 0);
+			dense.x.globalCompositeOperation = 'source-over';
+			px.x.globalCompositeOperation = 'screen';
+			px.x.drawImage(dense.c, 0, 0);
+			px.x.globalCompositeOperation = 'source-over';
+			// STREAK layer (separate — this one DOES get the blur+contrast
+			// treatment for organic white edges)
+			// PILL GRAIN: a capsule filled with a greyscale gradient,
+			// multiplied by the fine dust field — a soft pill of grain that
+			// thins along its own gradient. Composited with a slow breathe.
+			const pill = mkc(W, H);
+			pill.x.fillStyle = '#000'; pill.x.fillRect(0, 0, W, H);
+			const pw = W * 0.52, ph2 = W * 0.13;
+			pill.x.save();
+			pill.x.translate(W * 0.56, H * 0.74);
+			pill.x.rotate(-0.32);
+			const pg = pill.x.createLinearGradient(-pw / 2, 0, pw / 2, 0);
+			pg.addColorStop(0, '#ffffff');
+			pg.addColorStop(1, '#000000');
+			pill.x.fillStyle = pg;
+			pill.x.beginPath();
+			pill.x.roundRect(-pw / 2, -ph2 / 2, pw, ph2, ph2 / 2);
+			pill.x.fill();
+			pill.x.restore();
+			pill.x.globalCompositeOperation = 'multiply';
+			pill.x.drawImage(img2, 0, 0, W, H);
+			pill.x.globalCompositeOperation = 'source-over';
+			LP = pill;
+			const stk = mkc(W, H);
+			stk.x.fillStyle = '#000'; stk.x.fillRect(0, 0, W, H);
+			// rock scratches + chips (white, sparse)
+			for (let k = 0; k < 60; k++) {
+				const x0 = W * hh0(k * 3.1 + 21), y0 = H * hh0(k * 5.7 + 8);
+				const ang = hh0(k * 7.9 + 3) * TAU;
+				const ln = sc * (6 + 40 * Math.pow(hh0(k * 11.3 + 5), 2));
+				stk.x.strokeStyle = 'rgba(255,255,255,' + (0.2 + 0.5 * Math.pow(hh0(k * 13.7 + 9), 1.6)).toFixed(3) + ')';
+				stk.x.lineWidth = Math.max(0.5, sc * (0.4 + 1.4 * Math.pow(hh0(k * 17.1 + 2), 2.4)));
+				stk.x.beginPath();
+				stk.x.moveTo(x0, y0);
+				stk.x.quadraticCurveTo(
+					x0 + Math.cos(ang + 0.5) * ln * 0.5, y0 + Math.sin(ang + 0.5) * ln * 0.5,
+					x0 + Math.cos(ang) * ln, y0 + Math.sin(ang) * ln);
+				stk.x.stroke();
+			}
+			// organic edges: blur then hard contrast, twice — streaks and
+			// grit alike end up eaten-at but solid WHITE
+			const passP = (blur, con) => {
+				tmp.x.filter = 'none';
+				tmp.x.fillStyle = '#000'; tmp.x.fillRect(0, 0, W, H);
+				tmp.x.filter = 'blur(' + blur + 'px) contrast(' + con + ')';
+				tmp.x.drawImage(stk.c, 0, 0);
+				tmp.x.filter = 'none';
+				stk.x.globalCompositeOperation = 'copy';
+				stk.x.drawImage(tmp.c, 0, 0);
+				stk.x.globalCompositeOperation = 'source-over';
+			};
+			// gentle: enough to eat the edges organically, not enough to
+			// erase blurred thin lines entirely
+			passP(0.7, 2.0);
+			passP(0.4, 1.5);
+			// merge: raw fine speckle + goo'd white streaks
+			px.x.globalCompositeOperation = 'screen';
+			px.x.drawImage(stk.c, 0, 0);
+			px.x.globalCompositeOperation = 'source-over';
+			LX = px;
+		} catch (e) { console.warn('[grit] plate build failed', e); }
+	}
+	function reset() { t = 0; fitKey = ''; ready(); }
+	function step(dt) { t += dt; }
+
+	function layers() {
+		if (LA) return;
+		const mk = (w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return { c, x: c.getContext('2d') }; };
+		LA = mk(W, H); LB = mk(W, H); LM = mk(W, H);
+		LT = mk(W, H); // alpha-capable temp for feathered patch composites
+		LG = mk(W, H); // FULL-res grain — really small, no upscale blocks
+		LG.gd = LG.x.createImageData(LG.c.width, LG.c.height);
+		// halftone tile: soft dark dot on white; overlay + contrast turns
+		// midtones into print dots
+		const cell = Math.max(2, Math.round(W / 550));
+		LH = mk(cell, cell);
+		const hg = LH.x.createRadialGradient(cell / 2, cell / 2, 0, cell / 2, cell / 2, cell * 0.62);
+		hg.addColorStop(0, '#000');
+		hg.addColorStop(1, '#fff');
+		LH.x.fillStyle = hg;
+		LH.x.fillRect(0, 0, cell, cell);
+
+	}
+
+	const meas = (word, stop, size) => {
+		mctx.font = '700 ' + size + 'px ' + gsfFam(stop);
+		return mctx.measureText(word).width;
+	};
+
+	function bez(g, x1, y1, x2, y2) {
+		if (g <= 0) return 0;
+		if (g >= 1) return 1;
+		let u = g;
+		for (let i = 0; i < 5; i++) {
+			const iu = 1 - u;
+			const x = 3 * iu * iu * u * x1 + 3 * iu * u * u * x2 + u * u * u;
+			const dx = 3 * iu * iu * x1 + 6 * iu * u * (x2 - x1) + 3 * u * u * (1 - x2);
+			if (Math.abs(dx) < 1e-6) break;
+			u -= (x - g) / dx;
+			if (u < 0) u = 0; else if (u > 1) u = 1;
+		}
+		const iu = 1 - u;
+		return 3 * iu * iu * u * y1 + 3 * iu * u * u * y2 + u * u * u;
+	}
+
+	// Normal-size lockup, VERY bold (wght 700). Each row spans the measure
+	// at the width stop whose natural span fits it best (same recipe as
+	// Flex). Letter rects are recorded for the per-letter brightness map.
+	function doFit(rows) {
+		const M = W * 0.82;
+		const size = Math.max(8, (100 * M) / Math.max(1, meas(rows[0].join(' '), 100, 100)));
+		mctx.font = '700 ' + size + 'px ' + gsfFam(100);
+		const capH = mctx.measureText('H').actualBoundingBoxAscent || size * 0.72;
+		const spaceW = size * 0.22;
+		const R = rows.map((words) => {
+			let best = null;
+			for (const stop of GSF_STOPS) {
+				const ws = words.map((w) => meas(w, stop, size));
+				const tot = ws.reduce((a, b) => a + b, 0) + spaceW * (words.length - 1);
+				if (!best || Math.abs(tot - M) < Math.abs(best.tot - M)) best = { stop, ws, tot };
+			}
+			const k = (M - spaceW * (words.length - 1)) / Math.max(1, best.tot - spaceW * (words.length - 1));
+			return { stop: best.stop, words, natW: best.ws, cells: best.ws.map((w) => w * k), space: spaceW };
+		});
+		const gap = capH * 0.34;
+		const B = R.length * capH + gap * (R.length - 1);
+		const boxTop = (H - B) / 2, boxLeft = (W - M) / 2;
+		// letter rects (absolute) for the brightness map
+		const rects = [];
+		let y = boxTop;
+		R.forEach((row) => {
+			let x = boxLeft;
+			row.words.forEach((word, q) => {
+				const kx = row.cells[q] / (row.natW[q] || 1);
+				mctx.font = '700 ' + size + 'px ' + gsfFam(row.stop);
+				let lx = 0;
+				for (const ch of word) {
+					const aw = mctx.measureText(ch).width * kx;
+					rects.push({ x: x + lx, y, w: aw, h: capH, cx: x + lx + aw / 2, cy: y + capH / 2 });
+					lx += aw;
+				}
+				x += row.cells[q] + row.space;
+			});
+			y += capH + gap;
+		});
+		return { R, size, capH, boxTop, boxLeft, gap, rects, M };
+	}
+
+	function drawLockup(g, color) {
+		g.fillStyle = color;
+		g.textBaseline = 'alphabetic';
+		g.textAlign = 'left';
+		let y = fit.boxTop;
+		for (const row of fit.R) {
+			g.font = '700 ' + fit.size + 'px ' + gsfFam(row.stop);
+			let x = fit.boxLeft;
+			for (let q = 0; q < row.words.length; q++) {
+				g.save();
+				g.translate(x, y + fit.capH);
+				g.scale(row.cells[q] / (row.natW[q] || 1), 1);
+				g.fillText(row.words[q], 0, 0);
+				g.restore();
+				x += row.cells[q] + row.space;
+			}
+			y += fit.capH + fit.gap;
+		}
+	}
+
+	function render(ctx) {
+		const o = getOpts();
+		paintBg(ctx, o, W, H);
+		if (!fontsReady) { ready(); return; }
+		layers();
+		const raw = (o.text || 'Interactive / Design Concepts').toUpperCase();
+		const rows = raw.split('/').map((r) => r.trim().split(/\s+/).filter(Boolean)).filter((r) => r.length);
+		if (!rows.length) return;
+		const key = raw + '|' + W + 'x' + H;
+		if (fitKey !== key) { fit = doFit(rows); fitKey = key; }
+		const dur = o.duration || 5;
+		const p = (((t / dur) % 1) + 1) % 1;
+		const ax = LA.x, bx = LB.x, mx = LM.x;
+
+		// 1) bold white type on opaque black (the goo chain needs luminance)
+		ax.filter = 'none';
+		ax.globalCompositeOperation = 'source-over';
+		ax.fillStyle = '#000'; ax.fillRect(0, 0, W, H);
+		drawLockup(ax, '#fff');
+
+		// 2) ROUNDING: blur -> hard contrast -> blur -> contrast. The goo
+		// threshold rounds every corner artificially; run it twice for a
+		// soft pebble-like letterform, then a light animated blur on top.
+		const goo = (src, dst, blur, con) => {
+			dst.filter = 'none';
+			dst.fillStyle = '#000'; dst.fillRect(0, 0, W, H);
+			dst.filter = 'blur(' + blur + 'px) contrast(' + con + ')';
+			dst.drawImage(src, 0, 0);
+			dst.filter = 'none';
+		};
+		// radius rides the GLYPH size, not the canvas — big enough to round
+		// corners, small enough that thin rows stay legible
+		const r1 = Math.max(1.2, fit.capH * 0.07);
+		goo(LA.c, bx, r1, 18);
+		goo(LB.c, ax, r1 * 0.6, 12);
+
+		// 3) letter-by-letter brightness: full at the off-centre focal
+		// point (a third off), fading to 60% for the far letters
+		const fx = W * 0.62, fy = H * 0.38;
+		const rad = Math.hypot(W, H) * 0.52;
+		mx.fillStyle = '#000'; mx.fillRect(0, 0, W, H);
+		for (const r of fit.rects) {
+			const d = Math.min(1, Math.hypot(r.cx - fx, r.cy - fy) / rad);
+			const v = Math.round(255 * (1 - 0.28 * d)); // floor ~72%, reads white
+			mx.fillStyle = 'rgb(' + v + ',' + v + ',' + v + ')';
+			mx.fillRect(r.x - 2, r.y - fit.capH * 0.25, r.w + 4, r.h + fit.capH * 0.5);
+		}
+		ax.globalCompositeOperation = 'multiply';
+		ax.drawImage(LM.c, 0, 0);
+		if ((o.fg || '#ffffff').toLowerCase() !== '#ffffff') {
+			ax.fillStyle = o.fg; ax.fillRect(0, 0, W, H); // tint (still multiply)
+		}
+		ax.globalCompositeOperation = 'source-over';
+
+		// 4b) MOTION BLUR patches — real directional convolution, like
+		// Photoshop's: ~20 sub-pixel-spaced samples of the type layer are
+		// AVERAGED along a hashed random direction (a true 1-D box blur),
+		// then feather-masked back INTO the luminance layer, replacing the
+		// sharp pixels there — no ghost copies, a genuine smear.
+		const blkH = fit.R.length * fit.capH + fit.gap * (fit.R.length - 1);
+		// GRUNGE finish on the luminance layer: ink blotches, grain-eroded
+		// edges, halftone dot structure, then a contrast re-punch — the
+		// too-perfect goo edges come out ragged and printy.
+		for (let k = 0; k < 8; k++) {
+			const hh = (a) => { const v = Math.sin(a * 12.9898 + 78.233) * 43758.5453; return v - Math.floor(v); };
+			const bxp = fit.boxLeft + fit.M * hh(k * 3 + 1);
+			const byp = fit.boxTop + blkH * hh(k * 7 + 2) + Math.sin(TAU * p + k) * 2;
+			const br = fit.capH * (0.5 + 1.4 * hh(k * 13 + 3));
+			const gr2 = ax.createRadialGradient(bxp, byp, 0, bxp, byp, br);
+			gr2.addColorStop(0, 'rgba(0,0,0,' + (0.18 + 0.2 * hh(k * 17 + 4)).toFixed(2) + ')');
+			gr2.addColorStop(1, 'rgba(0,0,0,0)');
+			ax.fillStyle = gr2;
+			ax.fillRect(bxp - br, byp - br, br * 2, br * 2);
+		}
+		{
+			// fine grain scrubbed into the layer (roughens edges pre-contrast)
+			const gd0 = LG.gd, d0 = gd0.data;
+			let sd0 = (31 * 2654435761) >>> 0; // static edge-erosion grain
+			const r0 = () => ((sd0 = (sd0 * 1664525 + 1013904223) >>> 0) / 4294967296);
+			for (let i2 = 0; i2 < d0.length; i2 += 4) {
+				const v = 128 + (r0() + r0() - 1) * 120;
+				d0[i2] = v; d0[i2 + 1] = v; d0[i2 + 2] = v; d0[i2 + 3] = 255;
+			}
+			LG.x.putImageData(gd0, 0, 0);
+			ax.globalCompositeOperation = 'overlay';
+			ax.globalAlpha = 0.5;
+			ax.drawImage(LG.c, 0, 0, W, H);
+			ax.globalAlpha = 1;
+			ax.globalCompositeOperation = 'source-over';
+			// DARK rock scratches gouged THROUGH the letters (ink removal)
+			const hs2 = (a) => { const v = Math.sin(a * 12.9898 + 78.233) * 43758.5453; return v - Math.floor(v); };
+			for (let k = 0; k < 34; k++) {
+				const x0 = fit.boxLeft + fit.M * hs2(k * 3.3 + 7);
+				const y0 = fit.boxTop - fit.capH * 0.3 + (blkH + fit.capH * 0.6) * hs2(k * 5.1 + 13);
+				const ang = hs2(k * 7.7 + 2) * TAU;
+				const ln = fit.capH * (0.2 + 1.4 * Math.pow(hs2(k * 9.9 + 4), 2));
+				ax.strokeStyle = 'rgba(0,0,0,' + (0.14 + 0.4 * Math.pow(hs2(k * 11.7 + 6), 1.5)).toFixed(3) + ')';
+				ax.lineWidth = Math.max(0.5, (W / 300) * (0.4 + 1.4 * Math.pow(hs2(k * 13.1 + 8), 2)));
+				ax.beginPath();
+				ax.moveTo(x0, y0);
+				ax.lineTo(x0 + Math.cos(ang) * ln, y0 + Math.sin(ang) * ln);
+				ax.stroke();
+			}
+			// contrast punch, then SOFTEN: blur the punched ink and press
+			// the halftone into the resulting edge ramps — a second, milder
+			// contrast turns them into dithered dot edges (soft, printy,
+			// never a hard vector contour)
+			const pass = (filter) => {
+				bx.filter = 'none';
+				bx.fillStyle = '#000'; bx.fillRect(0, 0, W, H);
+				bx.filter = filter;
+				bx.drawImage(LA.c, 0, 0);
+				bx.filter = 'none';
+				ax.globalCompositeOperation = 'copy';
+				ax.drawImage(LB.c, 0, 0);
+				ax.globalCompositeOperation = 'source-over';
+			};
+			pass('contrast(2.1)');
+			pass('blur(' + Math.max(0.8, fit.capH * 0.045).toFixed(2) + 'px)');
+			ax.globalCompositeOperation = 'overlay';
+			ax.globalAlpha = 0.55;
+			ax.fillStyle = ax.createPattern(LH.c, 'repeat');
+			ax.fillRect(0, 0, W, H);
+			ax.globalAlpha = 1;
+			ax.globalCompositeOperation = 'source-over';
+			pass('brightness(1.65) contrast(1.45)'); // hard white core
+		}
+
+		// Patches TRAVEL: the loop is split into segments and each patch
+		// retargets a different hashed letter every segment, its smear
+		// growing from 0 and dying back to 0 within the segment — so the
+		// relocation jumps are invisible and the loop closes perfectly.
+		const rects = fit.rects, nLet = rects.length;
+		const SEGS = 1; // one relocation per loop — 3x slower than before
+		const [ebx1, eby1, ebx2, eby2] = o.orbBez ?? [0.28, 0, 0.1, 1];
+		const envE = (g) => bez(g < 0 ? 0 : g > 1 ? 1 : g, ebx1, eby1, ebx2, eby2);
+		for (let k = 0; k < 4; k++) {
+			const segF = p * SEGS + k / 4;
+			const si = ((Math.floor(segF) % SEGS) + SEGS) % SEGS;
+			const u = segF - Math.floor(segF);
+			// whip-eased pulse (same bezier as the orbiting type): eased
+			// rise to full smear, eased fall back to nothing
+			const env = u < 0.5 ? envE(u * 2) : envE((1 - u) * 2);
+			if (env < 0.06) continue;
+			const hh = (a) => { const v = Math.sin(a * 12.9898 + 78.233) * 43758.5453; return v - Math.floor(v); };
+			const rct = rects[Math.floor(hh(k * 53 + si * 97 + 11) * nLet) % nLet];
+			const cx = rct.cx, cy = rct.cy;
+			const ang = hh(k * 31 + si * 71 + 5) * TAU;
+			const len = fit.capH * (0.25 + 1.1 * env);
+			const dxs = Math.cos(ang), dys = Math.sin(ang);
+			const R = Math.max(rct.w, fit.capH) * (1.0 + 0.5 * env);
+			const N = Math.max(12, Math.min(22, Math.ceil(len)));
+			bx.filter = 'none';
+			bx.globalCompositeOperation = 'source-over';
+			bx.fillStyle = '#000'; bx.fillRect(0, 0, W, H);
+			bx.globalCompositeOperation = 'lighter';
+			bx.globalAlpha = 1 / N;
+			for (let i2 = 0; i2 < N; i2++) {
+				const off = (i2 / (N - 1) - 0.5) * len;
+				bx.drawImage(LA.c, dxs * off, dys * off);
+			}
+			bx.globalAlpha = 1;
+			bx.globalCompositeOperation = 'source-over';
+			const tx2 = LT.x;
+			tx2.clearRect(0, 0, W, H);
+			tx2.drawImage(LB.c, 0, 0);
+			const fadeA = Math.min(1, env * 1.6);
+			const gr = tx2.createRadialGradient(cx, cy, R * 0.4, cx, cy, R);
+			gr.addColorStop(0, 'rgba(255,255,255,' + fadeA + ')');
+			gr.addColorStop(1, 'rgba(255,255,255,0)');
+			tx2.globalCompositeOperation = 'destination-in';
+			tx2.fillStyle = gr;
+			tx2.fillRect(0, 0, W, H);
+			tx2.globalCompositeOperation = 'source-over';
+			ax.drawImage(LT.c, 0, 0);
+		}
+
+		// 4) composite (luminance -> screen over the bg) with a soft
+		// breathing blur — the whole word drifts in and out of focus
+		const softB = 0.25 + 0.65 * (0.5 + 0.5 * Math.sin(TAU * p));
+		ctx.save();
+		ctx.globalCompositeOperation = 'screen';
+		// brightness after the focus blur re-lifts thin strokes to WHITE
+		ctx.filter = 'blur(' + softB.toFixed(2) + 'px) brightness(1.3)';
+		ctx.drawImage(LA.c, 0, 0);
+		ctx.restore();
+
+		// the white grunge plate — STATIC (the background doesn't animate)
+		if (LX) {
+			ctx.save();
+			ctx.globalCompositeOperation = 'screen';
+			ctx.globalAlpha = 0.92;
+			ctx.drawImage(LX.c, 0, 0);
+			ctx.restore();
+		}
+		if (LP) {
+			// the pill of grain fades in and out, subtly (loop-periodic)
+			ctx.save();
+			ctx.globalCompositeOperation = 'screen';
+			ctx.globalAlpha = 0.38 * (0.5 + 0.5 * Math.sin(TAU * p - Math.PI / 2));
+			ctx.drawImage(LP.c, 0, 0);
+			ctx.restore();
+		}
+		// GLOBAL FILM GRAIN, the shader way: neutral-grey noise soft-lit
+		// over the frame, alpha following 1 - smoothstep(luma)^2 — grain
+		// rides the midtones, fades off the bright type/marks, and
+		// soft-light leaves pure black untouched. Baked ONCE (static).
+		if (!grainCv || grainKey !== fitKey) {
+			const fr = ctx.getImageData(0, 0, W, H);
+			const gcv = document.createElement('canvas');
+			gcv.width = W; gcv.height = H;
+			const gx2 = gcv.getContext('2d');
+			const gd2 = gx2.createImageData(W, H);
+			let sd2 = (97 * 2654435761) >>> 0;
+			const rn2 = () => ((sd2 = (sd2 * 1664525 + 1013904223) >>> 0) / 4294967296);
+			for (let i2 = 0; i2 < gd2.data.length; i2 += 4) {
+				const lum = fr.data[i2] / 255;
+				const t2 = Math.min(1, Math.max(0, (lum - 0.3) / 0.6));
+				const resp = t2 * t2 * (3 - 2 * t2);
+				const n2 = (rn2() + rn2() + rn2() - 1.5) * 60;
+				gd2.data[i2] = gd2.data[i2 + 1] = gd2.data[i2 + 2] = 128 + n2;
+				gd2.data[i2 + 3] = 255 * 0.5 * (1 - resp * resp);
+			}
+			gx2.putImageData(gd2, 0, 0);
+			grainCv = gcv; grainKey = fitKey;
+		}
+		ctx.save();
+		ctx.globalCompositeOperation = 'soft-light';
+		ctx.drawImage(grainCv, 0, 0);
+		ctx.restore();
+	}
+	return { reset, step, render, ready };
+}
+
 export const SCENES = [
 	// `smooth: true` = the scene's step(dt) is genuinely time-based, so the
 	// PREVIEW can run at full display rate (60fps) for silky motion; the export
@@ -5080,6 +7109,12 @@ export const SCENES = [
 	{ id: 'blobc125', name: 'Blob 12-5',    make: sceneBlob125, usesPreset: false, smooth: true },
 	{ id: 'glass01',  name: 'GLASS01',      make: sceneGlass01, usesPreset: false, smooth: true },
 	{ id: 'coin',     name: 'Coin',         make: sceneCoin,    usesPreset: false, smooth: true },
+	{ id: 'sphere',   name: 'Sphere',       make: sceneSphere,  usesPreset: false, smooth: true },
+	{ id: 'metal',    name: 'Liquid Metal', make: sceneMetal,   usesPreset: false, smooth: true },
+	{ id: 'typeorb',  name: 'Type Orbit',   make: sceneTypeOrb, usesPreset: false, smooth: true },
+	{ id: 'flex',     name: 'Flex',         make: sceneFlex,    usesPreset: false, smooth: true },
+	{ id: 'bleed',    name: 'Full Bleed',   make: sceneBleed,   usesPreset: false, smooth: true },
+	{ id: 'grit',     name: 'Grit',         make: sceneGrit,    usesPreset: false, smooth: true },
 	{ id: 'clouds',   name: 'Clouds',       make: sceneClouds,  usesPreset: false, smooth: true },
 	{ id: 'garble',   name: 'Garble',       make: sceneGarble,  usesPreset: false, smooth: true },
 	{ id: 'dots',    name: 'Halftone',      make: sceneDots,    usesPreset: false, smooth: true },

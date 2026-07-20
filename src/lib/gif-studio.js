@@ -345,9 +345,18 @@ async function encodeGifInline({ W, H, fps, frames, scene, delayMs, onProgress, 
 		if (f > 0) scene.step(dt);
 		scene.render(ctx);
 		const { data } = ctx.getImageData(0, 0, W, H);
-		const palette = quantize(data, 256, { format: 'rgb565' });
-		const index = applyPalette(data, palette, 'rgb565');
-		gif.writeFrame(index, W, H, { palette, delay });
+		// binary alpha for transparent-background scenes — see gif-worker.js
+		let hasAlpha = false;
+		for (let i = 3; i < data.length; i += 4) if (data[i] < 128) { hasAlpha = true; break; }
+		const format = hasAlpha ? 'rgba4444' : 'rgb565';
+		const palette = quantize(data, 256, { format, oneBitAlpha: true });
+		const index = applyPalette(data, palette, format);
+		const ti = hasAlpha ? palette.findIndex((p) => p[3] === 0) : -1;
+		gif.writeFrame(index, W, H, {
+			palette, delay,
+			transparent: ti >= 0, transparentIndex: Math.max(0, ti),
+			dispose: ti >= 0 ? 2 : -1
+		});
 		onProgress?.((f + 1) / frames);
 		// Yield periodically so the UI (progress bar) stays responsive.
 		if ((f & 3) === 0) await new Promise((r) => requestAnimationFrame(r));
@@ -394,15 +403,22 @@ export async function encodeWebP({ W, H, fps, frames, scene, delayMs, onProgress
 	const le32 = (n) => [n & 255, (n >> 8) & 255, (n >> 16) & 255, (n >> 24) & 255];
 	const le24 = (n) => [n & 255, (n >> 8) & 255, (n >> 16) & 255];
 	const parts = [];
-	// VP8X: animation flag (bit 1 of byte 0 = 0x02), canvas size minus one
-	parts.push([...'VP8X'].map((c) => c.charCodeAt(0)), le32(10), [0x02, 0, 0, 0, ...le24(W - 1), ...le24(H - 1)]);
-	// ANIM: white background, loop count 0 = forever
-	parts.push([...'ANIM'].map((c) => c.charCodeAt(0)), le32(6), [255, 255, 255, 255, 0, 0]);
+	// alpha flag (0x10) whenever any frame carries an ALPH chunk (lossy+alpha)
+	// or is losslessly coded (VP8L embeds its alpha) — transparent-bg scenes
+	const anyAlpha = frameChunks.some((chunks) =>
+		chunks.some((c) => (c[0] === 65 && c[1] === 76) || (c[0] === 86 && c[3] === 76)) // 'ALPH' | 'VP8L'
+	);
+	// VP8X: animation flag (bit 1 of byte 0 = 0x02) + alpha, canvas size minus one
+	parts.push([...'VP8X'].map((c) => c.charCodeAt(0)), le32(10), [0x02 | (anyAlpha ? 0x10 : 0), 0, 0, 0, ...le24(W - 1), ...le24(H - 1)]);
+	// ANIM: transparent background, loop count 0 = forever
+	parts.push([...'ANIM'].map((c) => c.charCodeAt(0)), le32(6), [0, 0, 0, 0, 0, 0]);
 	for (const chunks of frameChunks) {
 		let inner = 0;
 		for (const c of chunks) inner += c.length;
-		// ANMF header: x/2, y/2, (w-1), (h-1) as 24-bit, duration 24-bit, flags (blend=0, dispose=0)
-		parts.push([...'ANMF'].map((c) => c.charCodeAt(0)), le32(16 + inner), [...le24(0), ...le24(0), ...le24(W - 1), ...le24(H - 1), ...le24(delay), 0]);
+		// ANMF header: x/2, y/2, (w-1), (h-1) as 24-bit, duration 24-bit,
+		// flags bit0 = 1: NO blend — each full-canvas frame overwrites, so
+		// transparent areas don't composite over the previous frame
+		parts.push([...'ANMF'].map((c) => c.charCodeAt(0)), le32(16 + inner), [...le24(0), ...le24(0), ...le24(W - 1), ...le24(H - 1), ...le24(delay), 1]);
 		for (const c of chunks) parts.push(c);
 	}
 	let total = 4; // 'WEBP'

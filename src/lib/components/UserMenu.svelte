@@ -45,6 +45,9 @@
 				<a href="/app/theme" class="dropdown-item" onclick={() => menuOpen = false}>
 					Customize theme
 				</a>
+				<a href="/app/ai" class="dropdown-item" onclick={() => menuOpen = false}>
+					Gemma AI
+				</a>
 				<form method="POST" action="/app?/signout" style="display:contents">
 					<button type="submit" class="dropdown-item dropdown-item-btn">Sign out</button>
 				</form>

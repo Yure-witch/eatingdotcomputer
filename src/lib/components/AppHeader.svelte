@@ -6,6 +6,7 @@
 	import UserMenu from './UserMenu.svelte';
 	import NotificationBell from './NotificationBell.svelte';
 	import { pageTitle, pageTitleHref } from '$lib/page-title-store.js';
+	import GemmaIcon from '$lib/components/GemmaIcon.svelte';
 
 	// Live pager state (set by /app/+layout). Lets the header switch out of
 	// chat-mode the moment a conversation is swiped past halfway toward the menu,
@@ -42,6 +43,14 @@
 	);
 	const _convMobile = $derived(_isConv && _isMobile && !_convSwipedAway);
 
+	// When a page publishes a title, the title lockup carries the class
+	// switcher; the wordmark block is then EMPTY on desktop (the wordmark
+	// itself is desktop-hidden — the sidebar has it) but still eats a flex
+	// gap, indenting the title ~2rem past where other pages' header content
+	// starts. Hide the whole block on desktop in that case.
+	const _titleHasSwitcher = $derived(!!($pageTitle && currentClass?.name && !_convSwipedAway));
+	const _isGemma = $derived($page.url.pathname === '/app/chat/gemma');
+
 	// Publish the header's real rendered height as --header-h so the pager
 	// panels / chat menu / overlay can sit EXACTLY below it (the hardcoded 52px
 	// was a few px short, so the menu underlapped the bar). Tracks changes
@@ -59,9 +68,14 @@
 
 <header class="app-header" class:conv-mobile={_convMobile} bind:this={headerEl}>
 	{#if !_convMobile}
-		<div class="wordmark-wrap">
+		<div class="wordmark-wrap" class:desktop-hidden={_titleHasSwitcher}>
 			<a class="wordmark" href="/">eating.computer</a>
-			<ClassSwitcher {currentClass} {allClasses} />
+			<!-- When a page title is showing, ITS lockup carries the class
+			     switcher (title + dropdown) — don't render a second, lone
+			     switcher under the wordmark next to it. -->
+			{#if !_titleHasSwitcher}
+				<ClassSwitcher {currentClass} {allClasses} />
+			{/if}
 		</div>
 	{/if}
 	{#if $pageTitle && !_convSwipedAway}
@@ -74,22 +88,32 @@
 		     title so a #channel or a DM partner is always grounded in
 		     which class context the conversation belongs to. */ -->
 		<div class="page-title-block">
-			{#if $pageTitleHref}
-				<a class="page-title page-title-link" href={$pageTitleHref}>{$pageTitle}</a>
-			{:else}
-				<h1 class="page-title">{$pageTitle}</h1>
-			{/if}
+			<div class="page-title-row">
+				{#if _isGemma}<GemmaIcon size={22} />{/if}
+				{#if $pageTitleHref}
+					<a class="page-title page-title-link" href={$pageTitleHref}>{$pageTitle}</a>
+				{:else}
+					<h1 class="page-title">{$pageTitle}</h1>
+				{/if}
+				{#if _isGemma}<span class="page-title-desc">AI assistant · runs on your own key</span>{/if}
+			</div>
 			{#if currentClass?.name}
-				<span class="page-subtitle">{currentClass.name}</span>
+				<!-- The class dropdown rides under the page title on every
+				     surface (mobile chat bar AND desktop) — not a plain-text
+				     label. Same ClassSwitcher the wordmark block carries. -->
+				<ClassSwitcher {currentClass} {allClasses} />
 			{/if}
 		</div>
 	{/if}
 	<div class="header-right">
 		{#if _convMobile}
-			<button class="header-close" onclick={() => goto('/app/chat')} title="Close chat" aria-label="Close chat">
+			<!-- Slide back to the chat menu like a swipe would; hard-navigate
+			     only if the pager isn't active to animate it. -->
+			<button class="header-close" onclick={() => { if (!pagerNav?.slideToChatMenu?.()) goto('/app/chat'); }} title="Close chat" aria-label="Close chat">
 				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
 			</button>
 		{:else}
+			<!-- Bell sits top-right, just left of the profile photo -->
 			<NotificationBell {user} />
 			<UserMenu {user} />
 		{/if}
@@ -111,9 +135,16 @@
 		text-decoration: none; white-space: nowrap;
 	}
 	.wordmark:hover { opacity: 0.7; }
+	@media (min-width: 641px) {
+		/* Empty on desktop when the title carries the switcher — drop it so
+		   the title lockup starts at the same left offset as every page. */
+		.wordmark-wrap.desktop-hidden { display: none; }
+	}
 	/* Title + class subtitle stack. The block grows into the flex
 	   space the lone <h1> used to take, so the right-side controls
 	   keep their alignment. */
+	.page-title-row { display: flex; align-items: center; gap: 0.45rem; min-width: 0; }
+	.page-title-desc { font-size: 0.72rem; color: var(--muted-fg); white-space: nowrap; }
 	.page-title-block {
 		display: flex;
 		flex-direction: column;
@@ -133,15 +164,6 @@
 		text-overflow: ellipsis;
 		white-space: nowrap;
 		text-align: left;
-	}
-	.page-subtitle {
-		font-size: 0.72rem;
-		color: var(--md-sys-color-on-surface-variant, var(--muted-fg));
-		text-transform: uppercase;
-		letter-spacing: 0.08em;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
 	}
 	.page-title-link {
 		text-decoration: none;

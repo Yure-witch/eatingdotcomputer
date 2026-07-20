@@ -29,9 +29,12 @@
 	import { mountStaticEmotes, ensureSelectableEmoteShell } from '$lib/emote-mount.js';
 	import FileTypeIcon from '$lib/components/FileTypeIcon.svelte';
 	import ProfileHover from '$lib/components/ProfileHover.svelte';
+	import ExpressionTip from '$lib/components/ExpressionTip.svelte';
+	import ThreadPanel from '$lib/components/ThreadPanel.svelte';
 	import Avatar from '$lib/components/Avatar.svelte';
 	import UserMenu from '$lib/components/UserMenu.svelte';
 	import { loadEmojiNames, getEmojiName } from '$lib/emoji-names.js';
+	import { wrapEmojiInText } from '$lib/emoji-tip.js';
 	import { initSemanticSearch, searchEmoji, cpToChar, onSemanticReady } from '$lib/emoji-semantic.js';
 	import { getCustomEmojiMap, getCachedCustomEmojiMap } from '$lib/custom-emoji-store.js';
 	import {
@@ -39,7 +42,7 @@
 		SZ_OPEN, SZ_VEND,
 		TEXT_COLORS, WDTH_FX_MAP, WDTH_STEPS, WGHT_FX_MAP, WGHT_STEPS, SZ_FX_MAP, SZ_STEPS,
 		JUMBO_SIZES, EMOJI_RE_G,
-		escapeHtml, nestedFxHtml, ekTokenToUrl, normalizeLegacyMarkup, unicodeToReadable, stripMarkup,
+		escapeHtml, nestedFxHtml, ekTokenToUrl, normalizeLegacyMarkup, unicodeToReadable, readableToUnicode, stripMarkup, _segmenter, _isEmojiSeg,
 		stripFormatting, markupToSegments, segmentsToMarkup, jumboEmojiCount, jumboEmojiCountM, bubbleFontSize,
 		createContentRenderer, clearJumboCache
 	} from '$lib/message-render.js';
@@ -97,6 +100,58 @@
 	const presenceStatusCtx = getContext('presenceStatus');
 	const userMap = buildUserMap(data.currentUser, data.users);
 	const convId = data.channelId;
+
+	// ── Threads (Slack-style) ────────────────────────────────────────
+	// Live replies in Firebase (threads/{convId}/{parentId}/messages),
+	// archived replies in Turso (thread_messages, via /api/chat/sync).
+	// Chip count = archived + live; an open panel reports the exact
+	// merged total which then takes precedence.
+	let threadOpen = $state(null);          // parent message object
+	let threadCountsArchived = $state({});  // parentId → { n, lastAt } (Turso)
+	let threadCountsLive = $state({});      // parentId → n (Firebase)
+	let threadCountsExact = $state({});
+	let threadLiveLastAt = $state({});      // parentId → last live reply ts
+	let threadReadAt = $state({});          // parentId → my read cursor (threadReads/{uid})
+	// decode ms timestamp from a Firebase push id (first 8 chars)
+	const _TPUSH = '-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz';
+	function _threadPushTs(id) {
+		let ts = 0;
+		for (let i = 0; i < 8; i++) ts = ts * 64 + _TPUSH.indexOf(id[i]);
+		return ts;
+	}
+	function threadUnread(id) {
+		if (!threadCount(id)) return false;
+		const last = Math.max(threadLiveLastAt[id] ?? 0, threadCountsArchived[id]?.lastAt ?? 0);
+		return last > (threadReadAt[id] ?? 0);
+	}     // parentId → merged total (open panel)
+	function threadCount(id) {
+		if (threadCountsExact[id] != null) return threadCountsExact[id];
+		return (threadCountsArchived[id]?.n ?? 0) + (threadCountsLive[id] ?? 0);
+	}
+	onMount(() => {
+		fetch(`/api/chat/thread?convId=${encodeURIComponent(convId)}&counts=1`)
+			.then((r) => (r.ok ? r.json() : null))
+			.then((d) => { if (d?.counts) threadCountsArchived = d.counts; })
+			.catch(() => {});
+		const tref = ref(db, `threads/${convId}`);
+		onValue(tref, (snap) => {
+			const next = {};
+			const lastAt = {};
+			if (snap.exists()) {
+				for (const [pid, node] of Object.entries(snap.val())) {
+					const keys = Object.keys(node?.messages ?? {});
+					next[pid] = keys.length;
+					// push ids sort lexicographically → max key = latest reply
+					if (keys.length) lastAt[pid] = _threadPushTs(keys.sort().at(-1));
+				}
+			}
+			threadCountsLive = next;
+			threadLiveLastAt = lastAt;
+		});
+		const trref = ref(db, `threadReads/${data.currentUser.id}`);
+		onValue(trref, (snap) => { threadReadAt = snap.val() || {}; });
+		return () => { off(tref); off(trref); };
+	});
 
 	let messages = $state([...data.history]);
 	let hasMoreHistory = $state(data.hasMoreHistory ?? false);
@@ -283,75 +338,8 @@
 
 	function onMsgListMouseleave() { emojiTooltip = null; }
 
-	const _isEmojiSeg = s => /\p{Extended_Pictographic}|\p{Regional_Indicator}/u.test(s);
-	const _segmenter = new Intl.Segmenter();
-	// Strip skin-tone modifiers, ZWJ, and variation selectors to get base emoji
-	const MODIFIER_STRIP_RE = /[\u{1F3FB}-\u{1F3FF}\uFE0F\u200D]/gu;
-	const SKIN_TONE_NAMES = {
-		'\u{1F3FB}': 'light skin tone', '\u{1F3FC}': 'medium-light skin tone',
-		'\u{1F3FD}': 'medium skin tone', '\u{1F3FE}': 'medium-dark skin tone', '\u{1F3FF}': 'dark skin tone'
-	};
-	const SKIN_STRIP_RE = /[\u{1F3FB}-\u{1F3FF}]/gu;
-	function emojiDisplayName(g) {
-		const direct = getEmojiName(g);
-		if (direct) return direct;
-		// Collect all skin tones in order
-		const skinTones = [...g.matchAll(SKIN_STRIP_RE)].map(m => SKIN_TONE_NAMES[m[0]]);
-		// 1. Strip only skin tones, keep ZWJ/VS16 → try as single concept
-		const noSkin = g.replace(SKIN_STRIP_RE, '');
-		let baseName = getEmojiName(noSkin) || getEmojiName(noSkin.replace(/\uFE0F/g, ''));
-		if (baseName) return skinTones.length ? `${baseName}: ${skinTones.join(', ')}` : baseName;
-		// 2. Strip everything → try as single concept
-		const fullyStripped = g.replace(MODIFIER_STRIP_RE, '');
-		baseName = fullyStripped ? getEmojiName(fullyStripped) : null;
-		if (baseName) return skinTones.length ? `${baseName}: ${skinTones.join(', ')}` : baseName;
-		// 3. Try first pictographic base
-		if (fullyStripped) {
-			const parts = [..._segmenter.segment(fullyStripped)].filter(s => EMOJI_RE_G.test(s.segment));
-			if (parts.length === 1) {
-				baseName = getEmojiName(parts[0].segment);
-				if (baseName) {
-					const qualifiers = [...skinTones];
-					if (g.includes('\u2640')) qualifiers.unshift('woman');
-					else if (g.includes('\u2642')) qualifiers.unshift('man');
-					if (g.includes('\u27A1')) qualifiers.push('facing right');
-					else if (g.includes('\u2B05')) qualifiers.push('facing left');
-					return qualifiers.length ? `${baseName}: ${qualifiers.join(', ')}` : baseName;
-				}
-			}
-			// 4. Multiple base pictographics — name each ZWJ component
-			if (parts.length > 1) {
-				const componentNames = [];
-				const zwjParts = g.split('\u200D').filter(p => p.length > 0);
-				for (const part of zwjParts) {
-					const clean = part.replace(/\uFE0F/g, '');
-					if (clean === '\u2640' || clean === '\u2642' || clean === '\u27A1' || clean === '\u2B05') continue;
-					const skin = clean.match(SKIN_STRIP_RE)?.[0];
-					const base = clean.replace(SKIN_STRIP_RE, '');
-					const bName = base ? getEmojiName(base) : null;
-					const sName = skin ? SKIN_TONE_NAMES[skin] : null;
-					if (bName && sName) componentNames.push(`${bName}: ${sName}`);
-					else if (bName) componentNames.push(bName);
-				}
-				if (componentNames.length > 1) return componentNames.join(' + ');
-				if (componentNames.length === 1) return componentNames[0];
-			}
-		}
-		return null;
-	}
-	function wrapEmojiInText(text) {
-		const segs = [..._segmenter.segment(text)];
-		return segs.map(seg => {
-			const g = seg.segment;
-			if (EMOJI_RE_G.test(g)) {
-				const esc = escapeHtml(g);
-				const name = emojiDisplayName(g);
-				const nameHtml = name ? `<span class="e-tip-name">${escapeHtml(name)}</span>` : '';
-				return `<span class="e-tip">${esc}<span class="e-tip-pop"><span class="e-tip-char">${esc}</span>${nameHtml}</span></span>`;
-			}
-			return escapeHtml(g);
-		}).join('');
-	}
+	// emoji hover-name machinery lives in $lib/emoji-tip.js (shared with threads)
+
 
 	let revealedInvisible = $state(new Set());
 	function revealInvisible(id) { revealedInvisible = new Set([...revealedInvisible, id]); }
@@ -1393,8 +1381,11 @@
 		}
 
 		const newMarkup = segmentsToMarkup(mergedSegs);
+		// Build the new nodes BEFORE clearing — if the renderer ever throws,
+		// the compose keeps its content instead of being wiped mid-rebuild.
+		const newNodes = ceMarkupToNodes(newMarkup);
 		inputEl.innerHTML = '';
-		for (const node of ceMarkupToNodes(newMarkup)) inputEl.appendChild(node);
+		for (const node of newNodes) inputEl.appendChild(node);
 		mountStaticEmotes(inputEl);
 
 		// Restore selection over the same plain-text range so the bar stays visible
@@ -2482,7 +2473,9 @@
 
 	async function saveEdit() {
 		const msgId = editingMsgId;
-		const content = editContent.replace(/​/g, '').trim();
+		// the textarea holds READABLE markup ([rainbow]…[/rainbow], [sz:150])
+		// — convert back to the PUA wire format or effects die on save
+		const content = readableToUnicode(editContent.replace(/​/g, '')).trim();
 		if (!content || !msgId) { editingMsgId = null; return; }
 		editingMsgId = null;
 		messages = messages.map((m) => m.id === msgId ? { ...m, content, edited: true } : m);
@@ -2843,9 +2836,12 @@
 		if (_tgSprites.has(span)) return;
 		const fs = parseFloat(getComputedStyle(span).fontSize) || 16;
 		const size = Math.max(16, Math.round(fs * 1.4)); // .tg-emoji is 1.4em
+		// oversample 2: sent emotes rasterise at double density — higher
+		// resolution than the picker's cells — so they stay crisp through
+		// focus previews, zooms and inline text-size effects.
 		let props;
-		if (span.dataset.tgCp) props = { cp: span.dataset.tgCp, size };
-		else if (span.dataset.tgPack && span.dataset.tgId) props = { short: span.dataset.tgPack, id: span.dataset.tgId, size };
+		if (span.dataset.tgCp) props = { cp: span.dataset.tgCp, size, oversample: 2 };
+		else if (span.dataset.tgPack && span.dataset.tgId) props = { short: span.dataset.tgPack, id: span.dataset.tgId, size, oversample: 2 };
 		else return;
 		try { _tgSprites.set(span, mount(SpriteSticker, { target: span, props })); } catch {}
 	}
@@ -3656,27 +3652,14 @@
 </svg>
 <canvas bind:this={heartsCanvas} class="hearts-canvas"></canvas>
 
-{#if emojiTooltip}
-	<div class="emoji-tooltip" style="--tip-x: {emojiTooltip.left}px; --tip-y: {emojiTooltip.anchorY}px">
-		{#if emojiTooltip.type === 'ek'}
-			{#if emojiTooltip.url}<img class="et-img" src={emojiTooltip.url} alt="" />{/if}
-			<div class="et-ek-mix">
-				<span class="et-mix-char">{emojiTooltip.parentChar}</span>
-				<span class="et-mix-plus">+</span>
-				<span class="et-mix-char">{emojiTooltip.childChar}</span>
-			</div>
-		{:else if emojiTooltip.type === 'ce'}
-			<img class="et-img" src={emojiTooltip.url} alt={emojiTooltip.shortcode} />
-			<span class="et-shortcode">:{emojiTooltip.shortcode}:</span>
-		{/if}
-	</div>
-{/if}
+<!-- expression hover info (EK sources / CE shortcode / emoji names) — shared component -->
+<ExpressionTip root={listEl} />
 
 <!-- chat-header removed — channel name now publishes to the global
      AppHeader via pageTitle. On mobile, BottomNav's Chat button opens
      the chat sidebar, replacing what the local sidebar-toggle used to
      do here. -->
-<div class="message-list" bind:this={listEl} style:padding-bottom="{inputAreaHeight}px" onscroll={onListScroll} oncopy={onMsgListCopy} onmouseover={onMsgListMouseover} onmousemove={onMsgListMousemove} onmouseleave={onMsgListMouseleave}>
+<div class="message-list" bind:this={listEl} style:padding-bottom="{inputAreaHeight}px" onscroll={onListScroll} oncopy={onMsgListCopy}>
 	{#if loadingMore}
 		<div class="load-more-spinner"><span class="sending-spinner"></span></div>
 	{/if}
@@ -3789,7 +3772,7 @@
 					<button class="action-btn" onclick={(e) => { e.stopPropagation(); startReply(msg); }} title="Reply">
 						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>
 					</button>
-					<button class="action-btn" title="Reply in thread">
+					<button class="action-btn" onclick={(e) => { e.stopPropagation(); threadOpen = msg; }} title="Reply in thread">
 						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
 					</button>
 					<button class="action-btn" class:action-btn-starred={starredIds.has(msg.id)} onclick={(e) => { e.stopPropagation(); toggleStar(msg); }} title={starredIds.has(msg.id) ? 'Unstar' : 'Star message'}>
@@ -3860,6 +3843,13 @@
 						{/if}
 					{/each}
 				</div>
+			{/if}
+			{#if threadCount(msg.id) > 0}
+				<button class="thread-chip" class:unread={threadUnread(msg.id)} onclick={() => (threadOpen = msg)} title="Open thread">
+					<span class="msi msi-14">forum</span>
+					{threadCount(msg.id)} {threadCount(msg.id) === 1 ? 'reply' : 'replies'}
+					{#if threadUnread(msg.id)}<span class="thread-chip-dot" aria-label="Unread replies"></span>{/if}
+				</button>
 			{/if}
 			{#if readMarkers[msg.id]?.length}
 				<!-- Per-user read markers. Each reader's avatar sits at the
@@ -3975,6 +3965,22 @@
 	</div>
 {/if}
 
+
+{#if threadOpen}
+	<!-- keyed: opening a different thread remounts the panel (fresh fetch +
+	     subscriptions) instead of mutating a live instance -->
+	{#key threadOpen.id}
+	<ThreadPanel
+		{convId}
+		parent={threadOpen}
+		classId={data.currentClass?.id ?? null}
+		currentUser={data.currentUser}
+		resolveUser={(uid) => userMap[uid] ?? null}
+		onClose={() => (threadOpen = null)}
+		onCountChange={(pid, total) => { threadCountsExact = { ...threadCountsExact, [pid]: total }; }}
+	/>
+	{/key}
+{/if}
 
 <div class="input-area" class:kb-open={keyboardOpen} class:picker-open={_anyComposePicker} bind:clientHeight={inputAreaHeight} style:--input-area-h="{inputAreaHeight}px">
 	{#if replyingTo}
@@ -4420,6 +4426,25 @@
 	   under adjacent bubbles) and turn OFF mobile paint-containment for it so
 	   the bar — which floats above the message's own box — is never clipped. */
 	.message:hover { z-index: 40; content-visibility: visible; }
+
+	/* Thread chip — Slack-style "N replies" under a bubble */
+	.thread-chip {
+		display: inline-flex; align-items: center; gap: 0.3rem;
+		margin-top: 0.25rem; padding: 0.2rem 0.6rem;
+		border: 1.5px solid var(--border); border-radius: 999px;
+		background: var(--paper); color: var(--md-sys-color-primary, var(--accent));
+		font-family: inherit; font-size: 0.72rem; font-weight: 600;
+		cursor: pointer; transition: border-color 0.12s, background 0.12s;
+	}
+	.thread-chip:hover { border-color: var(--md-sys-color-primary, var(--accent)); background: var(--surface-2); }
+	.thread-chip.unread { border-color: var(--md-sys-color-primary, var(--accent)); font-weight: 700; }
+	.thread-chip-dot {
+		width: 7px; height: 7px; border-radius: 50%;
+		/* always RED — unread must read as unread regardless of the theme's
+		   primary colour (matches the sidebar's unread dots) */
+		background: #e53935;
+		flex-shrink: 0;
+	}
 
 	.msg-actions-bar {
 		position: absolute;
@@ -5338,7 +5363,7 @@
 		border-radius: 8px; cursor: pointer; transition: background 0.1s, border-color 0.1s;
 	}
 	.effect-tile:hover { background: var(--surface-2); border-color: var(--border); }
-	.effect-tile.active { background: #fff8e6; border-color: #d4aa30; }
+	.effect-tile.active { background: color-mix(in srgb, var(--accent) 14%, var(--paper)); border-color: var(--accent); }
 	.effect-tile-icon { font-size: 1.25rem; line-height: 1; pointer-events: none; }
 	.effect-tile-label { font-size: 0.67rem; font-weight: 600; color: var(--ink); white-space: nowrap; pointer-events: none; }
 	.wiggle-slider-row {

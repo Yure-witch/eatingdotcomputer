@@ -834,7 +834,7 @@
 					<input class="fi-typo-range" type="range" min="0.55" max="5" step="0.05"
 						bind:value={messageFontSize}
 						oninput={() => { if (_savedCeSel) { applyInlineSize(messageFontSize); showTextFxBar = true; } }} />
-					{#if messageFontSize !== 1.0}<button class="fi-typo-reset" onmousedown={(e) => { e.preventDefault(); messageFontSize = 1.0; _lastInlineTypo['sz-'] = null; if (_savedCeSel) applyInlineSize(1.0); }}>↺</button>{/if}
+					<button class="fi-typo-reset" class:fi-reset-off={messageFontSize === 1.0} onmousedown={(e) => { e.preventDefault(); messageFontSize = 1.0; _lastInlineTypo['sz-'] = null; if (_savedCeSel) applyInlineSize(1.0); }}>↺</button>
 				</div>
 			{/if}
 			<div class="fi-typo-row">
@@ -842,14 +842,14 @@
 				<input class="fi-typo-range" type="range" min="100" max="700" step="50"
 					bind:value={messageFontWeight}
 					oninput={() => { if (_savedCeSel) { applyInlineWeight(messageFontWeight); showTextFxBar = true; } }} />
-				{#if messageFontWeight !== 400}<button class="fi-typo-reset" onmousedown={(e) => { e.preventDefault(); messageFontWeight = 400; _lastInlineTypo['wght-'] = null; if (_savedCeSel) applyInlineWeight(400); }}>↺</button>{/if}
+				<button class="fi-typo-reset" class:fi-reset-off={messageFontWeight === 400} onmousedown={(e) => { e.preventDefault(); messageFontWeight = 400; _lastInlineTypo['wght-'] = null; if (_savedCeSel) applyInlineWeight(400); }}>↺</button>
 			</div>
 			<div class="fi-typo-row">
 				<span class="fi-typo-label">Width</span>
 				<input class="fi-typo-range" type="range" min="25" max="150" step="1"
 					bind:value={messageFontStretch}
 					oninput={() => { if (_savedCeSel) { applyInlineWidth(messageFontStretch); showTextFxBar = true; } }} />
-				{#if messageFontStretch !== 100}<button class="fi-typo-reset" onmousedown={(e) => { e.preventDefault(); messageFontStretch = 100; _lastInlineTypo['wdth-'] = null; if (_savedCeSel) applyInlineWidth(100); }}>↺</button>{/if}
+				<button class="fi-typo-reset" class:fi-reset-off={messageFontStretch === 100} onmousedown={(e) => { e.preventDefault(); messageFontStretch = 100; _lastInlineTypo['wdth-'] = null; if (_savedCeSel) applyInlineWidth(100); }}>↺</button>
 			</div>
 			<button class="fi-default-btn" onmousedown={(e) => {
 				e.preventDefault();
@@ -859,29 +859,33 @@
 			}}>Default</button>
 		</div>
 		<div class="fi-fx-bar">
-			<button class="fi-layer-toggle" class:fi-layer-on={allowFxNesting} onmousedown={(e) => { e.preventDefault(); allowFxNesting = !allowFxNesting; }} title="Stack different effects on the same text">
-				<span class="fi-toggle-track"><span class="fi-toggle-knob"></span></span>
-				Layer
-			</button>
-			<button class="fi-layer-toggle" class:fi-layer-on={allowFxMultiply} onmousedown={(e) => { e.preventDefault(); allowFxMultiply = !allowFxMultiply; }} title="Apply the same effect multiple times on the same text">
-				<span class="fi-toggle-track"><span class="fi-toggle-knob"></span></span>
-				Multiply
-			</button>
-			<button class="fi-layer-toggle" class:fi-layer-on={fxSplitWords} onmousedown={(e) => { e.preventDefault(); fxSplitWords = !fxSplitWords; }} title="Apply effect to each word separately">
-				<span class="fi-toggle-track"><span class="fi-toggle-knob"></span></span>
-				Per word
-			</button>
-			<span class="fi-divider"></span>
-			{#each TEXT_FXS as fx}
-				<button class="fi-fx-btn" onmousedown={(e) => { e.preventDefault(); applyTextFx(fx.name); }}>
-					{#if fx.name === 'ripple'}
-						{@html [...fx.label].map((c, i) => `<span class="tfx tfx-ripple" style="animation-delay:${(i * 0.08).toFixed(2)}s;display:inline-block">${c}</span>`).join('')}
-					{:else}
-						<span class="tfx tfx-{fx.name}">{fx.label}</span>
-					{/if}
+			<div class="fi-fx-toggles">
+				<button class="fi-layer-toggle" class:fi-layer-on={allowFxNesting} onmousedown={(e) => { e.preventDefault(); allowFxNesting = !allowFxNesting; }} title="Stack different effects on the same text">
+					<span class="fi-toggle-track"><span class="fi-toggle-knob"></span></span>
+					Layer
 				</button>
-			{/each}
-			<button class="fi-fx-close" onmousedown={(e) => { e.preventDefault(); showTextFxBar = false; }}>✕</button>
+				<button class="fi-layer-toggle" class:fi-layer-on={allowFxMultiply} onmousedown={(e) => { e.preventDefault(); allowFxMultiply = !allowFxMultiply; }} title="Apply the same effect multiple times on the same text">
+					<span class="fi-toggle-track"><span class="fi-toggle-knob"></span></span>
+					Multiply
+				</button>
+				<button class="fi-layer-toggle" class:fi-layer-on={fxSplitWords} onmousedown={(e) => { e.preventDefault(); fxSplitWords = !fxSplitWords; }} title="Apply effect to each word separately">
+					<span class="fi-toggle-track"><span class="fi-toggle-knob"></span></span>
+					Per word
+				</button>
+				<button class="fi-fx-close" onmousedown={(e) => { e.preventDefault(); showTextFxBar = false; }}>✕</button>
+			</div>
+			<div class="fi-fx-list">
+				{#each TEXT_FXS as fx}
+					<button class="fi-fx-btn" onmousedown={(e) => { e.preventDefault(); applyTextFx(fx.name); }}>
+						{#if fx.name === 'ripple' || fx.name === 'grow' || fx.name === 'shrink'}
+							<!-- per-grapheme effects preview their own letter-by-letter stagger -->
+							{@html [...fx.label].map((c, i) => `<span class="tfx tfx-${fx.name}" style="animation-delay:${(i * 0.08).toFixed(2)}s;display:inline-block">${c}</span>`).join('')}
+						{:else}
+							<span class="tfx tfx-{fx.name}">{fx.label}</span>
+						{/if}
+					</button>
+				{/each}
+			</div>
 		</div>
 	{/if}
 </div>
@@ -972,36 +976,50 @@
 	}
 	.fi-rainbow-btn:hover { background: var(--surface-2); }
 
+	/* Typo bar: sliders sit in aligned grid rows (label | slider | reset) —
+	   the reset slot is always reserved so a slider doesn't jump sideways
+	   when its ↺ appears; Default hangs off the end of the last row. */
 	.fi-typo-bar {
-		display: flex; gap: 0.5rem; padding: 0.35rem 0.85rem;
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+		column-gap: 1.1rem; row-gap: 0.3rem;
+		align-items: center;
+		padding: 0.45rem 0.85rem;
 		border-top: 1px solid var(--border); background: var(--surface-2);
-		flex-wrap: wrap;
 	}
-	.fi-typo-row { display: flex; align-items: center; gap: 0.35rem; flex: 1; min-width: 100px; }
+	.fi-typo-row {
+		display: grid; grid-template-columns: 2.9rem 1fr 1.1rem;
+		align-items: center; gap: 0.35rem; min-width: 0;
+	}
 	.fi-typo-label {
 		font-size: 0.65rem; font-weight: 600; color: var(--muted-fg);
-		text-transform: uppercase; letter-spacing: 0.03em; width: 2.5rem; flex-shrink: 0;
+		text-transform: uppercase; letter-spacing: 0.03em;
 	}
-	.fi-typo-range { flex: 1; height: 3px; accent-color: var(--ink, var(--ink)); cursor: pointer; }
+	.fi-typo-range { width: 100%; height: 3px; accent-color: var(--ink, var(--ink)); cursor: pointer; min-width: 0; }
 	.fi-typo-reset {
 		background: none; border: none; color: var(--muted-fg); font-size: 0.7rem;
-		cursor: pointer; padding: 0 0.15rem; line-height: 1; flex-shrink: 0;
+		cursor: pointer; padding: 0; line-height: 1; width: 1.1rem;
 		transition: color 0.1s;
 	}
 	.fi-typo-reset:hover { color: var(--ink, var(--ink)); }
+	.fi-reset-off { visibility: hidden; }
 	.fi-default-btn {
+		grid-column: 1 / -1; justify-self: end;
 		padding: 0.15rem 0.5rem; border: 1px solid var(--border); border-radius: 5px;
 		background: none; font-family: inherit; font-size: 0.62rem; font-weight: 600;
-		color: var(--muted-fg); cursor: pointer; white-space: nowrap; flex-shrink: 0;
+		color: var(--muted-fg); cursor: pointer; white-space: nowrap;
 		transition: background 0.1s, color 0.1s;
 	}
 	.fi-default-btn:hover { background: var(--surface-2); color: var(--ink, var(--ink)); }
 
+	/* Fx bar: toggles get their own row (close pinned right), effect pills
+	   wrap in a uniform grid below instead of jostling with the switches. */
 	.fi-fx-bar {
-		display: flex; align-items: center; gap: 0.3rem;
-		padding: 0.35rem 0.85rem; background: var(--paper, #faf6ef); border-top: 1px solid var(--border);
-		flex-wrap: wrap;
+		display: flex; flex-direction: column; gap: 0.4rem;
+		padding: 0.4rem 0.85rem 0.5rem; background: var(--paper, #faf6ef); border-top: 1px solid var(--border);
 	}
+	.fi-fx-toggles { display: flex; align-items: center; gap: 1rem; }
+	.fi-fx-list { display: flex; flex-wrap: wrap; gap: 0.3rem; }
 	.fi-layer-toggle {
 		display: flex; align-items: center; gap: 0.4rem; flex-shrink: 0;
 		background: none; border: none; padding: 0; cursor: pointer;
@@ -1022,7 +1040,6 @@
 		transition: transform 0.2s; box-shadow: 0 1px 2px rgba(0,0,0,0.18);
 	}
 	.fi-layer-on .fi-toggle-knob { transform: translateX(0.9rem); }
-	.fi-divider { width: 1px; height: 1.1rem; background: var(--border); flex-shrink: 0; margin: 0 0.1rem; }
 	.fi-fx-btn {
 		padding: 0.18rem 0.5rem; background: var(--surface-2); border: 1.5px solid var(--border);
 		border-radius: 5px; font-size: 0.76rem; font-weight: 600; color: var(--ink, var(--ink));

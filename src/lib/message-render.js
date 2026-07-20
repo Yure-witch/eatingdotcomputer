@@ -26,8 +26,13 @@ export const TEXT_FXS = [
 	{ name: 'jitter',    label: 'Jitter'    },
 	{ name: 'big',       label: 'Big'       },
 	{ name: 'small',     label: 'Small'     },
+	{ name: 'grow',      label: 'Grow'      },
+	{ name: 'shrink',    label: 'Shrink'    },
 	{ name: 'glitch',    label: 'Glitch'    },
 ];
+
+// Effects that animate one GRAPHEME at a time (staggered wave, like ripple).
+export const PER_GRAPHEME_FXS = ['ripple', 'grow', 'shrink'];
 
 export const FX_TO_CHAR = {};
 [
@@ -36,6 +41,7 @@ export const FX_TO_CHAR = {};
 	[0xE113, 'color-green'], [0xE114, 'color-teal'], [0xE115, 'color-blue'],
 	[0xE116, 'color-purple'], [0xE117, 'color-pink'],
 	[0xE118, 'underline'], [0xE119, 'strike'], [0xE11A, 'ripple'], [0xE11B, 'glitch'],
+	[0xE11C, 'grow'], [0xE11D, 'shrink'],
 	[0xE100, 'shake'], [0xE101, 'bounce'], [0xE102, 'wave'], [0xE103, 'nod'],
 	[0xE104, 'jitter'], [0xE105, 'big'], [0xE106, 'small'],
 	[0xE120, 'wdth-25'], [0xE121, 'wdth-50'], [0xE122, 'wdth-75'], [0xE123, 'wdth-125'], [0xE124, 'wdth-150'],
@@ -152,6 +158,21 @@ export function unicodeToReadable(markup) {
 	return result;
 }
 
+/**
+ * Inverse of unicodeToReadable: `[sz:137]…[/sz]`-style readable brackets
+ * back to the PUA wire format. normalizeLegacyMarkup already handles the
+ * named effects ([rainbow] → PUA) but NOT size tags — this covers both, so
+ * edit round-trips (unicodeToReadable → textarea → back) are lossless.
+ */
+export function readableToUnicode(text) {
+	// size opens: [sz:<number>] → SZ_OPEN + digits + SZ_VEND
+	text = text.replace(/\[sz:([0-9.]+)\]/g, (_, n) => SZ_OPEN + n + SZ_VEND);
+	// size closes share the generic close marker
+	text = text.replace(/\[\/sz\]/g, FX_CLOSE_CHAR);
+	// named effects + their closes
+	return normalizeLegacyMarkup(text);
+}
+
 export function stripMarkup(text) {
 	const withoutEk = text.replace(/\[ek:[a-z0-9]+:[0-9a-f-]+:[0-9a-f-]+\]/gi, '').replace(/\[ce:[a-zA-Z0-9_-]{1,32}\]/gi, '').replace(/\[tg:[0-9a-f-]+\]/gi, '').replace(/\[tgc:[A-Za-z0-9_]+:\d+\]/g, '');
 	const normalized = normalizeLegacyMarkup(withoutEk);
@@ -223,8 +244,12 @@ export function segmentsToMarkup(segs) {
 
 // ── Jumbo emoji detection ────────────────────────────────────────────────
 
-const _isEmojiSeg = s => /\p{Extended_Pictographic}|\p{Regional_Indicator}/u.test(s);
-const _segmenter = typeof Intl !== 'undefined' && Intl.Segmenter ? new Intl.Segmenter() : null;
+// Exported: the chat pages' compose renderers (ceMarkupToNodes) walk
+// graphemes with these; they referenced them without local definitions
+// (lost in a refactor), which made every per-word/flip/ripple effect
+// apply throw and WIPE the compose box.
+export const _isEmojiSeg = s => /\p{Extended_Pictographic}|\p{Regional_Indicator}/u.test(s);
+export const _segmenter = typeof Intl !== 'undefined' && Intl.Segmenter ? new Intl.Segmenter() : null;
 export const EMOJI_RE_G = /\p{Extended_Pictographic}/u;
 
 export function jumboEmojiCount(content) {
@@ -400,8 +425,9 @@ export function createContentRenderer({ hljs = null, codeIcons = {}, getCeMap = 
 				globalWi += graphemes.filter(g => !/^\s+$/.test(g)).length;
 				return out;
 			}
-			// `ripple` applies per-grapheme.
-			if (_segmenter && fxStack.includes('ripple')) {
+			// `ripple` / `grow` / `shrink` apply per-grapheme — a staggered
+			// wave that travels through the text one letter at a time.
+			if (_segmenter && PER_GRAPHEME_FXS.some((f) => fxStack.includes(f))) {
 				const graphemes = [..._segmenter.segment(chunk)].map(g => g.segment);
 				const html = graphemes.map((g, i) =>
 					/^\s+$/.test(g) ? escapeHtml(g) : nestedFxHtml(fxStack, escapeHtml(g), `${((globalWi + i) * 0.08).toFixed(2)}s`)

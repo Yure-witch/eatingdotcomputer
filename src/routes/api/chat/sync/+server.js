@@ -161,6 +161,48 @@ export async function GET({ request }) {
 		}
 	}
 
+	// Archive THREAD replies: threads/{convId}/{parentMsgId}/messages.
+	// Same 24h TTL as top-level messages — live replies stay in RTDB for
+	// realtime, older ones become durable history in thread_messages.
+	// (Thread counts on parent bubbles = Turso count + live count.)
+	let archivedThreads = 0;
+	const threadsRootSnap = await adminDb.ref('threads').get();
+	if (threadsRootSnap.exists()) {
+		for (const convId of Object.keys(threadsRootSnap.val())) {
+			const convSnap = await adminDb.ref(`threads/${convId}`).get();
+			if (!convSnap.exists()) continue;
+			for (const parentId of Object.keys(convSnap.val())) {
+				const msgsSnap = await adminDb.ref(`threads/${convId}/${parentId}/messages`).get();
+				if (!msgsSnap.exists()) continue;
+				const toArchive = [];
+				msgsSnap.forEach((child) => {
+					const ts = pushIdToTimestamp(child.key);
+					if (ts <= cutoff) toArchive.push({ key: child.key, ts, ...child.val() });
+				});
+				if (!toArchive.length) continue;
+				for (const msg of toArchive) {
+					const isCompact = 'u' in msg;
+					const userId = isCompact ? msg.u : (msg.userId ?? '');
+					const content = isCompact ? msg.c : (msg.content ?? '');
+					const userName = userMap[userId]?.name ?? msg.userName ?? 'Unknown';
+					const userRole = userMap[userId]?.role ?? msg.userRole ?? 'student';
+					await turso.execute({
+						sql: `INSERT OR IGNORE INTO thread_messages
+						      (id, parent_msg_id, conversation_id, user_id, user_name, user_role, content, created_at,
+						       attachment_url, attachment_filename, attachment_mimetype, attachment_size)
+						      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+						args: [msg.key, parentId, convId, userId, userName, userRole, content, new Date(msg.ts).toISOString(),
+						       msg.att?.url ?? null, msg.att?.name ?? null, msg.att?.type ?? null, msg.att?.size ?? null]
+					});
+				}
+				const cleanup = {};
+				for (const msg of toArchive) cleanup[msg.key] = null;
+				await adminDb.ref(`threads/${convId}/${parentId}/messages`).update(cleanup);
+				archivedThreads += toArchive.length;
+			}
+		}
+	}
+
 	// Archive notifications. Walk every `notifications/{uid}` node and
 	// move entries older than the cutoff into the Turso `notifications`
 	// table, then delete them from Firebase. Same TTL semantics as
@@ -196,5 +238,5 @@ export async function GET({ request }) {
 		}
 	}
 
-	return json({ archived, archivedNotifs });
+	return json({ archived, archivedThreads, archivedNotifs });
 }

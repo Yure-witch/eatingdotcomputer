@@ -21,6 +21,12 @@
 .tfx-small { display: inline-block; animation: tfx-small 0.75s ease-in-out infinite; vertical-align: middle; }
 @keyframes tfx-ripple { 0%, 100% { transform: translateY(0); } 25% { transform: translateY(-7px); } 60% { transform: translateY(2px); } }
 .tfx-ripple { display: inline-block; animation: tfx-ripple 1s ease-in-out infinite; }
+/* Grow / Shrink — scale waves that travel one letter at a time (per-grapheme
+   stagger, same delay mechanics as ripple) */
+@keyframes tfx-grow { 0%, 100% { transform: scale(1); } 30% { transform: scale(1.55); } 65% { transform: scale(0.95); } }
+.tfx-grow { display: inline-block; animation: tfx-grow 1s ease-in-out infinite; vertical-align: middle; }
+@keyframes tfx-shrink { 0%, 100% { transform: scale(1); } 30% { transform: scale(0.55); } 65% { transform: scale(1.06); } }
+.tfx-shrink { display: inline-block; animation: tfx-shrink 1s ease-in-out infinite; vertical-align: middle; }
 .tfx-glitch { display: inline-block; animation: tfx-glitch 0.3s steps(2, end) infinite; position: relative; }
 @keyframes tfx-glitch {
 	0% { transform: translate(0); filter: none; }

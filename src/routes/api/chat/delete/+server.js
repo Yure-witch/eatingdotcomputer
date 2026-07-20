@@ -25,12 +25,17 @@ export async function POST({ request, locals }) {
 	let reactionPath;
 	if (turso) {
 		const conv = await turso.execute({ sql: 'SELECT type FROM conversations WHERE id = ?', args: [conversationId] });
-		const type = String(conv.rows[0]?.type ?? 'channel');
+		// DM conversations only reach the `conversations` table on the daily
+		// archive sync — a FRESH dm has no row yet, and defaulting to
+		// 'channel' builds a wrong Firebase path (the live message then
+		// silently never updates). DM ids are `uid_uid`, so fall back on
+		// the underscore heuristic (same as the thread API).
+		const type = String(conv.rows[0]?.type ?? (conversationId.includes('_') ? 'dm' : 'channel'));
 		const base = type === 'dm' ? `dms/${conversationId}` : `channels/${conversationId}`;
 		msgPath = `${base}/messages/${messageId}`;
 		reactionPath = `${base}/reactions/${messageId}`;
 	} else {
-		msgPath = `channels/${conversationId}/messages/${messageId}`;
+		msgPath = `${conversationId.includes('_') ? 'dms' : 'channels'}/${conversationId}/messages/${messageId}`;
 		reactionPath = `channels/${conversationId}/reactions/${messageId}`;
 	}
 

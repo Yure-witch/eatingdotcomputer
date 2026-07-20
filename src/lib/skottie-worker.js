@@ -34,6 +34,9 @@ import { tintLottieAdaptive } from './lottie-adaptive.js';
 let _kit = null;
 let _canvas = null; // OffscreenCanvas
 let _surface = null;
+// Desktop flag from init: shorten the first-build placeholder hold (see
+// the handoffAt sites) — set by the main thread on fine-pointer devices.
+let _fastHandoff = false;
 
 // WebGL surface options. `preserveDrawingBuffer: 1` keeps the backbuffer
 // alive between compositor frames — without it, WebGL clears after
@@ -395,7 +398,11 @@ function renderCanvasCells(now) {
 			const isAdaptive = short && _adaptive.has(short);
 			// Re-entry (prebuilt) and adaptive packs hand off immediately;
 			// only a first-time build holds to hide the settling frames.
-			const handoffAt = (cell.prebuilt || isAdaptive) ? 1 : 12;
+			// Desktop (fastHandoff) trims that hold from 12 paints (~375 ms
+			// at the 32 fps tick) to 3 — settle completes within a couple of
+			// frames there, and the hold was the largest share of "not
+			// instant". Mobile keeps the signed-off 12-paint contract.
+			const handoffAt = (cell.prebuilt || isAdaptive) ? 1 : (_fastHandoff ? 3 : 12);
 			if (cell.paintCount >= handoffAt) {
 				cell.firstPainted = true;
 				firstPaints.push(id);
@@ -749,7 +756,7 @@ function renderFrame(msg) {
 			// falls away.
 			const short = shortFromUrl(cell.url);
 			const isAdaptive = short && _adaptive.has(short);
-			const handoffAt = isAdaptive ? 1 : 15;
+			const handoffAt = isAdaptive ? 1 : (_fastHandoff ? 3 : 15);
 			if (cell.paintCount === handoffAt) firstPaints.push(cr.id);
 		}
 	}
@@ -764,6 +771,7 @@ self.onmessage = async (e) => {
 	switch (msg.type) {
 		case 'init': {
 			_canvas = msg.canvas;
+			_fastHandoff = !!msg.fastHandoff;
 			diag('log', '[skottie-worker] init: canvas size', _canvas.width, 'x', _canvas.height);
 			try {
 				await loadKit();

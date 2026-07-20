@@ -417,7 +417,7 @@
 </svelte:head>
 
 <div class="shell" bind:this={pageEl}>
-	<main style:margin-left={syllabusPreviewOpen ? '0px' : null}>
+	<main class:wide={activeTab === 'syllabus'} style:margin-left={syllabusPreviewOpen ? '0px' : null}>
 		<div class="page-header">
 			<div>
 				<h1>Manage</h1>
@@ -1001,6 +1001,13 @@
 		display: block;
 		min-height: unset;
 		place-items: unset;
+	}
+	/* Syllabus: google-docs-style full-bleed workspace — the builder's
+	   sidebar / editor / preview panes get the whole viewport width */
+	main.wide {
+		max-width: none;
+		padding-left: 1.25rem;
+		padding-right: 1.25rem;
 	}
 
 	/* ── Tabs ── */

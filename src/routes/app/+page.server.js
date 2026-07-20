@@ -2,6 +2,7 @@ import { redirect, fail } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
 import { signOut } from '../../auth.js';
 import { getWeekPlans, getCompletionsForStudent, getCompletionsForWeek, getAllProgressForClass, getSubmissionsByItem, createWeekPlan, createWeekItems, updateWeekPlan, completeItem, uncompleteItem, deleteWeekPlan, toggleWeekSubmissions, toggleItemSubmissions, getVisibleSubmissionsForPlan, getStudentCountForClass } from '$lib/server/week-plans.js';
+import { getKeySyllabusWeeks } from '$lib/server/syllabus.js';
 import { uploadToR2 } from '$lib/server/r2.js';
 
 export async function load({ locals, parent }) {
@@ -14,6 +15,13 @@ export async function load({ locals, parent }) {
 	const isInstructor = session.user.role === 'instructor';
 
 	const plans = await getWeekPlans(classId);
+	// Default week subtitles come from the class's KEY syllabus: week N's
+	// subtitle is the key syllabus's week-N title (heading stays entered).
+	const sylWeeks = await getKeySyllabusWeeks(classId);
+	for (const pl of plans) {
+		pl.sylTitle = sylWeeks[pl.week]?.title || null;
+		pl.sylWeekOf = sylWeeks[pl.week]?.weekOf || null;
+	}
 
 	const today = new Date();
 	today.setHours(0, 0, 0, 0);

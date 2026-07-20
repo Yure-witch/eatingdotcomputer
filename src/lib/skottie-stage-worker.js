@@ -28,21 +28,26 @@ import { loadCustomPacks, getAdaptivePackList, getAdaptiveInk } from './telegram
 // looks like N=2 — at N=4 the per-worker context-switch + message-
 // passing overhead starts eating the parallelism gain.
 
-// One worker per logical CPU, capped at 4. With the inline-canvas path
-// each cell owns its OWN DOM canvas (fed zero-copy via transferToImageBitmap),
-// so there is NO shared surface and NO cross-shard coherence requirement —
-// the old "collapse to 1 shard" fix was only needed for the shared overlay,
-// which is gone. Spreading cells across shards parallelises the expensive
-// MakeManagedAnimation builds (30–60 ms each), which is exactly what makes
-// the initial placeholder→animation transition feel snappy instead of
-// laggy. Cells hash to a shard by URL so a popular emoji builds once.
-const NUM_WORKERS = Math.min(
-	4,
-	Math.max(
-		2,
-		(typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 2
-	)
-);
+// With the inline-canvas path each cell owns its OWN DOM canvas (fed
+// zero-copy via transferToImageBitmap), so there is NO shared surface and
+// NO cross-shard coherence requirement — the old "collapse to 1 shard" fix
+// was only needed for the shared overlay, which is gone. Spreading cells
+// across shards parallelises the expensive MakeManagedAnimation builds
+// (30–60 ms each), which is exactly what makes the initial
+// placeholder→animation transition feel snappy instead of laggy. Cells
+// hash to a shard by URL so a popular emoji builds once.
+//
+// DESKTOP (fine pointer, plenty of cores) gets a BIG pool — Telegram
+// Desktop renders these instantly, and the closest the web gets is raw
+// build parallelism: a 24-cell first viewport clears in ~1 wave with 10
+// workers instead of 3 waves with 4. Mobile keeps the conservative cap;
+// its constraint is GPU/memory budget, not build latency.
+const _FINE_POINTER = typeof window !== 'undefined'
+	&& window.matchMedia?.('(pointer: fine)').matches;
+const _CORES = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 2;
+const NUM_WORKERS = _FINE_POINTER
+	? Math.min(12, Math.max(4, _CORES - 2))
+	: Math.min(4, Math.max(2, _CORES));
 
 // ── Scroll throttle (identical to skottie-stage.js) ──────────────────────
 let _isScrolling = false;
@@ -333,7 +338,10 @@ export function ensureStage() {
 				{ type: 'module' }
 			);
 			sh.worker.addEventListener('message', (e) => onShardMessage(i, e));
-			sh.worker.postMessage({ type: 'init', canvas: offscreen }, [offscreen]);
+				// fastHandoff: desktop settles animations in a couple of paints —
+				// shorten the placeholder hold so first render feels instant
+				// (mobile keeps the full hold-then-cross-fade contract).
+				sh.worker.postMessage({ type: 'init', canvas: offscreen, fastHandoff: _FINE_POINTER }, [offscreen]);
 			await new Promise((resolve, reject) => {
 				const handler = (e) => {
 					if (e.data.type === 'ready') {

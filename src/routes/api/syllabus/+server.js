@@ -38,15 +38,19 @@ export async function GET({ url, locals }) {
 		const lineHeights = (lh && typeof lh === 'object')
 			? { title: lh.title ?? 1.2, section: lh.section ?? 1.3, text: lh.text ?? 1.75, weekHeader: lh.weekHeader ?? 1.3, weekTopic: lh.weekTopic ?? 1.65 }
 			: { title: 1.2, section: 1.3, text: 1.75, weekHeader: 1.3, weekTopic: 1.65 };
-		return json({ blocks: parseBlocks(val.blocks), font: val.font ?? 'Georgia, serif', customFonts: Array.isArray(val.customFonts) ? val.customFonts : [], margins, fontSizes, spacing, lineHeights, name: val.name ?? 'Untitled' });
+		return json({ blocks: parseBlocks(val.blocks), font: val.font ?? 'Georgia, serif', customFonts: Array.isArray(val.customFonts) ? val.customFonts : [], margins, fontSizes, spacing, lineHeights, name: val.name ?? 'Untitled', pageMode: val.pageMode ?? 'letter', pageWIn: val.pageWIn ?? 8.5, pageHIn: val.pageHIn ?? 11, weekDates: (() => { try { return JSON.parse(val.weekDatesJson ?? '{}'); } catch { return {}; } })() });
 	} else {
-		// List all syllabi for class
-		const snap = await db.ref(`syllabi/${classId}`).get();
-		if (!snap.exists()) return json({ syllabi: [] });
+		// List all syllabi for class (+ which one is the KEY syllabus —
+		// the one that drives the class's week subtitles)
+		const [snap, keySnap] = await Promise.all([
+			db.ref(`syllabi/${classId}`).get(),
+			db.ref(`syllabiKey/${classId}`).get()
+		]);
+		if (!snap.exists()) return json({ syllabi: [], keyId: keySnap.val() ?? null });
 		const syllabi = Object.entries(snap.val())
 			.map(([id, s]) => ({ id, name: s.name ?? 'Untitled', updatedAt: s.updatedAt ?? 0 }))
 			.sort((a, b) => b.updatedAt - a.updatedAt);
-		return json({ syllabi });
+		return json({ syllabi, keyId: keySnap.val() ?? null });
 	}
 }
 
@@ -54,7 +58,7 @@ export async function POST({ request, locals }) {
 	const session = await locals.auth();
 	if (!session || session.user.role !== 'instructor') error(403, 'Forbidden');
 
-	const { classId, syllabusId, name, blocks, font, customFonts, margins, fontSizes, spacing, lineHeights } = await request.json();
+	const { classId, syllabusId, name, blocks, font, customFonts, margins, fontSizes, spacing, lineHeights, pageMode, pageWIn, pageHIn, weekDates } = await request.json();
 	if (!classId || !syllabusId) error(400, 'classId and syllabusId required');
 
 	const blocksObj = {};
@@ -70,10 +74,26 @@ export async function POST({ request, locals }) {
 		customFonts: Array.isArray(customFonts) ? customFonts : [],
 		spacing: (spacing && typeof spacing === 'object') ? spacing : { title: 0, section: 6, text: 6, week: 8 },
 		lineHeights: (lineHeights && typeof lineHeights === 'object') ? lineHeights : { title: 1.2, section: 1.3, text: 1.75, weekHeader: 1.3, weekTopic: 1.65 },
+		weekDatesJson: JSON.stringify((weekDates && typeof weekDates === 'object') ? weekDates : {}),
+		pageMode: pageMode === 'pageless' || pageMode === 'custom' ? pageMode : 'letter',
+		pageWIn: Number(pageWIn) || 8.5,
+		pageHIn: Number(pageHIn) || 11,
 		updatedAt: Date.now(),
 		blocks: blocksObj
 	});
 
+	return json({ ok: true });
+}
+
+// Set (or clear, with keyId null) the class's KEY syllabus.
+export async function PUT({ request, locals }) {
+	const session = await locals.auth();
+	if (!session || session.user.role !== 'instructor') error(403, 'Forbidden');
+	const { classId, keyId } = await request.json();
+	if (!classId) error(400, 'classId required');
+	const ref = getAdminDb().ref(`syllabiKey/${classId}`);
+	if (keyId) await ref.set(String(keyId));
+	else await ref.remove();
 	return json({ ok: true });
 }
 

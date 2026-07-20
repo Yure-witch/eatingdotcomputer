@@ -48,7 +48,13 @@
 		// can't render through the shared Skottie stage (e.g. the
 		// picker's tab icons, which live outside the grid's scroll
 		// content and so aren't covered by the stage canvas).
-		forceEngine = null
+		forceEngine = null,
+		// Raster density multiplier: the backing store rasterises at
+		// size × dpr × oversample while the element still displays at
+		// `size`. Chat bubbles pass 2 so sent emotes rasterise at a
+		// higher resolution than picker cells and stay crisp through
+		// zooms / focus previews / inline size effects.
+		oversample = 1
 	} = $props();
 
 	const isCustom = $derived(!!(short && id));
@@ -119,7 +125,7 @@
 	let skottieMod = null;
 	const isSkottieEngine = (eng) => eng === 'skottie' || eng === 'skottie-worker' || eng === 'skottie-webgpu' || eng === 'webgpu-rasterized' || eng === 'cpu-rasterized';
 
-	const px = $derived(Math.round(size * (typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 2)));
+	const px = $derived(Math.round(size * (typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 2) * (oversample || 1)));
 
 	// ──────────────────────────────────────────────────────────────────
 	//  Rlottie path

@@ -22,6 +22,34 @@
 	let fontWeightUploading = $state({}); // { [fontName]: boolean }
 	let fontWeightAdding = $state({}); // { [fontName]: { weight: string, style: string } | null }
 	let margins = $state({ top: 64, right: 64, bottom: 64, left: 64 });
+	// Positional week dates: keyed by SLOT NUMBER (the auto week number),
+	// not by block — reordering blocks moves content, never numbers/dates.
+	let weekDates = $state({});
+	function updateWeekDate(n, iso) {
+		const next = { ...weekDates };
+		if (iso) next[n] = iso; else delete next[n];
+		weekDates = next;
+		scheduleSave();
+	}
+	// weekly-cadence dropdown options anchored on the earliest chosen date
+	const weekDateAnchor = $derived(Object.values(weekDates).filter(Boolean).sort()[0] ?? null);
+	const dateOptions = $derived((() => {
+		if (!weekDateAnchor) return [];
+		const [ay, am, ad] = weekDateAnchor.split('-').map(Number);
+		const base = new Date(ay, am - 1, ad);
+		const out = [];
+		for (let k = -6; k <= 40; k++) {
+			const dt = new Date(base);
+			dt.setDate(base.getDate() + k * 7);
+			const iso = dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0') + '-' + String(dt.getDate()).padStart(2, '0');
+			out.push({ iso, label: dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) });
+		}
+		return out;
+	})());
+
+	let pageMode = $state('letter');    // 'letter' | 'pageless' | 'custom'
+	let pageWIn = $state(8.5);          // custom page size, inches
+	let pageHIn = $state(11);
 	let fontSizes   = $state({ title: 24, section: 14, text: 12, weekHeader: 12, weekTopic: 11 }); // all in pt
 	let spacing     = $state({ title: 0, section: 6, text: 6, week: 8 }); // space below each block type, in pt
 	let lineHeights = $state({ title: 1.2, section: 1.3, text: 1.75, weekHeader: 1.3, weekTopic: 1.65 });
@@ -87,12 +115,13 @@ let loadingDoc = $state(false);
 	// ── Preview panel ───────────────────────────────────────────────────────────
 	let previewBodyWidth = $state(0); // measured via bind:clientWidth
 
-	// US Letter portrait at 300 dpi
-	const PAGE_W = 2550; // 8.5in × 300dpi
-	const PAGE_H = 3300; // 11in  × 300dpi
+	// Page canvas at 300 dpi. Letter by default; 'custom' follows the
+	// user's inch inputs; 'pageless' keeps Letter width but never paginates.
+	const PAGE_W = $derived(pageMode === 'custom' ? Math.max(600, Math.round(pageWIn * 300)) : 2550);
+	const PAGE_H = $derived(pageMode === 'custom' ? Math.max(600, Math.round(pageHIn * 300)) : 3300);
 	const PREVIEW_PAD = 20;
-	// Max zoom = physical page size on a 96dpi screen (8.5in × 96 = 816px)
-	const SCREEN_MAX_W = Math.round(8.5 * 96); // 816
+	// Max zoom = physical page size on a 96dpi screen
+	const SCREEN_MAX_W = $derived(Math.round((PAGE_W / 300) * 96));
 
 	const pageZoom = $derived(
 		previewBodyWidth > 0
@@ -170,7 +199,7 @@ let loadingDoc = $state(false);
 		}
 
 		// Binary search: last globalOff where Range[0..globalOff].getClientRects() maxBottom <= pageEndY
-		let lo = 0, hi = totalLen, best = -1;
+		let lo = 0, hi = totalLen, best = -1, bestBot = 0;
 		while (lo <= hi) {
 			const mid = (lo + hi) >> 1;
 			const { n: endN, off: endOff } = nodeAt(mid);
@@ -181,7 +210,7 @@ let loadingDoc = $state(false);
 			for (const rect of r.getClientRects()) {
 				if (rect.bottom > maxBot) maxBot = rect.bottom;
 			}
-			if (maxBot <= pageEndY) { best = mid; lo = mid + 1; }
+			if (maxBot <= pageEndY) { best = mid; bestBot = maxBot; lo = mid + 1; }
 			else hi = mid - 1;
 		}
 
@@ -211,7 +240,7 @@ let loadingDoc = $state(false);
 		const afterHtml = div.innerHTML.trim();
 
 		if (!beforeHtml || !afterHtml) return null;
-		return { beforeHtml, afterHtml };
+		return { beforeHtml, afterHtml, splitY: bestBot };
 	}
 
 	/**
@@ -267,8 +296,38 @@ let loadingDoc = $state(false);
 					if (split) {
 						if (split.beforeHtml) curPage.push({ bidx, html: split.beforeHtml });
 						pages.push([{ bidx, html: split.afterHtml }]);
-						pageStartY = blockTop;
+						// the continuation begins at the split line, not at the
+						// block top — using blockTop overstated the continuation
+						// page's fill and forced premature breaks downstream
+						pageStartY = split.splitY || blockTop;
 						handled = true;
+					}
+				}
+
+				// ── 2b. Topic-level split for week blocks: the header plus the
+				// topics that fit stay; remaining topics continue overleaf ──
+				if (!handled && visibleBlocks[bidx]?.type === 'week') {
+					const lis = [...blockEl.querySelectorAll('.syl-topics li')];
+					const head = blockEl.querySelector('.syl-week-lockup');
+					const headBot = head ? head.offsetTop + head.offsetHeight - pageStartY : Infinity;
+					if (lis.length > 1 && headBot <= cAreaH) {
+						let fit = 0;
+						for (const li of lis) {
+							if (li.offsetTop + li.offsetHeight - pageStartY <= cAreaH) fit++;
+							else break;
+						}
+						if (fit >= 1 && fit < lis.length) {
+							curPage.push({ bidx, tEnd: fit });
+							pages.push([{ bidx, tStart: fit }]);
+							pageStartY = lis[fit].offsetTop;
+							handled = true;
+						} else if (fit === lis.length) {
+							// every visible line fits — only the block's
+							// trailing margin overflowed. Keep it here; the
+							// margin can hang off the page edge harmlessly.
+							curPage.push({ bidx });
+							handled = true;
+						}
 					}
 				}
 
@@ -285,6 +344,11 @@ let loadingDoc = $state(false);
 	}
 
 	function recomputePages() {
+		if (pageMode === 'pageless') {
+			// one endless page — no packing, no splits
+			pageBlocks = [visibleBlocks.map((_, i) => ({ bidx: i }))];
+			return;
+		}
 		if (!measureEl) return;
 		// Ensure the font is applied to the measure div before reading heights
 		if (font) measureEl.style.fontFamily = font;
@@ -305,6 +369,13 @@ let loadingDoc = $state(false);
 	$effect(() => {
 		const _cAreaH = contentAreaH;
 		const _font = font;
+		const _pm = pageMode, _pw = pageWIn, _phh = pageHIn;
+		// EVERY document input re-packs the pages — the ResizeObserver alone
+		// misses edits that keep the measured height identical (and pageless
+		// mode has no measure div at all), which froze the live preview.
+		const _blocks = blocks;
+		const _wd = weekDates;
+		const _fs = fontSizes, _sp = spacing, _lhh = lineHeights, _m = margins;
 		cancelAnimationFrame(recomputeRafId);
 		recomputeRafId = requestAnimationFrame(recomputePages);
 	});
@@ -371,9 +442,23 @@ let loadingDoc = $state(false);
 		if (res.ok) {
 			const data = await res.json();
 			syllabi = data.syllabi ?? [];
+			keySyllabusId = data.keyId ?? null;
 			if (syllabi.length && !activeSyllabusId) await openSyllabus(syllabi[0].id);
 		}
 		loadingList = false;
+	}
+
+	// The KEY syllabus drives the class's week subtitles (each class week
+	// shows the matching syllabus week's title under its heading).
+	let keySyllabusId = $state(null);
+	async function setKeySyllabus(id) {
+		const next = keySyllabusId === id ? null : id;
+		keySyllabusId = next;
+		await fetch('/api/syllabus', {
+			method: 'PUT',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ classId, keyId: next })
+		});
 	}
 
 	async function openSyllabus(id) {
@@ -405,6 +490,21 @@ let loadingDoc = $state(false);
 			lineHeights = (lh && typeof lh === 'object')
 				? { title: lh.title ?? 1.2, section: lh.section ?? 1.3, text: lh.text ?? 1.75, weekHeader: lh.weekHeader ?? 1.3, weekTopic: lh.weekTopic ?? 1.65 }
 				: { title: 1.2, section: 1.3, text: 1.75, weekHeader: 1.3, weekTopic: 1.65 };
+			pageMode = data.pageMode === 'pageless' || data.pageMode === 'custom' ? data.pageMode : 'letter';
+			pageWIn = +data.pageWIn || 8.5;
+			pageHIn = +data.pageHIn || 11;
+			weekDates = (data.weekDates && typeof data.weekDates === 'object') ? data.weekDates : {};
+			// migrate legacy per-block weekOf into positional dates
+			if (!Object.keys(weekDates).length) {
+				const wd = {};
+				let wn = 0;
+				for (const b of blocks) {
+					if (b.type !== 'week' || b.hidden) continue;
+					wn += 1;
+					try { const d = JSON.parse(b.content); if (d.weekOf) wd[wn] = d.weekOf; } catch { /**/ }
+				}
+				if (Object.keys(wd).length) weekDates = wd;
+			}
 			syllabusName = data.name;
 			lastSaved = null;
 		}
@@ -423,6 +523,8 @@ let loadingDoc = $state(false);
 		fontSizes   = { title: 24, section: 14, text: 12, weekHeader: 12, weekTopic: 11 };
 		spacing     = { title: 0, section: 6, text: 6, week: 8 };
 		lineHeights = { title: 1.2, section: 1.3, text: 1.75, weekHeader: 1.3, weekTopic: 1.65 };
+		pageMode = 'letter'; pageWIn = 8.5; pageHIn = 11;
+		weekDates = {};
 		syllabusName = name;
 		lastSaved = null;
 		await saveNow();
@@ -446,6 +548,8 @@ let loadingDoc = $state(false);
 		fontSizes = src.fontSizes ?? { title: 24, section: 14, text: 12, weekHeader: 12, weekTopic: 11 };
 		spacing = src.spacing ?? { title: 0, section: 6, text: 6, week: 8 };
 		lineHeights = src.lineHeights ?? { title: 1.2, section: 1.3, text: 1.75, weekHeader: 1.3, weekTopic: 1.65 };
+		pageMode = src.pageMode ?? 'letter'; pageWIn = +src.pageWIn || 8.5; pageHIn = +src.pageHIn || 11;
+		weekDates = (src.weekDates && typeof src.weekDates === 'object') ? src.weekDates : {};
 		syllabusName = newName;
 		lastSaved = null;
 		await saveNow();
@@ -482,7 +586,7 @@ let loadingDoc = $state(false);
 			await fetch('/api/syllabus', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ classId, syllabusId: activeSyllabusId, name: syllabusName, blocks, font, customFonts, margins, fontSizes, spacing, lineHeights })
+				body: JSON.stringify({ classId, syllabusId: activeSyllabusId, name: syllabusName, blocks, font, customFonts, margins, fontSizes, spacing, lineHeights, pageMode, pageWIn, pageHIn, weekDates })
 			});
 			lastSaved = Date.now();
 			syllabi = syllabi.map((s) => s.id === activeSyllabusId ? { ...s, name: syllabusName, updatedAt: lastSaved } : s);
@@ -536,6 +640,21 @@ let loadingDoc = $state(false);
 	}
 
 	// ── Week helpers ─────────────────────────────────────────────────────────────
+	// Reparent the print layer to <body> so print CSS can display:none the
+	// ENTIRE app (zero height -> no trailing blank pages) while the print
+	// pages remain renderable.
+	function portalToBody(node) {
+		document.body.appendChild(node);
+		return { destroy() { node.remove(); } };
+	}
+
+	function fmtWeekOf(iso) {
+		if (!iso) return '';
+		const [y, m, d] = String(iso).split('-').map(Number);
+		if (!y || !m || !d) return '';
+		return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
+	}
+
 	function parseWeek(content) {
 		try { return JSON.parse(content); } catch { return { weekNum: 1, title: '', topics: [] }; }
 	}
@@ -547,6 +666,7 @@ let loadingDoc = $state(false);
 	function addTopic(blockId) { const d = parseWeek(blocks.find(b=>b.id===blockId)?.content); setWeek(blockId, { ...d, topics: [...(d.topics??[]), { id: uid(), text: '', hidden: false }] }); }
 	function updateTopic(blockId, tid, text) { const d = parseWeek(blocks.find(b=>b.id===blockId)?.content); setWeek(blockId, { ...d, topics: d.topics.map(t => t.id===tid ? {...t, text} : t) }); }
 	function toggleTopic(blockId, tid) { const d = parseWeek(blocks.find(b=>b.id===blockId)?.content); setWeek(blockId, { ...d, topics: d.topics.map(t => t.id===tid ? {...t, hidden:!t.hidden} : t) }); }
+	function toggleTopicBullet(blockId, tid) { const d = parseWeek(blocks.find(b=>b.id===blockId)?.content); setWeek(blockId, { ...d, topics: d.topics.map(t => t.id===tid ? {...t, bullet: !t.bullet} : t) }); }
 	function deleteTopic(blockId, tid) { const d = parseWeek(blocks.find(b=>b.id===blockId)?.content); setWeek(blockId, { ...d, topics: d.topics.filter(t => t.id!==tid) }); }
 	function moveTopic(blockId, ti, dir) {
 		const d = parseWeek(blocks.find(b=>b.id===blockId)?.content);
@@ -581,7 +701,10 @@ let loadingDoc = $state(false);
 			last = m.index + m[0].length;
 		}
 		if (last < raw.length) result += marked.parse(raw.slice(last));
-		return result;
+		// strip the newlines marked emits BETWEEN tags — under pre-wrap
+		// they'd render as extra blank lines. Newlines the user actually
+		// typed live INSIDE the tags and survive.
+		return result.replace(/>\n+</g, '><').trim();
 	}
 
 	/** Render one block as HTML. Pass bidx to add data-bidx (for measurement only). */
@@ -602,9 +725,15 @@ let loadingDoc = $state(false);
 		} else if (block.type === 'week') {
 			const d = parseWeek(block.content);
 			const vis = (d.topics ?? []).filter(t => !t.hidden);
-			return `<div class="syl-week"${bAttr} style="${mb(sp.week)}">
-				<div class="syl-week-header" style="${sz(fs.weekHeader)};${lh('weekHeader')}">Week ${weekNums[block.id] ?? ''}: ${d.title ? renderText(d.title) : ''}</div>
-				${vis.length ? `<ul class="syl-topics">${vis.map(t => `<li style="${sz(fs.weekTopic)};${lh('weekTopic')}">${renderText(t.text)}</li>`).join('')}</ul>` : ''}
+			const numPx = ptToPx(fs.weekHeader);
+			const wn = weekNums[block.id];
+			const wOf = (wn && weekDates[wn]) || d.weekOf || null;
+			return `<div class="syl-week"${bAttr} style="${mb(sp.week * 2.5)}">
+				<div class="syl-week-lockup">
+					<span class="syl-week-num" style="font-size:${Math.round(numPx * 0.78)}px;width:${Math.round(numPx * 1.7)}px;height:${Math.round(numPx * 1.7)}px;margin-top:${Math.round((numPx * lineHeights.weekHeader - numPx * 1.7) / 2 - numPx * 0.14)}px">${wn ?? ''}</span>
+					<div class="syl-week-head" style="${sz(fs.weekHeader)};${lh('weekHeader')}">${wOf ? `<span class="syl-week-date-pre">${fmtWeekOf(wOf)}: </span>` : ''}<span class="syl-week-title">${d.title ? renderText(d.title) : ''}</span></div>
+				</div>
+				${vis.length ? `<ul class="syl-topics" style="margin-left:${Math.round(numPx * 2.71)}px">${vis.map(t => `<li${t.bullet ? ' class="topic-bullet"' : ''} style="${sz(fs.text)};${lh('weekTopic')}">${renderText(t.text)}</li>`).join('')}</ul>` : ''}
 			</div>`;
 		}
 		return '';
@@ -663,8 +792,34 @@ let loadingDoc = $state(false);
 			if (slot.pStart !== undefined && b.type === 'text') {
 				return renderTextSlice(b, slot.pStart, slot.pEnd);
 			}
+			if ((slot.tStart !== undefined || slot.tEnd !== undefined) && b.type === 'week') {
+				return renderWeekSlice(b, slot.tStart ?? 0, slot.tEnd ?? Infinity);
+			}
 			return renderBlock(b);
 		}).join('');
+	}
+
+	/** Week block sliced at topic level: continuation pages omit the header. */
+	function renderWeekSlice(block, tStart, tEnd) {
+		const d = parseWeek(block.content);
+		const vis = (d.topics ?? []).filter(t => !t.hidden).slice(tStart, tEnd === Infinity ? undefined : tEnd);
+		const sz = (pt) => `font-size:${ptToPx(pt)}px`;
+		const mb = (pt) => `margin-bottom:${ptToPx(pt)}px`;
+		const lh = (key) => `line-height:${lineHeights[key]}`;
+		const fs = fontSizes, sp = spacing;
+		const numPx = ptToPx(fs.weekHeader);
+		const wn = weekNums[block.id];
+		const wOf = (wn && weekDates[wn]) || null;
+		const header = tStart === 0
+			? `<div class="syl-week-lockup">
+				<span class="syl-week-num" style="font-size:${Math.round(numPx * 0.78)}px;width:${Math.round(numPx * 1.7)}px;height:${Math.round(numPx * 1.7)}px;margin-top:${Math.round((numPx * lineHeights.weekHeader - numPx * 1.7) / 2 - numPx * 0.14)}px">${wn ?? ''}</span>
+				<div class="syl-week-head" style="${sz(fs.weekHeader)};${lh('weekHeader')}">${wOf ? `<span class="syl-week-date-pre">${fmtWeekOf(wOf)}: </span>` : ''}<span class="syl-week-title">${d.title ? renderText(d.title) : ''}</span></div>
+			</div>`
+			: '';
+		return `<div class="syl-week" style="${mb(sp.week * 2.5)}">
+			${header}
+			${vis.length ? `<ul class="syl-topics" style="margin-left:${Math.round(numPx * 2.71)}px">${vis.map(t => `<li${t.bullet ? ' class="topic-bullet"' : ''} style="${sz(fs.text)};${lh('weekTopic')}">${renderText(t.text)}</li>`).join('')}</ul>` : ''}
+		</div>`;
 	}
 
 	/** Full content for print (all pages in sequence, no page containers). */
@@ -680,13 +835,25 @@ let loadingDoc = $state(false);
 		return `saved ${Math.round(s/60)}m ago`;
 	}
 
-	function printSyllabus() { window.print(); }
+	async function printSyllabus() {
+		// Make sure every webfont (Google Sans for the week-number chips,
+		// plus any uploaded document font) is fully loaded before the
+		// print snapshot — the browser embeds loaded fonts into the PDF.
+		try {
+			await Promise.all([
+				document.fonts.load("700 16px 'Google Sans Flex'"),
+				document.fonts.ready
+			]);
+		} catch { /* print anyway */ }
+		window.print();
+	}
 </script>
 
 <svelte:window onmousemove={onWindowMousemove} onmouseup={onWindowMouseup} />
 
 <svelte:head>
 	<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" crossorigin="anonymous" />
+	{@html '<' + 'style>@page { size: ' + (pageMode === 'custom' ? pageWIn + 'in ' + pageHIn + 'in' : 'letter') + '; margin: 0; }</' + 'style>'}
 </svelte:head>
 
 <!-- When preview is open, left-align the editor so the float panel has room on the right -->
@@ -728,6 +895,7 @@ let loadingDoc = $state(false);
 									<span class="syl-list-date">{new Date(syl.updatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
 								</button>
 								<div class="syl-list-actions">
+									<button class="syl-icon-btn syl-key-btn" class:is-key={keySyllabusId === syl.id} onclick={() => setKeySyllabus(syl.id)} title={keySyllabusId === syl.id ? 'Key syllabus (drives week subtitles)' : 'Make key syllabus'}>★</button>
 									<button class="syl-icon-btn" onclick={() => duplicateSyllabus(syl.id)} title="Duplicate">⧉</button>
 									<button class="syl-icon-btn" onclick={() => startRename(syl.id, syl.name)} title="Rename">✎</button>
 									<button class="syl-icon-btn syl-del-btn" onclick={() => deleteSyllabus(syl.id)} title="Delete">×</button>
@@ -754,6 +922,25 @@ let loadingDoc = $state(false);
 				</span>
 				<div class="syl-toolbar-right">
 				<button class="syl-btn" class:syl-btn-active={sizesOpen} onclick={() => sizesOpen = !sizesOpen}>Sizes</button>
+					<label class="font-label">
+						Page
+						<select class="font-select" bind:value={pageMode} onchange={scheduleSave}>
+							<option value="letter">Letter</option>
+							<option value="pageless">Pageless</option>
+							<option value="custom">Custom</option>
+						</select>
+					</label>
+					{#if pageMode === 'custom'}
+						<div class="margins-fields">
+							<label class="margins-field-label">W
+								<input class="margins-input" type="number" min="3" max="24" step="0.5" bind:value={pageWIn} onchange={scheduleSave} />
+							</label>
+							<label class="margins-field-label">H
+								<input class="margins-input" type="number" min="3" max="36" step="0.5" bind:value={pageHIn} onchange={scheduleSave} />
+							</label>
+							<span class="margins-unit">in</span>
+						</div>
+					{/if}
 					<div class="margins-group">
 						<span class="margins-group-label">Margins</span>
 						<div class="margins-fields">
@@ -895,7 +1082,7 @@ let loadingDoc = $state(false);
 			{#if sizesOpen}
 			<div class="syl-sizes-bar">
 				<span class="sizes-bar-label">Size</span>
-				{#each [['Title','title'],['Section','section'],['Body','text'],['Week','weekHeader'],['Topic','weekTopic']] as [label, key]}
+				{#each [['Title','title'],['Section','section'],['Body','text'],['Week','weekHeader']] as [label, key]}
 					<label class="sizes-field-label">
 						{label}
 						<div class="sizes-input-wrap">
@@ -946,6 +1133,10 @@ let loadingDoc = $state(false);
 			{/if}
 
 			<div class="syl-blocks">
+				<div
+					class="syl-page"
+					style:max-width={pageMode === 'pageless' ? 'none' : pageMode === 'custom' ? Math.round(pageWIn * 96) + 'px' : '850px'}
+				>
 				{#each blocks as block, idx (block.id)}
 					<div
 						class="syl-block"
@@ -1007,16 +1198,29 @@ let loadingDoc = $state(false);
 								{@const wd = parseWeek(block.content)}
 								<div class="week-editor" style="margin-bottom:{edPx(spacing.week)}px">
 									<div class="week-header-row">
-										<span class="week-prefix" style="font-size:{edPx(fontSizes.weekHeader)}px;font-weight:700;line-height:{lineHeights.weekHeader}">{block.hidden ? 'Week —:' : 'Week ' + (weekNums[block.id] ?? '') + ':'} </span>
+										<span class="week-num-chip" style="font-size:{Math.round(edPx(fontSizes.weekHeader) * 0.78)}px;width:{Math.round(edPx(fontSizes.weekHeader) * 1.7)}px;height:{Math.round(edPx(fontSizes.weekHeader) * 1.7)}px">{block.hidden ? '—' : (weekNums[block.id] ?? '')}</span>
+										{#if !block.hidden && weekNums[block.id]}
+											{#if dateOptions.length}
+												<select class="week-date-select" value={weekDates[weekNums[block.id]] ?? ''} onchange={(e) => updateWeekDate(weekNums[block.id], e.target.value)}>
+													<option value="">no date</option>
+													{#each dateOptions as o (o.iso)}
+														<option value={o.iso}>{o.label}</option>
+													{/each}
+												</select>
+											{:else}
+												<input class="week-date-input" type="date" value="" onchange={(e) => updateWeekDate(weekNums[block.id], e.target.value)} title="First class date — seeds the weekly dropdown" />
+											{/if}
+										{/if}
 										<input class="week-title-input" style="font-size:{edPx(fontSizes.weekHeader)}px;line-height:{lineHeights.weekHeader};font-weight:700" value={wd.title ?? ''} oninput={(e) => updateWeekField(block.id, 'title', e.target.value)} placeholder="Week title…" />
 									</div>
 									<div class="week-topics">
 										{#each (wd.topics ?? []) as topic, ti}
 											<div class="topic-row" class:topic-hidden={topic.hidden}>
-												<input class="topic-input" style="font-size:{edPx(fontSizes.weekTopic)}px;line-height:{lineHeights.weekTopic}" value={topic.text} oninput={(e) => updateTopic(block.id, topic.id, e.target.value)} placeholder="Topic…" />
+												<input class="topic-input" style="font-size:{Math.round(edPx(fontSizes.text) * 0.92)}px;line-height:{lineHeights.weekTopic}" value={topic.text} oninput={(e) => updateTopic(block.id, topic.id, e.target.value)} placeholder="Topic…" />
 												<div class="topic-actions">
 													<button class="topic-btn" onclick={() => moveTopic(block.id, ti, -1)} disabled={ti===0} title="Move up">↑</button>
 													<button class="topic-btn" onclick={() => moveTopic(block.id, ti, 1)} disabled={ti===wd.topics.length-1} title="Move down">↓</button>
+													<button class="topic-btn" class:topic-btn-on={topic.bullet} onclick={() => toggleTopicBullet(block.id, topic.id)} title={topic.bullet ? 'Remove bullet' : 'Add bullet'}>•</button>
 													<button class="topic-btn" onclick={() => toggleTopic(block.id, topic.id)} title={topic.hidden ? 'Show' : 'Hide'}>{topic.hidden ? '○' : '●'}</button>
 													<button class="topic-btn topic-btn-del" onclick={() => deleteTopic(block.id, topic.id)} title="Delete">×</button>
 												</div>
@@ -1042,19 +1246,21 @@ let loadingDoc = $state(false);
 						<button class="syl-btn" onclick={() => { blocks = defaultBlocks(); scheduleSave(); }}>Start from template</button>
 					</div>
 				{/if}
+				</div>
 			</div>
 		{/if}
 	</div>
 
 </div>
 
-<!-- Hidden measurement div: all blocks at content-area width, used to greedily pack blocks into pages. -->
-{#if previewOpen}
+<!-- Hidden measurement div: all blocks at content-area width, used to
+     greedily pack blocks into pages. Always mounted — PRINT uses the same
+     pagination, with or without the preview panel open. -->
+{#if activeSyllabusId && pageMode !== 'pageless'}
 	<div
 		class="syl-measure"
 		bind:this={measureEl}
 		style:width="{PAGE_W - margins.left - margins.right}px"
-	
 	>
 		{@html renderMeasure()}
 	</div>
@@ -1089,7 +1295,7 @@ let loadingDoc = $state(false);
 					<div
 						class="float-page"
 						style:width="{PAGE_W}px"
-						style:height="{PAGE_H}px"
+						style:height={pageMode === 'pageless' ? 'auto' : PAGE_H + 'px'}
 						style:padding-top="{margins.top}px"
 						style:padding-right="{margins.right}px"
 						style:padding-bottom="{margins.bottom}px"
@@ -1105,9 +1311,23 @@ let loadingDoc = $state(false);
 	</div>
 {/if}
 
-<!-- Print-only output -->
-<div class="print-only" style:padding="{margins.top}px {margins.right}px {margins.bottom}px {margins.left}px">
-	{@html activeSyllabusId ? renderPrint() : ''}
+<!-- Print-only output: the SAME paginated pages as the preview, scaled
+     from the 300dpi canvas to CSS pixels (96/300) — print is pixel-for-
+     pixel the preview. Pageless prints as one flow the browser paginates. -->
+<div class="print-only" id="syl-print-root" use:portalToBody>
+	{#if activeSyllabusId}
+		{#each { length: numPages } as _, pageIndex}
+			<div
+				class="print-page"
+				style:width="{PAGE_W}px"
+				style:height={pageMode === 'pageless' ? 'auto' : PAGE_H + 'px'}
+				style:padding="{margins.top}px {margins.right}px {margins.bottom}px {margins.left}px"
+				style:zoom={96 / 300}
+			>
+				{@html renderPage(pageBlocks[pageIndex])}
+			</div>
+		{/each}
+	{/if}
 </div>
 
 <style>
@@ -1296,7 +1516,27 @@ let loadingDoc = $state(false);
 	.syl-btn-print:hover { opacity: 0.85; }
 	.syl-checkbox-label { display: flex; align-items: center; gap: 0.4rem; font-size: 0.82rem; color: var(--muted-fg); cursor: pointer; white-space: nowrap; }
 	/* Blocks */
-	.syl-blocks { flex: 1; padding: 2rem 1.5rem 2rem 0.5rem; overflow-y: auto; display: flex; flex-direction: column; gap: 0; background: var(--paper); }
+	/* Google-Docs-style workspace: muted canvas; the blocks live on a
+	   centred white "page" with a soft sheet shadow */
+	.syl-blocks {
+		flex: 1;
+		overflow-y: auto;
+		display: flex; flex-direction: column;
+		background: color-mix(in srgb, var(--surface-2) 88%, var(--ink) 4%);
+		padding: 2rem 1.5rem 3rem;
+	}
+	.syl-page {
+		width: 100%;
+		max-width: 850px;
+		margin: 0 auto;
+		background: var(--paper);
+		border: 1px solid var(--border);
+		border-radius: 4px;
+		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 8px 28px rgba(0, 0, 0, 0.07);
+		padding: clamp(1.5rem, 4vw, 4rem) clamp(1.25rem, 3.5vw, 3.25rem);
+		box-sizing: border-box;
+		display: flex; flex-direction: column; gap: 0;
+	}
 	.syl-block {
 		display: flex; flex-direction: row; align-items: flex-start;
 		position: relative; border-radius: 6px;
@@ -1346,7 +1586,7 @@ let loadingDoc = $state(false);
 
 	/* Week editor */
 	.week-editor { }
-	.week-header-row { display: flex; align-items: baseline; gap: 0.2rem; margin-bottom: 0.3rem; }
+	.week-header-row { display: flex; align-items: center; gap: 0.45rem; margin-bottom: 0.3rem; }
 	.week-prefix { color: var(--ink); }
 	.week-title-input {
 		flex: 1; font-family: inherit; font-weight: 700;
@@ -1479,8 +1719,59 @@ let loadingDoc = $state(false);
 	:global(.float-page .syl-text, .print-only .syl-text, .syl-measure .syl-text) { font-size: 0.9rem; margin-bottom: 0.4rem; }
 	:global(.float-page .syl-text p, .print-only .syl-text p, .syl-measure .syl-text p) { margin: 0 0 0.4em; }
 	:global(.float-page .syl-week, .print-only .syl-week, .syl-measure .syl-week) { margin: 0.6rem 0; }
-	:global(.float-page .syl-week-header, .print-only .syl-week-header, .syl-measure .syl-week-header) { font-weight: 700; font-size: 0.92rem; margin-bottom: 0.18rem; }
-	:global(.float-page .syl-topics, .print-only .syl-topics, .syl-measure .syl-topics) { margin: 0.15rem 0 0 1.25rem; padding: 0; list-style: disc; }
+	:global(.float-page .syl-week-lockup, .print-only .syl-week-lockup, .syl-measure .syl-week-lockup) { display: flex; align-items: flex-start; gap: 0; }
+	:global(.float-page .syl-week-num, .print-only .syl-week-num, .syl-measure .syl-week-num) {
+		display: inline-flex; align-items: center; justify-content: center;
+		background: #000; color: #fff; font-weight: 700; flex-shrink: 0;
+		border-radius: 50%;
+		font-family: 'Google Sans Flex', 'Google Sans', sans-serif;
+		margin-right: 1.3em; /* ~20px of air after the circle */
+		box-sizing: border-box;
+		padding-top: 0.07em; /* optical centre: ~1px down */
+	}
+	:global(.float-page .syl-week-head, .print-only .syl-week-head, .syl-measure .syl-week-head) { min-width: 0; }
+	/* typed spacing is intentional — preserve runs of spaces (and typed
+	   line breaks) exactly as written, in preview, print AND the
+	   measurement layer so pagination matches */
+	:global(.float-page .syl-text, .print-only .syl-text, .syl-measure .syl-text,
+		.float-page .syl-topics li, .print-only .syl-topics li, .syl-measure .syl-topics li,
+		.float-page .syl-week-head, .print-only .syl-week-head, .syl-measure .syl-week-head) { white-space: pre-wrap; }
+	/* markdown links: [text](url) — anchors survive into the printed PDF
+	   as real clickable link annotations */
+	:global(.float-page a, .print-only a, .syl-measure a) { color: inherit; text-decoration: underline; text-underline-offset: 0.12em; }
+	/* marked() wraps text in block <p>s — flatten them so the date, colon
+	   and title share one line */
+	:global(.float-page .syl-week-head p, .print-only .syl-week-head p, .syl-measure .syl-week-head p) { display: inline; margin: 0; }
+	:global(.float-page .syl-topics li p, .print-only .syl-topics li p, .syl-measure .syl-topics li p) { display: inline; margin: 0; }
+	:global(.float-page .syl-week-date-pre, .print-only .syl-week-date-pre, .syl-measure .syl-week-date-pre) { font-weight: 700; }
+	:global(.float-page .syl-week-title, .print-only .syl-week-title, .syl-measure .syl-week-title) { font-weight: 700; }
+	:global(.float-page .syl-week-title, .print-only .syl-week-title, .syl-measure .syl-week-title) { font-weight: 700; }
+	:global(.float-page .syl-week-date, .print-only .syl-week-date, .syl-measure .syl-week-date) { color: #555; margin-top: 0.25em; }
+	.week-num-chip {
+		display: inline-flex; align-items: center; justify-content: center;
+		background: var(--ink); color: var(--paper); font-weight: 700;
+		flex-shrink: 0; margin-right: 20px;
+		border-radius: 50%;
+		font-family: 'Google Sans Flex', 'Google Sans', sans-serif;
+		box-sizing: border-box;
+		padding-top: 0.07em; /* optical centre: ~1px down */
+	}
+	.week-date-select {
+		font-family: inherit; font-size: 0.8rem; color: var(--ink);
+		border: 1px solid var(--border); border-radius: 6px;
+		padding: 0.2rem 0.45rem; background: var(--paper);
+	}
+	.week-date-input {
+		font-family: inherit; font-size: 0.78rem; color: var(--muted-fg);
+		border: 1px solid var(--border); border-radius: 6px;
+		padding: 0.15rem 0.4rem; background: var(--paper);
+		margin: 0.25rem 0 0.3rem;
+	}
+	.topic-btn-on { color: var(--ink); background: var(--surface-2); border-radius: 4px; }
+	.syl-key-btn { color: var(--muted-fg); }
+	.syl-key-btn.is-key { color: #e8b84b; }
+	:global(.float-page .syl-topics, .print-only .syl-topics, .syl-measure .syl-topics) { margin: 0.15rem 0 0 1.25rem; padding: 0; list-style: none; }
+	:global(.float-page .syl-topics li.topic-bullet, .print-only .syl-topics li.topic-bullet, .syl-measure .syl-topics li.topic-bullet) { list-style: disc; }
 	:global(.float-page .syl-topics li, .print-only .syl-topics li, .syl-measure .syl-topics li) { font-size: 0.86rem; }
 	:global(.float-page .katex-display, .print-only .katex-display, .syl-measure .katex-display) { margin: 0.5em 0; }
 	:global(.float-page strong, .print-only strong, .syl-measure strong) { font-weight: 700; }
@@ -1489,13 +1780,12 @@ let loadingDoc = $state(false);
 	/* Print */
 	.print-only { display: none; }
 	@media print {
-		.syl-root, .float-panel { display: none !important; }
+		/* the print root is a direct <body> child (portal); everything else
+		   collapses to zero height — page count = exactly the page divs */
+		:global(body > :not(#syl-print-root)) { display: none !important; }
+		:global(html, body) { height: auto !important; margin: 0 !important; padding: 0 !important; }
 		.print-only { display: block !important; }
-		:global(.print-only .syl-title) { font-size: 2rem; font-weight: 700; margin: 0 0 0.15rem; }
-		:global(.print-only .syl-section) { font-size: 1.05rem; font-weight: 700; margin: 1.5rem 0 0.35rem; border-bottom: 1.5px solid #000; padding-bottom: 0.15rem; }
-		:global(.print-only .syl-text) { font-size: 10pt; line-height: 1.6; }
-		:global(.print-only .syl-week-header) { font-weight: 700; font-size: 10pt; }
-		:global(.print-only .syl-topics) { margin-left: 1.2rem; }
-		:global(.print-only .syl-topics li) { font-size: 10pt; line-height: 1.5; }
+		:global(.print-page) { box-sizing: border-box; overflow: hidden; break-after: page; background: #fff; }
+		:global(.print-page:last-child) { break-after: auto; }
 	}
 </style>

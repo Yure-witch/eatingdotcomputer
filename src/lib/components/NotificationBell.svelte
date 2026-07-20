@@ -1,19 +1,31 @@
 <script>
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount, onDestroy, tick } from 'svelte';
 	import { db as rtdb } from '$lib/firebase.js';
 	import { ref, onValue, off, set, query, limitToLast } from 'firebase/database';
 	import Avatar from './Avatar.svelte';
+	import { createContentRenderer } from '$lib/message-render.js';
+	import { mountStaticEmotes } from '$lib/emote-mount.js';
+	import { getCachedCustomEmojiMap } from '$lib/custom-emoji-store.js';
 
 	let { user = null } = $props();
 
-	let notifs = $state({}); // notifId -> { type, fromUid, fromName, convType, convId, msgId, snippet, createdAt }
+	let notifs = $state({});    // live RTDB: notifId -> { type, fromUid, fromName, convType, convId, msgId, snippet, createdAt }
+	let archived = $state([]);  // Turso history (>24h old), fetched once on mount
 	let readAt = $state(0);
 	let menuOpen = $state(false);
 	let menuEl = $state(null);
 	let triggerEl = $state(null);
+	// Reactions get their own tab — rich-content reacts (emoji, kitchen
+	// mixes, emotes, TG stickers) are a different kind of signal than
+	// mentions / replies / thread replies.
+	let bellTab = $state('activity'); // 'activity' | 'reactions'
 
 	let notifsRef = null;
 	let readRef = null;
+
+	// Reaction snippets can be rich tokens ([ek:]/[ce:]/[tg:]/[tgc:]) —
+	// render them through the shared message renderer like reaction chips do.
+	const { contentHtml } = createContentRenderer({ getCeMap: () => getCachedCustomEmojiMap() || {} });
 
 	const unreadCount = $derived.by(() => {
 		let n = 0;
@@ -23,10 +35,30 @@
 		return n;
 	});
 
-	const sortedNotifs = $derived.by(() => {
-		const arr = Object.entries(notifs).map(([id, v]) => ({ id, ...v }));
+	const allNotifs = $derived.by(() => {
+		const seen = new Set();
+		const arr = [];
+		for (const [id, v] of Object.entries(notifs)) { seen.add(id); arr.push({ id, ...v }); }
+		for (const n of archived) { if (!seen.has(n.id)) arr.push(n); }
 		arr.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
-		return arr.slice(0, 25);
+		return arr;
+	});
+	const activityNotifs = $derived(allNotifs.filter((n) => n.type !== 'reaction').slice(0, 40));
+	const reactionNotifs = $derived(allNotifs.filter((n) => n.type === 'reaction').slice(0, 40));
+	const sortedNotifs = $derived(bellTab === 'reactions' ? reactionNotifs : activityNotifs);
+	// `readAt` is stamped to NOW the moment the menu opens (clears the bell
+	// badge) — so the per-item "you haven't seen this yet" marker compares
+	// against a snapshot FROZEN at open instead, and stays put while you look.
+	let seenCutoff = $state(0);
+	$effect(() => { if (!menuOpen) seenCutoff = readAt; });
+	const isUnseen = (n) => (n.createdAt ?? 0) > seenCutoff;
+	const unreadActivity = $derived(activityNotifs.filter(isUnseen).length);
+	const unreadReactions = $derived(reactionNotifs.filter(isUnseen).length);
+
+	// animate any TG sticker reacts whenever the visible list changes
+	$effect(() => {
+		void sortedNotifs; void menuOpen;
+		if (menuOpen) tick().then(() => { if (menuEl) mountStaticEmotes(menuEl); });
 	});
 
 	function notifHref(n) {
@@ -79,6 +111,11 @@
 		onValue(readRef, (snap) => {
 			readAt = Number(snap.val() ?? 0);
 		});
+		// archived history (>24h, synced to Turso) — merged under the live set
+		fetch('/api/notifications')
+			.then((r) => (r.ok ? r.json() : null))
+			.then((d) => { if (d?.notifications) archived = d.notifications; })
+			.catch(() => {});
 	});
 
 	onDestroy(() => {
@@ -115,6 +152,14 @@
 				<div class="menu-head">
 					<span class="menu-title">Notifications</span>
 				</div>
+				<div class="menu-tabs">
+					<button class="menu-tab" class:on={bellTab === 'activity'} onclick={() => (bellTab = 'activity')}>
+						Activity{#if unreadActivity > 0}<span class="tab-dot">{unreadActivity}</span>{/if}
+					</button>
+					<button class="menu-tab" class:on={bellTab === 'reactions'} onclick={() => (bellTab = 'reactions')}>
+						Reactions{#if unreadReactions > 0}<span class="tab-dot">{unreadReactions}</span>{/if}
+					</button>
+				</div>
 				{#if sortedNotifs.length === 0}
 					<div class="menu-empty">Nothing yet.</div>
 				{:else}
@@ -122,10 +167,11 @@
 						{#each sortedNotifs as n (n.id)}
 							<a
 								class="notif-item"
-								class:unread={(n.createdAt ?? 0) > readAt}
+								class:unread={isUnseen(n)}
 								href={notifHref(n)}
 								onclick={closeMenu}
 							>
+								{#if isUnseen(n)}<span class="notif-dot" aria-label="Unseen"></span>{/if}
 								<Avatar
 									name={n.fromName}
 									uid={n.fromUid}
@@ -140,7 +186,9 @@
 											{#if n.type === 'mention'}
 												mentioned you
 											{:else if n.type === 'reaction'}
-												reacted {n.snippet ?? ''}
+												reacted <span class="notif-react">{@html contentHtml(n.snippet ?? '')}</span>
+											{:else if n.type === 'thread'}
+												replied in your thread
 											{:else}
 												replied to you
 											{/if}
@@ -186,8 +234,9 @@
 		height: 16px;
 		padding: 0 4px;
 		border-radius: 999px;
-		background: var(--accent);
-		color: var(--ink);
+		/* unread is ALWAYS red — same #e53935 as the sidebar/bottom-nav badges */
+		background: #e53935;
+		color: #fff;
 		font-size: 0.66rem;
 		font-weight: 700;
 		display: inline-flex;
@@ -199,7 +248,7 @@
 	.menu {
 		position: absolute;
 		top: calc(100% + 6px);
-		right: 0;
+		right: 0; /* bell sits top-right (left of the avatar) — menu opens leftward */
 		width: min(360px, calc(100vw - 24px));
 		padding: 4px;
 		background: var(--paper);
@@ -216,6 +265,28 @@
 		letter-spacing: 0.04em;
 		color: var(--muted-fg);
 	}
+	.menu-tabs { display: flex; gap: 0.3rem; padding: 0 6px 6px; }
+	.menu-tab {
+		flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 0.35rem;
+		padding: 0.32rem 0.5rem; border: 1px solid var(--border); border-radius: 8px;
+		background: transparent; color: var(--muted-fg);
+		font-family: inherit; font-size: 0.76rem; font-weight: 600; cursor: pointer;
+		transition: background 0.12s, color 0.12s, border-color 0.12s;
+	}
+	.menu-tab.on {
+		background: var(--md-sys-color-secondary-container, var(--surface-2));
+		color: var(--md-sys-color-on-secondary-container, var(--ink));
+		border-color: var(--md-sys-color-secondary, var(--border));
+	}
+	.tab-dot {
+		min-width: 15px; height: 15px; padding: 0 4px; border-radius: 999px;
+		background: #e53935; color: #fff;
+		font-size: 0.62rem; font-weight: 700;
+		display: inline-flex; align-items: center; justify-content: center; line-height: 1;
+	}
+	.notif-react :global(img), .notif-react :global(.tg-emoji) {
+		width: 1.2em; height: 1.2em; vertical-align: -0.25em;
+	}
 	.menu-empty {
 		padding: 1.5rem 1rem;
 		text-align: center;
@@ -224,6 +295,7 @@
 	}
 	.menu-list { display: flex; flex-direction: column; gap: 1px; max-height: 60vh; overflow-y: auto; }
 	.notif-item {
+		position: relative;
 		display: grid;
 		grid-template-columns: 28px 1fr auto;
 		gap: 0.55rem;
@@ -247,6 +319,14 @@
 		white-space: nowrap;
 		max-width: 100%;
 	}
+	/* red "you haven't seen this yet" dot, pinned to the row's left edge */
+	.notif-dot {
+		position: absolute;
+		left: 2px; top: 50%; transform: translateY(-50%);
+		width: 7px; height: 7px; border-radius: 50%;
+		background: #e53935;
+	}
+	.notif-item.unread { padding-left: 14px; }
 	.notif-age {
 		font-size: 0.7rem;
 		color: var(--muted-fg);

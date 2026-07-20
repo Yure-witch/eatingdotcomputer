@@ -150,6 +150,9 @@
 							{#if hoveredWeek.isCurrent}<span class="rail-tip-badge current">now</span>{/if}
 						</span>
 						<span class="rail-tip-headline">{@html contentHtml(hoveredWeek.headline, false)}</span>
+						{#if hoveredWeek.sylTitle}
+							<span class="rail-tip-syl">From {hoveredWeek.sylWeekOf ? new Date(...hoveredWeek.sylWeekOf.split('-').map((v, i) => i === 1 ? v - 1 : +v)).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' · ' : ''}{hoveredWeek.sylTitle}</span>
+						{/if}
 						{#if hoveredWeek.dueDate}
 							<span class="rail-tip-due">
 								{hoveredWeek.isPast ? 'Was due ' : 'Due '}{fmtDate(hoveredWeek.dueDate)}
@@ -520,6 +523,7 @@
 		background: color-mix(in srgb, var(--md-sys-color-primary, var(--accent)) 55%, transparent);
 	}
 	.rail-tip-headline { font-family: 'Avara', serif; font-size: 0.95rem; line-height: 1.25; }
+	.rail-tip-syl { display: block; font-size: 0.78rem; color: var(--muted-fg); margin-top: 0.15rem; }
 	.rail-tip-due {
 		font-family: 'JetBrains Mono', ui-monospace, monospace;
 		font-size: 0.68rem;

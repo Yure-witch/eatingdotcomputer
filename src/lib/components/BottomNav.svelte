@@ -261,8 +261,10 @@
 		/* Active item gets an M3 nav-bar pill behind its icon, fed by
 		   the same --sidebar-active token the desktop rail uses for
 		   selected rows. The pill lives on the .icon-wrap so the
-		   label below stays unwrapped. */
-		.nav-item.active { color: var(--sidebar-active-fg); }
+		   label below stays unwrapped. Only the ICON takes the active
+		   colour — the highlight pill covers just the icon, so the
+		   label keeps its resting colour in every state. */
+		.nav-item.active .icon-wrap { color: var(--sidebar-active-fg); }
 		.nav-item:not(.active):active { color: var(--sidebar-fg-muted); }
 
 		.label {

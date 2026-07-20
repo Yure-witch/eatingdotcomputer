@@ -5,9 +5,11 @@
 	let _kitchen = null;
 	let _namesObj = null;
 	let _popularTokens = null;
+	let _cldr = null;
 	let _kitchenP = null;
 	let _namesP = null;
 	let _popularP = null;
+	let _cldrP = null;
 
 	export function preload() {
 		if (!_kitchenP) _kitchenP = fetch('/emoji-kitchen.json')
@@ -19,6 +21,25 @@
 		if (!_popularP) _popularP = fetch('/ek-popular-combined.json')
 			.then(r => r.ok ? r.json() : Promise.reject('Failed'))
 			.then(d => { _popularTokens = d; return d; })
+			.catch(() => null);
+		// CLDR index from the SAME emoji-data.json the regular emoji picker
+		// uses: canonical ordering (so the kitchen's emoji strips follow the
+		// emoji picker's group order) + per-emoji keyword text for search.
+		// Kitchen cps are lowercase and may carry -fe0f; emoji-data cps are
+		// uppercase without it — normalise both sides.
+		if (!_cldrP) _cldrP = fetch('/emoji-data.json', { cache: 'force-cache' })
+			.then(r => r.ok ? r.json() : Promise.reject('Failed'))
+			.then(d => {
+				const order = new Map(), terms = new Map();
+				let i = 0;
+				for (const g of d.groups || []) for (const it of g.items || []) {
+					const k = it.cp.toLowerCase().replace(/-fe0f/g, '');
+					order.set(k, i++);
+					terms.set(k, [it.n || '', ...(it.kw || []), ...(it.st || [])].join(' ').toLowerCase());
+				}
+				_cldr = { order, terms };
+				return _cldr;
+			})
 			.catch(() => null);
 	}
 </script>
@@ -153,6 +174,29 @@
 
 	function onKitchenScroll(e) {
 		virtScrollTop = e.currentTarget.scrollTop;
+		hoverTip = null; // fixed-position tip would drift from its cell
+	}
+
+	// ── Hover tooltip (emoji + emoji label) ──────────────────────────
+	// position: fixed so it can never be clipped by the scroll container
+	// or sit under the tabs bar — the old ::before tooltip was cut off for
+	// cells in the first row. Flips below the cell when there's no room
+	// above the panel edge. One delegated handler covers every grid.
+	let hoverTip = $state(null); // { text, x, y, below }
+	function onTipOver(e) {
+		const cell = e.target?.closest?.('.mix-result-item[data-tip]');
+		if (!cell) { hoverTip = null; return; }
+		const r = cell.getBoundingClientRect();
+		const below = r.top < 64; // would poke past the panel top → go under
+		hoverTip = {
+			text: cell.dataset.tip,
+			x: r.left + r.width / 2,
+			y: below ? r.bottom + 6 : r.top - 6,
+			below
+		};
+	}
+	function onTipOut(e) {
+		if (!e.relatedTarget?.closest?.('.mix-result-item[data-tip]')) hoverTip = null;
 	}
 
 	// Resolve { startIdx, endIdx, padTop, totalH } for a token list. When
@@ -188,6 +232,9 @@
 
 	// Emoji names map (plain object: char -> name)
 	let namesObj = $state(null);
+
+	// CLDR index (order + keywords) from emoji-data.json — see preload()
+	let cldr = $state(null);
 
 	// Mode: 'popular' | 'recent' | 'mix' | 'browse' | 'search' | 'gboard' | 'emojimix' | 'funbox' | 'settings'
 	let mode = $state('popular');
@@ -231,79 +278,87 @@
 	// Keyboard filter
 	let keyFilter = $state('');
 
-	// Derived: all codepoint strings from kitchen
-	let allCps = $derived(kitchen ? kitchen.cps : []);
+	// CLDR helpers — same data the regular emoji picker searches/orders by.
+	// Falls back to the plain names map until emoji-data.json resolves.
+	function normCp(cp) { return cp.toLowerCase().replace(/-fe0f/g, ''); }
+	function cldrOrd(cp) { return cldr?.order.get(normCp(cp)) ?? 1e9; }
+	function cpTerms(cp) {
+		return cldr?.terms.get(normCp(cp)) ?? (namesObj?.[cpToEmoji(cp)] ?? '').toLowerCase();
+	}
 
-	// Derived: filtered keyboard codepoints
+	// Derived: all codepoint strings from kitchen, in the regular emoji
+	// picker's (CLDR group) order — unknown cps sink to the end.
+	let allCps = $derived.by(() => {
+		if (!kitchen) return [];
+		const cps = [...kitchen.cps];
+		if (cldr) cps.sort((a, b) => cldrOrd(a) - cldrOrd(b));
+		return cps;
+	});
+
+	// Multi-token keyword match: every query word must appear somewhere in
+	// the emoji's CLDR name/keywords ("grin face" matches 😀).
+	function cpMatches(cp, toks) {
+		const terms = cpTerms(cp);
+		return toks.every((t) => terms.includes(t));
+	}
+
+	// Derived: filtered keyboard codepoints (mix/browse strips)
 	let filteredCps = $derived.by(() => {
 		if (!kitchen) return [];
-		const q = keyFilter.trim().toLowerCase();
-		if (!q) return allCps;
-		if (!namesObj) return allCps;
-		return allCps.filter(cp => {
-			const ch = cpToEmoji(cp);
-			const name = namesObj[ch] ?? '';
-			return name.toLowerCase().includes(q);
-		});
+		const toks = keyFilter.trim().toLowerCase().split(/\s+/).filter(Boolean);
+		if (!toks.length) return allCps;
+		return allCps.filter((cp) => cpMatches(cp, toks));
 	});
 
 	// Derived: emoji search results (for search mode — the clickable emoji buttons)
 	let searchResults = $derived.by(() => {
-		if (!kitchen || !namesObj) return [];
-		const q = searchQuery.trim().toLowerCase();
-		if (!q) return allCps.slice(0, 60);
-		return allCps.filter(cp => {
-			const ch = cpToEmoji(cp);
-			const name = namesObj[ch] ?? '';
-			return name.toLowerCase().includes(q);
-		});
+		if (!kitchen) return [];
+		const toks = searchQuery.trim().toLowerCase().split(/[\s+]+/).filter(Boolean);
+		if (!toks.length) return allCps.slice(0, 60);
+		return allCps.filter((cp) => cpMatches(cp, toks));
 	});
 
-	// TODO: improve EK search using a richer dataset — ideally a precomputed index
-	// mapping tags/keywords → (parentCp, childCp) pairs so we can match "crying laugh"
-	// or semantic concepts directly to mixes without going through individual emoji names.
-	// For now we derive from kitchen data + emoji names only.
+	// Popularity rank for search ordering — known-loved mixes surface first.
+	let popularRank = $derived.by(() => {
+		const m = new Map();
+		(popularTokens || []).forEach((t, i) => m.set(t, i));
+		return m;
+	});
+
+	// Mix search over CLDR keywords. A kitchen mix is BOTH of its component
+	// emoji, so every query word may hit either side: "fire" finds every mix
+	// with 🔥 in it; "fire love" narrows to 🔥×❤️-ish pairs (each word must
+	// match at least one component). The old "cat + dog" syntax still works —
+	// '+' is just another separator now. Results rank popular-first.
 	let ekSearchResults = $derived.by(() => {
-		if (!kitchen || !namesObj || !searchQuery.trim()) return [];
-		const q = searchQuery.trim().toLowerCase();
-		const seen = new Set();
-		const results = [];
-
-		// Parse optional A + B query (e.g. "cat + dog" or "cat+dog")
-		const plusIdx = q.search(/\s*\+\s*/);
-		const parts = plusIdx >= 0
-			? [q.slice(0, plusIdx).replace(/\s*\+\s*$/, '').trim(), q.slice(plusIdx).replace(/^\s*\+\s*/, '').trim()]
-			: [q];
-
-		const matchCps = (term) => term
-			? allCps.filter(cp => (namesObj[cpToEmoji(cp)] ?? '').toLowerCase().includes(term))
-			: [];
-
-		if (parts.length === 2 && parts[0] && parts[1]) {
-			// A + B search: find mixes where both sides match
-			const asSet = new Set(matchCps(parts[0]));
-			const bsSet = new Set(matchCps(parts[1]));
-			for (const cpA of asSet) {
-				for (const cpB of bsSet) {
-					for (const mix of getMixes(cpA, cpB)) {
-						if (!seen.has(mix.token)) { seen.add(mix.token); results.push(mix); }
-					}
-					if (results.length >= 60) break;
-				}
-				if (results.length >= 60) break;
-			}
-		} else {
-			// Single term: all mixes involving any matched emoji (cap per emoji to avoid explosion)
-			const matched = matchCps(parts[0]).slice(0, 8);
-			for (const cp of matched) {
-				for (const mix of getAllMixes(cp)) {
-					if (!seen.has(mix.token)) { seen.add(mix.token); results.push(mix); }
-					if (results.length >= 80) break;
-				}
-				if (results.length >= 80) break;
+		if (!kitchen || !searchQuery.trim()) return [];
+		const toks = searchQuery.trim().toLowerCase().split(/[\s+]+/).filter(Boolean);
+		if (!toks.length) return [];
+		// per-word candidate emoji sets
+		const sets = toks.map((t) => new Set(allCps.filter((cp) => cpTerms(cp).includes(t))));
+		if (sets.some((s) => s.size === 0)) return [];
+		// enumerate pairs from the rarest word's set (kitchen data lists each
+		// combo under both components, so parent-side enumeration covers it),
+		// then require every word to match one side of the pair
+		let smallest = 0;
+		for (let i = 1; i < sets.length; i++) if (sets[i].size < sets[smallest].size) smallest = i;
+		const seenPair = new Set();
+		const out = [];
+		outer: for (const cp of sets[smallest]) {
+			for (const mix of getAllMixes(cp)) {
+				const other = mix.childCp;
+				const pk = cp < other ? cp + '|' + other : other + '|' + cp;
+				if (seenPair.has(pk)) continue;
+				let ok = true;
+				for (const s of sets) { if (!s.has(cp) && !s.has(other)) { ok = false; break; } }
+				if (!ok) continue;
+				seenPair.add(pk);
+				out.push(mix);
+				if (out.length >= 400) break outer;
 			}
 		}
-		return results;
+		out.sort((a, b) => (popularRank.get(a.token) ?? 1e9) - (popularRank.get(b.token) ?? 1e9));
+		return out.slice(0, 160);
 	});
 
 	// Derived: mix results for Mix mode
@@ -393,6 +448,20 @@
 		// Kick off preloading if not already started (no-op if parent already called preload())
 		preload();
 
+		// The kitchen's emoji glyphs always render in Noto Color Emoji (the
+		// mixes ARE Noto artwork, so ingredients should match) — make sure
+		// the webfont is present even when the user's chat emoji-font is
+		// 'system' (the root layout only loads it in noto mode).
+		try {
+			if (!document.querySelector('#noto-color-emoji-font')) {
+				const link = document.createElement('link');
+				link.id = 'noto-color-emoji-font';
+				link.rel = 'stylesheet';
+				link.href = 'https://fonts.googleapis.com/css2?family=Noto+Color+Emoji&display=swap';
+				document.head.appendChild(link);
+			}
+		} catch { /* non-fatal — system emoji fallback */ }
+
 		// Load localStorage first (synchronous)
 		try {
 			const stored = localStorage.getItem('ek-recents');
@@ -422,6 +491,12 @@
 			try { namesObj = await _namesP; } catch {}
 		}
 
+		if (_cldr) {
+			cldr = _cldr;
+		} else {
+			try { cldr = await _cldrP; } catch {}
+		}
+
 		if (_popularTokens) {
 			popularTokens = _popularTokens;
 		} else {
@@ -442,6 +517,34 @@
 		try { localStorage.setItem('ek-recents', JSON.stringify(recents)); } catch {}
 		onInsert(token);
 	}
+
+	// ── Mix randomize / clear ─────────────────────────────────────────
+	function randOf(list) { return list[Math.floor(Math.random() * list.length)]; }
+	// distinct partner cps that actually have a mix with `cp`
+	function partnersOf(cp) {
+		if (!kitchen) return [];
+		const idx = kitchen.cps.indexOf(cp);
+		const entries = kitchen.data[String(idx)] ?? [];
+		return [...new Set(entries.map(([, ci]) => kitchen.cps[ci]))];
+	}
+	// Randomize one slot. If the OTHER slot is filled, pick among its real
+	// partners so the roll always lands on an existing mix, never a dead end.
+	function randomizeSlot(which) {
+		if (!kitchen) return;
+		const other = which === 'A' ? slotB : slotA;
+		const pool = other ? partnersOf(other) : kitchen.cps;
+		const pick = randOf(pool.length ? pool : kitchen.cps);
+		if (which === 'A') slotA = pick; else slotB = pick;
+	}
+	// Randomize both: random emoji + one of its actual partners.
+	function randomizeBoth() {
+		if (!kitchen) return;
+		let a = randOf(kitchen.cps), ps = partnersOf(a);
+		for (let tries = 0; !ps.length && tries < 5; tries++) { a = randOf(kitchen.cps); ps = partnersOf(a); }
+		slotA = a;
+		slotB = ps.length ? randOf(ps) : randOf(kitchen.cps);
+	}
+	function clearSlots() { slotA = null; slotB = null; activeSlot = 'A'; }
 
 	function selectKeyboardEmoji(cp) {
 		if (mode === 'mix') {
@@ -561,6 +664,8 @@
 		</button>
 		<button class="kitchen-tab" class:active={mode === 'recent'}   onclick={() => setMode('recent')}   title="Recently used">🕐</button>
 		<button class="kitchen-tab" class:active={mode === 'popular'}  onclick={() => setMode('popular')}>Popular</button>
+		<button class="kitchen-tab" class:active={mode === 'browse'}   onclick={() => setMode('browse')}>Browse</button>
+		<button class="kitchen-tab" class:active={mode === 'mix'}      onclick={() => setMode('mix')}>Mix</button>
 		{#if showGboard}
 		<button class="kitchen-tab" class:active={mode === 'gboard'}   onclick={() => setMode('gboard')}>Gboard</button>
 		{/if}
@@ -570,14 +675,13 @@
 		{#if showFunbox}
 		<button class="kitchen-tab" class:active={mode === 'funbox'}   onclick={() => setMode('funbox')}>Funbox</button>
 		{/if}
-		<button class="kitchen-tab" class:active={mode === 'mix'}      onclick={() => setMode('mix')}>Mix</button>
-		<button class="kitchen-tab" class:active={mode === 'browse'}   onclick={() => setMode('browse')}>Browse</button>
 		<button class="kitchen-tab settings-tab" class:active={mode === 'settings'} onclick={() => setMode('settings')} title="Tab settings">⚙️</button>
 		</div>
 	</div>
 
 	<!-- Content area -->
-	<div class="kitchen-content" bind:this={kitchenContentEl} onscroll={onKitchenScroll}>
+<!-- svelte-ignore a11y_no_static_element_interactions a11y_mouse_events_have_key_events -->
+	<div class="kitchen-content" bind:this={kitchenContentEl} onscroll={onKitchenScroll} onmouseover={onTipOver} onmouseout={onTipOut}>
 		{#snippet rankTab(tokens, loadingState, errorState)}
 			{#if loadingState}
 				<div class="kitchen-loading"><span class="kitchen-spinner"></span>Loading…</div>
@@ -655,79 +759,96 @@
 		{:else if mode === 'mix'}
 			<!-- Mix mode -->
 			<div class="mix-slots">
-				<button
-					class="slot-btn"
-					class:slot-active={activeSlot === 'A'}
-					onclick={() => activeSlot = 'A'}
-					title="Slot A — click to activate"
-				>
-					{#if slotA}
-						<span class="slot-emoji">{cpToEmoji(slotA)}</span>
-					{:else}
-						<span class="slot-placeholder">?</span>
-					{/if}
-				</button>
+				<div class="slot-col">
+					<button
+						class="slot-btn"
+						class:slot-active={activeSlot === 'A'}
+						onclick={() => activeSlot = 'A'}
+						title="Slot A — click to activate"
+					>
+						{#if slotA}
+							<span class="slot-emoji">{cpToEmoji(slotA)}</span>
+						{:else}
+							<span class="slot-placeholder">?</span>
+						{/if}
+					</button>
+					<button class="slot-rand" onclick={() => randomizeSlot('A')} title="Random emoji for this slot">🎲</button>
+				</div>
 				<span class="mix-plus">+</span>
-				<button
-					class="slot-btn"
-					class:slot-active={activeSlot === 'B'}
-					onclick={() => activeSlot = 'B'}
-					title="Slot B — click to activate"
-				>
-					{#if slotB}
-						<span class="slot-emoji">{cpToEmoji(slotB)}</span>
-					{:else}
-						<span class="slot-placeholder">?</span>
-					{/if}
-				</button>
+				<div class="slot-col">
+					<button
+						class="slot-btn"
+						class:slot-active={activeSlot === 'B'}
+						onclick={() => activeSlot = 'B'}
+						title="Slot B — click to activate"
+					>
+						{#if slotB}
+							<span class="slot-emoji">{cpToEmoji(slotB)}</span>
+						{:else}
+							<span class="slot-placeholder">?</span>
+						{/if}
+					</button>
+					<button class="slot-rand" onclick={() => randomizeSlot('B')} title="Random emoji for this slot">🎲</button>
+				</div>
+				<span class="mix-plus">=</span>
+				<!-- the RESULT lives on the same line as its ingredients:
+				     A + B = C, slot-sized so the equation reads at a glance.
+				     Its own controls sit underneath, icon-only, matching the
+				     per-slot dice: 🎲 rerolls the whole pair, ✕ clears it. -->
+				<div class="slot-col">
+					<div class="mix-inline-results">
+						{#if mixResults.length > 0}
+							{#each mixResults as mix}
+								<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+								<div class="mix-result-item mix-inline-item" onclick={() => insertToken(mix.token)} data-tip={tokenLabel(mix.token)} title="Insert">
+									<img use:lazyImg={mix.url} alt={mix.label} class="mix-img" />
+								</div>
+							{/each}
+						{:else}
+							<div class="slot-btn mix-inline-empty">
+								<span class="slot-placeholder">{slotA && slotB ? '∅' : '?'}</span>
+							</div>
+						{/if}
+					</div>
+					<div class="mix-under-actions">
+						<button class="slot-rand" onclick={randomizeBoth} title="Random pair that actually mixes">🎲</button>
+						<button class="slot-rand" onclick={clearSlots} disabled={!slotA && !slotB} title="Clear both">✕</button>
+					</div>
+				</div>
 			</div>
-			<div class="mix-results">
-				{#if mixResults.length > 0}
-					{#each mixResults as mix}
-						<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-						<div class="mix-result-item" onclick={() => insertToken(mix.token)} data-tip={tokenLabel(mix.token)}>
-							<img use:lazyImg={mix.url} alt={mix.label} class="mix-img" />
-						</div>
-					{/each}
-				{:else if slotA && slotB}
-					<div class="mix-empty">No mix found for these two.</div>
-				{:else}
-					<div class="mix-hint">Pick two emoji below to mix them.</div>
-				{/if}
-			</div>
+			{#if !slotA || !slotB}
+				<div class="mix-hint">Pick two emoji below to mix them.</div>
+			{:else if !mixResults.length}
+				<div class="mix-empty">No mix found for these two.</div>
+			{/if}
 
 		{:else if mode === 'browse'}
-			<!-- Browse mode -->
-			<div class="browse-selector-row">
-				<button
-					class="slot-btn browse-selector"
-					onclick={() => {}}
-					title="Selected emoji"
-				>
-					{#if browseEmoji}
-						<span class="slot-emoji">{cpToEmoji(browseEmoji)}</span>
-					{:else}
-						<span class="slot-placeholder">?</span>
-					{/if}
-				</button>
-				{#if browseEmoji}
-					<span class="browse-emoji-name">{emojiName(browseEmoji)}</span>
-				{:else}
-					<span class="browse-hint-text">Pick an emoji below</span>
-				{/if}
-			</div>
-			{#if browseEmoji && browseResults.length > 0}
-				<div class="browse-grid">
-					{#each browseResults as item}
-						<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-						<div class="browse-item" onclick={() => insertToken(item.token)} title={item.childEmoji}>
-							<img use:lazyImg={item.url} alt={item.childEmoji} class="mix-img" />
-							<span class="browse-item-child">{item.childEmoji}</span>
-						</div>
-					{/each}
+			<!-- Browse mode: chooser until an emoji is picked, then a banner
+			     (emoji + name + Change) with ONLY the mixes below — the
+			     keyboard gets out of the way once the selection is made. -->
+			{#if browseEmoji}
+				<div class="browse-banner">
+					<span class="browse-banner-emoji">{cpToEmoji(browseEmoji)}</span>
+					<span class="browse-banner-name">{emojiName(browseEmoji)}</span>
+					<button class="mix-action-btn browse-change" onclick={() => (browseEmoji = null)}>Change</button>
 				</div>
-			{:else if browseEmoji}
-				<div class="mix-empty">No mixes found for this emoji.</div>
+				{#if browseResults.length > 0}
+					<div class="browse-grid">
+						{#each browseResults as item}
+							<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+							<div class="browse-item" onclick={() => insertToken(item.token)} title={item.childEmoji}>
+								<img use:lazyImg={item.url} alt={item.childEmoji} class="mix-img" />
+								<span class="browse-item-child">{item.childEmoji}</span>
+							</div>
+						{/each}
+					</div>
+				{:else}
+					<div class="mix-empty">No mixes found for this emoji.</div>
+				{/if}
+			{:else}
+				<div class="browse-selector-row">
+					<span class="browse-hint-text">Pick an emoji below to see everything it mixes with.</span>
+				</div>
 			{/if}
 
 		{:else if mode === 'search'}
@@ -737,7 +858,7 @@
 				<input
 					class="search-input"
 					type="text"
-					placeholder="Search emoji or try &quot;cat + dog&quot;…"
+					placeholder="Search mixes — try &quot;fire love&quot; or &quot;cat dog&quot;…"
 					bind:value={searchQuery}
 					autofocus
 				/>
@@ -777,9 +898,10 @@
 		{/if}
 	</div>
 
-	<!-- Mini emoji keyboard (shown in mix + browse modes) -->
-	{#if mode === 'mix' || mode === 'browse'}
-		<div class="kitchen-keyboard">
+	<!-- Mini emoji keyboard — mix mode always; browse only until a pick is
+	     made (after that the banner's Change button brings it back) -->
+	{#if mode === 'mix' || (mode === 'browse' && !browseEmoji)}
+		<div class="kitchen-keyboard" class:kb-short={mode === 'mix'}>
 			<input
 				class="key-filter-input"
 				type="text"
@@ -797,6 +919,10 @@
 		</div>
 	{/if}
 </div>
+
+{#if hoverTip}
+	<div class="ek-tip" class:ek-tip-below={hoverTip.below} style="left:{hoverTip.x}px; top:{hoverTip.y}px">{hoverTip.text}</div>
+{/if}
 
 <style>
 	.kitchen-panel {
@@ -916,6 +1042,56 @@
 		padding: 0;
 	}
 	.slot-btn:hover { border-color: var(--muted-fg); background: var(--surface-2); }
+	.slot-col { display: flex; flex-direction: column; align-items: center; gap: 0.2rem; }
+	.slot-rand {
+		background: none; border: none; cursor: pointer; padding: 0;
+		font-size: 0.95rem; line-height: 1; opacity: 0.55; transition: opacity 0.1s, transform 0.1s;
+	}
+	.slot-rand:hover:not(:disabled) { opacity: 1; transform: rotate(-12deg) scale(1.15); }
+	.slot-rand:disabled { opacity: 0.22; cursor: default; }
+	.mix-under-actions { display: flex; gap: 0.55rem; align-items: center; }
+	.mix-action-btn {
+		padding: 0.22rem 0.55rem; border: 1.5px solid var(--border); border-radius: 7px;
+		background: var(--surface-2); font-family: inherit; font-size: 0.72rem; font-weight: 600;
+		color: var(--ink); cursor: pointer; white-space: nowrap; transition: background 0.1s;
+	}
+	.mix-action-btn:hover:not(:disabled) { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+	.mix-action-btn:disabled { opacity: 0.4; cursor: default; }
+	/* Inline mix result — slot-sized cell(s) completing the A + B = C row */
+	.mix-inline-results { display: flex; gap: 0.35rem; align-items: center; }
+	.mix-inline-item {
+		width: 56px; height: 56px; flex-shrink: 0;
+		border: 2px solid var(--border); border-radius: 12px;
+		display: flex; align-items: center; justify-content: center;
+		background: var(--paper); cursor: pointer; overflow: hidden;
+		transition: border-color 0.15s, transform 0.15s;
+	}
+	.mix-inline-item:hover { border-color: var(--ink); transform: scale(1.06); }
+	.mix-inline-item .mix-img { width: 46px; height: 46px; }
+	.mix-inline-empty { cursor: default; pointer-events: none; }
+
+	/* Every emoji glyph in the kitchen renders in Noto Color Emoji — the
+	   mixes themselves are Google's Noto artwork, so the ingredient emoji
+	   match them regardless of the user's chat emoji-font setting. */
+	.key-btn, .slot-emoji, .slot-placeholder, .browse-banner-emoji, .browse-item-child {
+		font-family: 'Noto Color Emoji', 'Google Sans Flex', 'Space Grotesk', sans-serif;
+	}
+
+	/* Browse banner — the picked emoji stays pinned up top with its name */
+	.browse-banner {
+		display: flex; align-items: center; gap: 0.6rem;
+		padding: 0.5rem 0.75rem; margin-bottom: 0.5rem;
+		background: var(--surface-2); border: 1.5px solid var(--border);
+		border-radius: 10px;
+		position: sticky; top: 0; z-index: 2;
+	}
+	.browse-banner-emoji { font-size: 1.8rem; line-height: 1; }
+	.browse-banner-name {
+		flex: 1; min-width: 0; font-size: 0.85rem; font-weight: 600;
+		color: var(--ink); text-transform: capitalize;
+		white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+	}
+	.browse-change { flex-shrink: 0; }
 	.slot-btn.slot-active { border-color: var(--ink); box-shadow: 0 0 0 2px rgba(26,26,26,0.1); }
 	.slot-emoji { font-size: 1.9rem; line-height: 1; }
 	.slot-placeholder { font-size: 1.4rem; color: var(--border); }
@@ -941,13 +1117,12 @@
 	}
 	.mix-result-item:hover { border-color: var(--ink); background: var(--surface-2); transform: scale(1.06); }
 
-	/* Floating emoji label on hover */
-	.mix-result-item[data-tip]:hover::before {
-		content: attr(data-tip);
-		position: absolute;
-		bottom: calc(100% + 6px);
-		left: 50%;
-		transform: translateX(-50%);
+	/* Floating emoji label on hover — a FIXED element rendered at the panel
+	   root (see hoverTip), so it rides over the tabs bar instead of being
+	   clipped by the scroll container like the old ::before tooltip. */
+	.ek-tip {
+		position: fixed;
+		transform: translate(-50%, -100%);
 		background: rgba(26, 26, 26, 0.88);
 		color: #fff;
 		padding: 3px 8px;
@@ -956,9 +1131,12 @@
 		line-height: 1.4;
 		white-space: nowrap;
 		pointer-events: none;
-		z-index: 200;
-		font-family: inherit;
+		z-index: 1000;
+		/* 'inherit' is not a valid font-family list member — keep a real
+		   fallback so the declaration survives and the emoji render Noto */
+		font-family: 'Noto Color Emoji', 'Google Sans Flex', sans-serif;
 	}
+	.ek-tip-below { transform: translate(-50%, 0); }
 	/* Fill the grid cell rather than being a fixed 56px square — fixed
 	   width was making the last column of `repeat(5, 1fr)` overflow on
 	   narrow panels. Aspect-ratio + max-size caps how big a single mix
@@ -1100,6 +1278,10 @@
 		flex-direction: column;
 		max-height: 268px;
 	}
+	/* Mix mode: the pane above holds the A + B = C row (taller than
+	   Browse's hint line), so give it the room back — otherwise the mix
+	   pane gets a few-pixel overflow scroll inside the 440px picker shell */
+	.kitchen-keyboard.kb-short { max-height: 190px; }
 	.key-filter-input {
 		margin: 0.4rem 0.5rem 0.3rem;
 		padding: 0.35rem 0.6rem;

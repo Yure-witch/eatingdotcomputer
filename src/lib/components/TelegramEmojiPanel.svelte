@@ -222,7 +222,10 @@
 		// static TG packs, so showing animated FX or unicode categories
 		// would defeat the point.
 		if (!_isStaticOnly) {
-			if (fx.length) head.push({ key: 'Effects', label: 'Effects', icon: '✨' });
+			// The ✨ entries (av > 0) are the curated, specially-animated set —
+			// surfaced as "Special effects", flowing ABOVE the regular
+			// categories rather than as an isolated grid.
+			if (fx.length) head.push({ key: 'Effects', label: 'Special effects', icon: '✨' });
 			// The 🎨 "Custom" aggregate tab is gone — in flow/scroll mode
 			// every custom pack already renders as its own labelled section
 			// in the continuous scroller, so the aggregate was duplicate
@@ -248,11 +251,11 @@
 	const items = $derived(byCat[active] ?? []);
 
 	// Categories that render as a SINGLE grid even in flow mode.
-	// `Effects` is whole-message effects (different concept from the
-	// per-emoji picker); `Custom` is an aggregate of every per-pack
-	// section underneath it, so showing it both as its own block AND
-	// repeated in each pack's block would be duplicate noise.
-	const STANDALONE_TG_CATS = new Set(['Effects', 'Custom']);
+	// `Custom` is an aggregate of every per-pack section underneath it, so
+	// showing it both as its own block AND repeated in each pack's block
+	// would be duplicate noise. (`Effects` used to live here too — it now
+	// flows as the leading "Special effects" section instead.)
+	const STANDALONE_TG_CATS = new Set(['Custom']);
 	const isStandalone = (key) => STANDALONE_TG_CATS.has(key);
 
 	// Flow mode = every non-standalone head category + every pack tab,
@@ -745,9 +748,15 @@
 	.tg-tabs-bar { display: flex; align-items: center; gap: 0.4rem; padding: 0.35rem 0.5rem; border-bottom: 1.5px solid var(--border); background: var(--surface-2); flex-shrink: 0; }
 	.tg-tabs { flex: 1; min-width: 0; display: flex; align-items: center; gap: 1px; overflow-x: auto; }
 	.tg-tabs::-webkit-scrollbar { height: 0; }
-	.tg-tab { flex: 1 0 auto; min-width: 34px; padding: 0.45rem 0; border: none; background: none; font-size: 1.05rem; line-height: 1; cursor: pointer; opacity: 0.55; transition: opacity 0.13s, background 0.13s; border-bottom: 2px solid transparent; }
-	.tg-tab:hover { opacity: 0.85; background: var(--surface-2); }
-	.tg-tab.active { opacity: 1; border-bottom-color: var(--ink, var(--ink)); background: var(--paper, var(--paper)); }
+	/* No opacity fade on unselected tabs; hover/active mirror the
+	   ExpressionPicker strip (M3 state layer + secondary container) so
+	   all the category bars read as one family. */
+	.tg-tab { flex: 1 0 auto; min-width: 34px; padding: 0.45rem 0; border: none; background: none; font-size: 1.05rem; line-height: 1; cursor: pointer; border-radius: 10px; transition: background 0.13s; }
+	.tg-tab:hover:not(.active) { background: color-mix(in srgb, var(--md-sys-color-on-surface, var(--ink)) 7%, transparent); }
+	.tg-tab.active {
+		background: var(--md-sys-color-secondary-container, var(--surface-2));
+		color: var(--md-sys-color-on-secondary-container, var(--ink));
+	}
 	.tg-tab-pack { display: inline-flex; align-items: center; justify-content: center; min-width: 32px; padding: 0.3rem 0.18rem; }
 	.tg-tab-sep { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; padding: 0 0.35rem; color: #b8aea0; font-size: 0.85rem; font-weight: 700; user-select: none; }
 
@@ -847,9 +856,11 @@
 	.tg-foot-status { flex: 1; text-align: right; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 	.tg-mode-row { display: flex; align-items: center; gap: 0.4rem; padding: 0.35rem 0.55rem; border-bottom: 1px solid var(--border); flex-shrink: 0; background: var(--surface-2); }
-	.tg-mode-label { font-size: 0.7rem; color: #8a7f72; font-weight: 600; }
-	.tg-mode-btn { flex: 1; padding: 0.25rem 0; border: 1.5px solid var(--border); border-radius: 6px; background: var(--paper); color: #8a8078; font-family: inherit; font-size: 0.74rem; cursor: pointer; transition: all 0.13s; }
-	.tg-mode-btn.active { background: var(--ink, var(--ink)); color: #fff; border-color: var(--ink, var(--ink)); }
+	.tg-mode-label { font-size: 0.7rem; color: var(--muted-fg); font-weight: 600; }
+	.tg-mode-btn { flex: 1; padding: 0.25rem 0; border: 1.5px solid var(--border); border-radius: 6px; background: var(--paper); color: var(--muted-fg); font-family: inherit; font-size: 0.74rem; cursor: pointer; transition: all 0.13s; }
+	/* active = ink tile with paper text — flips correctly with the theme
+	   (the old hardcoded #fff was white-on-white in dark mode) */
+	.tg-mode-btn.active { background: var(--ink, var(--ink)); color: var(--paper, #fff); border-color: var(--ink, var(--ink)); }
 
 	.tg-search-row { position: relative; padding: 0.25rem 0.55rem 0.35rem; border-bottom: 1px solid var(--border); background: var(--surface-2); flex-shrink: 0; }
 	.tg-search { width: 100%; box-sizing: border-box; padding: 0.3rem 1.6rem 0.3rem 0.55rem; border: 1.5px solid var(--border); border-radius: 6px; background: var(--paper); font-family: inherit; font-size: 0.78rem; color: var(--ink, var(--ink)); outline: none; transition: border-color 0.13s; }
