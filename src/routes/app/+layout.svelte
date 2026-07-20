@@ -12,6 +12,7 @@
 	import ProfileHover from '$lib/components/ProfileHover.svelte';
 	import Avatar from '$lib/components/Avatar.svelte';
 	import GemmaIcon from '$lib/components/GemmaIcon.svelte';
+	import { setFaviconBadge } from '$lib/favicon-badge.js';
 	import BottomNav from '$lib/components/BottomNav.svelte';
 	import ConvSkeleton from '$lib/components/ConvSkeleton.svelte';
 	import AppHeader from '$lib/components/AppHeader.svelte';
@@ -916,6 +917,14 @@
 	// before any Firebase client subscription fires. Client subscriptions update these live.
 	let lastRead = $state({ ...(data.initialLastRead ?? {}) });
 	let unreadCounts = $state({ ...(data.initialUnreadCounts ?? {}) });
+
+	// Favicon unread badge: total unread messages across every channel and
+	// DM, drawn as a red count bubble on the tab icon (web only — the
+	// native shell has its own app badge).
+	$effect(() => {
+		const total = Object.values(unreadCounts).reduce((a, b) => a + (Number(b) || 0), 0);
+		if (typeof document !== 'undefined') setFaviconBadge(total);
+	});
 	// channelMeta seeded from channel.lastAt values returned by the server
 	let channelMeta = $state(
 		Object.fromEntries((data.channels ?? []).filter((ch) => ch.lastAt).map((ch) => [ch.id, { lastAt: ch.lastAt }]))
