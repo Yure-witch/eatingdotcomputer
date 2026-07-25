@@ -27,6 +27,37 @@
 	const openGoals = $derived(goals.filter((g) => !g.done));
 	const doneGoals = $derived(goals.filter((g) => g.done));
 
+	// ── Group by date ────────────────────────────────────────────────────
+	// Open goals group by the day they were harvested; completed goals by
+	// the day they were checked off. Lists arrive newest-first, so groups
+	// come out newest-first too.
+	function parseIso(iso) {
+		if (!iso) return null;
+		try { return new Date(iso.includes('T') || iso.endsWith('Z') ? iso : iso.replace(' ', 'T') + 'Z'); } catch { return null; }
+	}
+	function dayLabel(iso) {
+		const d = parseIso(iso);
+		if (!d || isNaN(d)) return 'Earlier';
+		const today = new Date(); today.setHours(0, 0, 0, 0);
+		const day = new Date(d); day.setHours(0, 0, 0, 0);
+		const diff = Math.round((today - day) / 86400000);
+		if (diff <= 0) return 'Today';
+		if (diff === 1) return 'Yesterday';
+		return d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+	}
+	function groupByDay(list, dateOf) {
+		const groups = [];
+		for (const g of list) {
+			const label = dayLabel(dateOf(g));
+			const last = groups[groups.length - 1];
+			if (last && last.label === label) last.items.push(g);
+			else groups.push({ label, items: [g] });
+		}
+		return groups;
+	}
+	const openGroups = $derived(groupByDay(openGoals, (g) => g.createdAt));
+	const doneGroups = $derived(groupByDay(doneGoals, (g) => g.doneAt ?? g.createdAt));
+
 	async function toggleGoal(g) {
 		const next = !g.done;
 		goals = goals.map((x) => (x.goalId === g.goalId ? { ...x, done: next } : x));
@@ -162,9 +193,12 @@
 			<section class="goals-section">
 				<h2>Open</h2>
 				{#if openGoals.length}
-					<ul class="goal-list">
-						{#each openGoals as g (g.goalId)}{@render goalRow(g)}{/each}
-					</ul>
+					{#each openGroups as grp (grp.label)}
+						<h3 class="goal-date">{grp.label}</h3>
+						<ul class="goal-list">
+							{#each grp.items as g (g.goalId)}{@render goalRow(g)}{/each}
+						</ul>
+					{/each}
 				{:else}
 					<p class="empty">Nothing open — say what you're working on in chat and Gemma will pick it up.</p>
 				{/if}
@@ -173,9 +207,12 @@
 			{#if doneGoals.length}
 				<section class="goals-section">
 					<h2>Completed</h2>
-					<ul class="goal-list">
-						{#each doneGoals as g (g.goalId)}{@render goalRow(g)}{/each}
-					</ul>
+					{#each doneGroups as grp (grp.label)}
+						<h3 class="goal-date">{grp.label}</h3>
+						<ul class="goal-list">
+							{#each grp.items as g (g.goalId)}{@render goalRow(g)}{/each}
+						</ul>
+					{/each}
 				</section>
 			{/if}
 		{/if}
@@ -193,6 +230,11 @@
 		color: var(--md-sys-color-primary, var(--accent));
 		margin: 0 0 0.5rem;
 	}
+	.goal-date {
+		font-size: 0.72rem; font-weight: 600; color: var(--muted-fg);
+		margin: 0.9rem 0 0.15rem;
+	}
+	.goal-date:first-of-type { margin-top: 0.25rem; }
 	.goal-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
 	.goal { display: flex; flex-direction: column; gap: 0.2rem; padding: 0.6rem 0; }
 	.goal:not(:last-child) { border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); }
