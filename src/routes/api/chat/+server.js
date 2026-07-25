@@ -11,7 +11,7 @@ export async function POST({ request, locals }) {
 	const session = await locals.auth();
 	await requireClassAccess(session);
 
-	const { content, channelId, to, reply_to, attachment, effect, fontSize, fontWeight, fontStretch, noSplit, wiggleSize, mentions } = await request.json();
+	const { content, channelId, to, reply_to, attachment, effect, fontSize, fontWeight, fontStretch, noSplit, wiggleSize, mentions, tgFx } = await request.json();
 	if (!content?.trim() && !attachment?.url) error(400, 'Empty message');
 	if (content && content.length > 20000) error(400, 'Message too long (max 20,000 characters)');
 
@@ -29,6 +29,9 @@ export async function POST({ request, locals }) {
 	if (fontStretch && Math.abs(fontStretch - 100) > 0.5) msg.wdth = parseInt(fontStretch);
 	if (noSplit) msg.nsp = 1;
 	if (wiggleSize && Math.abs(wiggleSize - 6) > 0.5) msg.ws = parseInt(wiggleSize);
+	// Telegram special-effect opt-in — only meaningful on jumbo (emoji-only)
+	// messages with an av>0 [tg:] emote; the client only sends it then.
+	if (tgFx) msg.tfx = 1;
 	if (reply_to?.id) {
 		msg.rt = { id: reply_to.id, u: reply_to.userId, c: String(reply_to.content ?? '').slice(0, 100) };
 	}

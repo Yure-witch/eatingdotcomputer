@@ -34,7 +34,7 @@
 	import Avatar from '$lib/components/Avatar.svelte';
 	import UserMenu from '$lib/components/UserMenu.svelte';
 	import { loadEmojiNames, getEmojiName } from '$lib/emoji-names.js';
-	import { wrapEmojiInText } from '$lib/emoji-tip.js';
+	import { wrapEmojiInText, tgReactionName } from '$lib/emoji-tip.js';
 	import { initSemanticSearch, searchEmoji, cpToChar, onSemanticReady } from '$lib/emoji-semantic.js';
 	import { getCustomEmojiMap, getCachedCustomEmojiMap } from '$lib/custom-emoji-store.js';
 	import {
@@ -238,6 +238,18 @@
 	let messageFontStretch = $state(100);
 	let wiggleSize = $state(6);
 	const jumboInput = $derived(jumboEmojiCount(input));
+	// Telegram special-effect opt-in. The toggle only appears when the
+	// compose renders jumbo (emoji-only) AND contains an av>0 [tg:] emote;
+	// small/inline sends never carry the effect.
+	let tgFxOn = $state(false);
+	let tgManifestReady = $state(false);
+	const tgFxEligible = $derived.by(() => {
+		if (!tgManifestReady || jumboInput <= 0) return false;
+		for (const m of input.matchAll(/\[tg:([0-9a-f-]+)\]/gi)) {
+			if ((tgEntry(m[1].toLowerCase())?.av || 0) > 0) return true;
+		}
+		return false;
+	});
 	let sizeSliderActive = $state(false);
 	let thumbY = $state(0);
 	let panelFixedLeft = $state(0);
@@ -2661,7 +2673,7 @@
 			emojiNames = names; _ceMap = ce;
 			_clearHtmlCache(); clearJumboCache(); messages = [...messages];
 		});
-		Promise.all([loadTelegramEmoji(), loadCustomPacks()]).then(() => { mountTgStickers(); });
+		Promise.all([loadTelegramEmoji(), loadCustomPacks()]).then(() => { tgManifestReady = true; mountTgStickers(); });
 		document.addEventListener('selectionchange', onCeSelect);
 		document.addEventListener('selectionchange', onMsgListSelectionChange);
 		document.addEventListener('visibilitychange', flushPendingRead);
@@ -3028,14 +3040,16 @@
 				const msgId = span.closest('.message[data-msg-id]')?.dataset.msgId;
 				const isJumbo = !!span.closest('.bubble')?.classList.contains('jumbo-emoji');
 				if (msgId && isJumbo && (entry?.av || 0) > 0) {
-					// Auto-play if either: sent in the last 5 minutes, OR not yet seen
-					// by this user (createdAt > the lastRead value at page open).
+					// Auto-play ONLY when the sender opted in via the compose
+					// special-effect toggle (msg.tgFx), and either: sent in the
+					// last 5 minutes, OR not yet seen by this user (createdAt >
+					// the lastRead value at page open).
 					const msg = messages.find((m) => m.id === msgId);
 					const FRESH_MS = 5 * 60 * 1000;
 					const isFresh = msg && (Date.now() - (msg.createdAt || 0)) < FRESH_MS;
 					const isUnseen = msg && (msg.createdAt || 0) > _lastReadAtMount;
 					const key = msgId + ':' + cp;
-					if ((isFresh || isUnseen) && !_tgPlayedFx.has(key)) {
+					if (msg?.tgFx && (isFresh || isUnseen) && !_tgPlayedFx.has(key)) {
 						_tgPlayedFx.add(key);
 						setTimeout(() => {
 							if (!span.isConnected) return;
@@ -3052,13 +3066,18 @@
 			}
 		}
 	}
-	// Click an animated emoji → overlay a big play (dedicated variant if any, else enlarge)
+	// Click an animated emoji → overlay a big play. Jumbo emotes always get the
+	// dedicated special-effect variant on click (the compose checkbox only gates
+	// the on-receipt AUTO-play); small/inline emotes never render the special
+	// effect — they get the plain enlarged animation.
 	async function playTgInteraction(el) {
 		const cp = el.dataset.tgCp;
 		const entry = tgEntry(cp);
 		if (!entry || entry.flag) return;
 		const rect = el.getBoundingClientRect();
-		const url = entry.av > 0 ? tgAnimationUrl(cp, 1 + Math.floor(Math.random() * entry.av)) : tgAnimatedUrl(cp);
+		const _inJumbo = !!el.closest('.bubble')?.classList.contains('jumbo-emoji');
+		const wantFx = _inJumbo && entry.av > 0;
+		const url = wantFx ? tgAnimationUrl(cp, 1 + Math.floor(Math.random() * entry.av)) : tgAnimatedUrl(cp);
 		const data = await fetchLottie(url);
 		if (!data) return;
 		// Anchor to the CHAT container's edges, not the viewport's, so the directional
@@ -3162,6 +3181,7 @@
 		const wdthSnap = (messageFontStretch !== 100 && !hasInlineWdth) ? messageFontStretch : undefined;
 		const noSplit = !fxSplitWords;
 		const wigSnap = (fxSnap === 'wiggly' || fxSnap === 'cursed' || fxSnap === 'scalloped' || fxSnap === 'starburst') && wiggleSize !== 6 ? wiggleSize : undefined;
+		const tgFxSnap = tgFxEligible && tgFxOn ? true : undefined;
 		const _sendContent = content || attSnap?.filename || '';
 		const _mentionRoster = [
 			...(data.users ?? []),
@@ -3175,6 +3195,7 @@
 			pending: true, replyTo: replySnap, attachment: attSnap, fx: fxSnap,
 			fontSize: szSnap ?? 1, fontWeight: wghtSnap ?? 400, fontStretch: wdthSnap ?? 100, noSplit,
 			wiggleSize: wigSnap,
+			tgFx: !!tgFxSnap,
 			mentions: _sendMentions
 		};
 		messages = [...messages, optimistic];
@@ -3186,6 +3207,7 @@
 		pendingAttachment = null;
 		messageEffect = null;
 		showEffectPanel = false;
+		tgFxOn = false;
 		messageFontSize = 1.0;
 		messageFontWeight = 400;
 		messageFontStretch = 100;
@@ -3199,7 +3221,7 @@
 		fetch('/api/chat', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ content: _sendContent, channelId: convId, reply_to: replySnap, attachment: attSnap, effect: fxSnap || undefined, fontSize: szSnap, fontWeight: wghtSnap, fontStretch: wdthSnap, noSplit: noSplit || undefined, wiggleSize: wigSnap, mentions: _sendMentions.length ? _sendMentions : undefined })
+			body: JSON.stringify({ content: _sendContent, channelId: convId, reply_to: replySnap, attachment: attSnap, effect: fxSnap || undefined, fontSize: szSnap, fontWeight: wghtSnap, fontStretch: wdthSnap, noSplit: noSplit || undefined, wiggleSize: wigSnap, tgFx: tgFxSnap, mentions: _sendMentions.length ? _sendMentions : undefined })
 		}).then(() => {
 			// Only remove if still pending (onChildAdded may have already replaced it)
 			if (messages.some((m) => m.id === optimistic.id && m.pending)) {
@@ -3249,7 +3271,13 @@
 
 	const VIEWABLE_EXTS = new Set(['js','mjs','cjs','ts','tsx','jsx','py','html','htm','css','json','md','txt','csv','sql','sh','bash','env','yml','yaml','xml','svg','toml','ini','cfg','conf','log','c','h','cpp','hpp','rs','go','java','swift','svelte','vue','rb','php','pl','r','lua','kt','scala','ex','exs','hs','ml','clj','dockerfile','makefile','gitignore','env.example','env.local']);
 	const MAX_VIEW_SIZE = 500 * 1024; // 500 KB
+	// Word documents get their own (bigger) cap — they're rendered in-app
+	// via mammoth (docx → HTML), which is way faster on the mobile PWA than
+	// bouncing out to the browser/QuickLook for a preview.
+	const MAX_DOC_VIEW_SIZE = 15 * 1024 * 1024; // 15 MB
+	const isDocxFile = (filename) => (filename ?? '').split('.').pop()?.toLowerCase() === 'docx';
 	function isViewableFile(filename, mimetype, size) {
+		if (isDocxFile(filename)) return size <= MAX_DOC_VIEW_SIZE;
 		if (size > MAX_VIEW_SIZE) return false;
 		if (mimetype?.startsWith('text/')) return true;
 		if (mimetype === 'application/json' || mimetype === 'application/xml') return true;
@@ -3285,6 +3313,7 @@
 		} catch { window.open(url, '_blank'); }
 	}
 	async function viewFile(url, filename) {
+		if (isDocxFile(filename)) return viewDocx(url, filename);
 		try {
 			const r = await fetch(`/api/file-proxy?url=${encodeURIComponent(url)}`);
 			if (!r.ok) throw new Error('Failed to fetch');
@@ -3292,6 +3321,40 @@
 			const lang = langFromFilename(filename);
 			fileViewer = { filename, url, content: text, lang };
 		} catch { fileViewer = { filename, url, content: 'Failed to load file.', lang: 'plaintext' }; }
+	}
+	// In-app Word reader: fetch the bytes and render locally with
+	// docx-preview (dynamically imported so the chunk only loads when a doc
+	// is actually opened). Unlike mammoth's semantic HTML, docx-preview
+	// reproduces the ORIGINAL formatting — fonts, colors, alignment,
+	// spacing, page layout. Overlay shows immediately with a loading state.
+	async function viewDocx(url, filename) {
+		fileViewer = { filename, url, doc: true, docLoading: true, docBuf: null };
+		try {
+			const r = await fetch(`/api/file-proxy?url=${encodeURIComponent(url)}`);
+			if (!r.ok) throw new Error('Failed to fetch');
+			const buf = await r.arrayBuffer();
+			// Only commit if this viewer is still the open one (user may have
+			// closed it or opened another file while we fetched).
+			if (fileViewer?.doc && fileViewer.url === url) {
+				fileViewer = { filename, url, doc: true, docLoading: false, docBuf: buf };
+			}
+		} catch {
+			if (fileViewer?.doc && fileViewer.url === url) {
+				fileViewer = { filename, url, doc: true, docLoading: false, docBuf: null, docError: true };
+			}
+		}
+	}
+	// Svelte action: render the fetched docx bytes into the container with
+	// original formatting once the overlay's doc div mounts.
+	function renderDocx(node, buf) {
+		(async () => {
+			try {
+				const { renderAsync } = await import('docx-preview');
+				await renderAsync(buf, node, undefined, { ignoreLastRenderedPageBreak: true });
+			} catch {
+				node.innerHTML = '<p style="padding:1.5rem">Failed to render document.</p>';
+			}
+		})();
 	}
 
 	// Any atomic emote element: EK/CE/flag <img> or a Telegram/custom emoji
@@ -3652,6 +3715,18 @@
 </svg>
 <canvas bind:this={heartsCanvas} class="hearts-canvas"></canvas>
 
+<!-- Wheel anywhere over the page's dead space (the margins beside the
+     centered 840px message column, the header, etc.) scrolls the chat —
+     the list is the scroll container AND the centered column, so those
+     margins live outside it and native wheel scrolling never reaches it.
+     Real scrollables/popovers are excluded so their own scrolling wins. -->
+<svelte:window onwheel={(e) => {
+	if (!listEl) return;
+	const t = e.target;
+	if (t instanceof Element && t.closest('.message-list, .input-area, .compose-picker-pop, .effect-pop, .format-pop, .code-lang-pop, .file-viewer, .picker-overlay, .react-dock, .emoji-picker-pop, aside, nav')) return;
+	listEl.scrollTop += e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+}} />
+
 <!-- expression hover info (EK sources / CE shortcode / emoji names) — shared component -->
 <ExpressionTip root={listEl} />
 
@@ -3836,7 +3911,7 @@
 									<span class="reaction-tooltip-emoji">{@html reactionHtml(emoji)}</span>
 									<div class="reaction-tooltip-text">
 										<span class="reaction-tooltip-names">{Object.keys(users).map(uid => userMap[uid]?.name ?? 'Someone').join(', ')}</span>
-										<span class="reaction-tooltip-label">reacted with {emojiNames[emoji] ?? emoji}</span>
+										<span class="reaction-tooltip-label">reacted with {emojiNames[emoji] ?? tgReactionName(emoji) ?? emoji}</span>
 									</div>
 								</div>
 							</button>
@@ -3891,10 +3966,12 @@
 					<img class="file-viewer-icon" src={fileCodeIcon(fileViewer.filename)} alt="" />
 				{/if}
 				<span class="file-viewer-name">{fileViewer.filename}</span>
-				<button class="file-viewer-dl" onclick={(e) => { const btn = e.currentTarget; navigator.clipboard.writeText(fileViewer.content).then(() => { btn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#a6e3a1" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Copied!`; setTimeout(() => { btn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copy`; }, 1500); }); }}>
-					<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-					Copy
-				</button>
+				{#if !fileViewer.doc}
+					<button class="file-viewer-dl" onclick={(e) => { const btn = e.currentTarget; navigator.clipboard.writeText(fileViewer.content).then(() => { btn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#a6e3a1" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Copied!`; setTimeout(() => { btn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copy`; }, 1500); }); }}>
+						<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+						Copy
+					</button>
+				{/if}
 				<a class="file-viewer-dl" href={fileViewer.url} target="_blank" rel="noopener noreferrer">
 					<svg width="13" height="13" viewBox="0 -960 960 960" fill="currentColor"><path d="M320-240 80-480l240-240 57 57-184 184 183 183-56 56Zm320 0-57-57 184-184-183-183 56-56 240 240-240 240Z"/></svg>
 					Source
@@ -3905,7 +3982,21 @@
 				</button>
 				<button class="file-viewer-close" onclick={() => fileViewer = null}>×</button>
 			</div>
-			<pre class="file-viewer-code"><code>{@html highlightCode(fileViewer.content, fileViewer.lang)}</code></pre>
+			{#if fileViewer.doc}
+				{#if fileViewer.docLoading}
+					<div class="file-viewer-doc file-viewer-doc-loading">
+						<span class="msi msi-18 spin">progress_activity</span> Loading document…
+					</div>
+				{:else if fileViewer.docError}
+					<div class="file-viewer-doc file-viewer-doc-loading">Failed to load document.</div>
+				{:else}
+					{#key fileViewer.url}
+						<div class="file-viewer-doc" use:renderDocx={fileViewer.docBuf}></div>
+					{/key}
+				{/if}
+			{:else}
+				<pre class="file-viewer-code"><code>{@html highlightCode(fileViewer.content, fileViewer.lang)}</code></pre>
+			{/if}
 		</div>
 	</div>
 {/if}
@@ -4265,6 +4356,16 @@
 				</div>
 			</div>
 		</div>
+		{#if tgFxEligible}
+			<!-- Telegram special-effect opt-in: 40px checkbox, only offered
+			     when the compose is emoji-only (renders jumbo) and holds an
+			     av>0 emote. Off by default; resets after send. -->
+			<label class="tgfx-check" title="Send with special effect">
+				<input type="checkbox" bind:checked={tgFxOn} />
+				<span class="tgfx-box" aria-hidden="true">✓</span>
+				<span class="tgfx-label">Send with special effect</span>
+			</label>
+		{/if}
 		<div class="compose-effect-wrap">
 			<button class="btn-effect" class:active={messageEffect !== null || showEffectPanel}
 					title="Message effects" onclick={() => showEffectPanel = !showEffectPanel}><span class="msi msi-18" class:msi-fill={messageEffect !== null || showEffectPanel}>auto_awesome</span></button>
@@ -4784,6 +4885,18 @@
 	.file-viewer-code code {
 		font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace; white-space: pre;
 	}
+	/* In-app Word document reader (docx-preview — original formatting).
+	   The library renders real "pages" (.docx-wrapper > section.docx) with
+	   the document's own fonts/colors/spacing; we just give it a PDF-viewer
+	   style gray backdrop and let it scroll both axes (pages have a fixed
+	   real-world width, so narrow screens pan horizontally). */
+	.file-viewer-doc { flex: 1; overflow: auto; background: #525659; }
+	.file-viewer-doc :global(.docx-wrapper) { background: transparent; padding: 1.25rem; }
+	.file-viewer-doc-loading {
+		display: flex; align-items: center; justify-content: center; gap: 0.5rem;
+		font-family: 'Google Sans Flex', 'Space Grotesk', sans-serif;
+		color: #ccc; font-size: 0.9rem;
+	}
 
 	/* Reactions */
 	.reactions { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.2rem; }
@@ -4990,6 +5103,30 @@
 		box-sizing: border-box;
 		background: var(--paper);
 	}
+	.tgfx-check {
+		position: relative; flex-shrink: 0;
+		display: flex; align-items: center; gap: 0.45rem;
+		cursor: pointer; user-select: none;
+	}
+	.tgfx-check input {
+		position: absolute; inset: 0; width: 100%; height: 100%;
+		opacity: 0; margin: 0; cursor: pointer;
+	}
+	.tgfx-box {
+		width: 40px; height: 40px; box-sizing: border-box; flex-shrink: 0;
+		display: flex; align-items: center; justify-content: center;
+		border: 2px solid var(--border); border-radius: 10px;
+		background: var(--paper); color: transparent;
+		font-size: 1.4rem; line-height: 1;
+		transition: background 150ms ease, border-color 150ms ease, color 150ms ease;
+	}
+	.tgfx-label {
+		font-size: 0.72rem; line-height: 1.25; color: var(--muted-fg);
+		max-width: 5.5rem;
+	}
+	.tgfx-check input:checked + .tgfx-box { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+	.tgfx-check input:checked ~ .tgfx-label { color: var(--ink); }
+	.tgfx-check:hover .tgfx-box { border-color: var(--ink); }
 	/* The fade lives on the .input-area parent (not .input-bar) so
 	   the reply-bar / attachment preview that sit between the input
 	   bar and the messages above DON'T get washed out by the

@@ -65,6 +65,7 @@ export async function GET({ request }) {
 			const fontWeight  = msg.fw != null && Math.abs(msg.fw - 400) > 1 ? parseInt(msg.fw) : null;
 			const fontStretch = msg.wdth != null && Math.abs(msg.wdth - 100) > 0.5 ? parseFloat(msg.wdth) : null;
 			const noSplit     = msg.nsp ? 1 : 0;
+			const tgFx        = msg.tfx ? 1 : 0;
 			// Mentions: archive the compact `mn` array as JSON. Stored
 			// in the new chat_messages.mentions column. Page-load
 			// queries can JSON.parse it back to render pills on
@@ -76,11 +77,11 @@ export async function GET({ request }) {
 				sql: `INSERT OR IGNORE INTO chat_messages
 				      (id, conversation_id, user_id, user_name, user_role, content, created_at, reply_to_id,
 				       attachment_url, attachment_filename, attachment_mimetype, attachment_size,
-				       fx, font_size, font_weight, font_stretch, no_split, mentions)
-				      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				       fx, font_size, font_weight, font_stretch, no_split, mentions, tg_fx)
+				      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				args: [msg.key, conversationId, userId, userName, userRole, content, new Date(msg.ts).toISOString(), replyToId,
 				       attUrl, attFilename, attMimetype, attSize,
-				       fx, fontSize, fontWeight, fontStretch, noSplit, mentionsJson]
+				       fx, fontSize, fontWeight, fontStretch, noSplit, mentionsJson, tgFx]
 			});
 
 			// Archive reactions for this message → message_reactions table

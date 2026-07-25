@@ -20,7 +20,7 @@ export async function load({ params, parent }) {
 			sql: `SELECT * FROM (
 			        SELECT id, user_id, user_name, user_role, content, created_at,
 			               attachment_url, attachment_filename, attachment_mimetype, attachment_size,
-			               fx, font_size, font_weight, font_stretch, no_split, is_edited, mentions
+			               fx, font_size, font_weight, font_stretch, no_split, is_edited, mentions, tg_fx
 			        FROM chat_messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT ?
 			      ) sub ORDER BY created_at ASC`,
 			args: [convId, PAGE_SIZE]
@@ -66,6 +66,7 @@ export async function load({ params, parent }) {
 			fontWeight: r.font_weight != null ? Number(r.font_weight) : 400,
 			fontStretch: r.font_stretch != null ? Number(r.font_stretch) : 100,
 			noSplit: Number(r.no_split) === 1,
+			tgFx: Number(r.tg_fx) === 1,
 			attachment: r.attachment_url ? {
 				url: String(r.attachment_url),
 				filename: String(r.attachment_filename ?? ''),

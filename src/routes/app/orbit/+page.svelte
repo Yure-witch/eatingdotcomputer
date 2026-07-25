@@ -42,10 +42,13 @@
 			? orderedWeeks.findIndex((w) => w.planId === data.currentPlanId)
 			: -1
 	);
-	// Roadmap shows just the CURRENT week + the NEXT one; the full timeline
-	// lives on /app/weeks (linked below the window).
+	// Roadmap shows just the CURRENT week + the NEXT one; the "See all
+	// weeks" toggle below the window expands the full timeline inline
+	// (same pattern as the Syllabus section below it).
+	let roadmapExpanded = $state(false);
 	const visibleWeeks = $derived.by(() => {
 		if (!orderedWeeks.length) return [];
+		if (roadmapExpanded) return orderedWeeks;
 		const start = currentIdx < 0 ? 0 : currentIdx;
 		return orderedWeeks.slice(start, start + 2);
 	});
@@ -66,6 +69,22 @@
 	let showForm = $state(false);
 	let openSubmit = $state(null);
 	let submitTypes = $state({});
+
+	// ── Syllabus section ─────────────────────────────────────────────
+	// Collapsed: just the NEXT week's header + topics. Expanded: every
+	// week of the key syllabus in a detailed outline.
+	let syllabusExpanded = $state(false);
+	const syllabusShownWeeks = $derived(
+		syllabusExpanded
+			? (data.syllabusWeeks ?? [])
+			: (data.syllabusWeeks ?? []).filter((w) => w.week === data.syllabusNextWeek)
+	);
+	function fmtWeekOf(iso) {
+		if (!iso) return '';
+		const [y, m, d] = String(iso).split('-').map(Number);
+		if (!y || !m || !d) return '';
+		return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
+	}
 
 	// Streamed Collection data — starts empty so the roadmap paints instantly,
 	// then fills in when load()'s `collection` promise resolves a beat later.
@@ -167,8 +186,9 @@
 			<ul class="roadmap-window">
 				{#each visibleWeeks as wk (wk.planId)}
 					{@const isCurrent = wk.planId === data.currentPlanId}
+					{@const isPast = !!data.currentWeekNum && wk.week < data.currentWeekNum && !isCurrent}
 					{@const status = weekStatus(wk)}
-					<li class="roadmap-row" class:current={isCurrent}>
+					<li class="roadmap-row" class:current={isCurrent} class:past={isPast}>
 						<a class="roadmap-link" href="/app">
 							<span class="roadmap-week-num">Week {wk.week}</span>
 							<div class="roadmap-body">
@@ -177,11 +197,13 @@
 								{:else}
 									<span class="roadmap-headline muted">Untitled week</span>
 								{/if}
-								{#if wk.dueDate}
+								{#if wk.dueDate && !isPast}
 									<span class="roadmap-due">Due {fmtDueDate(wk.dueDate)}</span>
 								{/if}
 							</div>
-							{#if isInstructor}
+							{#if isPast}
+								<!-- Passed weeks: name only — no status / due noise -->
+							{:else if isInstructor}
 								<span class="roadmap-status instructor">
 									{wk.items.length} item{wk.items.length === 1 ? '' : 's'}
 								</span>
@@ -203,12 +225,46 @@
 					</li>
 				{/each}
 			</ul>
-			{#if hasMoreWeeks}
-				<a class="roadmap-all-link" href="/app/weeks">
-					<span>See all weeks</span>
-					<span class="msi msi-18">arrow_forward</span>
-				</a>
+			{#if hasMoreWeeks || roadmapExpanded}
+				<button class="roadmap-all-link sylo-all-btn" onclick={() => (roadmapExpanded = !roadmapExpanded)}>
+					<span>{roadmapExpanded ? 'Just the current week' : `See all ${orderedWeeks.length} weeks`}</span>
+					<span class="msi msi-18">{roadmapExpanded ? 'expand_less' : 'expand_more'}</span>
+				</button>
 			{/if}
+		{/if}
+
+		<!-- ═══════════════════ SYLLABUS ═══════════════════ -->
+		{#if data.syllabusWeeks?.length}
+			<div class="files-divider"></div>
+			<div class="page-header">
+				<h1>Syllabus</h1>
+			</div>
+			<ul class="sylo-weeks">
+				{#each syllabusShownWeeks as w (w.week)}
+					{@const isPast = !!data.currentWeekNum && w.week < data.currentWeekNum}
+					<li class="sylo-week" class:next={w.week === data.syllabusNextWeek} class:past={isPast}>
+						{#if w.week === data.syllabusNextWeek}<span class="sylo-next-tag">upcoming</span>{/if}
+						<div class="sylo-card">
+							<div class="sylo-week-head">
+								<span class="sylo-week-num">Class {w.week}</span>
+								<span class="sylo-week-title">{w.title || 'Untitled'}</span>
+								{#if w.weekOf}<span class="sylo-week-of">{fmtWeekOf(w.weekOf)}</span>{/if}
+							</div>
+							<!-- Passed weeks collapse to just the name — topics only
+							     render for the current week onward. -->
+							{#if w.topics.length && !isPast}
+								<ul class="sylo-topics">
+									{#each w.topics as t}<li>{t}</li>{/each}
+								</ul>
+							{/if}
+						</div>
+					</li>
+				{/each}
+			</ul>
+			<button class="roadmap-all-link sylo-all-btn" onclick={() => (syllabusExpanded = !syllabusExpanded)}>
+				<span>{syllabusExpanded ? 'Just the next class' : `See all ${data.syllabusWeeks.length} classes`}</span>
+				<span class="msi msi-18">{syllabusExpanded ? 'expand_less' : 'expand_more'}</span>
+			</button>
 		{/if}
 
 		<!-- ═══════════════════ FILES ═══════════════════ -->
@@ -528,6 +584,75 @@
 	   Replaces the long per-week sections with a 5-row list centered
 	   on the current week. Rows themselves are plain anchors that
 	   jump to /app for the full checklist. */
+	/* ── Syllabus section (key-syllabus outline) ── */
+	.sylo-all-btn { background: none; border: none; cursor: pointer; font-family: inherit; }
+	.sylo-weeks {
+		list-style: none;
+		padding: 0;
+		margin: 0 0 2rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.4rem;
+	}
+	.sylo-week { display: flex; flex-direction: column; align-items: stretch; gap: 0.3rem; }
+	.sylo-week.past .sylo-card { opacity: 0.65; }
+	.roadmap-row.past .roadmap-link { opacity: 0.65; padding-top: 0.5rem; padding-bottom: 0.5rem; }
+	.sylo-card {
+		padding: 0.7rem 0.95rem;
+		background: var(--md-sys-color-surface-container, var(--surface-2));
+		border: 1px solid var(--md-sys-color-outline-variant, var(--border));
+		border-radius: 12px;
+	}
+	.sylo-week.next .sylo-card {
+		/* Gentle tint over the normal surface — the full primary-container
+		   read as too dark/intense against the light-theme surfaces. */
+		background: color-mix(in srgb, var(--md-sys-color-primary, var(--accent)) 8%, var(--md-sys-color-surface-container, var(--surface-2)));
+		border-color: color-mix(in srgb, var(--md-sys-color-primary, var(--accent)) 45%, var(--md-sys-color-outline-variant, var(--border)));
+	}
+	.sylo-week-head {
+		display: flex;
+		align-items: baseline;
+		gap: 0.6rem;
+		flex-wrap: wrap;
+	}
+	.sylo-week-num {
+		font-family: 'JetBrains Mono', ui-monospace, monospace;
+		font-size: 0.72rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.08em;
+		color: var(--md-sys-color-secondary, var(--muted-fg));
+		flex-shrink: 0;
+	}
+	.sylo-week-title {
+		font-family: 'Avara', serif;
+		font-size: 1.02rem;
+		font-weight: 600;
+		min-width: 0;
+	}
+	.sylo-next-tag {
+		font-size: 0.6rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
+		background: var(--md-sys-color-primary, var(--accent));
+		color: var(--md-sys-color-on-primary, var(--paper));
+		padding: 0.14rem 0.45rem; border-radius: 99px;
+		align-self: flex-start; flex-shrink: 0;
+	}
+	.sylo-week-of {
+		margin-left: auto;
+		font-size: 0.78rem;
+		color: var(--md-sys-color-secondary, var(--muted-fg));
+		flex-shrink: 0;
+	}
+	.sylo-topics {
+		margin: 0.45rem 0 0.1rem;
+		padding-left: 1.25rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.2rem;
+		font-size: 0.88rem;
+		line-height: 1.45;
+	}
+
 	.roadmap-all-link {
 		display: inline-flex;
 		align-items: center;
@@ -567,9 +692,10 @@
 		border-color: color-mix(in srgb, var(--md-sys-color-primary, var(--accent)) 50%, var(--border));
 	}
 	.roadmap-row.current .roadmap-link {
-		background: var(--md-sys-color-primary-container, color-mix(in srgb, var(--md-sys-color-primary, var(--accent)) 18%, var(--paper)));
-		border-color: var(--md-sys-color-primary, var(--accent));
-		box-shadow: 0 6px 18px color-mix(in srgb, var(--md-sys-color-primary, var(--accent)) 22%, transparent);
+		/* Same gentle tint as the Syllabus upcoming card — the full
+		   primary-container + glow was too dark/intense on light theme. */
+		background: color-mix(in srgb, var(--md-sys-color-primary, var(--accent)) 8%, var(--md-sys-color-surface-container, var(--surface-2)));
+		border-color: color-mix(in srgb, var(--md-sys-color-primary, var(--accent)) 45%, var(--md-sys-color-outline-variant, var(--border)));
 	}
 	.roadmap-row.current .roadmap-link:hover { transform: translateY(-1px); }
 
@@ -580,9 +706,6 @@
 		text-transform: uppercase;
 		letter-spacing: 0.08em;
 		color: var(--md-sys-color-secondary, var(--muted-fg));
-	}
-	.roadmap-row.current .roadmap-week-num {
-		color: var(--md-sys-color-on-primary-container, var(--ink));
 	}
 
 	.roadmap-body {

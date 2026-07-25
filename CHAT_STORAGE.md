@@ -38,6 +38,7 @@ Live messages are written **compact** to keep RTDB payloads small:
   fx,                 // optional: whole-bubble effect name
   fs, fw, wdth,       // optional: font size / weight / stretch
   nsp,                // optional: no-split flag for per-word effects
+  tfx,                // optional: 1 = Telegram special-effect opt-in (jumbo av>0 emote; archived to chat_messages.tg_fx)
   mn: [{ u, o, l }]   // optional: mentions (uid, offset, len)
 }
 ```

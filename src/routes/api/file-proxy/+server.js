@@ -10,9 +10,12 @@ export async function GET({ url, locals }) {
 	try {
 		const res = await fetch(fileUrl, { signal: AbortSignal.timeout(10000) });
 		if (!res.ok) error(res.status, 'File not found');
-		const text = await res.text();
-		return new Response(text, {
-			headers: { 'Content-Type': 'text/plain; charset=utf-8' }
+		// Pass bytes through untouched — decoding to text here corrupted
+		// binary files (docx/zip/images), which broke the in-app Word
+		// reader and binary downloads. Text callers still .text() fine.
+		const buf = await res.arrayBuffer();
+		return new Response(buf, {
+			headers: { 'Content-Type': res.headers.get('content-type') ?? 'application/octet-stream' }
 		});
 	} catch (e) {
 		if (e?.status) throw e;

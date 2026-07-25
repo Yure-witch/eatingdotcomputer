@@ -39,6 +39,7 @@
 		"@sveltejs/adapter-vercel": "^6.3.1",
 		"bcryptjs": "^3.0.3",
 		"canvaskit-wasm": "^0.41.1",
+		"docx-preview": "^0.4.0",
 		"dotenv": "^17.3.1",
 		"firebase": "^12.10.0",
 		"firebase-admin": "^13.7.0",

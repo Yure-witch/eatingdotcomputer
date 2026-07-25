@@ -21,6 +21,98 @@
 	let activeTab = $state('assignments');
 	let syllabusPreviewOpen = $state(false);
 
+	// ── Gemma daily digest tab ──────────────────────────────────────────
+	// Master switch = the instructor's own users.gemma_digest flag (the
+	// cron only runs when an instructor has it on); students still opt in
+	// individually from their profile-edit page.
+	let gemmaMasterOn = $state(data.members.find((m) => m.id === data.currentUser?.id)?.gemmaDigest ?? false);
+	// Sync from the server at mount — page-load data can be stale if the
+	// setting changed elsewhere (Gemma page opt-out, profile edit).
+	onMount(async () => {
+		try {
+			const r = await fetch('/api/gemma/settings');
+			if (r.ok) gemmaMasterOn = (await r.json()).optIn;
+		} catch { /* keep load-time value */ }
+	});
+	let gemmaTestStatus = $state(null);
+	// Live "who's generating right now" — polled every 5s while the Gemma
+	// tab is open (reads the per-user in-flight locks). A 1s ticker keeps
+	// the elapsed-seconds display counting smoothly between polls.
+	let gemmaGenerating = $state([]);
+	let gemmaGenPolledAt = $state(0);
+	let gemmaGenNow = $state(0);
+	const gemmaGenSecs = (g) =>
+		g.forSecs + Math.max(0, Math.round((gemmaGenNow - gemmaGenPolledAt) / 1000));
+	$effect(() => {
+		if (activeTab !== 'gemma') return;
+		let alive = true;
+		const poll = async () => {
+			try {
+				const r = await fetch('/api/gemma/digest?status=all');
+				if (r.ok && alive) {
+					gemmaGenerating = (await r.json()).generating ?? [];
+					gemmaGenPolledAt = Date.now();
+					gemmaGenNow = Date.now();
+				}
+			} catch { /* keep last */ }
+		};
+		poll();
+		const iv = setInterval(poll, 5000);
+		const tick = setInterval(() => { if (gemmaGenerating.length) gemmaGenNow = Date.now(); }, 1000);
+		return () => { alive = false; clearInterval(iv); clearInterval(tick); };
+	});
+	let interestsDraft = $state({});
+	let interestsStatus = $state({});
+	async function toggleGemmaMaster() {
+		gemmaMasterOn = !gemmaMasterOn;
+		try {
+			await fetch('/api/gemma/settings', {
+				method: 'POST', headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ optIn: gemmaMasterOn })
+			});
+		} catch { gemmaMasterOn = !gemmaMasterOn; }
+	}
+	async function saveInterests(uid) {
+		interestsStatus = { ...interestsStatus, [uid]: 'saving' };
+		try {
+			const m = data.members.find((x) => x.id === uid);
+			const r = await fetch('/api/gemma/settings', {
+				method: 'POST', headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ userId: uid, interests: interestsDraft[uid] ?? m?.interests ?? '' })
+			});
+			interestsStatus = { ...interestsStatus, [uid]: r.ok ? 'saved' : 'failed' };
+		} catch { interestsStatus = { ...interestsStatus, [uid]: 'failed' }; }
+		setTimeout(() => { interestsStatus = { ...interestsStatus, [uid]: null }; }, 2000);
+	}
+	async function sendTestDigest(reset = false) {
+		// Guard against double-fires: check the server-side in-flight lock
+		// first (generation takes a minute+; the button alone can't protect
+		// against reloads or a second tab).
+		gemmaTestStatus = 'Checking…';
+		try {
+			const st = await fetch('/api/gemma/digest?status=1').then((r) => r.json()).catch(() => ({}));
+			if (st.inProgress) {
+				gemmaTestStatus = 'A digest is already generating — give it a minute';
+				setTimeout(() => { gemmaTestStatus = null; }, 5000);
+				return;
+			}
+		} catch { /* proceed */ }
+		gemmaTestStatus = reset ? 'Resetting… (takes a minute or two)' : 'Sending… (takes a minute or two)';
+		try {
+			const r = await fetch('/api/gemma/digest', {
+				method: 'POST', headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(reset ? { reset: true } : {})
+			});
+			const j = await r.json().catch(() => ({}));
+			const first = j.sent?.[0];
+			gemmaTestStatus = !r.ok ? 'Failed to send'
+				: first?.reason === 'in-progress' ? 'A digest is already generating — give it a minute'
+				: first?.delivered ? `Sent ${first.usedLlm ? '(written by Gemma)' : first.reminder ? '(reminder)' : '(template — no LLM key reachable)'} — check your Gemma DM`
+				: `Nothing sent (${first?.reason ?? 'no recipients'})`;
+		} catch { gemmaTestStatus = 'Failed to send'; }
+		setTimeout(() => { gemmaTestStatus = null; }, 8000);
+	}
+
 	// Activity chart
 	const W = 480, PAD = 4, LABEL_W = 64, ROW_H = 44;
 	const RANGES = [
@@ -444,6 +536,7 @@
 			</button>
 			<button class="manage-tab" class:active={activeTab === 'activity'} onclick={() => activeTab = 'activity'}>Activity</button>
 			<button class="manage-tab" class:active={activeTab === 'moderation'} onclick={() => activeTab = 'moderation'}>Moderation</button>
+			<button class="manage-tab" class:active={activeTab === 'gemma'} onclick={() => activeTab = 'gemma'}>Gemma</button>
 		</nav>
 
 		{#if activeTab === 'syllabus'}
@@ -881,6 +974,72 @@
 		</table>
 		</div>
 	</section>
+		{/if}
+
+		{#if activeTab === 'gemma'}
+		<section class="members-section enrollment-section">
+			<h2>Gemma digest</h2>
+			<label class="enrollment-toggle">
+				<input type="checkbox" checked={gemmaMasterOn} onchange={toggleGemmaMaster} />
+				<span class="enrollment-toggle-text">
+					<span class="enrollment-toggle-title">Enable digests</span>
+					<span class="enrollment-toggle-sub">
+						Master switch — the daily cron only runs while this is on, and you'll receive the digest too.
+						Students must ALSO opt in individually (Profile → Edit). Each morning Gemma DMs a recap of
+						yesterday's class chat, gentle reminders for open assignment items, and one inspiration nudge
+						built from the interests below. If nothing changed since the last send, Gemma skips the digest
+						and sends just a short reminder for un-actioned items (or nothing when all's done). Written
+						with your saved Gemma API key (falls back to a plain template if no key is reachable).
+						Inspiration comes from the model + interests — Gemma has no web search yet.
+					</span>
+				</span>
+			</label>
+			<div class="enrollment-actions">
+				<button class="btn-secondary" onclick={() => sendTestDigest(false)} disabled={!!gemmaTestStatus}>
+					{gemmaTestStatus ?? '✨ Send me a test digest now'}
+				</button>
+				<button class="btn-secondary" onclick={() => sendTestDigest(true)} disabled={!!gemmaTestStatus}
+					title="Wipes YOUR Gemma conversation, goals and change-detection state, then sends a fresh digest — for testing the first-time experience.">
+					🧪 Reset &amp; send first-time digest
+				</button>
+			</div>
+			<p class="gemma-live-status" class:busy={gemmaGenerating.length}>
+				{#if gemmaGenerating.length}
+					<span class="msi msi-18 gemma-spin">progress_activity</span>
+					Generating now: {gemmaGenerating.map((g) => `${g.name ?? g.userId} (${gemmaGenSecs(g)}s)`).join(', ')}
+				{:else}
+					No digests generating right now.
+				{/if}
+			</p>
+		</section>
+
+		<section class="members-section">
+			<h2>Student interests <span class="member-count">(fed to Gemma for inspiration)</span></h2>
+			<div class="gemma-interest-list">
+				{#each data.members.filter((m) => m.role !== 'instructor') as m (m.id)}
+					<div class="gemma-interest-row">
+						<div class="gemma-interest-head">
+							<Avatar name={m.name} uid={m.id} avatarKind={m.avatarKind ?? 'gen'} avatarValue={m.avatarValue ?? null} size={30} />
+							<span class="gemma-interest-name">{m.name || 'Unnamed'}</span>
+							<span class="gemma-optin" class:on={m.gemmaDigest}>{m.gemmaDigest ? 'opted in' : 'not opted in'}</span>
+						</div>
+						<textarea
+							class="gemma-interest-input"
+							rows="2"
+							placeholder="Interests, goals, things they want to make… (e.g. generative type, analog synths, zines)"
+							value={interestsDraft[m.id] ?? m.interests}
+							oninput={(e) => (interestsDraft = { ...interestsDraft, [m.id]: e.currentTarget.value })}
+						></textarea>
+						<button class="btn-secondary small" onclick={() => saveInterests(m.id)} disabled={interestsStatus[m.id] === 'saving'}>
+							{interestsStatus[m.id] === 'saving' ? 'Saving…' : interestsStatus[m.id] === 'saved' ? 'Saved ✓' : interestsStatus[m.id] === 'failed' ? 'Failed — retry' : 'Save interests'}
+						</button>
+					</div>
+				{/each}
+				{#if !data.members.some((m) => m.role !== 'instructor')}
+					<p class="empty">No students in the class yet.</p>
+				{/if}
+			</div>
+		</section>
 		{/if}
 
 		{#if activeTab === 'moderation'}
@@ -1780,5 +1939,38 @@
 	@media (max-width: 640px) {
 		.dm-msg-row { max-width: 88%; }
 		.dm-chat-scroll { padding: 0.75rem 0.875rem; }
+	}
+
+	/* ── Gemma digest tab ── */
+	.gemma-live-status {
+		margin: 0.6rem 0 0; font-size: 0.75rem; color: var(--muted-fg);
+		display: flex; align-items: center; gap: 0.35rem;
+	}
+	.gemma-live-status.busy { color: var(--md-sys-color-primary, var(--accent)); font-weight: 600; }
+	.gemma-spin { display: inline-block; animation: gemma-spin 1s linear infinite; }
+	@keyframes gemma-spin { to { transform: rotate(360deg); } }
+	.gemma-interest-list { display: flex; flex-direction: column; gap: 1rem; }
+	.gemma-interest-row {
+		display: flex; flex-direction: column; gap: 0.4rem; align-items: flex-start;
+		padding: 0.75rem 0.9rem;
+		border: 1px solid var(--border); border-radius: 12px;
+		background: var(--md-sys-color-surface-container, var(--surface-2, var(--paper)));
+	}
+	.gemma-interest-head { display: flex; align-items: center; gap: 0.5rem; }
+	.gemma-interest-name { font-weight: 600; font-size: 0.9rem; }
+	.gemma-optin {
+		font-size: 0.65rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
+		padding: 0.1rem 0.45rem; border-radius: 99px;
+		border: 1px solid var(--border); color: var(--muted-fg);
+	}
+	.gemma-optin.on {
+		color: var(--md-sys-color-primary, var(--accent));
+		border-color: var(--md-sys-color-primary, var(--accent));
+	}
+	.gemma-interest-input {
+		width: 100%; box-sizing: border-box; resize: vertical;
+		font-family: inherit; font-size: 0.85rem; line-height: 1.4;
+		padding: 0.5rem 0.65rem; border: 1px solid var(--border); border-radius: 8px;
+		background: var(--paper); color: var(--ink);
 	}
 </style>

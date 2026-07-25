@@ -27,7 +27,70 @@
 		if (res.ok) hasKey = (await res.json()).hasKey;
 		checked = true;
 		scrollDown();
+		loadDigests();
+		syncDigestSetting();
 	});
+
+	// ── Daily digests ────────────────────────────────────────────────────
+	// Digests are DM'd server-side by the gemma bot (see gemma-digest.js);
+	// this page is their home. Fetch them, merge any new ones into the
+	// thread (deduped by digestId), persist, and let the endpoint clear the
+	// unread badge on the sidebar's Gemma entry.
+	async function loadDigests() {
+		try {
+			const r = await fetch('/api/gemma/digest?history=1');
+			if (!r.ok) return;
+			const { digests } = await r.json();
+			// Prune locally-cached digest bubbles the server no longer has
+			// (instructor "reset & send first-time digest" wipes the conv) —
+			// only when the server list is complete, so a >40-digest history
+			// never self-truncates.
+			if ((digests ?? []).length < 40) {
+				const serverIds = new Set((digests ?? []).map((d) => d.id));
+				const pruned = messages.filter((m) => !m.digestId || serverIds.has(m.digestId));
+				if (pruned.length !== messages.length) { messages = pruned; persist(); }
+			}
+			const seen = new Set(messages.map((m) => m.digestId).filter(Boolean));
+			const fresh = (digests ?? []).filter((d) => d.text && !seen.has(d.id));
+			if (fresh.length) {
+				messages = [...messages, ...fresh.map((d) => ({
+					role: 'assistant', content: d.text, digestId: d.id, digestAt: d.at
+				}))];
+				persist();
+			}
+			scrollDown();
+		} catch { /* digests are best-effort */ }
+	}
+	const digestDate = (at) => new Date(at).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+
+	// Goals + assignment action items moved to /app/goals (the Goals page
+	// in the Gemma sidebar section) — this thread is chat + digests.
+
+	// ── Digest opt in/out ────────────────────────────────────────────────
+	// Synced from the SERVER at mount (stale page data made "opt back in"
+	// look broken); the button toggles both ways.
+	let digestsOn = $state(null); // null until synced
+	let digestsBusy = $state(false);
+	async function syncDigestSetting() {
+		try {
+			const r = await fetch('/api/gemma/settings');
+			if (r.ok) digestsOn = (await r.json()).optIn;
+		} catch { /* leave null — button hides */ }
+	}
+	async function toggleDigests() {
+		if (digestsOn === null || digestsBusy) return;
+		if (digestsOn && !confirm('Are you sure you want to opt out of Gemma digests? You can opt back in right here any time.')) return;
+		digestsBusy = true;
+		const next = !digestsOn;
+		try {
+			const r = await fetch('/api/gemma/settings', {
+				method: 'POST', headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ optIn: next })
+			});
+			if (r.ok) digestsOn = next;
+		} catch { /* keep old state */ }
+		digestsBusy = false;
+	}
 
 	function persist() {
 		try {
@@ -136,6 +199,14 @@
 	function mdSafe(text) {
 		try { return marked.parse(text); } catch { return text; }
 	}
+	// Digest texts arrive as plain lines with "- " bullets. breaks:true keeps
+	// single newlines as line breaks; the "• " rewrite repairs digests stored
+	// before the generator switched to markdown hyphens.
+	function digestMd(text) {
+		try {
+			return marked.parse(String(text).replace(/(^|\n)\s*[•▪]\s+/g, '$1- '), { breaks: true });
+		} catch { return text; }
+	}
 
 	function onKeydown(e) {
 		if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
@@ -171,13 +242,16 @@
 						{#if m.role === 'assistant'}
 							<span class="gm-msg-icon"><GemmaIcon size={24} /></span>
 						{/if}
-						<div class="gm-bubble" class:own={m.role === 'user'}>
+						<div class="gm-bubble" class:own={m.role === 'user'} class:digest={!!m.digestId}>
+							{#if m.digestId}
+								<div class="gm-digest-tag">📬 Digest{m.digestAt ? ` — ${digestDate(m.digestAt)}` : ''}</div>
+							{/if}
 							{#if msgImg(m)}
 								<img class="gm-img" src={msgImg(m)} alt="attachment" />
 							{/if}
 							{#if m.role === 'assistant'}
 								{#if m.content}
-									{@html mdSafe(m.content)}
+									{@html m.digestId ? digestMd(m.content) : mdSafe(m.content)}
 								{:else}
 									<span class="gm-typing"><i></i><i></i><i></i></span>
 								{/if}
@@ -187,6 +261,13 @@
 						</div>
 					</div>
 				{/each}
+				{#if digestsOn !== null}
+					<div class="gm-optout-row">
+						<button class="gm-optout" onclick={toggleDigests} disabled={digestsBusy}>
+							{digestsBusy ? 'Saving…' : digestsOn ? 'Opt out of digests' : 'Digests are off — opt back in'}
+						</button>
+					</div>
+				{/if}
 				{#if errorText}<p class="gm-error">{errorText}</p>{/if}
 			</div>
 		</div>
@@ -285,6 +366,120 @@
 		white-space: pre-wrap;
 	}
 	.gm-bubble.own { background: var(--ink); color: var(--paper); }
+	.gm-bubble.digest { border: 1.5px solid color-mix(in srgb, var(--md-sys-color-primary, var(--accent)) 45%, var(--border)); }
+	.gm-digest-tag {
+		font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+		color: var(--md-sys-color-primary, var(--accent));
+		margin-bottom: 0.35rem;
+	}
+	/* The checklist card gets room to breathe: generous padding, a wider
+	   footprint than a chat bubble, soft separators between rows. */
+	.gm-bubble.gm-actions {
+		/* top padding matches the digest bubbles (0.6rem) so the section tag
+		   sits at the same height as "📬 Digest" in the summaries above */
+		padding: 0.6rem 1.15rem 0.85rem;
+		max-width: min(560px, 92%);
+		width: 100%;
+	}
+	.gm-actions .gm-digest-tag { margin: 0 0 0.2rem; }
+	.gm-action-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+	.gm-action {
+		display: flex; flex-direction: column; gap: 0.2rem;
+		padding: 0.55rem 0;
+	}
+	.gm-action-list .gm-action:first-child { padding-top: 0.05rem; }
+	.gm-action-list .gm-action:last-child { padding-bottom: 0.1rem; }
+	.gm-action:not(:last-child) { border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); }
+	.gm-actions .gm-tag-gap { margin-top: 0.7rem; }
+	.gm-action-check { display: flex; align-items: flex-start; gap: 0.55rem; cursor: pointer; }
+	/* Checkbox matches the homepage student checklist (.check-box): 24px,
+	   2px border, 6px radius, ink fill + paper checkmark when checked. */
+	.gm-action-check input {
+		appearance: none; -webkit-appearance: none;
+		width: 24px; height: 24px; margin: 0; flex-shrink: 0;
+		border: 2px solid var(--border); border-radius: 6px;
+		background: var(--paper); cursor: pointer;
+		display: inline-flex; align-items: center; justify-content: center;
+		transition: all 0.15s;
+	}
+	.gm-action-check:hover input:not(:checked) { border-color: var(--muted-fg); }
+	.gm-action-check input:checked { background: var(--ink); border-color: var(--ink); }
+	.gm-action-check input:checked::after {
+		content: '';
+		width: 11px; height: 6px;
+		border-left: 3px solid var(--paper);
+		border-bottom: 3px solid var(--paper);
+		transform: rotate(-45deg) translateY(-2px);
+	}
+	.gm-action-check span { padding-top: 2px; line-height: 1.45; }
+	.gm-action.done .gm-action-check span { text-decoration: line-through; opacity: 0.55; }
+	.gm-action-submit { color: inherit; text-decoration: none; font-weight: 500; }
+	.gm-action-submit:hover { text-decoration: underline; }
+	.gm-action-hint { font-size: 0.7rem; color: var(--muted-fg); font-weight: 400; }
+	.gm-action-week { font-size: 0.7rem; color: var(--muted-fg); padding-left: calc(24px + 0.55rem); }
+	.gm-tag-gap { margin-top: 0.8rem; }
+	.gm-goal-src {
+		font-size: 0.68rem; color: var(--muted-fg); text-decoration: none;
+		padding-left: calc(24px + 0.55rem);
+	}
+	.gm-goal-src:hover { color: var(--md-sys-color-primary, var(--accent)); text-decoration: underline; }
+	.gm-goal-row { display: flex; align-items: flex-start; gap: 0.4rem; }
+	.gm-goal-row .gm-action-check { flex: 1; min-width: 0; }
+	.gm-goal-remove {
+		background: none; border: none; cursor: pointer; padding: 0 0.15rem;
+		color: var(--muted-fg); font-size: 0.75rem; line-height: 1.4; flex-shrink: 0;
+	}
+	.gm-goal-remove:hover { color: var(--ink); }
+	.gm-goals-more {
+		background: none; border: none; cursor: pointer;
+		margin-top: 0.55rem; padding: 0;
+		font-size: 0.75rem; font-weight: 600;
+		color: var(--md-sys-color-primary, var(--accent));
+	}
+	.gm-goals-more:hover { text-decoration: underline; }
+	.gm-goal-by {
+		display: inline-block; margin-left: 0.4rem; padding: 0.05rem 0.4rem;
+		font-size: 0.62rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+		color: var(--md-sys-color-primary, var(--accent));
+		border: 1px solid color-mix(in srgb, var(--md-sys-color-primary, var(--accent)) 45%, transparent);
+		border-radius: 99px; vertical-align: 1px;
+	}
+	.gm-goal-remove.armed {
+		color: #fff; background: #c0392b; border-radius: 6px;
+		font-size: 0.68rem; font-weight: 700; padding: 0.1rem 0.4rem;
+	}
+	.gm-goal-srcbtn {
+		display: inline-flex; align-items: center; gap: 0.25rem;
+		background: none; border: none; cursor: pointer; padding: 0;
+		margin-left: calc(24px + 0.55rem); margin-top: 0.1rem;
+		font-size: 0.68rem; font-weight: 600; color: var(--muted-fg);
+		align-self: flex-start;
+	}
+	.gm-goal-srcbtn:hover { color: var(--md-sys-color-primary, var(--accent)); }
+	.gm-goal-srcbtn .msi { font-size: 14px; line-height: 1; }
+	.gm-goal-preview {
+		display: block; margin-left: calc(24px + 0.55rem); margin-top: 0.15rem;
+		padding: 0.35rem 0.55rem;
+		font-size: 0.74rem; line-height: 1.45; color: var(--muted-fg);
+		background: color-mix(in srgb, var(--ink) 5%, transparent);
+		border-left: 2.5px solid color-mix(in srgb, var(--md-sys-color-primary, var(--accent)) 55%, var(--border));
+		border-radius: 0 8px 8px 0;
+		text-decoration: none;
+	}
+	.gm-goal-preview:hover { background: color-mix(in srgb, var(--ink) 9%, transparent); }
+	.gm-goal-preview mark {
+		background: color-mix(in srgb, var(--md-sys-color-primary, var(--accent)) 26%, transparent);
+		color: var(--ink); border-radius: 3px; padding: 0 2px;
+	}
+	.gm-goal-preview-who { font-weight: 700; margin-right: 0.25rem; color: var(--ink); }
+	.gm-optout-row { display: flex; justify-content: center; padding: 0.5rem 0 0.25rem; }
+	.gm-optout {
+		background: none; border: none; cursor: pointer;
+		margin-top: 0.9rem; padding: 0;
+		font-size: 0.7rem; color: var(--muted-fg); text-decoration: underline;
+	}
+	.gm-optout:hover { color: var(--ink); }
+	.gm-optout:disabled { cursor: default; text-decoration: none; }
 	.gm-img {
 		display: block; max-width: 260px; max-height: 320px;
 		border-radius: 10px; margin-bottom: 0.4rem; object-fit: cover;

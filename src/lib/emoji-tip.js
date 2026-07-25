@@ -6,6 +6,7 @@
 // call loadEmojiNames() once per surface so lookups have data.
 import { escapeHtml, EMOJI_RE_G } from '$lib/message-render.js';
 import { getEmojiName } from '$lib/emoji-names.js';
+import { tgEntry, tgcEntry } from '$lib/telegram-emoji-store.js';
 
 const _isEmojiSeg = s => /\p{Extended_Pictographic}|\p{Regional_Indicator}/u.test(s);
 const _segmenter = new Intl.Segmenter();
@@ -63,6 +64,29 @@ export function emojiDisplayName(g) {
 	}
 	return null;
 }
+// Friendly label for a Telegram reaction key — the reaction-chip tooltip
+// ("reacted with …") otherwise falls back to the raw '[tg:…]' / '[tgc:…]'
+// token string. Returns null for non-Telegram keys so callers can chain
+// their existing fallbacks. Needs loadTelegramEmoji()/loadCustomPacks()
+// to have resolved (both chat pages do this on mount).
+export function tgReactionName(token) {
+	if (typeof token !== 'string') return null;
+	let m = /^\[tg:([0-9a-f-]+)\]$/i.exec(token);
+	if (m) {
+		const entry = tgEntry(m[1].toLowerCase());
+		if (!entry) return 'a Telegram emoji';
+		const name = emojiDisplayName(entry.e) ?? entry.e;
+		return `${name} (${entry.cat})`;
+	}
+	m = /^\[tgc:([A-Za-z0-9_]+):(\d+)\]$/.exec(token);
+	if (m) {
+		const entry = tgcEntry(m[2]);
+		const pack = entry?.packTitle ?? m[1];
+		const name = entry?.alt ? (emojiDisplayName(entry.alt) ?? entry.alt) : null;
+		return name ? `${name} (${pack})` : `an emote from ${pack}`;
+	}
+	return null;
+}
 export function wrapEmojiInText(text) {
 	const segs = [..._segmenter.segment(text)];
 	return segs.map(seg => {
@@ -71,7 +95,11 @@ export function wrapEmojiInText(text) {
 			const esc = escapeHtml(g);
 			const name = emojiDisplayName(g);
 			const nameHtml = name ? `<span class="e-tip-name">${escapeHtml(name)}</span>` : '';
-			return `<span class="e-tip">${esc}<span class="e-tip-pop"><span class="e-tip-char">${esc}</span>${nameHtml}</span></span>`;
+			// Meta line mirrors the expression-picker tab this comes from —
+			// the Emoji tab's `mood` Material icon (same pattern as the
+			// EK / custom-emote / Telegram cards in ExpressionTip.svelte).
+			const metaHtml = '<span class="e-tip-meta"><span class="msi">mood</span> Emoji</span>';
+			return `<span class="e-tip">${esc}<span class="e-tip-pop"><span class="e-tip-char">${esc}</span>${nameHtml}${metaHtml}</span></span>`;
 		}
 		return escapeHtml(g);
 	}).join('');

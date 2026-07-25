@@ -149,7 +149,7 @@
 			<span class="msi msi-20" class:msi-fill={tab === 'emoji'}>mood</span>
 		</button>
 		{#if !tgHidden}
-			<button class="expr-tab" class:active={tab === 'animated'} onclick={() => (tab = 'animated')} title="Animated stickers">
+			<button class="expr-tab" class:active={tab === 'animated'} onclick={() => (tab = 'animated')} title="Animated emotes">
 				<span class="msi msi-20" class:msi-fill={tab === 'animated'}>animated_images</span>
 			</button>
 		{/if}

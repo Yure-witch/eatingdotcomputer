@@ -18,6 +18,32 @@
 	// input mirrors the value into the form payload; the existing
 	// server action reads `data.get('bio')` unchanged.
 	let bioValue = $state(form?.bio ?? data.prefill.bio ?? '');
+
+	// Gemma digest opt-in (instant save, independent of the form). Synced
+	// from the server at mount — page-load data can be stale if the setting
+	// changed elsewhere (e.g. the opt-out button on the Gemma page).
+	import { onMount } from 'svelte';
+	let gemmaOptIn = $state(data.prefill.gemmaDigest ?? false);
+	let gemmaOptInStatus = $state('');
+	onMount(async () => {
+		try {
+			const r = await fetch('/api/gemma/settings');
+			if (r.ok) gemmaOptIn = (await r.json()).optIn;
+		} catch { /* keep prefill */ }
+	});
+	async function toggleGemmaOptIn() {
+		gemmaOptIn = !gemmaOptIn;
+		gemmaOptInStatus = 'saving…';
+		try {
+			const r = await fetch('/api/gemma/settings', {
+				method: 'POST', headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ optIn: gemmaOptIn })
+			});
+			gemmaOptInStatus = r.ok ? 'saved' : 'failed';
+			if (!r.ok) gemmaOptIn = !gemmaOptIn;
+		} catch { gemmaOptInStatus = 'failed'; gemmaOptIn = !gemmaOptIn; }
+		setTimeout(() => (gemmaOptInStatus = ''), 2000);
+	}
 </script>
 
 <svelte:head><title>Edit profile — eating.computer</title></svelte:head>
@@ -108,6 +134,16 @@
 					<button type="submit" class="btn-primary">Save changes</button>
 				</div>
 			</form>
+
+			<!-- Gemma daily digest opt-in — saved instantly, separate from the
+			     profile form (hits /api/gemma/settings directly). -->
+			<label class="gemma-optin-row">
+				<input type="checkbox" checked={gemmaOptIn} onchange={toggleGemmaOptIn} />
+				<span class="gemma-optin-text">
+					<span class="gemma-optin-title">Gemma digest</span>
+					<span class="gemma-optin-sub">Each morning Gemma DMs you a recap of yesterday's class chat, reminders for anything you haven't finished, and a little inspiration. If nothing's changed, you just get a short reminder (or nothing at all). Opt out any time.{gemmaOptInStatus ? ` — ${gemmaOptInStatus}` : ''}</span>
+				</span>
+			</label>
 		</div>
 	</main>
 </div>
@@ -123,6 +159,17 @@
 
 	.back { display: inline-block; font-size: 0.85rem; color: var(--muted-fg); text-decoration: none; margin-bottom: 1.5rem; }
 	.back:hover { color: var(--ink); }
+
+	.gemma-optin-row {
+		display: flex; align-items: flex-start; gap: 0.6rem;
+		margin-top: 1.25rem; padding-top: 1.25rem;
+		border-top: 1.5px solid var(--border);
+		cursor: pointer;
+	}
+	.gemma-optin-row input { margin-top: 0.2rem; accent-color: var(--ink); cursor: pointer; }
+	.gemma-optin-text { display: flex; flex-direction: column; gap: 0.15rem; }
+	.gemma-optin-title { font-weight: 600; font-size: 0.9rem; }
+	.gemma-optin-sub { font-size: 0.78rem; color: var(--muted-fg); line-height: 1.4; }
 
 	.card {
 		background: var(--paper); border: 1.5px solid var(--border); border-radius: 16px;

@@ -10,7 +10,7 @@ export async function load({ locals, parent }) {
 
 	const db = getDb();
 	const result = db ? await db.execute({
-		sql: 'SELECT name, pronouns, bio, website, year, school, focus, avatar_kind, avatar_value FROM users WHERE id = ?',
+		sql: 'SELECT name, pronouns, bio, website, year, school, focus, avatar_kind, avatar_value, gemma_digest FROM users WHERE id = ?',
 		args: [session.user.id]
 	}) : { rows: [] };
 
@@ -25,7 +25,8 @@ export async function load({ locals, parent }) {
 			school: String(u.school ?? ''),
 			focus: String(u.focus ?? ''),
 			avatarKind: u.avatar_kind ? String(u.avatar_kind) : 'gen',
-			avatarValue: u.avatar_value ? String(u.avatar_value) : null
+			avatarValue: u.avatar_value ? String(u.avatar_value) : null,
+			gemmaDigest: Number(u.gemma_digest) === 1
 		}
 	};
 }

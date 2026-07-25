@@ -58,7 +58,7 @@ export async function load({ locals, parent }) {
 	// All members + online status — scoped to current class (instructors always included)
 	const db = getDb();
 	const usersResult = db ? await db.execute({
-		sql: `SELECT u.id, u.name, u.email, u.role, u.created_at, u.avatar_kind, u.avatar_value FROM users u
+		sql: `SELECT u.id, u.name, u.email, u.role, u.created_at, u.avatar_kind, u.avatar_value, u.gemma_digest, u.interests FROM users u
 		      WHERE u.role = 'instructor'
 		         OR EXISTS (
 		              SELECT 1 FROM class_memberships cm
@@ -120,6 +120,8 @@ export async function load({ locals, parent }) {
 			joinedAt: String(r.created_at ?? ''),
 			avatarKind: r.avatar_kind ? String(r.avatar_kind) : 'gen',
 			avatarValue: r.avatar_value ? String(r.avatar_value) : null,
+			gemmaDigest: Number(r.gemma_digest) === 1,
+			interests: r.interests ? String(r.interests) : '',
 			online: presence?.online ?? false,
 			lastSeen,
 			ua: presence?.ua ?? null,

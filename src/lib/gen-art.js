@@ -7065,6 +7065,490 @@ function sceneGrit(env) {
 	return { reset, step, render, ready };
 }
 
+// ── Extrude — Madeon "Gonna Be Good"-style type ─────────────────────────────
+// ALL-CAPS, max-weight words stacked one per line, filling the frame.
+// Two-layer pipeline:
+//   1. GRAYSCALE LIT RENDER (precomputed with the field): the type reads as
+//      soft extruded cylinders under a directional light — normals from the
+//      distance field give diffuse + a specular hot-spot, a crown term keeps
+//      the stroke centreline bright, edges feather over ~half the stroke
+//      radius, and the background sits as a dim ground plane.
+//   2. COLOUR FILTER (per frame): the whole frame — background included — is
+//      multiplied by a top→bottom multicolour gradient that travels downward
+//      one wrap per loop. The letters bend it (the field bows the bands
+//      around each letterform) and Perlin noise scatters it; dark palette
+//      stops make each travelling cycle fade out Madeon-style.
+// Warm + cool variants share this engine.
+function sceneExtrude(env, stops, opt = {}) {
+	const { W, H, getOpts, noise } = env;
+	// classic = the original moody "dark souls" grade, kept as Extrude OG.
+	// The default grade is bright/Madeon: no blacks, high ground plane, and
+	// the type mask is blurred + re-thresholded so letters go round & blobby.
+	const CLASSIC = !!opt.classic;
+	let t = 0;
+	let fieldKey = '', dist = null, distMax = 2, lum = null;
+
+	// palette LUT — wrap-interpolated stops (the dark stops ARE the fade-out)
+	const LUT = new Array(256);
+	{
+		const cols = stops.map(hexToRgb);
+		const n = cols.length;
+		for (let i = 0; i < 256; i++) {
+			const u = (i / 256) * n;
+			const k = u | 0;
+			LUT[i] = mix3(cols[k % n], cols[(k + 1) % n], u - k);
+		}
+	}
+
+	function buildField(o) {
+		// 1. text mask — ALL CAPS, max weight, one word per line, each word
+		//    fitted to the frame width, the stack centred vertically.
+		const cv = document.createElement('canvas');
+		cv.width = W; cv.height = H;
+		const c = cv.getContext('2d', { willReadFrequently: true });
+		c.clearRect(0, 0, W, H);
+		c.fillStyle = '#fff';
+		c.textAlign = 'center'; c.textBaseline = 'middle';
+		const words = String(o.text || '').toUpperCase().trim().split(/\s+/).filter(Boolean);
+		if (words.length) {
+			const font = (p) => `1000 ${p}px ${o.fontFamily}`;
+			// per-word size that fills ~88% of the width
+			const sizes = words.map((w) => {
+				c.font = font(100);
+				const ww = Math.max(1, c.measureText(w).width);
+				return (W * 0.88) / (ww / 100);
+			});
+			// scale the whole stack down if it overflows ~86% of the height
+			const LINE = 1.02; // tight stacking
+			const totalH = sizes.reduce((s, p) => s + p * LINE, 0);
+			const k = Math.min(1, (H * 0.86) / totalH);
+			let y = H / 2 - (totalH * k) / 2;
+			for (let i = 0; i < words.length; i++) {
+				const p = sizes[i] * k;
+				c.font = font(p);
+				c.fillText(words[i], W / 2, y + (p * LINE) / 2);
+				y += p * LINE;
+			}
+		}
+		// 1b. round & blobby (non-classic): blur the mask hard and re-threshold
+		//     below 50% — corners round off, tight counters fill in, nearby
+		//     strokes fuse into blobbier forms.
+		let a = c.getImageData(0, 0, W, H).data;
+		let thr = 128;
+		if (!CLASSIC && 'filter' in c) {
+			const cv2 = document.createElement('canvas');
+			cv2.width = W; cv2.height = H;
+			const c2 = cv2.getContext('2d', { willReadFrequently: true });
+			c2.filter = `blur(${Math.max(2, H * 0.022)}px)`;
+			c2.drawImage(cv, 0, 0);
+			a = c2.getImageData(0, 0, W, H).data;
+			thr = 92;
+		}
+		// 2. inside-distance field via two-pass chamfer (px to nearest edge)
+		const INF = 1e6, d = new Float32Array(W * H);
+		for (let i = 0, p = 3; i < d.length; i++, p += 4) d[i] = a[p] >= thr ? INF : 0;
+		for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+			const i = y * W + x;
+			if (!d[i]) continue;
+			let m = d[i];
+			if (x) m = Math.min(m, d[i - 1] + 1);
+			if (y) {
+				m = Math.min(m, d[i - W] + 1);
+				if (x) m = Math.min(m, d[i - W - 1] + 1.4142);
+				if (x < W - 1) m = Math.min(m, d[i - W + 1] + 1.4142);
+			}
+			d[i] = m;
+		}
+		for (let y = H - 1; y >= 0; y--) for (let x = W - 1; x >= 0; x--) {
+			const i = y * W + x;
+			if (!d[i]) continue;
+			let m = d[i];
+			if (x < W - 1) m = Math.min(m, d[i + 1] + 1);
+			if (y < H - 1) {
+				m = Math.min(m, d[i + W] + 1);
+				if (x < W - 1) m = Math.min(m, d[i + W + 1] + 1.4142);
+				if (x) m = Math.min(m, d[i + W - 1] + 1.4142);
+			}
+			d[i] = m;
+		}
+		let dm = 0;
+		for (let i = 0; i < d.length; i++) if (d[i] < INF && d[i] > dm) dm = d[i];
+		dist = d; distMax = Math.max(2, dm);
+
+		// 3. grayscale lit layer — static (light + geometry don't animate),
+		//    so bake it once per field.
+		//    CLASSIC (Extrude OG): directional light + specular via distance-
+		//    field normals — dramatic, edge-lit, ridge highlights.
+		//    Default bright grade: NO normals/specular (they read as sharp
+		//    points at stroke ridges) — instead a smooth dome per stroke plus
+		//    an even top→bottom light fade across the frame.
+		const FEATHER = Math.max(2.5, distMax * 0.5);
+		lum = new Float32Array(W * H);
+		if (CLASSIC) {
+			const BGL = 0.30, AMB = 0.26, DIF = 0.62, SPC = 0.50, CRN = 0.18;
+			const K = 2.4;
+			const Lx = -0.42, Ly = -0.72, Lz = 0.55;
+			const Ln = Math.hypot(Lx, Ly, Lz);
+			const L = [Lx / Ln, Ly / Ln, Lz / Ln];
+			for (let y = 0, i = 0; y < H; y++) {
+				for (let x = 0; x < W; x++, i++) {
+					const dv = d[i];
+					if (dv <= 0) { lum[i] = BGL; continue; }
+					const dn = Math.min(1, dv / distMax);
+					const gx = ((x < W - 1 ? d[i + 1] : dv) - (x > 0 ? d[i - 1] : dv)) / 2;
+					const gy = ((y < H - 1 ? d[i + W] : dv) - (y > 0 ? d[i - W] : dv)) / 2;
+					const nl = Math.hypot(gx * K, gy * K, 1);
+					const nx = -(gx * K) / nl, ny = -(gy * K) / nl, nzc = 1 / nl;
+					const diff = Math.max(0, nx * L[0] + ny * L[1] + nzc * L[2]);
+					const spec = Math.pow(diff, 10);
+					const crown = CRN * Math.sin(Math.PI * Math.min(1, dn * 1.15));
+					const l = AMB + DIF * diff + SPC * spec + crown;
+					const aF = Math.min(1, dv / FEATHER);
+					const af = aF * aF * (3 - 2 * aF);
+					lum[i] = BGL + (l - BGL) * af;
+				}
+			}
+		} else {
+			// Bulbous height field — the classic "puffy text" technique (heavy
+			// Gaussian blur of the mask AS the surface height, then light it):
+			// unlike the raw distance field, a blurred plateau has NO medial
+			// ridge — the crest rounds off into a genuine bulb.
+			let h = null, hMax = 1;
+			if ('filter' in c) {
+				const mcv = document.createElement('canvas');
+				mcv.width = W; mcv.height = H;
+				const mc = mcv.getContext('2d');
+				const mimg = mc.createImageData(W, H);
+				for (let i = 0; i < d.length; i++) {
+					if (d[i] > 0) { const p = i * 4; mimg.data[p] = 255; mimg.data[p + 1] = 255; mimg.data[p + 2] = 255; mimg.data[p + 3] = 255; }
+				}
+				mc.putImageData(mimg, 0, 0);
+				const bcv = document.createElement('canvas');
+				bcv.width = W; bcv.height = H;
+				const bc = bcv.getContext('2d', { willReadFrequently: true });
+				bc.filter = `blur(${Math.max(3, distMax * 0.85)}px)`;
+				bc.drawImage(mcv, 0, 0);
+				const bd = bc.getImageData(0, 0, W, H).data;
+				h = new Float32Array(W * H);
+				for (let i = 0; i < h.length; i++) {
+					h[i] = bd[i * 4 + 3] / 255;
+					if (d[i] > 0 && h[i] > hMax) hMax = h[i];
+				}
+				if (hMax <= 0) hMax = 1;
+			}
+			const BGL = 0.72;      // bright ground plane
+			const AMB = 0.62;      // type ambient
+			const DOME = 0.50;     // bulb height → brightness amount
+			const VFADE = 0.40;    // even top→bottom light falloff
+			const KL = distMax * 1.3; // top-light strength from the height slope
+			for (let y = 0, i = 0; y < H; y++) {
+				const vert = 1 - VFADE * (y / H); // light from the top, even fade down
+				for (let x = 0; x < W; x++, i++) {
+					const dv = d[i];
+					if (dv <= 0) { lum[i] = BGL * vert; continue; }
+					let l;
+					if (h) {
+						const hN = Math.min(1, h[i] / hMax);
+						// smooth top-light: the blurred surface tilts toward the
+						// light on stroke tops, away on the undersides — gradients
+						// of a Gaussian surface are creaseless, so no hot points
+						const hy = ((y < H - 1 ? h[i + W] : h[i]) - (y > 0 ? h[i - W] : h[i])) / 2;
+						const topLit = Math.min(1, Math.max(0, 0.5 + hy * KL));
+						l = (AMB + DOME * hN) * (0.72 + 0.55 * topLit) * vert;
+					} else {
+						// no ctx.filter support → gentle dn dome fallback
+						const dn = Math.min(1, dv / distMax);
+						l = (AMB + DOME * Math.sin((Math.PI / 2) * Math.min(1, dn * 1.05))) * vert;
+					}
+					const aF = Math.min(1, dv / FEATHER);
+					const af = aF * aF * (3 - 2 * aF);
+					lum[i] = BGL * vert + (l - BGL * vert) * af;
+				}
+			}
+		}
+	}
+
+	return {
+		reset() { t = 0; },
+		step(dt) { t += dt; },
+		render(ctx) {
+			const o = getOpts();
+			// Cache key carries a live measurement so a field built against the
+			// fallback font is rebuilt once the real font loads (same trick as
+			// Garble's cacheKey).
+			ctx.save();
+			ctx.font = `800 24px ${o.fontFamily}`;
+			const fp = ctx.measureText(o.text || '').width | 0;
+			ctx.restore();
+			const key = `${o.text}|${o.fontFamily}|${W}x${H}|${fp}`;
+			if (key !== fieldKey) { buildField(o); fieldKey = key; }
+			const phase = (((t / (o.duration || 4)) % 1) + 1) % 1;
+			const img = ctx.createImageData(W, H);
+			const px = img.data;
+			const INFLUENCE = 0.65;    // how hard letters bend the gradient
+			// Noise: HUGE, very gradual features (larger than the frame) so the
+			// perlin pattern itself is never visible — it just slowly warps the
+			// gradient. The classic OG grade keeps the original finer scatter.
+			const NOISE_AMT = CLASSIC ? 0.25 : 0.18;
+			const NS = CLASSIC ? 1 / (H * 0.16) : 1 / (H * 1.6);
+			for (let y = 0, i = 0, p = 0; y < H; y++) {
+				const vy = y / H; // vertical gradient base — top → bottom
+				for (let x = 0; x < W; x++, i++, p += 4) {
+					const dn = Math.min(1, dist[i] / distMax); // 0 outside letters
+					// Full-frame gradient (background included), bowed by the
+					// letterform's depth + scattered by noise; − phase → travels
+					// downward, exactly one wrap per loop → seamless.
+					let u = vy + dn * INFLUENCE + noise(x * NS, y * NS) * NOISE_AMT - phase;
+					u -= Math.floor(u);
+					const col = LUT[Math.min(255, (u * 256) | 0)];
+					// colour filter × grayscale lit layer
+					const l = lum[i];
+					px[p] = Math.min(255, col[0] * l);
+					px[p + 1] = Math.min(255, col[1] * l);
+					px[p + 2] = Math.min(255, col[2] * l);
+					px[p + 3] = 255;
+				}
+			}
+			ctx.putImageData(img, 0, 0);
+		}
+	};
+}
+// Bright Madeon palettes — no blacks; the pale stop IS the fade-out (each
+// travelling cycle washes out toward near-white before the next colour blooms).
+const EXTRUDE_WARM = ['#fff1d6', '#ffd166', '#ff9a3c', '#ff5f8f', '#ff8fb3', '#ffc94a'];
+const EXTRUDE_COOL = ['#e8f4ff', '#8fd8ff', '#4f8fff', '#8f6cff', '#c39aff', '#5ce0d8'];
+// The original moody grade, preserved verbatim as "Extrude OG" (user asked to
+// keep the first warm version around).
+const EXTRUDE_OG = ['#160a10', '#5c1030', '#c22a52', '#ff6a3c', '#ffc94a', '#ff8f6b', '#7a2040'];
+const sceneExtrudeWarm = (env) => sceneExtrude(env, EXTRUDE_WARM);
+const sceneExtrudeCool = (env) => sceneExtrude(env, EXTRUDE_COOL);
+const sceneExtrudeOG = (env) => sceneExtrude(env, EXTRUDE_OG, { classic: true });
+
+// ── Heatmap — the Apple thermal-camera type effect, as a real shader ────────
+// Browser port of the AE recipe (blurred type = heat source, animated fractal
+// noise = atmospheric shimmer, thermal gradient map = Colorama), running in a
+// WebGL fragment shader and composited back onto the scene's 2D canvas.
+// The type is the same ALL-CAPS word-stack as Extrude, blurred so heat halos
+// bleed past the glyph edges. The noise walks a circle through 3D FBM domain
+// (radius ~0.8) so the loop is EXACTLY seamless. Palette: navy → violet →
+// magenta → red-orange → amber → hot white.
+const HEATMAP_FRAG = `
+precision mediump float;
+uniform vec2 uRes; uniform float uPhase; uniform sampler2D uText;
+// film-grain hash (Hoskins hash12) — the old sin-based hash repeats visibly
+// at large fragcoords on mediump GPUs; this one stays uniform white noise
+float grain(vec2 p){
+	vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+	p3 += dot(p3, p3.yzx + 33.33);
+	return fract((p3.x + p3.y) * p3.z);
+}
+// AE "4-Color Gradient", two white + two black points, inverse-square blend.
+// Background gradient pours in from the TOP only: whites staggered around the
+// top centre, blacks at the bottom corners.
+float fourGrad(vec2 uv){
+	vec2 pw1 = vec2(0.45, 0.95), pw2 = vec2(0.60, 0.78);
+	vec2 pb1 = vec2(0.12, 0.10), pb2 = vec2(0.88, 0.14);
+	float e = 0.03;
+	float w = 1.0 / (dot(uv - pw1, uv - pw1) + e) + 1.0 / (dot(uv - pw2, uv - pw2) + e);
+	float b = 1.0 / (dot(uv - pb1, uv - pb1) + e) + 1.0 / (dot(uv - pb2, uv - pb2) + e);
+	return w / (w + b);
+}
+// AE Colorama output cycle — 5 colours, WRAPPING (the cycle is a wheel).
+// User-specified stops: #12002a, #4e03ca, #0090ff, #ffe610, #ed0038.
+vec3 cycle5(float v){
+	v = fract(v);
+	vec3 c0 = vec3(0.071, 0.000, 0.165); // #12002a deep purple
+	vec3 c1 = vec3(0.306, 0.012, 0.792); // #4e03ca violet
+	vec3 c2 = vec3(0.000, 0.565, 1.000); // #0090ff azure
+	vec3 c3 = vec3(1.000, 0.902, 0.063); // #ffe610 yellow
+	vec3 c4 = vec3(0.929, 0.000, 0.220); // #ed0038 red
+	float f = v * 5.0;
+	if (f < 1.0) return mix(c0, c1, f);
+	if (f < 2.0) return mix(c1, c2, f - 1.0);
+	if (f < 3.0) return mix(c2, c3, f - 2.0);
+	if (f < 4.0) return mix(c3, c4, f - 3.0);
+	return mix(c4, c0, f - 4.0);
+}
+void main(){
+	vec2 uv = gl_FragCoord.xy / uRes;
+	vec4 tx = texture2D(uText, vec2(uv.x, 1.0 - uv.y));
+	float s    = tx.r; // sharp glyph mask
+	float gBig = tx.g; // wide halo blur (AE fast blur 75, scaled up)
+	float gMid = tx.b; // tight halo blur (AE 22/13/5 stack folded together)
+	float g = fourGrad(uv);
+	// inner glow — kept SUBTLE, just a whisper of rim inside the edge
+	float inner = s * (1.0 - gMid);
+	// per-letter directional gradient: vertical derivative of the tight halo
+	// hugs each glyph's own forms — upper faces of every stroke catch light,
+	// undersides fall off, independent of where the letter sits on screen
+	vec2 tuv = vec2(uv.x, 1.0 - uv.y);
+	// broader sampling → the intra-letter gradient fades gradually across
+	// the whole letter body instead of hugging the edges
+	float dy = 0.014;
+	float dir = texture2D(uText, tuv + vec2(0.0, dy)).b - texture2D(uText, tuv - vec2(0.0, dy)).b;
+	// text plate: the PER-LETTER directional gradient is the dominant model
+	// (each glyph lit down its own forms, soft and gradual); the global
+	// background gradient rides underneath at reduced weight — it mostly
+	// times WHERE the colour fade lands as the phase sweeps.
+	float Ltext = s * (0.10 + 0.60 * g) + s * dir * 0.62 + inner * 0.16;
+	// glow stack matted ALPHA-INVERTED by the text — halo exists only
+	// OUTSIDE the glyphs, shaped by the same gradient pulled tighter
+	float halo = (1.0 - s) * (0.15 * gBig + 0.12 * gMid) * (0.35 + 0.65 * g);
+	float L = clamp(Ltext + halo, 0.0, 1.0);
+	// fine per-pixel grain — stronger INSIDE the letters, whisper outside
+	L += (grain(gl_FragCoord.xy) - 0.5) * (0.004 + s * 0.025);
+	// Colorama with an animated phase shift: the palette itself rotates, so
+	// colours FLOW through the letterforms — one full cycle per loop.
+	// The luminance range spans ~65% of the cycle: roughly THREE of the five
+	// colours ride the letters at any moment, and the window slides so each
+	// colour still sweeps through and leaves.
+	vec3 col = cycle5(L * 0.65 + uPhase);
+	// beyond the halo the adjustment layer has nothing to grade (masking:
+	// alpha) — background sits at the palette's darkest stop, never black
+	float cov = clamp(s + gBig * 0.75, 0.0, 1.0);
+	vec3 bg = vec3(0.071, 0.000, 0.165);
+	gl_FragColor = vec4(mix(bg, col, cov), 1.0);
+}`;
+function sceneHeatmap(env) {
+	const { W, H, getOpts, noise } = env;
+	let t = 0;
+	let glcv = null, gl = null, prog = null, loc = null, textTex = null, texKey = '';
+
+	function initGL() {
+		glcv = document.createElement('canvas');
+		glcv.width = W; glcv.height = H;
+		gl = glcv.getContext('webgl', { premultipliedAlpha: false, preserveDrawingBuffer: true });
+		if (!gl) return false;
+		const vs = gl.createShader(gl.VERTEX_SHADER);
+		gl.shaderSource(vs, 'attribute vec2 aPos; void main(){ gl_Position = vec4(aPos, 0.0, 1.0); }');
+		gl.compileShader(vs);
+		const fs = gl.createShader(gl.FRAGMENT_SHADER);
+		gl.shaderSource(fs, HEATMAP_FRAG);
+		gl.compileShader(fs);
+		if (!gl.getShaderParameter(fs, gl.COMPILE_STATUS)) { console.warn('[heatmap]', gl.getShaderInfoLog(fs)); return false; }
+		prog = gl.createProgram();
+		gl.attachShader(prog, vs); gl.attachShader(prog, fs); gl.linkProgram(prog);
+		if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return false;
+		gl.useProgram(prog);
+		const buf = gl.createBuffer();
+		gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+		gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+		const aPos = gl.getAttribLocation(prog, 'aPos');
+		gl.enableVertexAttribArray(aPos);
+		gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+		loc = { res: gl.getUniformLocation(prog, 'uRes'), phase: gl.getUniformLocation(prog, 'uPhase'), text: gl.getUniformLocation(prog, 'uText') };
+		gl.viewport(0, 0, W, H);
+		textTex = gl.createTexture();
+		return true;
+	}
+
+	// ALL-CAPS word stack (same layout as Extrude), packed as three channels:
+	// R = sharp glyph mask, G = wide halo blur (AE's fast-blur-75 glow comp),
+	// B = tight halo blur (the 22/13/5 stack folded into one pass). Painted
+	// on opaque black so channel values survive the premultiplied upload.
+	function buildTextTexture(o) {
+		const cv = document.createElement('canvas');
+		cv.width = W; cv.height = H;
+		const c = cv.getContext('2d');
+		// text as typed — mixed case fine, and line breaks are EXPLICIT:
+		// "/" splits lines ("hello world" = one line; "hello / world" = two)
+		const lines = String(o.text || '').trim().split('/').map((s) => s.trim()).filter(Boolean);
+		// Kaomoji guard: combining marks (lenny face's ͡ eye-arcs etc.) must be
+		// shaped by the SAME font as their base glyphs — per-glyph fallback
+		// mixes metrics from two fonts and the marks land misaligned. When the
+		// text carries combining marks, hand the WHOLE string to a single
+		// concrete font VERIFIED to anchor them correctly. Headless-Chrome
+		// screenshot matrix (2026-07-23): Arial / Times NR / Georgia / Tahoma
+		// shape the eye-arcs right; generic sans-serif (→ Helvetica on macOS
+		// Chrome), Lucida Grande, Verdana and the monospaces all garble them.
+		const hasMarks = /[\u0300-\u036f\u1ab0-\u1aff\u1dc0-\u1dff\u20d0-\u20ff\ufe20-\ufe2f]/.test(o.text || '');
+		const drawStack = (fill) => {
+			if (!lines.length) return;
+			c.fillStyle = fill;
+			c.textAlign = 'center'; c.textBaseline = 'middle';
+			const font = (p) => hasMarks ? `400 ${p}px Arial, sans-serif` : `700 ${p}px ${o.fontFamily}`;
+			const sizes = lines.map((w) => {
+				c.font = font(100);
+				return (W * 0.84) / (Math.max(1, c.measureText(w).width) / 100);
+			});
+			const LINE = 1.04;
+			const totalH = sizes.reduce((s, p) => s + p * LINE, 0);
+			const k = Math.min(1, (H * 0.82) / totalH);
+			let y = H / 2 - (totalH * k) / 2;
+			for (let i = 0; i < lines.length; i++) {
+				const p = sizes[i] * k;
+				c.font = font(p);
+				c.fillText(lines[i], W / 2, y + (p * LINE) / 2);
+				y += p * LINE;
+			}
+		};
+		c.fillStyle = '#000';
+		c.fillRect(0, 0, W, H);
+		c.globalCompositeOperation = 'lighter';
+		if ('filter' in c) {
+			c.filter = `blur(${Math.max(6, H * 0.055)}px)`;
+			drawStack('#00ff00'); // G = wide halo
+			c.filter = `blur(${Math.max(2, H * 0.014)}px)`;
+			drawStack('#0000ff'); // B = tight halo
+			// R gets a whisper of blur too — the raw 1px-antialiased edge made
+			// the luminance (and with it the Colorama mapping) jump across a
+			// single pixel, reading as a crunchy outline. ~2px of softness
+			// lets the palette glide through the edge instead.
+			c.filter = `blur(${Math.max(1.5, H * 0.006)}px)`;
+			drawStack('#ff0000'); // R = (softly) sharp glyphs
+			c.filter = 'none';
+		} else {
+			drawStack('#00ff00'); // no filter support: halos = sharp (degraded)
+			drawStack('#0000ff');
+			drawStack('#ff0000');
+		}
+		c.globalCompositeOperation = 'source-over';
+		const src = cv;
+		gl.bindTexture(gl.TEXTURE_2D, textTex);
+		gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+		gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+	}
+
+	return {
+		reset() { t = 0; },
+		step(dt) { t += dt; },
+		render(ctx) {
+			const o = getOpts();
+			const phase = (((t / (o.duration || 4)) % 1) + 1) % 1;
+			if (!gl && !initGL()) {
+				// no WebGL → cheap 2D approximation so the scene never blanks
+				ctx.fillStyle = '#05051e'; ctx.fillRect(0, 0, W, H);
+				ctx.fillStyle = '#ffb020';
+				ctx.font = `700 ${H * 0.3}px ${o.fontFamily}`;
+				ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+				ctx.fillText(String(o.text || '').toUpperCase(), W / 2, H / 2);
+				return;
+			}
+			ctx.save();
+			ctx.font = `700 24px ${o.fontFamily}`;
+			const fp = ctx.measureText(o.text || '').width | 0;
+			ctx.restore();
+			const key = `${o.text}|${o.fontFamily}|${fp}`;
+			if (key !== texKey) { buildTextTexture(o); texKey = key; }
+			gl.useProgram(prog);
+			gl.activeTexture(gl.TEXTURE0);
+			gl.bindTexture(gl.TEXTURE_2D, textTex);
+			gl.uniform1i(loc.text, 0);
+			gl.uniform2f(loc.res, W, H);
+			gl.uniform1f(loc.phase, phase);
+			gl.drawArrays(gl.TRIANGLES, 0, 3);
+			ctx.clearRect(0, 0, W, H);
+			ctx.drawImage(glcv, 0, 0);
+			// keep the linter honest about unused env noise in this scene
+			void noise;
+		}
+	};
+}
+
 export const SCENES = [
 	// `smooth: true` = the scene's step(dt) is genuinely time-based, so the
 	// PREVIEW can run at full display rate (60fps) for silky motion; the export
@@ -7073,6 +7557,10 @@ export const SCENES = [
 	{ id: 'type',    name: 'Kinetic Type',  make: sceneType,    usesPreset: true,  smooth: true },
 	{ id: 'tile',    name: 'Step & Repeat', make: sceneTile,    usesPreset: true,  smooth: true },
 	{ id: 'lorem',   name: 'Wave Wall',     make: sceneLorem,   usesPreset: false, smooth: true },
+	{ id: 'extrudew', name: 'Extrude Warm', make: sceneExtrudeWarm, usesPreset: false, smooth: true },
+	{ id: 'extrudec', name: 'Extrude Cool', make: sceneExtrudeCool, usesPreset: false, smooth: true },
+	{ id: 'extrudeog', name: 'Extrude OG',  make: sceneExtrudeOG,  usesPreset: false, smooth: true },
+	{ id: 'heatmap',  name: 'Heatmap',      make: sceneHeatmap,    usesPreset: false, smooth: true },
 	{ id: 'meta',    name: 'Metaballs',     make: sceneMeta,    usesPreset: false, smooth: true },
 	{ id: 'cmeta',   name: 'Color Metaballs', make: sceneCMeta, usesPreset: false, smooth: true },
 	{ id: 'blobc',   name: 'Blob 1',        make: sceneBlobColor, usesPreset: false, smooth: true },

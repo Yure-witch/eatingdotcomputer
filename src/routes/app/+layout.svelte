@@ -1,7 +1,8 @@
 <script>
 	import '$lib/text-effects.css';
 	import { browser } from '$app/environment';
-	import { onMount, onDestroy, setContext, untrack } from 'svelte';
+	import { onMount, onDestroy, setContext, untrack, tick } from 'svelte';
+	import { mountStaticEmotes } from '$lib/emote-mount.js';
 	import { page, navigating } from '$app/stores';
 	import { auth, db as rtdb } from '$lib/firebase.js';
 	import { signInWithCustomToken } from 'firebase/auth';
@@ -1017,10 +1018,21 @@
 			} else if (kind === 'ce') {
 				url = ceMap[payload]?.url ?? '';
 			} else if (kind === 'tg') {
-				url = tgEntry(payload)?.flag ? tgFlagUrl(payload) : tgThumbUrl(payload);
+				// Animated preview: emit the same .tg-emoji span chat uses —
+				// mountStaticEmotes() (emote-mount.js) attaches a live Lottie
+				// player after render. Flags stay static webp imgs.
+				if (tgEntry(payload)?.flag) {
+					url = tgFlagUrl(payload);
+				} else {
+					out += `<span class="tg-emoji" data-tg-cp="${_escAttr(payload)}" role="img" aria-label="emoji"></span>`;
+					continue;
+				}
 			} else if (kind === 'tgc') {
 				const [short, id] = payload.split(':');
-				if (short && id) url = tgcThumbUrl(short, id);
+				if (short && id) {
+					out += `<span class="tg-emoji tgc-emoji" data-tg-pack="${_escAttr(short)}" data-tg-id="${_escAttr(id)}" role="img" aria-label="custom emoji"></span>`;
+				}
+				continue;
 			}
 			if (url) out += `<img class="prev-emote" src="${_escAttr(url)}" alt="" loading="lazy" />`;
 		}
@@ -1031,6 +1043,23 @@
 	function isUnread(convId, lastAt) {
 		return (lastAt ?? 0) > (lastRead[convId] ?? 0);
 	}
+
+	// Gemma digest conv (DMs from the `gemma` bot) — previewed on the
+	// sidebar's single Gemma entry.
+	const gemmaConvId = $derived(data.currentUser ? getConvId(data.currentUser.id, 'gemma') : null);
+	const gemmaUnread = $derived(gemmaConvId ? (unreadCounts[gemmaConvId] ?? 0) : 0);
+	const gemmaLast = $derived(gemmaConvId ? (dmList.find((d) => d.convId === gemmaConvId)?.lastMessage ?? null) : null);
+
+	// Attach live Lottie players to any .tg-emoji spans previewHtml emitted
+	// into the conversation previews (desktop sidebar + mobile chat panel).
+	// mountStaticEmotes is idempotent, so re-running on every preview change
+	// is safe — only fresh spans get mounted.
+	$effect(() => {
+		void channelMeta; void dmList; void _prevVer;
+		tick().then(() => {
+			for (const el of document.querySelectorAll('.conv-last')) mountStaticEmotes(el);
+		});
+	});
 
 	// ── App badge (iOS PWA / desktop PWA) ──
 	const totalUnread = $derived.by(() => {
@@ -1893,6 +1922,37 @@
 <!-- Conversation list — shared by the desktop sidebar AND the mobile chat
      panel (pager index 0). Defined once at the top level so both can render it. -->
 {#snippet chatListContent()}
+	<!-- Gemma — her chat (digests arrive here as DMs from the `gemma` bot,
+	     previewed + badged) and the Goals page (the historical todo list). -->
+	<div class="sidebar-section">
+		<div class="section-header"><span>Gemma</span></div>
+		<div class="member-row">
+			<a class="conv-item" href="/app/chat/gemma" class:active={$page.url.pathname === '/app/chat/gemma'} draggable="false">
+				<span class="avatar-wrap">
+					<GemmaIcon size={_isMobile ? 40 : 26} />
+					<span class="presence-dot"></span>
+				</span>
+				<div class="member-text">
+					<span class="member-name" class:bold={gemmaUnread > 0}>Gemma</span>
+					{#if gemmaLast}<span class="conv-last">{@html previewHtml(gemmaLast)}</span>{:else}<span class="conv-last conv-last-empty">AI — tap to chat</span>{/if}
+				</div>
+				<span class="role-badge">AI</span>
+				{#if gemmaUnread > 0}
+					<span class="unread-badge">{gemmaUnread > 99 ? '99+' : gemmaUnread}</span>
+				{/if}
+			</a>
+		</div>
+		<div class="member-row">
+			<a class="conv-item" href="/app/goals" class:active={$page.url.pathname === '/app/goals'} draggable="false">
+				<span class="avatar-wrap gemma-goals-icon">🎯</span>
+				<div class="member-text">
+					<span class="member-name">Goals</span>
+					<span class="conv-last conv-last-empty">Your todo list, past &amp; present</span>
+				</div>
+			</a>
+		</div>
+	</div>
+
 	{#if data.channels?.length}
 		<!-- Channels -->
 		<div class="sidebar-section">
@@ -1965,20 +2025,6 @@
 					</a>
 				</div>
 			{/if}
-
-			<div class="member-row">
-				<a class="conv-item" href="/app/chat/gemma" class:active={$page.url.pathname === '/app/chat/gemma'} draggable="false">
-					<span class="avatar-wrap">
-						<GemmaIcon size={_isMobile ? 40 : 26} />
-						<span class="presence-dot"></span>
-					</span>
-					<div class="member-text">
-						<span class="member-name">Gemma</span>
-						<span class="conv-last conv-last-empty">AI — tap to chat</span>
-					</div>
-					<span class="role-badge">AI</span>
-				</a>
-			</div>
 
 			{#each orderedUsers as u (u.id)}
 				{@const isOnline = onlineIds.has(u.id)}
@@ -2465,9 +2511,18 @@
 	/* Inline emote thumbnails in the chat-list preview (static — no animation).
 	   :global because they're injected via {@html}, which Svelte's scoping skips. */
 	:global(.prev-emote) { height: 1.2em; width: 1.2em; object-fit: contain; vertical-align: -0.25em; display: inline-block; }
+	/* Animated TG emote spans in previews — match the static img footprint
+	   (the global .tg-emoji is 1.4em, a touch tall for the preview line). */
+	.conv-last :global(.tg-emoji) { width: 1.2em; height: 1.2em; vertical-align: -0.25em; }
 
+	.gemma-goals-icon {
+		display: inline-flex; align-items: center; justify-content: center;
+		font-size: 1.05rem; width: 26px; height: 26px;
+	}
 	.role-badge {
-		font-size: 0.6rem; font-weight: 600; background: #333; color: var(--sidebar-fg-muted);
+		/* Inverted sidebar colors — legible in light AND dark themes (the old
+		   hardcoded #333 background left the muted fg unreadable in light). */
+		font-size: 0.6rem; font-weight: 600; background: var(--sidebar-fg); color: var(--sidebar-bg);
 		padding: 0.08rem 0.3rem; border-radius: 99px; text-transform: uppercase; margin-left: auto; flex-shrink: 0;
 	}
 

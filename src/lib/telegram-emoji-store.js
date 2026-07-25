@@ -11,6 +11,14 @@ export const TG_SPRITE_URL = `${TG_R2_BASE}/sprite.webp`;
 export const TG_SPRITE_MANIFEST_URL = `${TG_R2_BASE}/sprite-manifest.json`;
 const MANIFEST_URL = `${TG_R2_BASE}/manifest.json`;
 
+// Tab icon per Telegram picker category — single source of truth shared by
+// TelegramEmojiPanel (tab rail) and ExpressionTip (hover card meta line).
+export const TG_CAT_ICONS = {
+	Effects: '✨', Smileys: '😀', People: '🧑', 'Animals and Nature': '🐻',
+	'Food and Drink': '🍔', Activity: '⚽', 'Travel and Places': '✈️',
+	Objects: '💡', Symbols: '❤️', Flags: '🏁', Other: '➕'
+};
+
 export const TG_RE = /\[tg:([0-9a-f-]+)\]/gi;
 export const cpToToken = (cp) => `[tg:${cp}]`;
 export const charToCp = (ch) => Array.from(ch).map((c) => c.codePointAt(0).toString(16)).join('-');

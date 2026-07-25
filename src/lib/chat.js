@@ -79,7 +79,8 @@ export function normaliseMessage(id, raw, userMap) {
 		fontWeight: raw.fw ?? 400,
 		fontStretch: raw.wdth ?? 100,
 		noSplit: !!(raw.nsp),
-		wiggleSize: raw.ws ?? undefined
+		wiggleSize: raw.ws ?? undefined,
+		tgFx: !!(raw.tfx)
 	};
 }
 

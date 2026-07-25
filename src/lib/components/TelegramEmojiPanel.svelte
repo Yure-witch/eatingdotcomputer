@@ -5,7 +5,8 @@
 		loadCustomPacks,
 		loadSpriteSheet,
 		engineMode,
-		isStaticPack
+		isStaticPack,
+		TG_CAT_ICONS
 	} from '$lib/telegram-emoji-store.js';
 	// Picker uses a pre-rasterised sprite renderer: each emoji is rendered
 	// once via rlottie (the worker WASM renderer Telegram itself uses for
@@ -52,13 +53,9 @@
 	const _isStaticOnly = packFilter === 'static';
 
 	// display order + tab icon for each Telegram-category present in the manifest
-	const CAT_ORDER = [
-		{ key: 'Smileys', icon: '😀' }, { key: 'People', icon: '🧑' },
-		{ key: 'Animals and Nature', icon: '🐻' }, { key: 'Food and Drink', icon: '🍔' },
-		{ key: 'Activity', icon: '⚽' }, { key: 'Travel and Places', icon: '✈️' },
-		{ key: 'Objects', icon: '💡' }, { key: 'Symbols', icon: '❤️' },
-		{ key: 'Flags', icon: '🏁' }, { key: 'Other', icon: '➕' }
-	];
+	const CAT_ORDER = ['Smileys', 'People', 'Animals and Nature', 'Food and Drink',
+		'Activity', 'Travel and Places', 'Objects', 'Symbols', 'Flags', 'Other']
+		.map((key) => ({ key, icon: TG_CAT_ICONS[key] }));
 
 	let loading = $state(true);
 	let byCat = $state({});
@@ -225,7 +222,7 @@
 			// The ✨ entries (av > 0) are the curated, specially-animated set —
 			// surfaced as "Special effects", flowing ABOVE the regular
 			// categories rather than as an isolated grid.
-			if (fx.length) head.push({ key: 'Effects', label: 'Special effects', icon: '✨' });
+			if (fx.length) head.push({ key: 'Effects', label: 'Special effects', icon: TG_CAT_ICONS.Effects });
 			// The 🎨 "Custom" aggregate tab is gone — in flow/scroll mode
 			// every custom pack already renders as its own labelled section
 			// in the continuous scroller, so the aggregate was duplicate

@@ -19,7 +19,7 @@ export async function GET({ url, locals }) {
 		sql: `SELECT * FROM (
 		        SELECT id, conversation_id, user_id, user_name, user_role, content, created_at,
 		               attachment_url, attachment_filename, attachment_mimetype, attachment_size,
-		               fx, font_size, font_weight, font_stretch, no_split, is_edited, mentions
+		               fx, font_size, font_weight, font_stretch, no_split, is_edited, mentions, tg_fx
 		        FROM chat_messages
 		        WHERE conversation_id = ? AND created_at < ?
 		        ORDER BY created_at DESC LIMIT ?
@@ -40,6 +40,7 @@ export async function GET({ url, locals }) {
 		fontWeight: r.font_weight != null ? Number(r.font_weight) : 400,
 		fontStretch: r.font_stretch != null ? Number(r.font_stretch) : 100,
 		noSplit: Number(r.no_split) === 1,
+		tgFx: Number(r.tg_fx) === 1,
 		attachment: r.attachment_url ? {
 			url: String(r.attachment_url),
 			filename: String(r.attachment_filename ?? ''),

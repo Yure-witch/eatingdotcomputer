@@ -13,6 +13,7 @@ import {
 	getCompletionsForWeek
 } from '$lib/server/week-plans.js';
 import { uploadToR2 } from '$lib/server/r2.js';
+import { getKeySyllabusOutline } from '$lib/server/syllabus.js';
 
 const URL_RE = /https?:\/\/[^\s<>"{}|\\^`[\]()]+/gi;
 function cleanUrl(url) { return url.replace(/[.,;:!?)'"\]]+$/, ''); }
@@ -82,7 +83,19 @@ export async function load({ locals, parent }) {
 	// page fills the Files sections in (behind a loading state) when it lands.
 	const collection = loadCollection(db, classId, userId);
 
-	return { weeks, currentPlanId, role: session.user.role, userId, classId, collection };
+	// Key-syllabus week outline for the Roadmap's syllabus section
+	// (headers + topics; [] when no key syllabus is set).
+	const syllabusWeeks = await getKeySyllabusOutline(classId);
+	// The syllabus teaser highlights the NEXT week (the one after the
+	// current plan's week); falls back to the current week, then week 1.
+	const currentWeekNum = currentPlan?.week ?? 0;
+	const syllabusNextWeek =
+		syllabusWeeks.find((w) => w.week === currentWeekNum + 1)?.week
+		?? syllabusWeeks.find((w) => w.week === currentWeekNum)?.week
+		?? syllabusWeeks[0]?.week
+		?? null;
+
+	return { weeks, currentPlanId, currentWeekNum, role: session.user.role, userId, classId, collection, syllabusWeeks, syllabusNextWeek };
 }
 
 // Secondary "Collection" data — chat-shared links, uploaded files, and the

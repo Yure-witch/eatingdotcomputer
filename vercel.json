@@ -7,6 +7,10 @@
 		{
 			"path": "/api/presence/archive",
 			"schedule": "0 1 * * *"
+		},
+		{
+			"path": "/api/gemma/digest",
+			"schedule": "0 13 * * *"
 		}
 	]
 }
