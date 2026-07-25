@@ -171,6 +171,13 @@ The following major areas need to be built. None are started yet.
 - **Notes**: Section hides entirely when no key syllabus is set (helper returns []).
 - **Follow-ups (same day, user feedback)**: "next" tag renamed to an "upcoming" pill sitting ABOVE the card; upcoming-card tint softened (8% primary over surface — full primary-container was too dark on light theme); the expand toggle moved below the entries as a "See all N weeks" link-style button. The Roadmap window got the same inline expand treatment (replacing the old /app/weeks link). In both expanded lists, weeks that have already passed collapse to just their name (no status/due/topics) and render dimmed.
 
+## Gemma — DM-scan scope opt-in
+
+### Instructor-DMs-only default + all-DMs opt-in — 2026-07-24
+- **Status**: `attempted`
+- **What**: Migration 046 (applied): `users.gemma_scan_dms` (default 0). Goal harvesting previously read ALL of a user's DMs; the default is now PRIVACY-TIGHTER — only DM conversations with instructors (plus class channels). Students opt in to full-DM scanning via a new "Let Gemma read all my DMs" checkbox on Profile → Edit (instant save via /api/gemma/settings {scanDms}; GET returns it for server-truth syncing). Scope enforced in gatherDMLines (instructor-id set from users table, conv other-participant check).
+- **Committed**: the entire session shipped in `1262799` (Gemma system, Goals page, docx reader, GIF Studio scenes, chat polish — 41 files); this DM-scope feature follows in the next commit.
+
 ## Gemma — opt-in daily digest
 
 ### Daily digest engine + Manage tab + opt-ins — 2026-07-23

@@ -97,11 +97,26 @@ async function gatherDMLines(userId) {
 	const db = getDb();
 	const adminDb = getAdminDb();
 	if (!db) return [];
-	const usersRes = await db.execute({ sql: 'SELECT id, name FROM users' });
+	const usersRes = await db.execute({ sql: 'SELECT id, name, role, gemma_scan_dms FROM users' });
 	const names = {};
-	for (const r of usersRes.rows) names[String(r.id)] = String(r.name ?? 'Someone');
+	const instructorIds = new Set();
+	let scanAll = false;
+	for (const r of usersRes.rows) {
+		const id = String(r.id);
+		names[id] = String(r.name ?? 'Someone');
+		if (String(r.role) === 'instructor') instructorIds.add(id);
+		if (id === userId && Number(r.gemma_scan_dms) === 1) scanAll = true;
+	}
+	// DM-scan scope (privacy): by default only conversations WITH AN
+	// INSTRUCTOR are read; users.gemma_scan_dms = 1 is the student's opt-in
+	// for Gemma to read ALL their DMs.
+	const inScope = (convId) => {
+		if (scanAll) return true;
+		const otherId = convId.replace(userId, '').replace(/^_|_$/g, '');
+		return instructorIds.has(otherId);
+	};
 	const chats = await adminDb.ref(`userChats/${userId}`).get();
-	const convIds = chats.exists() ? Object.keys(chats.val()).filter((c) => !c.includes(GEMMA_ID)) : [];
+	const convIds = chats.exists() ? Object.keys(chats.val()).filter((c) => !c.includes(GEMMA_ID) && inScope(c)) : [];
 	if (!convIds.length) return [];
 	const lines = [];
 	const seenIds = new Set();

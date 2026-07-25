@@ -13,8 +13,8 @@ export async function GET({ locals }) {
 	if (!session?.user) error(401, 'Not authenticated');
 	const db = getDb();
 	if (!db) error(500, 'No database');
-	const row = (await db.execute({ sql: 'SELECT gemma_digest FROM users WHERE id = ?', args: [session.user.id] })).rows[0];
-	return json({ optIn: Number(row?.gemma_digest) === 1 });
+	const row = (await db.execute({ sql: 'SELECT gemma_digest, gemma_scan_dms FROM users WHERE id = ?', args: [session.user.id] })).rows[0];
+	return json({ optIn: Number(row?.gemma_digest) === 1, scanDms: Number(row?.gemma_scan_dms) === 1 });
 }
 
 export async function POST({ request, locals }) {
@@ -30,6 +30,16 @@ export async function POST({ request, locals }) {
 			args: [body.optIn ? 1 : 0, session.user.id]
 		});
 		return json({ ok: true, optIn: body.optIn });
+	}
+
+	// DM-scan scope opt-in: 1 = Gemma may read ALL the caller's DMs when
+	// harvesting goals (default reads only instructor DMs + channels).
+	if (typeof body.scanDms === 'boolean') {
+		await db.execute({
+			sql: 'UPDATE users SET gemma_scan_dms = ? WHERE id = ?',
+			args: [body.scanDms ? 1 : 0, session.user.id]
+		});
+		return json({ ok: true, scanDms: body.scanDms });
 	}
 
 	if (typeof body.userId === 'string' && 'interests' in body) {

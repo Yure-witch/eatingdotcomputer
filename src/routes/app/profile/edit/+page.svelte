@@ -25,12 +25,31 @@
 	import { onMount } from 'svelte';
 	let gemmaOptIn = $state(data.prefill.gemmaDigest ?? false);
 	let gemmaOptInStatus = $state('');
+	let gemmaScanDms = $state(false);
+	let gemmaScanStatus = $state('');
 	onMount(async () => {
 		try {
 			const r = await fetch('/api/gemma/settings');
-			if (r.ok) gemmaOptIn = (await r.json()).optIn;
+			if (r.ok) {
+				const j = await r.json();
+				gemmaOptIn = j.optIn;
+				gemmaScanDms = j.scanDms ?? false;
+			}
 		} catch { /* keep prefill */ }
 	});
+	async function toggleGemmaScanDms() {
+		gemmaScanDms = !gemmaScanDms;
+		gemmaScanStatus = 'saving…';
+		try {
+			const r = await fetch('/api/gemma/settings', {
+				method: 'POST', headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ scanDms: gemmaScanDms })
+			});
+			gemmaScanStatus = r.ok ? 'saved' : 'failed';
+			if (!r.ok) gemmaScanDms = !gemmaScanDms;
+		} catch { gemmaScanStatus = 'failed'; gemmaScanDms = !gemmaScanDms; }
+		setTimeout(() => (gemmaScanStatus = ''), 2000);
+	}
 	async function toggleGemmaOptIn() {
 		gemmaOptIn = !gemmaOptIn;
 		gemmaOptInStatus = 'saving…';
@@ -144,6 +163,14 @@
 					<span class="gemma-optin-sub">Each morning Gemma DMs you a recap of yesterday's class chat, reminders for anything you haven't finished, and a little inspiration. If nothing's changed, you just get a short reminder (or nothing at all). Opt out any time.{gemmaOptInStatus ? ` — ${gemmaOptInStatus}` : ''}</span>
 				</span>
 			</label>
+
+			<label class="gemma-optin-row gemma-optin-sub-row">
+				<input type="checkbox" checked={gemmaScanDms} onchange={toggleGemmaScanDms} />
+				<span class="gemma-optin-text">
+					<span class="gemma-optin-title">Let Gemma read all my DMs</span>
+					<span class="gemma-optin-sub">For goal tracking, Gemma normally only reads class channels and your chats with instructors. Turn this on to let her also pick up goals and requests from your other DMs.{gemmaScanStatus ? ` — ${gemmaScanStatus}` : ''}</span>
+				</span>
+			</label>
 		</div>
 	</main>
 </div>
@@ -167,6 +194,7 @@
 		cursor: pointer;
 	}
 	.gemma-optin-row input { margin-top: 0.2rem; accent-color: var(--ink); cursor: pointer; }
+	.gemma-optin-sub-row { margin-top: 0.75rem; padding-top: 0; border-top: none; }
 	.gemma-optin-text { display: flex; flex-direction: column; gap: 0.15rem; }
 	.gemma-optin-title { font-weight: 600; font-size: 0.9rem; }
 	.gemma-optin-sub { font-size: 0.78rem; color: var(--muted-fg); line-height: 1.4; }
