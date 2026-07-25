@@ -9,7 +9,7 @@ export async function load({ locals }) {
 
 	const db = getDb();
 	const result = db ? await db.execute({
-		sql: 'SELECT name, bio, pronouns, website, year, school, focus, avatar_kind, avatar_value FROM users WHERE id = ?',
+		sql: 'SELECT name, bio, pronouns, website, year, school, focus, interests, avatar_kind, avatar_value FROM users WHERE id = ?',
 		args: [session.user.id]
 	}) : { rows: [] };
 
@@ -23,6 +23,7 @@ export async function load({ locals }) {
 			year: String(u?.year ?? ''),
 			school: String(u?.school ?? ''),
 			focus: String(u?.focus ?? ''),
+			interests: String(u?.interests ?? ''),
 			avatarKind: u?.avatar_kind ? String(u.avatar_kind) : 'gen',
 			avatarValue: u?.avatar_value ? String(u.avatar_value) : null
 		}
@@ -44,8 +45,15 @@ export const actions = {
 		const year = String(data.get('year') ?? '').trim();
 		const school = String(data.get('school') ?? '').trim();
 		const focus = String(data.get('focus') ?? '').trim();
+		// "Tell me about your interests" — feeds Gemma's digest inspiration
+		// (same users.interests column the instructor can edit in Manage).
+		const interests = String(data.get('interests') ?? '').trim().slice(0, 2000);
 
-		if (!name) return fail(400, { error: 'Name is required', name, pronouns, bio, website, year, school, focus });
+		if (!name) return fail(400, { error: 'Name is required', name, pronouns, bio, website, year, school, focus, interests });
+		// Students pick their Cooper school + year; instructors skip that step.
+		if (session.user.role !== 'instructor' && (!school || !year)) {
+			return fail(400, { error: 'Pick your school and year', name, pronouns, bio, website, year, school, focus, interests });
+		}
 
 		const db = getDb();
 		if (!db) return fail(503, { error: 'Database unavailable' });
@@ -86,10 +94,10 @@ export const actions = {
 		const nextStep = session.user.role === 'instructor' ? 'complete' : 'class';
 
 		await db.execute({
-			sql: 'UPDATE users SET name = ?, pronouns = ?, bio = ?, website = ?, year = ?, school = ?, focus = ?, avatar_kind = ?, avatar_value = ?, onboarding_step = ? WHERE id = ?',
+			sql: 'UPDATE users SET name = ?, pronouns = ?, bio = ?, website = ?, year = ?, school = ?, focus = ?, interests = ?, avatar_kind = ?, avatar_value = ?, onboarding_step = ? WHERE id = ?',
 			args: [
 				name, pronouns || null, bio || null, website || null,
-				year || null, school || null, focus || null,
+				year || null, school || null, focus || null, interests || null,
 				avatarKind, avatarValue,
 				nextStep, session.user.id
 			]

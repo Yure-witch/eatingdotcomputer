@@ -171,6 +171,17 @@ The following major areas need to be built. None are started yet.
 - **Notes**: Section hides entirely when no key syllabus is set (helper returns []).
 - **Follow-ups (same day, user feedback)**: "next" tag renamed to an "upcoming" pill sitting ABOVE the card; upcoming-card tint softened (8% primary over surface — full primary-container was too dark on light theme); the expand toggle moved below the entries as a "See all N weeks" link-style button. The Roadmap window got the same inline expand treatment (replacing the old /app/weeks link). In both expanded lists, weeks that have already passed collapse to just their name (no status/due/topics) and render dimmed.
 
+## Onboarding — Cooper Union 3-step wizard
+
+### Revamped onboarding profile step — 2026-07-24
+- **Status**: `attempted`
+- **What**: `/onboarding/profile` rebuilt from one long generic form into a 3-step wizard (single form, one POST — steps are client-side):
+  1. **Who are you** — avatar, name, pronouns.
+  2. **You at Cooper** — school as three picker cards (Architecture 🏛️ / Art 🎨 / Engineering ⚙️, with full school names: Irwin S. Chanin / School of Art / Albert Nerken), year as pills (1st–5th year + Other), focus/concentration. REQUIRED for students (server-validated); instructors skip this step entirely.
+  3. **What do you make?** — "Tell me about your interests" textarea that saves to `users.interests` — the SAME column Gemma's digest inspiration reads and the instructor can edit in Manage → Gemma. Bio + portfolio moved here as optional.
+- Progress dots with back-navigation, per-step validation, generic "School / University" free-text replaced.
+- **Notes**: students now self-report interests at onboarding; instructor edits in Manage still override/augment the same field.
+
 ## Gemma — DM-scan scope opt-in
 
 ### Instructor-DMs-only default + all-DMs opt-in — 2026-07-24

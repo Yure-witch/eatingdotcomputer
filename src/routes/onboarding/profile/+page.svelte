@@ -1,35 +1,77 @@
 <script>
+	// Onboarding, Cooper Union edition — a 3-step wizard instead of one long
+	// form:
+	//   1. Who are you       — avatar, name, pronouns
+	//   2. You at Cooper     — school (the three Cooper schools as cards),
+	//                          year (1st–5th), focus/major
+	//   3. What do you make? — interests (feeds Gemma's digest inspiration —
+	//                          same users.interests the instructor edits in
+	//                          Manage), plus optional bio + portfolio.
+	// One form, one final submit — the steps are client-side, so the existing
+	// server action stays a single POST.
 	import { enhance } from '$app/forms';
 	import AvatarPicker from '$lib/components/AvatarPicker.svelte';
 	import FormattedInput from '$lib/components/FormattedInput.svelte';
 	let { data, form } = $props();
 
-	const YEARS = ['Freshman', 'Sophomore', 'Junior', 'Senior', 'Graduate', 'Other'];
+	const isInstructor = data.user?.role === 'instructor';
 
-	// Same picker shape /app/profile/edit uses. Default to 'gen' so a
-	// brand-new user gets the generative gradient + initial without
-	// having to interact with the picker. They can swap to photo or
-	// emote any time later from their profile.
+	const SCHOOLS = [
+		{ id: 'Architecture', icon: '🏛️', label: 'Architecture', full: 'Irwin S. Chanin School of Architecture' },
+		{ id: 'Art', icon: '🎨', label: 'Art', full: 'School of Art' },
+		{ id: 'Engineering', icon: '⚙️', label: 'Engineering', full: 'Albert Nerken School of Engineering' }
+	];
+	const YEARS = ['1st year', '2nd year', '3rd year', '4th year', '5th year', 'Other'];
+
+	// Steps: instructors skip "You at Cooper".
+	const steps = isInstructor
+		? [{ id: 'who', label: 'You' }, { id: 'make', label: 'Interests' }]
+		: [{ id: 'who', label: 'You' }, { id: 'cooper', label: 'At Cooper' }, { id: 'make', label: 'Interests' }];
+	let stepIdx = $state(0);
+	const step = $derived(steps[stepIdx].id);
+
+	// Field state (mirrored into hidden inputs for the single POST)
+	let name = $state(form?.name ?? data.prefill.name ?? '');
+	let pronouns = $state(form?.pronouns ?? data.prefill.pronouns ?? '');
+	let school = $state(form?.school ?? data.prefill.school ?? '');
+	let year = $state(form?.year ?? data.prefill.year ?? '');
+	let focus = $state(form?.focus ?? data.prefill.focus ?? '');
+	let interests = $state(form?.interests ?? data.prefill.interests ?? '');
+	let website = $state(form?.website ?? data.prefill.website ?? '');
+	let bioValue = $state(form?.bio ?? data.prefill.bio ?? '');
+
 	let avatarKind = $state(data.prefill.avatarKind ?? 'gen');
 	let avatarValue = $state(data.prefill.avatarValue ?? null);
 	let photoFile = $state(null);
 
-	// Bio uses FormattedInput so students/teachers can drop inline
-	// emotes (emoji, Emoji Kitchen mixes, custom emotes, animated TG
-	// stickers) into their own bio at onboarding. Hidden input mirrors
-	// the value into the form payload so the existing server action
-	// (which reads `data.get('bio')`) keeps working unchanged.
-	let bioValue = $state(form?.bio ?? data.prefill.bio ?? '');
+	let stepError = $state(null);
+	function next() {
+		stepError = null;
+		if (step === 'who' && !name.trim()) { stepError = 'Your name, at least!'; return; }
+		if (step === 'cooper' && (!school || !year)) { stepError = 'Pick your school and year.'; return; }
+		if (stepIdx < steps.length - 1) stepIdx += 1;
+	}
+	function back() { stepError = null; if (stepIdx > 0) stepIdx -= 1; }
 </script>
 
-<svelte:head><title>Set up your profile — eating.computer</title></svelte:head>
+<svelte:head><title>Welcome — eating.computer</title></svelte:head>
 
 <div class="card">
-	<h1>Set up your profile</h1>
-	<p class="sub">This is how your classmates will see you.</p>
+	<div class="progress">
+		{#each steps as s, i}
+			<button type="button" class="prog-step" class:active={i === stepIdx} class:done={i < stepIdx}
+				onclick={() => { if (i < stepIdx) { stepError = null; stepIdx = i; } }}>
+				<span class="prog-dot">{i < stepIdx ? '✓' : i + 1}</span>
+				<span class="prog-label">{s.label}</span>
+			</button>
+			{#if i < steps.length - 1}<span class="prog-line" class:done={i < stepIdx}></span>{/if}
+		{/each}
+	</div>
 
 	{#if form?.error}
 		<p class="error">{form.error}</p>
+	{:else if stepError}
+		<p class="error">{stepError}</p>
 	{/if}
 
 	<form method="POST" enctype="multipart/form-data" use:enhance={({ formData }) => {
@@ -37,64 +79,104 @@
 			formData.append('avatar_photo', photoFile);
 		}
 	}}>
-		<div class="avatar-section">
-			<AvatarPicker
-				name={form?.name ?? data.prefill.name}
-				uid={data.session?.user?.id ?? data.prefill.name}
-				bind:avatarKind
-				bind:avatarValue
-				bind:photoFile
-			/>
-		</div>
+		<!-- every field rides hidden so the one POST carries all steps -->
+		<input type="hidden" name="name" value={name} />
+		<input type="hidden" name="pronouns" value={pronouns} />
+		<input type="hidden" name="school" value={school} />
+		<input type="hidden" name="year" value={year} />
+		<input type="hidden" name="focus" value={focus} />
+		<input type="hidden" name="interests" value={interests} />
+		<input type="hidden" name="website" value={website} />
+		<input type="hidden" name="bio" value={bioValue} />
 		<input type="hidden" name="avatar_kind" value={avatarKind} />
 		<input type="hidden" name="avatar_value" value={avatarKind === 'expr' ? (avatarValue ?? '') : ''} />
 
-		<label>
-			<span>Name <span class="req">*</span></span>
-			<input type="text" name="name" value={form?.name ?? data.prefill.name} required placeholder="Your full name" />
-		</label>
+		{#if step === 'who'}
+			<h1>Hi! Who are you?</h1>
+			<p class="sub">This is how your classmates will see you.</p>
 
-		<label>
-			<span>Pronouns</span>
-			<input type="text" name="pronouns" value={form?.pronouns ?? data.prefill.pronouns} placeholder="e.g. she/her, they/them" />
-		</label>
-
-		<div class="row-2">
-			<label>
-				<span>Year</span>
-				<select name="year">
-					<option value="">Select year</option>
-					{#each YEARS as y}
-						<option value={y} selected={(form?.year ?? data.prefill.year) === y}>{y}</option>
-					{/each}
-				</select>
-			</label>
-
-			<label class="grow">
-				<span>School / University</span>
-				<input type="text" name="school" value={form?.school ?? data.prefill.school} placeholder="e.g. RISD, Parsons" />
-			</label>
-		</div>
-
-		<label>
-			<span>Focus / Major</span>
-			<input type="text" name="focus" value={form?.focus ?? data.prefill.focus} placeholder="e.g. Graphic Design, Illustration" />
-		</label>
-
-		<label>
-			<span>Bio</span>
-			<input type="hidden" name="bio" value={bioValue} />
-			<div class="bio-fi">
-				<FormattedInput bind:value={bioValue} placeholder="A little about yourself…" />
+			<div class="avatar-section">
+				<AvatarPicker
+					name={name}
+					uid={data.user?.id ?? name}
+					bind:avatarKind
+					bind:avatarValue
+					bind:photoFile
+				/>
 			</div>
-		</label>
 
-		<label>
-			<span>Website / portfolio</span>
-			<input type="url" name="website" value={form?.website ?? data.prefill.website} placeholder="https://yoursite.com" />
-		</label>
+			<label>
+				<span>Name <span class="req">*</span></span>
+				<input type="text" bind:value={name} required placeholder="Your full name" />
+			</label>
 
-		<button type="submit" class="btn-primary">Continue →</button>
+			<label>
+				<span>Pronouns</span>
+				<input type="text" bind:value={pronouns} placeholder="e.g. she/her, they/them" />
+			</label>
+
+		{:else if step === 'cooper'}
+			<h1>You at Cooper</h1>
+			<p class="sub">Which school are you in, and where are you in the program?</p>
+
+			<div class="school-cards">
+				{#each SCHOOLS as s (s.id)}
+					<button type="button" class="school-card" class:selected={school === s.id} onclick={() => (school = s.id)}>
+						<span class="school-icon">{s.icon}</span>
+						<span class="school-label">{s.label}</span>
+						<span class="school-full">{s.full}</span>
+					</button>
+				{/each}
+			</div>
+
+			<div class="year-row">
+				<span class="field-title">Year <span class="req">*</span></span>
+				<div class="year-pills">
+					{#each YEARS as y (y)}
+						<button type="button" class="year-pill" class:selected={year === y} onclick={() => (year = y)}>{y}</button>
+					{/each}
+				</div>
+			</div>
+
+			<label>
+				<span>Focus / concentration</span>
+				<input type="text" bind:value={focus} placeholder="e.g. Sculpture, Electrical Engineering, Drawing…" />
+			</label>
+
+		{:else}
+			<h1>What do you make?</h1>
+			<p class="sub">Tell me about your interests — what do you make, what do you want to learn or build? Gemma uses this to personalize your daily digest.</p>
+
+			<label>
+				<span>Your interests</span>
+				<textarea rows="4" bind:value={interests} placeholder="e.g. I make generative type posters and small synths. This semester I want to get better at creative coding and build an interactive installation…"></textarea>
+			</label>
+
+			<label>
+				<span>Bio <span class="opt">(optional)</span></span>
+				<div class="bio-fi">
+					<FormattedInput bind:value={bioValue} placeholder="A little about yourself…" />
+				</div>
+			</label>
+
+			<label>
+				<span>Website / portfolio <span class="opt">(optional)</span></span>
+				<input type="url" bind:value={website} placeholder="https://yoursite.com" />
+			</label>
+		{/if}
+
+		<div class="nav-row">
+			{#if stepIdx > 0}
+				<button type="button" class="btn-ghost" onclick={back}>← Back</button>
+			{:else}
+				<span></span>
+			{/if}
+			{#if stepIdx < steps.length - 1}
+				<button type="button" class="btn-primary" onclick={next}>Continue →</button>
+			{:else}
+				<button type="submit" class="btn-primary">Finish →</button>
+			{/if}
+		</div>
 	</form>
 </div>
 
@@ -103,27 +185,42 @@
 		background: var(--paper);
 		border: 1.5px solid var(--border);
 		border-radius: 16px;
-		padding: 2.5rem 2rem;
+		padding: 2rem 2rem 1.75rem;
 		width: 100%;
-		max-width: 480px;
+		max-width: 500px;
 		display: flex;
 		flex-direction: column;
-		gap: 1rem;
+		gap: 0.9rem;
 	}
+
+	.progress { display: flex; align-items: center; gap: 0.4rem; margin-bottom: 0.25rem; }
+	.prog-step {
+		display: flex; align-items: center; gap: 0.4rem;
+		background: none; border: none; padding: 0; cursor: default;
+		color: var(--muted-fg); font-family: inherit;
+	}
+	.prog-step.done { cursor: pointer; }
+	.prog-dot {
+		width: 22px; height: 22px; border-radius: 50%;
+		display: inline-flex; align-items: center; justify-content: center;
+		border: 1.5px solid var(--border); font-size: 0.7rem; font-weight: 700;
+		background: var(--paper); flex-shrink: 0;
+	}
+	.prog-step.active .prog-dot { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+	.prog-step.done .prog-dot { border-color: var(--ink); color: var(--ink); }
+	.prog-step.active { color: var(--ink); font-weight: 600; }
+	.prog-label { font-size: 0.75rem; }
+	.prog-line { flex: 1; height: 1.5px; background: var(--border); min-width: 12px; }
+	.prog-line.done { background: var(--ink); }
 
 	h1 {
 		font-family: 'Avara', serif;
-		font-size: 1.75rem;
+		font-size: 1.6rem;
 		font-weight: 400;
-		margin: 0 0 0.1rem;
-		color: var(--ink, var(--ink));
+		margin: 0;
+		color: var(--ink);
 	}
-
-	.sub {
-		font-size: 0.9rem;
-		color: var(--muted-fg);
-		margin: 0 0 0.5rem;
-	}
+	.sub { font-size: 0.88rem; color: var(--muted-fg); margin: -0.35rem 0 0.25rem; line-height: 1.45; }
 
 	.error {
 		background: #fef2f2;
@@ -137,34 +234,63 @@
 
 	form { display: flex; flex-direction: column; gap: 0.9rem; }
 	label { display: flex; flex-direction: column; gap: 0.35rem; }
-	label span { font-size: 0.82rem; font-weight: 600; color: var(--ink, var(--ink)); }
+	label span, .field-title { font-size: 0.82rem; font-weight: 600; color: var(--ink); }
 	.req { color: #e53935; }
+	.opt { font-weight: 400; color: var(--muted-fg); }
 
-	.row-2 { display: flex; gap: 0.75rem; }
-	.row-2 label { flex: 1; min-width: 0; }
-	.grow { flex: 2 !important; }
-
-	input, textarea, select {
+	input, textarea {
 		padding: 0.6rem 0.85rem;
 		border: 1.5px solid var(--border);
 		border-radius: 8px;
 		font-family: inherit;
 		font-size: 0.9rem;
-		color: var(--ink, var(--ink));
+		color: var(--ink);
 		background: var(--paper);
 		outline: none;
 		transition: border-color 0.15s;
 		width: 100%;
 		box-sizing: border-box;
 	}
-	input:focus, textarea:focus, select:focus { border-color: var(--ink, var(--ink)); }
-	textarea { resize: vertical; }
+	input:focus, textarea:focus { border-color: var(--ink); }
+	textarea { resize: vertical; line-height: 1.5; }
 
+	.school-cards { display: flex; gap: 0.6rem; }
+	.school-card {
+		flex: 1; min-width: 0;
+		display: flex; flex-direction: column; align-items: center; gap: 0.3rem;
+		padding: 0.9rem 0.5rem 0.75rem;
+		border: 1.5px solid var(--border); border-radius: 12px;
+		background: var(--paper); cursor: pointer;
+		font-family: inherit; color: var(--ink);
+		transition: border-color 0.15s, background 0.15s, transform 0.15s;
+	}
+	.school-card:hover { transform: translateY(-1px); border-color: var(--muted-fg); }
+	.school-card.selected {
+		border-color: var(--ink);
+		background: color-mix(in srgb, var(--ink) 6%, var(--paper));
+		box-shadow: inset 0 0 0 1px var(--ink);
+	}
+	.school-icon { font-size: 1.5rem; line-height: 1; }
+	.school-label { font-weight: 700; font-size: 0.9rem; }
+	.school-full { font-size: 0.62rem; color: var(--muted-fg); text-align: center; line-height: 1.25; }
+
+	.year-row { display: flex; flex-direction: column; gap: 0.35rem; }
+	.year-pills { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+	.year-pill {
+		padding: 0.4rem 0.8rem;
+		border: 1.5px solid var(--border); border-radius: 999px;
+		background: var(--paper); cursor: pointer;
+		font-family: inherit; font-size: 0.82rem; color: var(--ink);
+		transition: all 0.15s;
+	}
+	.year-pill:hover { border-color: var(--muted-fg); }
+	.year-pill.selected { background: var(--ink); border-color: var(--ink); color: var(--paper); font-weight: 600; }
+
+	.nav-row { display: flex; justify-content: space-between; align-items: center; margin-top: 0.25rem; }
 	.btn-primary {
-		margin-top: 0.25rem;
 		padding: 0.7rem 1.5rem;
-		background: var(--ink, var(--ink));
-		color: var(--paper, var(--paper));
+		background: var(--ink);
+		color: var(--paper);
 		border: none;
 		border-radius: 10px;
 		font-family: inherit;
@@ -172,13 +298,16 @@
 		font-weight: 600;
 		cursor: pointer;
 		transition: opacity 0.15s;
-		align-self: flex-end;
 	}
 	.btn-primary:hover { opacity: 0.8; }
-	/* Match the visual weight of the textarea this replaced — same
-	   border / radius / min-height so the bio field doesn't suddenly
-	   feel foreign next to the inputs above it. The inner contenteditable
-	   gets its own padding from FormattedInput's defaults. */
+	.btn-ghost {
+		padding: 0.7rem 1rem;
+		background: none; border: none;
+		font-family: inherit; font-size: 0.9rem;
+		color: var(--muted-fg); cursor: pointer;
+	}
+	.btn-ghost:hover { color: var(--ink); }
+
 	.bio-fi {
 		border: 1.5px solid var(--border);
 		border-radius: 8px;
@@ -193,7 +322,7 @@
 	.avatar-section {
 		display: flex;
 		justify-content: center;
-		padding: 0.5rem 0 0.5rem;
+		padding: 0.25rem 0;
 		position: relative;
 	}
 </style>
