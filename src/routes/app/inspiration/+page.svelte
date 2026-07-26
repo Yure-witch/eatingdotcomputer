@@ -6,7 +6,16 @@
 	// lean toward what you save). Unsaved finds fade after 7 days; the
 	// History view keeps the record.
 	import { onMount } from 'svelte';
+	import { page } from '$app/stores';
 	import { pageTitle } from '$lib/page-title-store.js';
+
+	// Two feeds live here. "Mine" is the student's own interest-driven feed
+	// (personal reactions shape it). "Class" is a shared feed built from the
+	// syllabus — everyone sees the same items, and the AGGREGATE of everyone's
+	// reactions drives what floats up. Instructors also get "Students": a
+	// window into what each student likes, personally and for the class.
+	const isInstructor = $derived($page.data?.currentUser?.role === 'instructor');
+	let scope = $state('class'); // class | mine | students
 
 	let loading = $state(true);
 	let items = $state([]);
@@ -17,8 +26,9 @@
 	let topicsSaving = $state(false);
 	let scoutOnline = $state(false);
 	let pending = $state(false); // a batch is in flight on the worker
-	let view = $state('fresh'); // fresh | saved | history
+	let view = $state('fresh'); // fresh | saved | history (Mine only)
 	let historyLoaded = $state(false);
+	let insights = $state(null); // instructor Students view
 	let pollTimer = null;
 	// Poll a bounded number of times while a batch is in flight — a stuck
 	// batch (worker down) must NOT poll forever, which would hammer the
@@ -34,13 +44,23 @@
 			// Don't poll a backgrounded tab.
 			if (typeof document !== 'undefined' && document.hidden) { pollsLeft = 0; return; }
 			pollsLeft -= 1;
-			load(view === 'history');
+			load();
 		}, POLL_EVERY);
 	}
 
-	async function load(history = false) {
+	async function load() {
+		loading = items.length === 0; // keep current items visible on re-poll
+		if (scope === 'students') {
+			try {
+				const r = await fetch('/api/inspiration?insights=1');
+				if (r.ok) insights = await r.json();
+			} catch { /* empty state */ }
+			loading = false;
+			return;
+		}
+		const qs = scope === 'class' ? 'scope=class' : (view === 'history' ? 'history=1' : '');
 		try {
-			const r = await fetch(`/api/inspiration${history ? '?history=1' : ''}`);
+			const r = await fetch(`/api/inspiration${qs ? '?' + qs : ''}`);
 			if (r.ok) {
 				const j = await r.json();
 				items = j.items ?? [];
@@ -48,13 +68,22 @@
 				topics = j.topics ?? '';
 				scoutOnline = !!j.scoutOnline;
 				pending = !!j.pending;
-				if (history) historyLoaded = true;
-				// Batch in flight → keep polling (bounded) until it lands.
-				// Results merge in automatically since GET materializes them.
+				if (scope === 'mine' && view === 'history') historyLoaded = true;
 				if (pending) schedulePoll(); else pollsLeft = 0;
 			}
 		} catch { /* empty state below */ }
 		loading = false;
+	}
+
+	function switchScope(s) {
+		if (s === scope) return;
+		scope = s;
+		items = [];
+		insights = null;
+		historyLoaded = false;
+		view = 'fresh';
+		clearTimeout(pollTimer); pollTimer = null; pollsLeft = 0;
+		load();
 	}
 
 	async function fetchMore() {
@@ -64,7 +93,7 @@
 			await fetch('/api/inspiration', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ more: true })
+				body: JSON.stringify({ more: true, scope })
 			});
 		} catch { /* poll picks up state either way */ }
 		schedulePoll();
@@ -79,10 +108,11 @@
 	function setView(v) {
 		view = v;
 		// History needs the full list (expired included) — fetch once.
-		if (v === 'history' && !historyLoaded) load(true);
+		if (v === 'history' && !historyLoaded) load();
 	}
 
 	const visible = $derived.by(() => {
+		if (scope === 'class') return items; // class feed: shared, ordered by aggregate
 		if (view === 'saved') return items.filter((i) => i.saved);
 		if (view === 'history') return items;
 		return items.filter((i) => i.saved || !i.expired);
@@ -119,11 +149,12 @@
 
 	async function toggleSave(item) {
 		item.saved = !item.saved;
+		if (scope === 'class') item.aggSaves = (item.aggSaves ?? 0) + (item.saved ? 1 : -1);
 		try {
 			const r = await fetch('/api/inspiration', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ itemId: item.id, saved: item.saved })
+				body: JSON.stringify({ itemId: item.id, saved: item.saved, scope })
 			});
 			if (!r.ok) item.saved = !item.saved;
 		} catch { item.saved = !item.saved; }
@@ -167,14 +198,18 @@
 	async function rate(item, rating) {
 		const prev = item.rating;
 		item.rating = item.rating === rating ? 0 : rating;
-		if (item.rating === -1 && view !== 'history') {
+		// Keep the aggregate score in sync locally (class feed shows it live).
+		if (scope === 'class') item.aggScore = (item.aggScore ?? 0) + (item.rating - prev);
+		// Personal feed: a dislike drops the item from view immediately. Class
+		// feed items are shared, so they stay (just re-scored).
+		if (scope === 'mine' && item.rating === -1 && view !== 'history') {
 			items = items.filter((i) => i.id !== item.id || i.saved);
 		}
 		try {
 			const r = await fetch('/api/inspiration', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ itemId: item.id, rating: item.rating })
+				body: JSON.stringify({ itemId: item.id, rating: item.rating, scope })
 			});
 			if (!r.ok) item.rating = prev;
 		} catch { item.rating = prev; }
@@ -202,13 +237,35 @@
 		<div class="page-head">
 			<h1>Inspiration</h1>
 			<p class="page-sub">
-				New picks land every day or so, based on your interests{interests ? '' : ' (none on file yet)'}.
-				<strong>Save what speaks to you</strong> — it stays forever and shapes what shows up next.
-				👍 and 👎 teach it your taste too. Unsaved finds fade after 7 days, but History keeps the record.
+				{#if scope === 'class'}
+					A shared feed built from the class syllabus. Everyone sees the same finds — <strong>👍 what resonates</strong>,
+					and the ones the class rallies behind rise to the top.
+				{:else if scope === 'mine'}
+					Your own finds, based on your interests. <strong>Save what speaks to you</strong> and 👍/👎 teach it your
+					taste. Unsaved finds fade after 7 days; History keeps the record.
+				{:else}
+					What each student is drawn to — personally and in the class feed. Their likes quietly steer their own
+					feed, and shared favorites nudge the class feed for everyone.
+				{/if}
 			</p>
 		</div>
 
-		{#if interests || topics}
+		<div class="scope-tabs">
+			<button class="scope-tab" class:active={scope === 'class'} onclick={() => switchScope('class')}>Class</button>
+			<button class="scope-tab" class:active={scope === 'mine'} onclick={() => switchScope('mine')}>Mine</button>
+			{#if isInstructor}
+				<button class="scope-tab" class:active={scope === 'students'} onclick={() => switchScope('students')}>Students</button>
+			{/if}
+		</div>
+
+		{#if scope === 'class'}
+			{#if topics}
+				<div class="topics-row">
+					<span class="topics-label">From the syllabus:</span>
+					<span class="topics-value">{topics}</span>
+				</div>
+			{/if}
+		{:else if scope === 'mine' && (interests || topics)}
 			<div class="topics-row">
 				{#if editingTopics}
 					<input
@@ -233,6 +290,52 @@
 			</div>
 		{/if}
 
+		{#if scope === 'students'}
+			{#if loading}
+				<p class="empty"><span class="msi inspo-spin">progress_activity</span> Gathering what everyone likes…</p>
+			{:else if insights}
+				{#if insights.classFavorites?.length}
+					<section class="inspo-section">
+						<h2>Class favorites</h2>
+						<p class="sec-sub">Shared finds the class rated highest.</p>
+						<ul class="row-list">
+							{#each insights.classFavorites as f (f.url)}
+								<li class="row">
+									<div class="row-body">
+										<a class="row-title" href={f.url} target="_blank" rel="noopener noreferrer">{f.title}</a>
+										<span class="row-meta">👍 {f.score} · 🔖 {f.saves} · {f.kind}</span>
+									</div>
+								</li>
+							{/each}
+						</ul>
+					</section>
+				{/if}
+				<section class="inspo-section">
+					<h2>Each student</h2>
+					{#each insights.students as st (st.id)}
+						<div class="student-card">
+							<div class="student-head">
+								<a class="student-name" href="/app/profile/{st.id}">{st.name}</a>
+								<span class="student-stat">{st.likeCount} 👍 · {st.saveCount} 🔖</span>
+							</div>
+							{#if st.interests}<p class="student-interests">{st.interests}</p>{/if}
+							{#if st.personalLikes.length}
+								<ul class="student-likes">
+									{#each st.personalLikes as l (l.url)}
+										<li><a href={l.url} target="_blank" rel="noopener noreferrer">{l.title}</a>{#if l.meta}<span class="student-like-meta"> · {l.meta}</span>{/if}</li>
+									{/each}
+								</ul>
+							{:else}
+								<p class="student-empty">Nothing liked yet.</p>
+							{/if}
+						</div>
+					{/each}
+				</section>
+			{:else}
+				<p class="empty">No student activity yet.</p>
+			{/if}
+		{:else}
+
 		<details class="library-note">
 			<summary><span class="msi">school</span> Reading paywalled papers with your Cooper login</summary>
 			<div class="library-note-body">
@@ -255,19 +358,23 @@
 			</div>
 		</details>
 
-		<div class="view-row">
-			<button class="view-chip" class:active={view === 'fresh'} onclick={() => setView('fresh')}>Fresh</button>
-			<button class="view-chip" class:active={view === 'saved'} onclick={() => setView('saved')}>Saved</button>
-			<button class="view-chip" class:active={view === 'history'} onclick={() => setView('history')}>History</button>
-			<button class="view-chip export-chip" title="Download your topics, saves, likes/dislikes, and the derived taste model as JSON" onclick={exportAlgorithm}>
-				<span class="msi">download</span> Export my algorithm
-			</button>
-		</div>
+		{#if scope === 'mine'}
+			<div class="view-row">
+				<button class="view-chip" class:active={view === 'fresh'} onclick={() => setView('fresh')}>Fresh</button>
+				<button class="view-chip" class:active={view === 'saved'} onclick={() => setView('saved')}>Saved</button>
+				<button class="view-chip" class:active={view === 'history'} onclick={() => setView('history')}>History</button>
+				<button class="view-chip export-chip" title="Download your topics, saves, likes/dislikes, and the derived taste model as JSON" onclick={exportAlgorithm}>
+					<span class="msi">download</span> Export my algorithm
+				</button>
+			</div>
+		{/if}
 
 		{#if loading}
 			<p class="empty"><span class="msi inspo-spin">progress_activity</span> Gemma is out looking for new things…</p>
-		{:else if !topics}
+		{:else if scope === 'mine' && !topics}
 			<p class="empty">No interests on file yet — add them in your <a href="/app/profile/edit">profile</a> (or ask your instructor to fill them in on the Manage page) and check back tomorrow.</p>
+		{:else if scope === 'class' && !topics && !visible.length}
+			<p class="empty">The class feed builds from the syllabus — add week topics on the <a href="/app/manage">Manage</a> page and finds will start arriving.</p>
 		{:else if !visible.length}
 			{#if view === 'saved'}
 				<p class="empty">Nothing saved yet. Hit the bookmark on anything you want to keep.</p>
@@ -294,7 +401,7 @@
 										{/if}
 										<span class="art-title">{item.title}</span>
 										{#if item.snippet}<span class="art-snip">{item.snippet}</span>{/if}
-										<span class="art-meta">{item.meta}</span>
+										<span class="art-meta">{item.meta}{#if scope === 'class' && item.aggScore > 0} · 👍 {item.aggScore}{/if}</span>
 									</a>
 									<span class="art-actions">{@render itemActions(item)}</span>
 									{#if item.expired && !item.saved}<span class="expired-tag">faded</span>{/if}
@@ -313,7 +420,7 @@
 											{#if item.kind === 'paper'}<span class="msi lock-icon" title={isDoiPaper(item) ? 'Opens through Cooper Library — sign in with your Cooper login' : 'Find a copy (usually a book)'}>{isDoiPaper(item) ? 'account_balance' : 'menu_book'}</span>{/if}{item.title}
 										</a>
 										{#if item.snippet}<span class="row-snip">{item.snippet}</span>{/if}
-										{#if item.meta}<span class="row-meta">{item.meta}{#if isDoiPaper(item)} · via Cooper Library{/if}{#if item.expired && !item.saved} · faded{/if}</span>{/if}
+										{#if item.meta}<span class="row-meta">{item.meta}{#if isDoiPaper(item)} · via Cooper Library{/if}{#if scope === 'class' && item.aggScore > 0} · 👍 {item.aggScore} in class{/if}{#if item.expired && !item.saved} · faded{/if}</span>{/if}
 									</div>
 									{@render itemActions(item)}
 								</li>
@@ -336,6 +443,7 @@
 				{/if}
 			</div>
 		{/if}
+		{/if}
 	</main>
 </div>
 
@@ -345,6 +453,35 @@
 	.page-head h1 { font-family: 'Avara', serif; font-size: 1.5rem; margin: 0 0 0.35rem; }
 	.page-sub { font-size: 0.85rem; color: var(--muted-fg); margin: 0 0 1rem; line-height: 1.5; }
 	.page-sub strong { color: var(--ink); font-weight: 600; }
+
+	.scope-tabs {
+		display: flex; gap: 0.25rem; margin-bottom: 1rem;
+		border-bottom: 1.5px solid var(--border);
+	}
+	.scope-tab {
+		padding: 0.5rem 1rem; font-family: inherit; font-size: 0.9rem; font-weight: 600;
+		background: none; border: none; border-bottom: 2.5px solid transparent;
+		color: var(--muted-fg); cursor: pointer; margin-bottom: -1.5px;
+		transition: color 0.12s, border-color 0.12s;
+	}
+	.scope-tab:hover { color: var(--ink); }
+	.scope-tab.active { color: var(--ink); border-bottom-color: var(--ink); }
+
+	.student-card {
+		border: 1.5px solid var(--border); border-radius: 12px;
+		padding: 0.85rem 1rem; margin-bottom: 0.7rem;
+	}
+	.student-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem; }
+	.student-name { font-size: 0.95rem; font-weight: 600; color: var(--ink); text-decoration: none; }
+	.student-name:hover { text-decoration: underline; }
+	.student-stat { font-size: 0.78rem; color: var(--muted-fg); flex-shrink: 0; }
+	.student-interests { font-size: 0.78rem; color: var(--muted-fg); margin: 0.25rem 0 0.5rem; font-style: italic; }
+	.student-likes { list-style: none; margin: 0.4rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.25rem; }
+	.student-likes li { font-size: 0.82rem; line-height: 1.35; }
+	.student-likes a { color: var(--ink); text-decoration: none; }
+	.student-likes a:hover { text-decoration: underline; }
+	.student-like-meta { color: var(--muted-fg); font-size: 0.75rem; }
+	.student-empty { font-size: 0.78rem; color: var(--muted-fg); margin: 0.4rem 0 0; }
 
 	.topics-row {
 		display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;

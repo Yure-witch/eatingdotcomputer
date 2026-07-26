@@ -279,3 +279,230 @@ export async function setInspirationRating(userId, itemId, rating) {
 	});
 	return res.rowsAffected > 0;
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// CLASS FEED — one shared set of items generated from the syllabus. Same
+// base algorithm for everyone; ordering is driven by AGGREGATE student
+// reactions (a class favorite floats up). Each student's own like/save is
+// stored per-item in inspiration_reactions (the item row is shared, so it
+// can't hold one student's state). Popular PERSONAL likes also feed back
+// into the class query — what the class is into shapes what it's shown.
+// ─────────────────────────────────────────────────────────────────────────
+
+const classOwner = (classId) => `class:${classId}`;
+const classTag = (classId) => `inspo:class:${classId}`;
+
+// Search topics for the class: the syllabus (week headlines + topic
+// previews) plus what's "trending" — titles many students liked in their
+// personal feeds. The syllabus part is stable (same for the class); the
+// trending part is the aggregate influence.
+// Strip inline emote/effect tokens ([tg:..], [ce:..], …) and PUA glyphs so
+// chat-flavored syllabus text becomes clean search terms.
+function cleanTopic(s) {
+	return String(s ?? '')
+		.replace(/\[(?:tg|tgc|ce|ek|tfx|img)[^\]]*\]/gi, '')
+		.replace(/[\u{E000}-\u{F8FF}\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, '')
+		.replace(/\s+/g, ' ')
+		.trim();
+}
+
+async function getClassTopics(db, classId) {
+	const wp = (await db.execute({
+		sql: 'SELECT headline, topic_preview FROM week_plans WHERE class_id = ? ORDER BY week',
+		args: [classId]
+	})).rows;
+	const syllabus = [];
+	for (const r of wp) {
+		// The headline is the TOPIC name (best search term); the preview is
+		// usually a chatty note — use it only when there's no headline.
+		const term = cleanTopic(r.headline) || cleanTopic(r.topic_preview);
+		if (term && term.length > 2) syllabus.push(term);
+	}
+	const trending = (await db.execute({
+		sql: `SELECT title, COUNT(DISTINCT user_id) c FROM inspiration_items
+		      WHERE user_id NOT LIKE 'class:%' AND rating = 1
+		      GROUP BY lower(title) HAVING c >= 2 ORDER BY c DESC LIMIT 3`,
+		args: []
+	})).rows.map((r) => String(r.title).split(/\s+/).slice(0, 4).join(' '));
+	return { topics: [...syllabus.slice(0, 6), ...trending].filter(Boolean).join(', ').slice(0, 300), trending };
+}
+
+async function enqueueClassBatch(db, classId) {
+	const t = classTag(classId);
+	const pending = (await db.execute({
+		sql: `SELECT id FROM scout_jobs WHERE requested_by = ? AND status IN ('queued','running') LIMIT 1`,
+		args: [t]
+	})).rows[0];
+	if (pending) return false;
+	const { topics } = await getClassTopics(db, classId);
+	if (!topics) return false;
+	const seed = Number((await db.execute({
+		sql: `SELECT COUNT(*) AS n FROM scout_jobs WHERE requested_by = ?`, args: [t]
+	})).rows[0]?.n ?? 0);
+	await db.execute({
+		sql: `INSERT INTO scout_jobs (kind, query, requested_by) VALUES ('search', ?, ?)`,
+		args: [`${topics} #s${seed}`, t]
+	});
+	return true;
+}
+
+async function materializeClass(db, classId) {
+	const owner = classOwner(classId);
+	const jobs = (await db.execute({
+		sql: `SELECT result FROM scout_jobs WHERE requested_by = ? AND status = 'done' AND updated_at > datetime('now', '-2 days')`,
+		args: [classTag(classId)]
+	})).rows;
+	for (const job of jobs) {
+		let results;
+		try { results = JSON.parse(String(job.result)); } catch { continue; }
+		if (!Array.isArray(results)) continue;
+		const taken = {};
+		for (const r of results) {
+			const url = usableUrl(r);
+			if (!url) continue;
+			const kind = r.kind ?? 'link';
+			const quota = BASE_QUOTA[kind] ?? 4;
+			taken[kind] = (taken[kind] ?? 0) + 1;
+			if (taken[kind] > quota) continue;
+			await db.execute({
+				sql: `INSERT OR IGNORE INTO inspiration_items (user_id, kind, source, title, url, snippet, meta, image, paywalled)
+				      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				args: [owner, kind, r.source ?? null, r.title ?? '(untitled)', url, r.snippet ?? '', r.meta ?? '', r.image ?? null, r.paywalled ? 1 : 0]
+			});
+		}
+	}
+}
+
+// The class feed for a viewer: shared items + this viewer's own reactions
+// merged in + each item's aggregate score (how the class rates it).
+export async function getClassFeed(userId, classId) {
+	const db = getDb();
+	if (!db) return { items: [], pending: false, topics: '' };
+	const owner = classOwner(classId);
+
+	await materializeClass(db, classId);
+	const stale = (await db.execute({
+		sql: `SELECT MAX(created_at) latest FROM scout_jobs WHERE requested_by = ?`, args: [classTag(classId)]
+	})).rows[0]?.latest;
+	const ageMs = stale ? Date.now() - new Date(String(stale).replace(' ', 'T') + 'Z').getTime() : Infinity;
+	if (ageMs > REFRESH_MS) await enqueueClassBatch(db, classId);
+
+	const pending = !!(await db.execute({
+		sql: `SELECT id FROM scout_jobs WHERE requested_by = ? AND status IN ('queued','running') LIMIT 1`,
+		args: [classTag(classId)]
+	})).rows[0];
+
+	// Items + aggregate reaction score + the caller's own reaction.
+	const rows = (await db.execute({
+		sql: `SELECT i.*,
+		         COALESCE(SUM(rx.rating), 0) AS agg_score,
+		         COALESCE(SUM(CASE WHEN rx.saved = 1 THEN 1 ELSE 0 END), 0) AS agg_saves,
+		         MAX(CASE WHEN rx.user_id = ? THEN rx.rating END) AS my_rating,
+		         MAX(CASE WHEN rx.user_id = ? THEN rx.saved END)  AS my_saved
+		      FROM inspiration_items i
+		      LEFT JOIN inspiration_reactions rx ON rx.item_id = i.id
+		      WHERE i.user_id = ?
+		      GROUP BY i.id
+		      HAVING COALESCE(SUM(rx.rating), 0) > -2
+		      ORDER BY agg_score DESC, i.created_at DESC
+		      LIMIT 150`,
+		args: [userId, userId, owner]
+	})).rows;
+
+	const items = rows.map((r) => ({
+		...rowToItem(r),
+		saved: !!Number(r.my_saved),
+		rating: Number(r.my_rating ?? 0),
+		aggScore: Number(r.agg_score ?? 0),
+		aggSaves: Number(r.agg_saves ?? 0),
+		expired: false
+	}));
+	const { topics } = await getClassTopics(db, classId);
+	return { items, pending, topics };
+}
+
+export async function requestMoreClass(classId) {
+	const db = getDb();
+	if (!db) return false;
+	return enqueueClassBatch(db, classId);
+}
+
+// A student reacting to a shared class item → upsert into the reactions
+// table (never touches the shared item row).
+export async function reactClassItem(userId, itemId, { rating, saved }) {
+	const db = getDb();
+	if (!db) return false;
+	const cur = (await db.execute({
+		sql: `SELECT rating, saved FROM inspiration_reactions WHERE user_id = ? AND item_id = ?`,
+		args: [userId, itemId]
+	})).rows[0] ?? { rating: 0, saved: 0 };
+	const nextRating = rating === undefined ? Number(cur.rating ?? 0) : (rating === 1 ? 1 : rating === -1 ? -1 : 0);
+	const nextSaved = saved === undefined ? Number(cur.saved ?? 0) : (saved ? 1 : 0);
+	await db.execute({
+		sql: `INSERT INTO inspiration_reactions (user_id, item_id, rating, saved, updated_at)
+		      VALUES (?, ?, ?, ?, datetime('now'))
+		      ON CONFLICT(user_id, item_id) DO UPDATE SET rating = excluded.rating, saved = excluded.saved, updated_at = datetime('now')`,
+		args: [userId, itemId, nextRating, nextSaved]
+	});
+	return true;
+}
+
+// Instructor view: what every student likes, personally and for the class.
+export async function getStudentInsights(classId) {
+	const db = getDb();
+	if (!db) return { students: [], classFavorites: [], trending: [] };
+	const owner = classOwner(classId);
+
+	const students = (await db.execute({
+		sql: `SELECT id, name, interests, inspo_topics FROM users WHERE role != 'instructor' ORDER BY name`,
+		args: []
+	})).rows;
+
+	const out = [];
+	for (const s of students) {
+		const uid = String(s.id);
+		const personalLikes = (await db.execute({
+			sql: `SELECT kind, title, url, meta FROM inspiration_items
+			      WHERE user_id = ? AND (rating = 1 OR saved = 1) ORDER BY saved DESC, id DESC LIMIT 8`,
+			args: [uid]
+		})).rows.map((r) => ({ kind: String(r.kind), title: String(r.title), url: String(r.url), meta: r.meta ? String(r.meta) : '' }));
+		const classLikes = (await db.execute({
+			sql: `SELECT i.title, i.url, i.kind FROM inspiration_reactions rx
+			      JOIN inspiration_items i ON i.id = rx.item_id
+			      WHERE rx.user_id = ? AND (rx.rating = 1 OR rx.saved = 1)
+			      ORDER BY rx.saved DESC, rx.updated_at DESC LIMIT 8`,
+			args: [uid]
+		})).rows.map((r) => ({ kind: String(r.kind), title: String(r.title), url: String(r.url) }));
+		const counts = (await db.execute({
+			sql: `SELECT
+			        SUM(CASE WHEN rating = 1 THEN 1 ELSE 0 END) likes,
+			        SUM(CASE WHEN saved = 1 THEN 1 ELSE 0 END) saves
+			      FROM inspiration_items WHERE user_id = ?`,
+			args: [uid]
+		})).rows[0] ?? {};
+		out.push({
+			id: uid,
+			name: String(s.name ?? 'Unnamed'),
+			interests: s.interests ? String(s.interests) : '',
+			topics: s.inspo_topics ? String(s.inspo_topics) : '',
+			likeCount: Number(counts.likes ?? 0),
+			saveCount: Number(counts.saves ?? 0),
+			personalLikes,
+			classLikes
+		});
+	}
+
+	// What the class as a whole rates highest among the shared items.
+	const classFavorites = (await db.execute({
+		sql: `SELECT i.title, i.url, i.kind,
+		        SUM(rx.rating) score, SUM(CASE WHEN rx.saved = 1 THEN 1 ELSE 0 END) saves
+		      FROM inspiration_items i JOIN inspiration_reactions rx ON rx.item_id = i.id
+		      WHERE i.user_id = ?
+		      GROUP BY i.id HAVING score > 0 OR saves > 0
+		      ORDER BY score DESC, saves DESC LIMIT 12`,
+		args: [owner]
+	})).rows.map((r) => ({ kind: String(r.kind), title: String(r.title), url: String(r.url), score: Number(r.score ?? 0), saves: Number(r.saves ?? 0) }));
+
+	const { trending } = await getClassTopics(db, classId);
+	return { students: out, classFavorites, trending };
+}

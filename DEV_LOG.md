@@ -300,6 +300,18 @@ The following major areas need to be built. None are started yet.
 - **Status**: `attempted`
 - **What**: The always-DOI guard was silently DROPPING valuable no-DOI works — which turn out to be canonical BOOKS (Bringhurst *Elements of Typographic Style*, Geuss *Idea of a Critical Theory*, *Designing Interaction*). Books rarely have DOIs and can't route through OpenAthens (that's for e-journals). Now: DOI present → DOI link + Cooper OpenAthens (article); no DOI → **Google Books search** by title+author (`google.com/search?tbm=bks`) — never hidden, always lands on the book (preview + borrow/buy), linked direct. materialize `usableUrl` accepts doi.org OR google-books search for papers (still rejects catalog stubs). Frontend: `isDoiPaper` splits routing + icon (account_balance vs menu_book) + label (via Cooper Library vs book·find a copy). Verified a book-heavy query returns 10 papers, books as find-links, zero dropped.
 
+## Inspiration — Class feed + personal + instructor view
+
+### Two feeds (Class / Mine) + Students insights — 2026-07-26
+- **Status**: `attempted`
+- **What**: Three scope tabs on /app/inspiration.
+  - **Class** — one SHARED feed (inspiration_items owner_id `class:<classId>`) built from the syllabus (week_plans headlines, `cleanTopic` strips [tg:]/PUA/emoji chat tokens). Everyone sees the same items; per-student reactions live in new `inspiration_reactions` table (054); items ordered by AGGREGATE reaction score (SUM ratings across students) so class favorites float up. Shows "👍 N in class" per item.
+  - **Mine** — the existing personal feed (unchanged): interests-driven, personal reactions, Fresh/Saved/History, editable topics, export.
+  - **Students** (instructor only) — `getStudentInsights`: every student's personal likes/saves + their interests + class-favorite reactions, plus class aggregate favorites. Links to profiles.
+  - **Cross-influence**: class query = syllabus topics + "trending" personal-liked titles across ≥2 students (getClassTopics). Aggregate class reactions drive class ordering.
+  - API: `?scope=class`, `?insights=1`, POST `{scope,itemId,rating|saved}` → reactClassItem, POST `{more,scope}`. Class uses DEFAULT_CLASS.
+- **Note**: current syllabus has 1 week ("Text adventure") so the class feed is thin (6 artworks) — it enriches as week topics are added. Verified: class feed generates from cleaned topics, insights lists 19 students, all compiles.
+
 ### ⚠️ Vercel deploy stalled — 2026-07-26
 - **Blocker**: Auto-deploy stopped after commit `a112577` (basic Inspiration tab). SIX commits unshipped (Fetch More, feedback loop, header fixes, topics/export, OA links, paywall+OpenAthens). Confirmed via production sanitizer probe: POSTing a result with `paywalled:true` stored WITHOUT the field = old endpoint code live. `npm run build` passes clean locally (only optional-dep warnings), so it is NOT a build failure — appears Vercel-side (stuck/paused/queued). Worker changes take effect regardless (kahan), but all frontend + server-route changes are gated on this deploy. USER must check Vercel dashboard.
 
