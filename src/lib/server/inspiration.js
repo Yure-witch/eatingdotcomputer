@@ -338,30 +338,30 @@ async function getClassTopics(db, classId) {
 	return { topics, trending };
 }
 
-async function enqueueClassBatch(db, classId) {
-	const t = classTag(classId);
+// ── Generic shared-feed helpers (used by the blended class feed AND each
+//    per-week feed — they differ only by owner/tag/query) ────────────────
+
+async function enqueueSharedBatch(db, tag, query) {
+	if (!query) return false;
 	const pending = (await db.execute({
 		sql: `SELECT id FROM scout_jobs WHERE requested_by = ? AND status IN ('queued','running') LIMIT 1`,
-		args: [t]
+		args: [tag]
 	})).rows[0];
 	if (pending) return false;
-	const { topics } = await getClassTopics(db, classId);
-	if (!topics) return false;
 	const seed = Number((await db.execute({
-		sql: `SELECT COUNT(*) AS n FROM scout_jobs WHERE requested_by = ?`, args: [t]
+		sql: `SELECT COUNT(*) AS n FROM scout_jobs WHERE requested_by = ?`, args: [tag]
 	})).rows[0]?.n ?? 0);
 	await db.execute({
 		sql: `INSERT INTO scout_jobs (kind, query, requested_by) VALUES ('search', ?, ?)`,
-		args: [`${topics} #s${seed}`, t]
+		args: [`${query} #s${seed}`, tag]
 	});
 	return true;
 }
 
-async function materializeClass(db, classId) {
-	const owner = classOwner(classId);
+async function materializeOwner(db, owner, tag) {
 	const jobs = (await db.execute({
 		sql: `SELECT result FROM scout_jobs WHERE requested_by = ? AND status = 'done' AND updated_at > datetime('now', '-2 days')`,
-		args: [classTag(classId)]
+		args: [tag]
 	})).rows;
 	for (const job of jobs) {
 		let results;
@@ -384,26 +384,22 @@ async function materializeClass(db, classId) {
 	}
 }
 
-// The class feed for a viewer: shared items + this viewer's own reactions
-// merged in + each item's aggregate score (how the class rates it).
-export async function getClassFeed(userId, classId) {
-	const db = getDb();
-	if (!db) return { items: [], pending: false, topics: '' };
-	const owner = classOwner(classId);
-
-	await materializeClass(db, classId);
-	const stale = (await db.execute({
-		sql: `SELECT MAX(created_at) latest FROM scout_jobs WHERE requested_by = ?`, args: [classTag(classId)]
+async function jobAge(db, tag) {
+	const latest = (await db.execute({
+		sql: `SELECT MAX(created_at) latest FROM scout_jobs WHERE requested_by = ?`, args: [tag]
 	})).rows[0]?.latest;
-	const ageMs = stale ? Date.now() - new Date(String(stale).replace(' ', 'T') + 'Z').getTime() : Infinity;
-	if (ageMs > REFRESH_MS) await enqueueClassBatch(db, classId);
+	return latest ? Date.now() - new Date(String(latest).replace(' ', 'T') + 'Z').getTime() : Infinity;
+}
 
-	const pending = !!(await db.execute({
+async function isPending(db, tag) {
+	return !!(await db.execute({
 		sql: `SELECT id FROM scout_jobs WHERE requested_by = ? AND status IN ('queued','running') LIMIT 1`,
-		args: [classTag(classId)]
+		args: [tag]
 	})).rows[0];
+}
 
-	// Items + aggregate reaction score + the caller's own reaction.
+// Read one shared feed's items with the viewer's own reactions + aggregate.
+async function readSharedItems(db, userId, owner) {
 	const rows = (await db.execute({
 		sql: `SELECT i.*,
 		         COALESCE(SUM(rx.rating), 0) AS agg_score,
@@ -416,11 +412,10 @@ export async function getClassFeed(userId, classId) {
 		      GROUP BY i.id
 		      HAVING COALESCE(SUM(rx.rating), 0) > -2
 		      ORDER BY agg_score DESC, i.created_at DESC
-		      LIMIT 150`,
+		      LIMIT 120`,
 		args: [userId, userId, owner]
 	})).rows;
-
-	const items = rows.map((r) => ({
+	return rows.map((r) => ({
 		...rowToItem(r),
 		saved: !!Number(r.my_saved),
 		rating: Number(r.my_rating ?? 0),
@@ -428,14 +423,86 @@ export async function getClassFeed(userId, classId) {
 		aggSaves: Number(r.agg_saves ?? 0),
 		expired: false
 	}));
+}
+
+// The blended class feed — whole syllabus mixed together.
+export async function getClassFeed(userId, classId) {
+	const db = getDb();
+	if (!db) return { items: [], pending: false, topics: '' };
+	const owner = classOwner(classId), tag = classTag(classId);
+	await materializeOwner(db, owner, tag);
+	if ((await jobAge(db, tag)) > REFRESH_MS) {
+		const { topics } = await getClassTopics(db, classId);
+		await enqueueSharedBatch(db, tag, topics);
+	}
+	const items = await readSharedItems(db, userId, owner);
 	const { topics } = await getClassTopics(db, classId);
-	return { items, pending, topics };
+	return { items, pending: await isPending(db, tag), topics };
 }
 
 export async function requestMoreClass(classId) {
 	const db = getDb();
 	if (!db) return false;
-	return enqueueClassBatch(db, classId);
+	const { topics } = await getClassTopics(db, classId);
+	return enqueueSharedBatch(db, classTag(classId), topics);
+}
+
+// ── Per-week feeds ───────────────────────────────────────────────────────
+const weekOwner = (classId, w) => `class:${classId}:w${w}`;
+const weekTag = (classId, w) => `inspo:class:${classId}:w${w}`;
+
+// Each week that has a usable topic. The class SUBJECT is folded into each
+// week's query so even a terse week ("Text adventure") still pulls the full
+// content suite in the right disciplinary context.
+async function getWeekList(db, classId) {
+	const cls = (await db.execute({ sql: 'SELECT name FROM classes WHERE id = ?', args: [classId] })).rows[0];
+	const subject = cls?.name ? cleanTopic(cls.name) : '';
+	const wp = (await db.execute({
+		sql: 'SELECT week, headline, topic_preview FROM week_plans WHERE class_id = ? ORDER BY week',
+		args: [classId]
+	})).rows;
+	return wp.map((r) => {
+		const topic = cleanTopic(r.headline) || cleanTopic(r.topic_preview);
+		return {
+			week: Number(r.week),
+			headline: cleanTopic(r.headline) || `Week ${r.week}`,
+			topic,
+			query: [topic, subject].filter(Boolean).join(', ')
+		};
+	}).filter((w) => w.topic && w.topic.length > 2);
+}
+
+// The week-by-week class view: one full content suite per week topic.
+export async function getClassWeeklyFeeds(userId, classId) {
+	const db = getDb();
+	if (!db) return { weeks: [] };
+	const weeks = await getWeekList(db, classId);
+	const out = [];
+	for (const wk of weeks) {
+		const owner = weekOwner(classId, wk.week), tag = weekTag(classId, wk.week);
+		await materializeOwner(db, owner, tag);
+		if ((await jobAge(db, tag)) > REFRESH_MS) await enqueueSharedBatch(db, tag, wk.query);
+		out.push({
+			week: wk.week,
+			headline: wk.headline,
+			topic: wk.topic,
+			items: await readSharedItems(db, userId, owner),
+			pending: await isPending(db, tag)
+		});
+	}
+	return { weeks: out };
+}
+
+// "Fetch more" for the weekly view enqueues a fresh batch for every week.
+export async function requestMoreWeekly(classId) {
+	const db = getDb();
+	if (!db) return false;
+	const weeks = await getWeekList(db, classId);
+	let any = false;
+	for (const wk of weeks) {
+		if (await enqueueSharedBatch(db, weekTag(classId, wk.week), wk.query)) any = true;
+	}
+	return any;
 }
 
 // A student reacting to a shared class item → upsert into the reactions

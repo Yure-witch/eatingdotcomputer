@@ -300,6 +300,12 @@ The following major areas need to be built. None are started yet.
 - **Status**: `attempted`
 - **What**: The always-DOI guard was silently DROPPING valuable no-DOI works — which turn out to be canonical BOOKS (Bringhurst *Elements of Typographic Style*, Geuss *Idea of a Critical Theory*, *Designing Interaction*). Books rarely have DOIs and can't route through OpenAthens (that's for e-journals). Now: DOI present → DOI link + Cooper OpenAthens (article); no DOI → **Google Books search** by title+author (`google.com/search?tbm=bks`) — never hidden, always lands on the book (preview + borrow/buy), linked direct. materialize `usableUrl` accepts doi.org OR google-books search for papers (still rejects catalog stubs). Frontend: `isDoiPaper` splits routing + icon (account_balance vs menu_book) + label (via Cooper Library vs book·find a copy). Verified a book-heavy query returns 10 papers, books as find-links, zero dropped.
 
+## Recommendations — Class: All topics vs By week
+
+### Weekly per-topic feeds under the Class tab — 2026-07-26
+- **Status**: `attempted`
+- **What**: Class scope gained a sub-mode toggle: **All topics** (whole syllabus blended — the existing class feed) and **By week** (a full content suite per week topic). Refactored the class backend into generic shared-feed helpers (`enqueueSharedBatch`, `materializeOwner`, `readSharedItems`, `jobAge`, `isPending`) reused by both the blended feed (owner `class:<id>`) and each week (owner `class:<id>:w<n>`, tag `inspo:class:<id>:w<n>`). `getWeekList` folds the class SUBJECT into every week's query so a terse week ("Text adventure") still pulls papers/images/artwork/channels in the right context. `getClassWeeklyFeeds` returns [{week,headline,topic,items,pending}]; `requestMoreWeekly` fans a fresh batch to every week. API: `?scope=class&mode=weekly`, POST `{more,scope:class,mode:weekly}`. Frontend: extracted the kind-section rendering into a reusable `feedSections(list)` snippet, used by the flat feed and each week block; per-week scout jobs enqueue on first view and poll in. Verified: Week 1 filled with 17 items across paper/artwork/channel/article.
+
 ## Recommendations — arena_img quota + class parity
 
 ### are.na images now surface; class feed matches personal — 2026-07-26

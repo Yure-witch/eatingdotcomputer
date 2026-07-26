@@ -2,8 +2,10 @@ import { json, error } from '@sveltejs/kit';
 import {
 	getInspirationFeed,
 	getClassFeed,
+	getClassWeeklyFeeds,
 	requestMoreInspiration,
 	requestMoreClass,
+	requestMoreWeekly,
 	setInspirationSaved,
 	setInspirationRating,
 	reactClassItem,
@@ -46,6 +48,10 @@ export async function GET({ locals, url }) {
 	const scout = await scoutStatus().catch(() => ({ online: false }));
 
 	if (url.searchParams.get('scope') === 'class') {
+		if (url.searchParams.get('mode') === 'weekly') {
+			const feed = await getClassWeeklyFeeds(session.user.id, DEFAULT_CLASS);
+			return json({ ...feed, scope: 'class', mode: 'weekly', scoutOnline: scout.online });
+		}
 		const feed = await getClassFeed(session.user.id, DEFAULT_CLASS);
 		return json({ ...feed, scope: 'class', scoutOnline: scout.online });
 	}
@@ -62,9 +68,14 @@ export async function POST({ locals, request }) {
 	const scope = body?.scope === 'class' ? 'class' : 'mine';
 
 	if (body?.more) {
-		const queued = scope === 'class'
-			? await requestMoreClass(DEFAULT_CLASS)
-			: await requestMoreInspiration(session.user.id);
+		let queued;
+		if (scope === 'class') {
+			queued = body?.mode === 'weekly'
+				? await requestMoreWeekly(DEFAULT_CLASS)
+				: await requestMoreClass(DEFAULT_CLASS);
+		} else {
+			queued = await requestMoreInspiration(session.user.id);
+		}
 		return json({ ok: true, pending: queued });
 	}
 

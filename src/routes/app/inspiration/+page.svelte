@@ -16,6 +16,8 @@
 	// window into what each student likes, personally and for the class.
 	const isInstructor = $derived($page.data?.currentUser?.role === 'instructor');
 	let scope = $state('class'); // class | mine | students
+	let classMode = $state('all'); // all (whole syllabus mixed) | weekly (per week)
+	let weeks = $state([]); // per-week feeds when classMode === 'weekly'
 
 	let loading = $state(true);
 	let items = $state([]);
@@ -52,11 +54,26 @@
 	}
 
 	async function load() {
-		loading = items.length === 0; // keep current items visible on re-poll
+		loading = items.length === 0 && weeks.length === 0; // keep current visible on re-poll
 		if (scope === 'students') {
 			try {
 				const r = await fetch('/api/inspiration?insights=1');
 				if (r.ok) insights = await r.json();
+			} catch { /* empty state */ }
+			loading = false;
+			return;
+		}
+		// Class → By week: a full content suite per week topic.
+		if (scope === 'class' && classMode === 'weekly') {
+			try {
+				const r = await fetch('/api/inspiration?scope=class&mode=weekly');
+				if (r.ok) {
+					const j = await r.json();
+					weeks = j.weeks ?? [];
+					scoutOnline = !!j.scoutOnline;
+					pending = weeks.some((w) => w.pending);
+					if (pending) schedulePoll(); else pollsLeft = 0;
+				}
 			} catch { /* empty state */ }
 			loading = false;
 			return;
@@ -82,8 +99,20 @@
 		if (s === scope) return;
 		scope = s;
 		items = [];
+		weeks = [];
 		insights = null;
 		fullLoaded = false;
+		view = 'fresh';
+		classMode = 'all';
+		clearTimeout(pollTimer); pollTimer = null; pollsLeft = 0;
+		load();
+	}
+
+	function switchClassMode(m) {
+		if (m === classMode) return;
+		classMode = m;
+		items = [];
+		weeks = [];
 		view = 'fresh';
 		clearTimeout(pollTimer); pollTimer = null; pollsLeft = 0;
 		load();
@@ -96,7 +125,7 @@
 			await fetch('/api/inspiration', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ more: true, scope })
+				body: JSON.stringify({ more: true, scope, mode: classMode })
 			});
 		} catch { /* poll picks up state either way */ }
 		schedulePoll();
@@ -140,9 +169,11 @@
 	];
 	// Kinds that render as image cards in a grid (vs. list rows).
 	const IMAGE_KINDS = ['artwork', 'arena_img'];
-	const grouped = $derived(
-		KIND_SECTIONS.map((s) => ({ ...s, items: visible.filter((i) => i.kind === s.key) })).filter((s) => s.items.length)
-	);
+	// Group any item list into its kind-sections (reused by the flat feed
+	// and by each week block in the weekly view).
+	const groupItems = (list) =>
+		KIND_SECTIONS.map((s) => ({ ...s, items: list.filter((i) => i.kind === s.key) })).filter((s) => s.items.length);
+	const grouped = $derived(groupItems(visible));
 
 	// Cooper Union's OpenAthens proxy. ALL papers route through it — the
 	// student signs in with their Cooper login and lands on the live
@@ -247,6 +278,53 @@
 	</span>
 {/snippet}
 
+{#snippet feedSections(list)}
+	{#each groupItems(list) as sec (sec.key)}
+		<section class="inspo-section">
+			<h2>{sec.title}</h2>
+			{#if sec.sub}<p class="sec-sub">{sec.sub}</p>{/if}
+			{#if IMAGE_KINDS.includes(sec.key)}
+				<div class="art-grid">
+					{#each sec.items as item (item.id)}
+						<div class="art-card" class:expired={item.expired && !item.saved}>
+							<a href={item.url} target="_blank" rel="noopener noreferrer" class="art-link">
+								{#if item.image}
+									<img src={item.image} alt={item.title} loading="lazy" />
+								{:else}
+									<div class="art-noimg">🖼️</div>
+								{/if}
+								<span class="art-title">{item.title}</span>
+								{#if item.snippet}<span class="art-snip">{item.snippet}</span>{/if}
+								<span class="art-meta">{item.meta}{#if scope === 'class' && item.aggScore > 0} · 👍 {item.aggScore}{/if}</span>
+							</a>
+							<span class="art-actions">{@render itemActions(item)}</span>
+							{#if item.expired && !item.saved}<span class="expired-tag">faded</span>{/if}
+						</div>
+					{/each}
+				</div>
+			{:else}
+				<ul class="row-list">
+					{#each sec.items as item (item.id)}
+						<li class="row" class:expired={item.expired && !item.saved}>
+							{#if item.image}
+								<img class="row-thumb" src={item.image} alt="" loading="lazy" />
+							{/if}
+							<div class="row-body">
+								<a class="row-title" href={linkFor(item)} target="_blank" rel="noopener noreferrer">
+									{#if item.kind === 'paper'}<span class="msi lock-icon" title={isDoiPaper(item) ? 'Opens through Cooper Library — sign in with your Cooper login' : 'Find a copy (usually a book)'}>{isDoiPaper(item) ? 'account_balance' : 'menu_book'}</span>{/if}{item.title}
+								</a>
+								{#if item.snippet}<span class="row-snip">{item.snippet}</span>{/if}
+								{#if item.meta}<span class="row-meta">{item.meta}{#if isDoiPaper(item)} · via Cooper Library{/if}{#if scope === 'class' && item.aggScore > 0} · 👍 {item.aggScore} in class{/if}{#if item.expired && !item.saved} · faded{/if}</span>{/if}
+							</div>
+							{@render itemActions(item)}
+						</li>
+					{/each}
+				</ul>
+			{/if}
+		</section>
+	{/each}
+{/snippet}
+
 <div class="inspo-shell">
 	<main>
 		<div class="page-head">
@@ -274,9 +352,13 @@
 		</div>
 
 		{#if scope === 'class'}
-			{#if topics}
+			<div class="submode-row">
+				<button class="submode-tab" class:active={classMode === 'all'} onclick={() => switchClassMode('all')}>All topics</button>
+				<button class="submode-tab" class:active={classMode === 'weekly'} onclick={() => switchClassMode('weekly')}>By week</button>
+			</div>
+			{#if classMode === 'all' && topics}
 				<div class="topics-row">
-					<span class="topics-label">From the syllabus:</span>
+					<span class="topics-label">Whole syllabus, mixed:</span>
 					<span class="topics-value">{topics}</span>
 				</div>
 			{/if}
@@ -384,13 +466,47 @@
 					<span class="msi">download</span> Export my algorithm
 				</button>
 			</div>
-		{:else if scope === 'class'}
+		{:else if scope === 'class' && classMode === 'all'}
 			<div class="view-row">
 				<button class="view-chip" class:active={view === 'fresh'} onclick={() => setView('fresh')}>All</button>
 				<button class="view-chip" class:active={view === 'liked'} onclick={() => setView('liked')}>👍 Liked</button>
 				<button class="view-chip" class:active={view === 'saved'} onclick={() => setView('saved')}>🔖 Saved</button>
 			</div>
 		{/if}
+
+		{#if scope === 'class' && classMode === 'weekly'}
+			{#if loading}
+				<p class="empty"><span class="msi inspo-spin">progress_activity</span> Building each week's recommendations…</p>
+			{:else if !weeks.length}
+				<p class="empty">No week topics yet — add them on the <a href="/app/manage">Manage</a> page and each week gets its own full lineup.</p>
+			{:else}
+				{#each weeks as wk (wk.week)}
+					<div class="week-block">
+						<div class="week-head">
+							<span class="week-num">Week {wk.week}</span>
+							<span class="week-topic">{wk.headline}</span>
+						</div>
+						{#if wk.items.length}
+							{@render feedSections(wk.items)}
+						{:else if wk.pending}
+							<p class="week-empty"><span class="msi inspo-spin">progress_activity</span> Gathering finds for “{wk.topic}”…</p>
+						{:else}
+							<p class="week-empty">No finds yet for “{wk.topic}”.</p>
+						{/if}
+					</div>
+				{/each}
+			{/if}
+			{#if !loading}
+				<div class="more-row">
+					{#if pending}
+						<span class="more-pending"><span class="msi inspo-spin">progress_activity</span> Refreshing every week — new finds drop in as they land…</span>
+					{:else}
+						<button class="more-btn" onclick={fetchMore}><span class="msi">travel_explore</span> Fetch more for every week</button>
+						{#if !scoutOnline}<span class="more-note">Scout looks offline — it'll pick this up when it's back.</span>{/if}
+					{/if}
+				</div>
+			{/if}
+		{:else}
 
 		{#if loading}
 			<p class="empty"><span class="msi inspo-spin">progress_activity</span> Gemma is out looking for new things…</p>
@@ -411,51 +527,7 @@
 				<p class="empty">Nothing here yet — new finds should arrive within a day.</p>
 			{/if}
 		{:else}
-			{#each grouped as sec (sec.key)}
-				<section class="inspo-section">
-					<h2>{sec.title}</h2>
-					{#if sec.sub}<p class="sec-sub">{sec.sub}</p>{/if}
-
-					{#if IMAGE_KINDS.includes(sec.key)}
-						<div class="art-grid">
-							{#each sec.items as item (item.id)}
-								<div class="art-card" class:expired={item.expired && !item.saved}>
-									<a href={item.url} target="_blank" rel="noopener noreferrer" class="art-link">
-										{#if item.image}
-											<img src={item.image} alt={item.title} loading="lazy" />
-										{:else}
-											<div class="art-noimg">🖼️</div>
-										{/if}
-										<span class="art-title">{item.title}</span>
-										{#if item.snippet}<span class="art-snip">{item.snippet}</span>{/if}
-										<span class="art-meta">{item.meta}{#if scope === 'class' && item.aggScore > 0} · 👍 {item.aggScore}{/if}</span>
-									</a>
-									<span class="art-actions">{@render itemActions(item)}</span>
-									{#if item.expired && !item.saved}<span class="expired-tag">faded</span>{/if}
-								</div>
-							{/each}
-						</div>
-					{:else}
-						<ul class="row-list">
-							{#each sec.items as item (item.id)}
-								<li class="row" class:expired={item.expired && !item.saved}>
-									{#if item.image}
-										<img class="row-thumb" src={item.image} alt="" loading="lazy" />
-									{/if}
-									<div class="row-body">
-										<a class="row-title" href={linkFor(item)} target="_blank" rel="noopener noreferrer">
-											{#if item.kind === 'paper'}<span class="msi lock-icon" title={isDoiPaper(item) ? 'Opens through Cooper Library — sign in with your Cooper login' : 'Find a copy (usually a book)'}>{isDoiPaper(item) ? 'account_balance' : 'menu_book'}</span>{/if}{item.title}
-										</a>
-										{#if item.snippet}<span class="row-snip">{item.snippet}</span>{/if}
-										{#if item.meta}<span class="row-meta">{item.meta}{#if isDoiPaper(item)} · via Cooper Library{/if}{#if scope === 'class' && item.aggScore > 0} · 👍 {item.aggScore} in class{/if}{#if item.expired && !item.saved} · faded{/if}</span>{/if}
-									</div>
-									{@render itemActions(item)}
-								</li>
-							{/each}
-						</ul>
-					{/if}
-				</section>
-			{/each}
+			{@render feedSections(visible)}
 		{/if}
 
 		{#if topics && !loading && view === 'fresh'}
@@ -469,6 +541,7 @@
 					{#if !scoutOnline}<span class="more-note">Scout looks offline — it'll pick this up when it's back.</span>{/if}
 				{/if}
 			</div>
+		{/if}
 		{/if}
 		{/if}
 	</main>
@@ -493,6 +566,28 @@
 	}
 	.scope-tab:hover { color: var(--ink); }
 	.scope-tab.active { color: var(--ink); border-bottom-color: var(--ink); }
+
+	.submode-row { display: flex; gap: 0.4rem; margin-bottom: 0.85rem; }
+	.submode-tab {
+		padding: 0.3rem 0.85rem; font-family: inherit; font-size: 0.8rem; font-weight: 600;
+		background: none; color: var(--muted-fg); border: 1.5px solid var(--border);
+		border-radius: 999px; cursor: pointer; transition: all 0.12s;
+	}
+	.submode-tab:hover { border-color: var(--ink); color: var(--ink); }
+	.submode-tab.active { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+
+	.week-block { margin-bottom: 2.5rem; }
+	.week-head {
+		display: flex; align-items: baseline; gap: 0.6rem;
+		padding-bottom: 0.5rem; margin-bottom: 1rem;
+		border-bottom: 2px solid var(--ink);
+	}
+	.week-num {
+		font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
+		color: var(--paper); background: var(--ink); padding: 0.15rem 0.5rem; border-radius: 6px;
+	}
+	.week-topic { font-family: 'Avara', serif; font-size: 1.2rem; color: var(--ink); }
+	.week-empty { font-size: 0.82rem; color: var(--muted-fg); }
 
 	.student-card {
 		border: 1.5px solid var(--border); border-radius: 12px;
