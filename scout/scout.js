@@ -41,10 +41,13 @@ async function politeFetch(url, opts = {}) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ── sources ──────────────────────────────────────────────────────────────
-// Museum/are.na results rotate their result page daily so the same
-// interests surface NEW finds each day; papers deliberately don't rotate
-// (the canonical set should stay the canonical set).
-const dayRot = () => Math.floor(Date.now() / 86400000) % 4;
+// Result rotation. Queries may carry a batch seed suffix ("... #s3") set
+// by the app — each seed pushes every source deeper into its results so
+// "Fetch more" genuinely fetches MORE, not the same page again. Without
+// a seed (e.g. digest queries) rotation falls back to day-of-epoch, so
+// repeat daily queries still drift.
+let seed = null;
+const rot = (m) => (seed ?? Math.floor(Date.now() / 86400000)) % m;
 
 // Seminal papers: OpenAlex sorted by RELEVANCE first (raw citation sort
 // surfaces off-topic AI megapapers), then the top-25 relevant re-ranked
@@ -59,9 +62,10 @@ async function searchOpenAlexSeminal(q) {
 	);
 	if (!r.ok) return [];
 	const d = await r.json();
+	const off = seed ? Math.min(seed * 4, 20) : 0;
 	return (d.results ?? [])
 		.sort((a, b) => (b.cited_by_count ?? 0) - (a.cited_by_count ?? 0))
-		.slice(0, 5)
+		.slice(off, off + 5)
 		.map((w) => {
 			const auth = (w.authorships ?? []).slice(0, 2).map((a) => a.author?.display_name).filter(Boolean).join(', ');
 			const venue = w.primary_location?.source?.display_name ?? '';
@@ -81,7 +85,7 @@ async function searchMet(q) {
 	const r = await politeFetch(`https://collectionapi.metmuseum.org/public/collection/v1/search?q=${encodeURIComponent(q)}&hasImages=true`);
 	if (!r.ok) return [];
 	const d = await r.json();
-	const ids = (d.objectIDs ?? []).slice(dayRot() * 3, dayRot() * 3 + 3);
+	const ids = (d.objectIDs ?? []).slice(rot(8) * 3, rot(8) * 3 + 3);
 	const out = [];
 	for (const id of ids) {
 		const or = await politeFetch(`https://collectionapi.metmuseum.org/public/collection/v1/objects/${id}`);
@@ -103,7 +107,7 @@ async function searchMet(q) {
 
 async function searchAIC(q) {
 	const r = await politeFetch(
-		`https://api.artic.edu/api/v1/artworks/search?q=${encodeURIComponent(q)}&limit=3&page=${dayRot() + 1}&fields=id,title,artist_title,date_display,image_id`
+		`https://api.artic.edu/api/v1/artworks/search?q=${encodeURIComponent(q)}&limit=3&page=${rot(8) + 1}&fields=id,title,artist_title,date_display,image_id`
 	);
 	if (!r.ok) return [];
 	const d = await r.json();
@@ -122,7 +126,7 @@ async function searchAIC(q) {
 
 async function searchCleveland(q) {
 	const r = await politeFetch(
-		`https://openaccess-api.clevelandart.org/api/artworks/?q=${encodeURIComponent(q)}&limit=3&skip=${dayRot() * 3}&has_image=1`
+		`https://openaccess-api.clevelandart.org/api/artworks/?q=${encodeURIComponent(q)}&limit=3&skip=${rot(8) * 3}&has_image=1`
 	);
 	if (!r.ok) return [];
 	const d = await r.json();
@@ -139,7 +143,7 @@ async function searchCleveland(q) {
 
 async function searchVA(q) {
 	const r = await politeFetch(
-		`https://api.vam.ac.uk/v2/objects/search?q=${encodeURIComponent(q)}&page_size=3&page=${dayRot() + 1}&images_exist=true`
+		`https://api.vam.ac.uk/v2/objects/search?q=${encodeURIComponent(q)}&page_size=3&page=${rot(8) + 1}&images_exist=true`
 	);
 	if (!r.ok) return [];
 	const d = await r.json();
@@ -155,7 +159,7 @@ async function searchVA(q) {
 }
 
 async function searchArenaChannels(q) {
-	const r = await politeFetch(`https://api.are.na/v2/search/channels?q=${encodeURIComponent(q)}&per=4`);
+	const r = await politeFetch(`https://api.are.na/v2/search/channels?q=${encodeURIComponent(q)}&per=4&page=${rot(5) + 1}`);
 	if (!r.ok) return [];
 	const d = await r.json();
 	return (d.channels ?? []).map((c) => ({
@@ -170,7 +174,7 @@ async function searchArenaChannels(q) {
 }
 
 async function searchArenaBlocks(q) {
-	const r = await politeFetch(`https://api.are.na/v2/search/blocks?q=${encodeURIComponent(q)}&per=4`);
+	const r = await politeFetch(`https://api.are.na/v2/search/blocks?q=${encodeURIComponent(q)}&per=4&page=${rot(5) + 1}`);
 	if (!r.ok) return [];
 	const d = await r.json();
 	return (d.blocks ?? [])
@@ -217,6 +221,9 @@ function splitQuery(q) {
 }
 
 async function runSearch(query) {
+	const m = String(query).match(/\s*#s(\d+)\s*$/);
+	seed = m ? Number(m[1]) : null;
+	if (m) query = String(query).slice(0, m.index);
 	const out = [];
 	for (const part of splitQuery(query)) {
 		const [papers, chans, blocks, wiki, met, aic, cle, vam] = await Promise.all([

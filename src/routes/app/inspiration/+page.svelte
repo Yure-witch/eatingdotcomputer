@@ -12,11 +12,12 @@
 	let items = $state([]);
 	let interests = $state('');
 	let scoutOnline = $state(false);
+	let pending = $state(false); // a batch is in flight on the worker
 	let view = $state('fresh'); // fresh | saved | history
 	let historyLoaded = $state(false);
+	let pollTimer = null;
 
 	async function load(history = false) {
-		loading = true;
 		try {
 			const r = await fetch(`/api/inspiration${history ? '?history=1' : ''}`);
 			if (r.ok) {
@@ -24,15 +25,34 @@
 				items = j.items ?? [];
 				interests = j.interests ?? '';
 				scoutOnline = !!j.scoutOnline;
+				pending = !!j.pending;
 				if (history) historyLoaded = true;
+				// Batch in flight → keep polling until it lands. Results
+				// merge in automatically since GET materializes them.
+				if (pending && !pollTimer) {
+					pollTimer = setTimeout(() => { pollTimer = null; load(view === 'history'); }, 6000);
+				}
 			}
 		} catch { /* empty state below */ }
 		loading = false;
 	}
 
+	async function fetchMore() {
+		pending = true;
+		try {
+			await fetch('/api/inspiration', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ more: true })
+			});
+		} catch { /* poll picks up state either way */ }
+		if (!pollTimer) pollTimer = setTimeout(() => { pollTimer = null; load(view === 'history'); }, 6000);
+	}
+
 	onMount(() => {
 		pageTitle.set('Inspiration');
 		load();
+		return () => clearTimeout(pollTimer);
 	});
 
 	function setView(v) {
@@ -69,9 +89,42 @@
 			if (!r.ok) item.saved = !item.saved;
 		} catch { item.saved = !item.saved; }
 	}
+
+	// Like/dislike — teaches the algorithm (likes steer the next batch's
+	// query; dislikes shrink that kind's quota + block recurring words).
+	// Disliking removes the item from the feed on the spot.
+	async function rate(item, rating) {
+		const prev = item.rating;
+		item.rating = item.rating === rating ? 0 : rating;
+		if (item.rating === -1 && view !== 'history') {
+			items = items.filter((i) => i.id !== item.id || i.saved);
+		}
+		try {
+			const r = await fetch('/api/inspiration', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ itemId: item.id, rating: item.rating })
+			});
+			if (!r.ok) item.rating = prev;
+		} catch { item.rating = prev; }
+	}
 </script>
 
 <svelte:head><title>Inspiration — eating.computer</title></svelte:head>
+
+{#snippet itemActions(item)}
+	<span class="act-cluster">
+		<button class="act-btn" class:on-up={item.rating === 1} title="More like this" onclick={() => rate(item, 1)}>
+			<span class="msi" class:msi-fill={item.rating === 1}>thumb_up</span>
+		</button>
+		<button class="act-btn" class:on-down={item.rating === -1} title="Less like this" onclick={() => rate(item, -1)}>
+			<span class="msi" class:msi-fill={item.rating === -1}>thumb_down</span>
+		</button>
+		<button class="act-btn" class:on-save={item.saved} title={item.saved ? 'Saved — click to unsave' : 'Save forever'} onclick={() => toggleSave(item)}>
+			<span class="msi" class:msi-fill={item.saved}>bookmark</span>
+		</button>
+	</span>
+{/snippet}
 
 <div class="inspo-shell">
 	<main>
@@ -80,7 +133,7 @@
 			<p class="page-sub">
 				New picks land every day or so, based on your interests{interests ? '' : ' (none on file yet)'}.
 				<strong>Save what speaks to you</strong> — it stays forever and shapes what shows up next.
-				Unsaved finds fade after 7 days, but History keeps the record.
+				👍 and 👎 teach it your taste too. Unsaved finds fade after 7 days, but History keeps the record.
 			</p>
 		</div>
 
@@ -122,9 +175,7 @@
 										{#if item.snippet}<span class="art-snip">{item.snippet}</span>{/if}
 										<span class="art-meta">{item.meta}</span>
 									</a>
-									<button class="save-btn" class:on={item.saved} title={item.saved ? 'Saved — click to unsave' : 'Save'} onclick={() => toggleSave(item)}>
-										<span class="msi" class:msi-fill={item.saved}>bookmark</span>
-									</button>
+									<span class="art-actions">{@render itemActions(item)}</span>
 									{#if item.expired && !item.saved}<span class="expired-tag">faded</span>{/if}
 								</div>
 							{/each}
@@ -141,15 +192,26 @@
 										{#if item.snippet}<span class="row-snip">{item.snippet}</span>{/if}
 										{#if item.meta}<span class="row-meta">{item.meta}{#if item.expired && !item.saved} · faded{/if}</span>{/if}
 									</div>
-									<button class="save-btn" class:on={item.saved} title={item.saved ? 'Saved — click to unsave' : 'Save'} onclick={() => toggleSave(item)}>
-										<span class="msi" class:msi-fill={item.saved}>bookmark</span>
-									</button>
+									{@render itemActions(item)}
 								</li>
 							{/each}
 						</ul>
 					{/if}
 				</section>
 			{/each}
+		{/if}
+
+		{#if interests && !loading && view !== 'saved'}
+			<div class="more-row">
+				{#if pending}
+					<span class="more-pending"><span class="msi inspo-spin">progress_activity</span> Scout is out fetching a new batch — new finds drop in as they land…</span>
+				{:else}
+					<button class="more-btn" onclick={fetchMore}>
+						<span class="msi">travel_explore</span> Fetch more
+					</button>
+					{#if !scoutOnline}<span class="more-note">Scout looks offline — it'll pick this up when it's back.</span>{/if}
+				{/if}
+			</div>
 		{/if}
 	</main>
 </div>
@@ -218,17 +280,35 @@
 		padding: 0.1rem 0.4rem; border-radius: 99px;
 	}
 
-	.save-btn {
-		background: none; border: none; cursor: pointer; padding: 0.25rem;
-		color: var(--muted-fg); flex-shrink: 0;
+	.act-cluster { display: inline-flex; gap: 0.1rem; flex-shrink: 0; align-items: center; }
+	.act-btn {
+		background: none; border: none; cursor: pointer; padding: 0.22rem;
+		color: var(--muted-fg);
 		transition: color 0.12s, transform 0.12s;
+		line-height: 0;
 	}
-	.save-btn:hover { color: var(--ink); transform: scale(1.15); }
-	.save-btn.on { color: var(--md-sys-color-primary, var(--accent)); }
-	.art-card .save-btn {
+	.act-btn .msi { font-size: 19px; }
+	.act-btn:hover { color: var(--ink); transform: scale(1.15); }
+	.act-btn.on-up { color: #2e7d32; }
+	.act-btn.on-down { color: #c62828; }
+	.act-btn.on-save { color: var(--md-sys-color-primary, var(--accent)); }
+	.art-actions .act-cluster {
 		position: absolute; top: 0.3rem; right: 0.3rem;
-		background: color-mix(in srgb, var(--paper) 80%, transparent);
+		background: color-mix(in srgb, var(--paper) 82%, transparent);
 		border-radius: 99px; backdrop-filter: blur(6px);
+		padding: 0 0.15rem;
 	}
 	.msi-fill { font-variation-settings: 'FILL' 1; }
+
+	.more-row { display: flex; align-items: center; gap: 0.75rem; margin-top: 0.5rem; flex-wrap: wrap; }
+	.more-btn {
+		display: inline-flex; align-items: center; gap: 0.4rem;
+		padding: 0.55rem 1.2rem; font-family: inherit; font-size: 0.85rem; font-weight: 600;
+		background: var(--ink); color: var(--paper); border: none; border-radius: 999px;
+		cursor: pointer; transition: opacity 0.15s;
+	}
+	.more-btn:hover { opacity: 0.85; }
+	.more-btn .msi { font-size: 18px; }
+	.more-pending { font-size: 0.82rem; color: var(--muted-fg); display: inline-flex; align-items: center; gap: 0.4rem; }
+	.more-note { font-size: 0.75rem; color: var(--muted-fg); }
 </style>
