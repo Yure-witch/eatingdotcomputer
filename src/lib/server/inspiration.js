@@ -111,6 +111,22 @@ async function tasteFilter(db, userId, results) {
 	});
 }
 
+// Library catalog-record / link-resolver stubs OpenAlex sometimes lists as
+// "open access" — bibliographic records, not fulltext, and often malformed
+// (ports, HTML-encoded ampersands). They 404 or break the OpenAthens
+// redirector ("Bad Request"). Reject on the way in, belt-and-suspenders
+// against any stale cached job result — the worker no longer emits them.
+const JUNK_URL = /bib-bvb\.de|func=service|doc_library=|func_code=|worldcat\.org|base-search\.net/i;
+
+// A paper must resolve to a real article. The worker emits DOIs; anything
+// else on a paper is a legacy/mangled stub and is dropped.
+function usableUrl(r) {
+	const url = String(r?.url ?? '').replace(/&amp;/g, '&');
+	if (!/^https?:\/\//i.test(url) || JUNK_URL.test(url)) return null;
+	if ((r.kind ?? 'link') === 'paper' && !/(^|\.)doi\.org\//i.test(url)) return null;
+	return url;
+}
+
 // Insert results from every completed-but-recent job. Idempotent: the
 // per-user URL unique index makes re-materializing a no-op.
 async function materialize(db, userId) {
@@ -124,11 +140,12 @@ async function materialize(db, userId) {
 		try { results = JSON.parse(String(job.result)); } catch { continue; }
 		if (!Array.isArray(results)) continue;
 		for (const r of await tasteFilter(db, userId, results)) {
-			if (!r?.url) continue;
+			const url = usableUrl(r);
+			if (!url) continue;
 			await db.execute({
 				sql: `INSERT OR IGNORE INTO inspiration_items (user_id, kind, source, title, url, snippet, meta, image, paywalled)
 				      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-				args: [userId, r.kind ?? 'link', r.source ?? null, r.title ?? '(untitled)', r.url, r.snippet ?? '', r.meta ?? '', r.image ?? null, r.paywalled ? 1 : 0]
+				args: [userId, r.kind ?? 'link', r.source ?? null, r.title ?? '(untitled)', url, r.snippet ?? '', r.meta ?? '', r.image ?? null, r.paywalled ? 1 : 0]
 			});
 		}
 	}
