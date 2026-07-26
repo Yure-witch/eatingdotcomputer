@@ -108,8 +108,14 @@
 	const COOPER_PROXY = 'https://go.openathens.net/redirector/cooper.edu?url=';
 	// Repair any HTML-mangled ampersands from bad legacy records before proxying.
 	const cleanUrl = (u) => String(u ?? '').replace(/&amp;/g, '&');
-	const linkFor = (item) =>
-		item.kind === 'paper' ? COOPER_PROXY + encodeURIComponent(cleanUrl(item.url)) : item.url;
+	// A DOI-backed paper (journal article) → route through Cooper OpenAthens.
+	// A no-DOI paper is a book find-a-copy search → link direct.
+	const isDoiPaper = (item) => item.kind === 'paper' && /doi\.org\//i.test(cleanUrl(item.url));
+	const linkFor = (item) => {
+		if (item.kind !== 'paper') return item.url;
+		const u = cleanUrl(item.url);
+		return isDoiPaper(item) ? COOPER_PROXY + encodeURIComponent(u) : u;
+	};
 
 	async function toggleSave(item) {
 		item.saved = !item.saved;
@@ -304,10 +310,10 @@
 									{/if}
 									<div class="row-body">
 										<a class="row-title" href={linkFor(item)} target="_blank" rel="noopener noreferrer">
-											{#if item.kind === 'paper'}<span class="msi lock-icon" title="Opens through Cooper Library — sign in with your Cooper login">account_balance</span>{/if}{item.title}
+											{#if item.kind === 'paper'}<span class="msi lock-icon" title={isDoiPaper(item) ? 'Opens through Cooper Library — sign in with your Cooper login' : 'Find a copy (usually a book)'}>{isDoiPaper(item) ? 'account_balance' : 'menu_book'}</span>{/if}{item.title}
 										</a>
 										{#if item.snippet}<span class="row-snip">{item.snippet}</span>{/if}
-										{#if item.meta}<span class="row-meta">{item.meta}{#if item.kind === 'paper'} · via Cooper Library{/if}{#if item.expired && !item.saved} · faded{/if}</span>{/if}
+										{#if item.meta}<span class="row-meta">{item.meta}{#if isDoiPaper(item)} · via Cooper Library{/if}{#if item.expired && !item.saved} · faded{/if}</span>{/if}
 									</div>
 									{@render itemActions(item)}
 								</li>

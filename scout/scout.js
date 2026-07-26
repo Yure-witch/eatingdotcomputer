@@ -69,27 +69,36 @@ async function searchOpenAlexSeminal(q) {
 		.map((w) => {
 			const auth = (w.authorships ?? []).slice(0, 2).map((a) => a.author?.display_name).filter(Boolean).join(', ');
 			const venue = w.primary_location?.source?.display_name ?? '';
-			// ALWAYS link papers via the DOI (canonical, permanent) and route
-			// them through Cooper's OpenAthens proxy on the app side. This
-			// deliberately avoids OpenAlex's OA location URLs — those point at
-			// repository files and catalog-record stubs (e.g. bib-bvb.de) that
-			// rot, 404, or are HTML-mangled. The DOI always resolves to the
-			// live article; Cooper's login unlocks it (free if OA, subscription
-			// otherwise). `open_access.is_oa` is kept only as an info label.
+			// Two shapes, both always resolvable — never a rotting repository
+			// file or catalog stub (bib-bvb.de etc.):
+			//   • Has a DOI (journal articles) → link the DOI. The app routes
+			//     it through Cooper's OpenAthens proxy: free if OA, unlocked
+			//     from the paywall otherwise.
+			//   • No DOI (usually canonical BOOKS — Bringhurst, Geuss, …) →
+			//     a Google Books search by title+author. Never hidden, always
+			//     lands on the book (preview + where to borrow/buy). Books
+			//     can't go through OpenAthens (that's for e-journals), so the
+			//     app links these direct.
 			const doiUrl = w.doi
-				|| (w.ids?.doi ? (String(w.ids.doi).startsWith('http') ? w.ids.doi : `https://doi.org/${w.ids.doi}`) : null)
-				|| w.primary_location?.landing_page_url
-				|| w.id;
+				|| (w.ids?.doi ? (String(w.ids.doi).startsWith('http') ? w.ids.doi : `https://doi.org/${w.ids.doi}`) : null);
 			const isOa = !!w.open_access?.is_oa;
+			const isBook = /book/i.test(w.type ?? '');
+			let url, label;
+			if (doiUrl) {
+				url = doiUrl;
+				label = isOa ? 'open access' : '';
+			} else {
+				const terms = [w.display_name, w.authorships?.[0]?.author?.display_name].filter(Boolean).join(' ');
+				url = `https://www.google.com/search?tbm=bks&q=${encodeURIComponent(terms)}`;
+				label = isBook ? 'book · find a copy' : 'find a copy';
+			}
 			return {
 				kind: 'paper',
 				title: w.display_name,
-				url: doiUrl,
+				url,
 				snippet: [auth + (w.authorships?.length > 2 ? ' et al.' : ''), w.publication_year, venue].filter(Boolean).join(' · '),
-				meta: `${(w.cited_by_count ?? 0).toLocaleString()} citations${isOa ? ' · open access' : ''}`,
-				// Papers always go through Cooper Library (OpenAthens) on the app
-				// side; this flags the label, not the routing.
-				paywalled: !isOa,
+				meta: `${(w.cited_by_count ?? 0).toLocaleString()} citations${label ? ` · ${label}` : ''}`,
+				paywalled: !isOa && !!doiUrl,
 				source: 'openalex',
 				image: null
 			};

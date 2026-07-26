@@ -118,12 +118,14 @@ async function tasteFilter(db, userId, results) {
 // against any stale cached job result — the worker no longer emits them.
 const JUNK_URL = /bib-bvb\.de|func=service|doc_library=|func_code=|worldcat\.org|base-search\.net/i;
 
-// A paper must resolve to a real article. The worker emits DOIs; anything
-// else on a paper is a legacy/mangled stub and is dropped.
+// A paper link must be resolvable. The worker emits exactly two shapes:
+// a DOI (journal articles) or a Google Books search (no-DOI books). Anything
+// else on a paper is a legacy/mangled catalog stub and is dropped — but we
+// no longer hide no-DOI books, they arrive as find-a-copy search links.
 function usableUrl(r) {
 	const url = String(r?.url ?? '').replace(/&amp;/g, '&');
 	if (!/^https?:\/\//i.test(url) || JUNK_URL.test(url)) return null;
-	if ((r.kind ?? 'link') === 'paper' && !/(^|\.)doi\.org\//i.test(url)) return null;
+	if ((r.kind ?? 'link') === 'paper' && !/(^|\.)doi\.org\//i.test(url) && !/google\.[^/]+\/search/i.test(url)) return null;
 	return url;
 }
 
