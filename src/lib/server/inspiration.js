@@ -37,6 +37,7 @@ const rowToItem = (r) => ({
 	snippet: r.snippet ? String(r.snippet) : '',
 	meta: r.meta ? String(r.meta) : '',
 	image: r.image ? String(r.image) : null,
+	paywalled: !!Number(r.paywalled),
 	saved: !!Number(r.saved),
 	rating: Number(r.rating ?? 0),
 	savedAt: r.saved_at ? String(r.saved_at) : null,
@@ -125,9 +126,9 @@ async function materialize(db, userId) {
 		for (const r of await tasteFilter(db, userId, results)) {
 			if (!r?.url) continue;
 			await db.execute({
-				sql: `INSERT OR IGNORE INTO inspiration_items (user_id, kind, source, title, url, snippet, meta, image)
-				      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-				args: [userId, r.kind ?? 'link', r.source ?? null, r.title ?? '(untitled)', r.url, r.snippet ?? '', r.meta ?? '', r.image ?? null]
+				sql: `INSERT OR IGNORE INTO inspiration_items (user_id, kind, source, title, url, snippet, meta, image, paywalled)
+				      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				args: [userId, r.kind ?? 'link', r.source ?? null, r.title ?? '(untitled)', r.url, r.snippet ?? '', r.meta ?? '', r.image ?? null, r.paywalled ? 1 : 0]
 			});
 		}
 	}
@@ -214,7 +215,7 @@ export async function exportInspiration(userId) {
 	const db = getDb();
 	if (!db) return null;
 	const u = (await db.execute({ sql: 'SELECT name, interests, inspo_topics FROM users WHERE id = ?', args: [userId] })).rows[0];
-	const pick = (r) => ({ kind: String(r.kind), source: r.source, title: String(r.title), url: String(r.url), meta: r.meta ?? '' });
+	const pick = (r) => ({ kind: String(r.kind), source: r.source, title: String(r.title), url: String(r.url), meta: r.meta ?? '', paywalled: !!Number(r.paywalled) });
 	const saved = (await db.execute({ sql: 'SELECT * FROM inspiration_items WHERE user_id = ? AND saved = 1 ORDER BY saved_at DESC', args: [userId] })).rows.map(pick);
 	const liked = (await db.execute({ sql: 'SELECT * FROM inspiration_items WHERE user_id = ? AND rating = 1 ORDER BY id DESC', args: [userId] })).rows.map(pick);
 	const disliked = (await db.execute({ sql: 'SELECT * FROM inspiration_items WHERE user_id = ? AND rating = -1 ORDER BY id DESC', args: [userId] })).rows.map(pick);

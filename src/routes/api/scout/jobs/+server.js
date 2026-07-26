@@ -72,6 +72,7 @@ export async function POST({ request }) {
 			snippet: String(r?.snippet ?? '').slice(0, 300),
 			meta: String(r?.meta ?? '').slice(0, 120),
 			source: String(r?.source ?? '').slice(0, 40),
+			paywalled: r?.paywalled ? 1 : 0,
 			image: r?.image ? String(r.image).slice(0, 500) : null
 		})).filter((r) => r.url.startsWith('http'));
 		await db.execute({

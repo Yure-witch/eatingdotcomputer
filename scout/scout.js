@@ -84,6 +84,9 @@ async function searchOpenAlexSeminal(q) {
 				url: oaUrl || w.doi || w.primary_location?.landing_page_url || w.id,
 				snippet: [auth + (w.authorships?.length > 2 ? ' et al.' : ''), w.publication_year, venue].filter(Boolean).join(' · '),
 				meta: `${(w.cited_by_count ?? 0).toLocaleString()} citations · ${access}`,
+				// No legal free copy → the app shows a lock + routes the link
+				// through Cooper's OpenAthens proxy for institutional access.
+				paywalled: !oaUrl,
 				source: 'openalex',
 				image: null
 			};

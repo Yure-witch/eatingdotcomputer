@@ -73,7 +73,7 @@
 	});
 
 	const KIND_SECTIONS = [
-		{ key: 'paper', title: 'Seminal papers', sub: 'the most-cited scholarship on your interests — what everyone in the field has read' },
+		{ key: 'paper', title: 'Seminal papers', sub: 'the most-cited scholarship on your interests — what everyone in the field has read. 🔒 opens through Cooper Library access.' },
 		{ key: 'artwork', title: 'From the museums', sub: 'The Met · Art Institute of Chicago · Cleveland · V&A' },
 		{ key: 'channel', title: 'are.na channels', sub: 'curated rabbit holes' },
 		{ key: 'article', title: 'Overviews', sub: 'ground-floor context' },
@@ -82,6 +82,14 @@
 	const grouped = $derived(
 		KIND_SECTIONS.map((s) => ({ ...s, items: visible.filter((i) => i.kind === s.key) })).filter((s) => s.items.length)
 	);
+
+	// Cooper Union's OpenAthens proxy — prepending it to a paywalled URL
+	// routes the click through Cooper's institutional subscriptions (the
+	// student signs in with their Cooper login and lands on the article,
+	// not the paywall). Open-access items link direct.
+	const COOPER_PROXY = 'https://go.openathens.net/redirector/cooper.edu?url=';
+	const linkFor = (item) =>
+		item.paywalled ? COOPER_PROXY + encodeURIComponent(item.url) : item.url;
 
 	async function toggleSave(item) {
 		item.saved = !item.saved;
@@ -252,9 +260,11 @@
 										<img class="row-thumb" src={item.image} alt="" loading="lazy" />
 									{/if}
 									<div class="row-body">
-										<a class="row-title" href={item.url} target="_blank" rel="noopener noreferrer">{item.title}</a>
+										<a class="row-title" href={linkFor(item)} target="_blank" rel="noopener noreferrer">
+											{#if item.paywalled}<span class="msi lock-icon" title="Paywalled — opens through Cooper Library access">lock</span>{/if}{item.title}
+										</a>
 										{#if item.snippet}<span class="row-snip">{item.snippet}</span>{/if}
-										{#if item.meta}<span class="row-meta">{item.meta}{#if item.expired && !item.saved} · faded{/if}</span>{/if}
+										{#if item.meta}<span class="row-meta" class:meta-paywall={item.paywalled}>{item.meta}{#if item.paywalled} · via Cooper Library{/if}{#if item.expired && !item.saved} · faded{/if}</span>{/if}
 									</div>
 									{@render itemActions(item)}
 								</li>
@@ -350,6 +360,11 @@
 	.row-title:hover { text-decoration: underline; text-underline-offset: 2px; }
 	.row-snip { font-size: 0.76rem; color: var(--muted-fg); line-height: 1.4; }
 	.row-meta { font-size: 0.72rem; color: var(--md-sys-color-primary, var(--accent)); font-weight: 600; }
+	.row-meta.meta-paywall { color: var(--muted-fg); }
+	.lock-icon {
+		font-size: 14px; vertical-align: -2px; margin-right: 0.15rem;
+		color: var(--muted-fg);
+	}
 
 	/* artworks — image grid */
 	.art-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0.75rem; }
