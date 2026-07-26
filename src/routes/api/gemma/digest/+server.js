@@ -5,6 +5,7 @@ import { getDb } from '$lib/server/turso.js';
 import { getAdminDb } from '$lib/server/firebase-admin.js';
 import { getConvId } from '$lib/convId.js';
 import { pushIdToTimestamp } from '$lib/chat.js';
+import { scoutStatus } from '$lib/server/scout.js';
 
 // GET ?history=1 — session-authed: the caller's digest messages (live RTDB
 //   window + Turso archive, merged ascending). Also clears the gemma conv's
@@ -40,7 +41,10 @@ export async function GET({ request, url, locals }) {
 					for (const b of busy) b.name = names[b.userId] ?? b.userId;
 				}
 			}
-			return json({ generating: busy });
+			// Scout worker health rides along — Manage shows it next to
+			// the generation status (same poll, no extra endpoint).
+			const scout = await scoutStatus().catch(() => ({ online: false, lastSeen: null, queued: 0 }));
+			return json({ generating: busy, scout });
 		}
 		const snap = await getAdminDb().ref(`gemmaDigestState/${session.user.id}`).get();
 		const s = snap.val() ?? {};

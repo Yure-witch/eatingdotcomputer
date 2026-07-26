@@ -10,8 +10,9 @@
 // The text is written by the class's LLM when a key is available (instructor's
 // saved user_ai_keys row, same OpenAI-compatible endpoint the Gemma chat
 // uses; recipient's own key preferred when present), with a plain templated
-// fallback so digests still go out keyless. NOTE: no web-search tooling exists
-// yet — inspiration comes from model knowledge + the entered interests.
+// fallback so digests still go out keyless. Inspiration links come from the
+// Scout worker on kahan (are.na + Wikipedia lookups of users.interests via
+// $lib/server/scout.js) when it's online; model knowledge otherwise.
 //
 // Delivery: a real DM from the `gemma` bot user (seeded in migration 041) via
 // the same compact-message plumbing /api/chat uses, plus a push notification.
@@ -22,6 +23,7 @@ import { ServerValue } from 'firebase-admin/database';
 import { getConvId } from '$lib/convId.js';
 import { notifyUsers } from '$lib/server/push.js';
 import { getWeekPlans, getCompletionsForStudent } from '$lib/server/week-plans.js';
+import { searchWithWait } from '$lib/server/scout.js';
 
 const GEMMA_ID = 'gemma';
 export const DEFAULT_CLASS = 'idc-fall-2026';
@@ -648,13 +650,15 @@ async function llmWrite(creds, prompt) {
 						'"(asked by X)" annotation — then acknowledge one warmly in a single sentence; if they ' +
 						'just completed goals, congratulate them for those by name; if interests are given, ONE short inspiration ' +
 						'suggestion tied to those interests (a concept, artist, technique or tiny exercise). ' +
+						'If WEB FINDS are listed, ground the inspiration in ONE of them and include its URL verbatim as a ' +
+						'markdown link like [title](url) — never invent or alter URLs; with no web finds, no links at all. ' +
 						'Keep the whole thing under 180 words. Never invent assignments or messages.' },
 					{ role: 'user', content: prompt }
 	]);
 }
 
 // Keyless / LLM-failure fallback — plain templated digest.
-function templateDigest({ name, recapLines, incomplete, interests, doneGoals = [], goals = [], newGoalsCount = 0 }) {
+function templateDigest({ name, recapLines, incomplete, interests, doneGoals = [], goals = [], newGoalsCount = 0, webFinds = null }) {
 	const parts = [`Hi ${name.split(' ')[0]}! Here's your digest. ✨`];
 	if (doneGoals.length) {
 		parts.push(`🎉 You checked off: ${doneGoals.map((g) => g.label).join('; ')} — nicely done!`);
@@ -677,7 +681,12 @@ function templateDigest({ name, recapLines, incomplete, interests, doneGoals = [
 		parts.push('Your goals:');
 		for (const g of goals) parts.push(`- ${g.label}${g.requestedBy ? ` (asked by ${g.requestedBy})` : ''}`);
 	}
-	if (interests) parts.push(`Something for you: keep chasing ${interests.split(/[,;]/)[0].trim()} — bring a spark of it into this week's work.`);
+	if (webFinds?.length) {
+		const f = webFinds[0];
+		parts.push(`Something for you: [${f.title}](${f.url}) — found on ${f.source}, right up your alley.`);
+	} else if (interests) {
+		parts.push(`Something for you: keep chasing ${interests.split(/[,;]/)[0].trim()} — bring a spark of it into this week's work.`);
+	}
 	return parts.join('\n');
 }
 
@@ -786,11 +795,24 @@ async function sendGemmaDigestInner({ userId, classId = DEFAULT_CLASS, recapLine
 		return { userId, delivered: true, reminder: true };
 	}
 
+	// Real inspiration links from the Scout worker on kahan. Non-blocking in
+	// spirit: waits briefly only when the worker is online, else uses the
+	// cached result or silently returns null (digest degrades to no links).
+	let webFinds = null;
+	if (interests) {
+		webFinds = await searchWithWait(interests, { waitMs: 15000, requestedBy: userId }).catch(() => null);
+	}
+
 	let text = null, usedLlm = false;
 	if (creds) {
 		const prompt = [
 			`Recipient: ${name}${String(userRow.role) === 'instructor' ? ' (the instructor)' : ''}`,
 			interests ? `Their interests (entered by the instructor): ${interests}` : 'No interests on file.',
+			...(webFinds?.length ? [
+				'',
+				'WEB FINDS related to their interests (real links — pick ONE for the inspiration line, keep the URL exact):',
+				webFinds.slice(0, 6).map((f) => `- ${f.title} — ${f.url}${f.snippet ? ` (${f.snippet})` : ''}`).join('\n')
+			] : []),
 			'',
 			'CLASS CHAT (last 24h):',
 			recap.length ? recap.map(fmtRecapLine).join('\n') : '(no messages today)',
@@ -811,7 +833,7 @@ async function sendGemmaDigestInner({ userId, classId = DEFAULT_CLASS, recapLine
 		text = await llmWrite(creds, prompt);
 		usedLlm = !!text;
 	}
-	if (!text) text = templateDigest({ name, recapLines: recap, incomplete, interests, doneGoals, goals, newGoalsCount });
+	if (!text) text = templateDigest({ name, recapLines: recap, incomplete, interests, doneGoals, goals, newGoalsCount, webFinds });
 
 	await deliverDM(userId, text);
 	await stateRef.set({ hash: fingerprint, at: Date.now(), reminded: false });

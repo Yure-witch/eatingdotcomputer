@@ -39,6 +39,15 @@
 	// tab is open (reads the per-user in-flight locks). A 1s ticker keeps
 	// the elapsed-seconds display counting smoothly between polls.
 	let gemmaGenerating = $state([]);
+	// Scout worker (kahan web-research poller) health, from the same poll.
+	let scoutInfo = $state(null);
+	const scoutAgo = (ts) => {
+		if (!ts) return 'never';
+		const s = Math.round((Date.now() - ts) / 1000);
+		if (s < 90) return `${s}s ago`;
+		if (s < 5400) return `${Math.round(s / 60)}m ago`;
+		return `${Math.round(s / 3600)}h ago`;
+	};
 	let gemmaGenPolledAt = $state(0);
 	let gemmaGenNow = $state(0);
 	const gemmaGenSecs = (g) =>
@@ -50,7 +59,9 @@
 			try {
 				const r = await fetch('/api/gemma/digest?status=all');
 				if (r.ok && alive) {
-					gemmaGenerating = (await r.json()).generating ?? [];
+					const j = await r.json();
+					gemmaGenerating = j.generating ?? [];
+					scoutInfo = j.scout ?? null;
 					gemmaGenPolledAt = Date.now();
 					gemmaGenNow = Date.now();
 				}
@@ -1011,6 +1022,15 @@
 					No digests generating right now.
 				{/if}
 			</p>
+			{#if scoutInfo}
+				<p class="gemma-live-status" class:busy={scoutInfo.online}>
+					{#if scoutInfo.online}
+						● Scout online — kahan is watching for research jobs{scoutInfo.queued ? ` (${scoutInfo.queued} in queue)` : ''}. Digest inspiration uses real are.na / Wikipedia links.
+					{:else}
+						○ Scout offline (last seen {scoutAgo(scoutInfo.lastSeen)}) — inspiration falls back to cached finds or model knowledge. Start it on kahan: <code>~/scout/run.sh</code>
+					{/if}
+				</p>
+			{/if}
 		</section>
 
 		<section class="members-section">

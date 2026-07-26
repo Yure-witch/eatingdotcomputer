@@ -1,0 +1,12 @@
+[Unit]
+Description=eating.computer scout worker
+After=network-online.target
+
+[Service]
+WorkingDirectory=%h/scout
+ExecStart=%h/scout/run.sh
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

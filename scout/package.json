@@ -1,0 +1,11 @@
+{
+	"name": "eating-scout",
+	"private": true,
+	"version": "1.0.0",
+	"type": "module",
+	"description": "eating.computer research worker — polls the app for search jobs, scrapes are.na/Wikipedia, posts results back",
+	"scripts": {
+		"start": "node scout.js"
+	},
+	"engines": { "node": ">=18" }
+}

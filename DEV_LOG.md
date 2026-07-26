@@ -265,6 +265,37 @@ The following major areas need to be built. None are started yet.
 - **Notes**: mammoth only handles `.docx` (not legacy `.doc`) — .doc still falls back to Source/Download.
 - **Follow-up (same day)**: swapped mammoth → `docx-preview` per user feedback ("formatting should respect original output") — mammoth emits semantic HTML and discards fonts/colors/alignment; docx-preview reproduces the original layout as real pages. Render happens via a `use:renderDocx` Svelte action on the overlay container (the lib needs a DOM node); PDF-viewer-style gray backdrop, pages keep their fixed real width and pan horizontally on narrow screens. mammoth uninstalled.
 
+## Profile — customizable "vibe" profiles
+
+### Gradient bg + name font + mouse effect + signature expression — 2026-07-25
+- **Status**: `attempted`
+- **What**: First slice of the MySpace-style profiles roadmap item. `users.profile_style` (migration `047_profile_style.sql`, applied) holds a JSON blob `{ bg, font, fx, sig }` validated against whitelists in the new shared module `src/lib/profile-style.js`. New endpoint `POST /api/profile-style` saves the caller's own style. `/app/profile/[userId]` revamped:
+  - **Background** — 8 animated gradient presets (Sunset, Ocean, Candy, Vaporwave, Forest, Lava, Aurora — the heatmap palette, Goth) rendered full-bleed with a slow CSS `background-position` drift; the profile card + header go translucent with backdrop blur so text stays on `--ink` in both themes.
+  - **Name font** — Avara (default, matches the old look), Sans, Cambridge (`@font-face` from `/fonts/Cambridge.otf`), Space Grotesk, Typewriter, Comic Sans, Impact.
+  - **Mouse effect** — full-page canvas particles on pointermove: Sparkles / Hearts / Confetti / Bubbles / Glow trail (hue-cycling additive glow). Capped at 140 particles, spawn-throttled, DPR-aware, pointer-events: none.
+  - **Signature expression** — any emoji / EK / custom / Telegram emote token shown big (2.4rem wrapper → 1.4em emote) next to the name with a bob animation; animated emotes animate via `contentHtml` + `mountStaticEmotes` (same pipeline as bio). Picked with the inline `ExpressionPicker` (same token mapping AvatarPicker uses).
+  - **Customizer** — owner-only "✨ Customize" button on the profile toggles a panel (gradient swatches, font chips rendered in their own font, effect chips, sig picker w/ Clear); every change previews live and autosaves (debounced 500ms, "saved ✓" status).
+
+### Custom HTML profile pages (full MySpace mode) — 2026-07-25
+- **Status**: `attempted`
+- **What**: Users can author a complete HTML document — their own CSS and arbitrary JS — that replaces the standard profile card for all visitors. `users.profile_html` (migration `048_profile_html.sql`, applied); `POST /api/profile-style` extended to accept `{ html }` (100KB cap, null clears). **Security model**: the document only ever renders in `<iframe sandbox="allow-scripts allow-popups allow-modals" srcdoc>` — no `allow-same-origin`, so scripts run under an opaque origin with no cookies, no session, no app API access, no parent DOM reach. Never add `allow-same-origin` to this iframe.
+  - Custom page takes over the viewport under the header + a slim bar (back link, "X's custom page", Customize/Message button). Preset gradient/fx/sig are suppressed while a custom page is live.
+  - Customizer group "Custom page — MySpace mode": Build your own page → seeds a starter template (their name/bio/current gradient, a marquee, a sparkle-trail script) → editor modal with side-by-side textarea + debounced live-preview iframe (same sandbox), Tab-inserts-tab, char counter, Save & publish. Remove is two-step.
+  - Owner clicking ✨ Customize while a custom page is live falls back to the standard card view so preset controls stay reachable; toggling off returns to the custom page.
+
+## Scout — kahan web-research worker for Gemma
+
+### Pull-worker scraper API (are.na + Wikipedia inspiration links) — 2026-07-25
+- **Status**: `attempted`
+- **What**: Kahan (`cooper-kahan` SSH alias → kahanctrl.ee.cooper.edu:31415) has a public DNS record but firewalled inbound ports (only chatterbox got a public HTTPS front), so instead of an inbound API the scraper is a **puller**: `scout/scout.js` (single-file Node ≥18, zero deps) polls `GET /api/scout/jobs` over outbound HTTPS with `Bearer SCOUT_TOKEN`, runs searches, `POST`s results back. No ports, no tunnel.
+  - **Sources**: are.na official API (channel + block search, unauthenticated) and Wikipedia REST search; interests split on commas (≤3 sub-queries); politeness baked in (identified UA with contact email, ≥1s per-host spacing, 12s timeouts, official APIs only). ~14 results deduped by URL.
+  - **App side**: `scout_jobs` + `scout_state` tables (migration `049`, applied); `/api/scout/jobs` (GET claims ≤3 queued→running, heartbeats, requeues jobs stuck running >5min; POST stores capped/sanitized link arrays); `src/lib/server/scout.js` (`enqueueSearch` dedupes vs pending + <12h-fresh results, `searchWithWait` waits ≤15s only when the worker heartbeat is <90s old, falls back to ≤7-day cache, else null).
+  - **Gemma wiring**: `sendGemmaDigestInner` fetches webFinds for `users.interests`; prompt gains a "WEB FINDS" section + system-prompt rule to ground the inspiration in ONE find with its URL verbatim as a markdown link (never with no finds); `templateDigest` fallback links the first find. Fingerprint unchanged → link-only changes never trigger a re-send.
+  - **Observability**: `?status=all` response now carries `scout: {online, lastSeen, queued}`; Manage → Gemma shows "● Scout online / ○ offline (last seen …)".
+  - **Deploy**: `scp -r scout cooper-kahan:~/scout`, paste token into `scout.env`, `nohup ./run.sh &` (or the included systemd user unit). `SCOUT_TOKEN` generated into local `.env` — must also be added to Vercel env.
+  - **Verified E2E locally**: queued a job in Turso, ran the worker against localhost:5175 — claimed job #1, posted 14 real results (are.na channels + Wikipedia), heartbeat recorded, bad token → 401.
+- **Note**: while testing, a bare `GET /api/gemma/digest` locally ran the real cron path (local .env has no `CRON_SECRET`, and the guard is `if (env.CRON_SECRET && …)`) — sent one real digest to the instructor account.
+
 ## Chat — desktop margin scrolling
 
 ### Wheel over page margins scrolls the chat — 2026-07-22
