@@ -300,6 +300,13 @@ The following major areas need to be built. None are started yet.
 - **Status**: `attempted`
 - **What**: The always-DOI guard was silently DROPPING valuable no-DOI works — which turn out to be canonical BOOKS (Bringhurst *Elements of Typographic Style*, Geuss *Idea of a Critical Theory*, *Designing Interaction*). Books rarely have DOIs and can't route through OpenAthens (that's for e-journals). Now: DOI present → DOI link + Cooper OpenAthens (article); no DOI → **Google Books search** by title+author (`google.com/search?tbm=bks`) — never hidden, always lands on the book (preview + borrow/buy), linked direct. materialize `usableUrl` accepts doi.org OR google-books search for papers (still rejects catalog stubs). Frontend: `isDoiPaper` splits routing + icon (account_balance vs menu_book) + label (via Cooper Library vs book·find a copy). Verified a book-heavy query returns 10 papers, books as find-links, zero dropped.
 
+## Recommendations — arena_img quota + class parity
+
+### are.na images now surface; class feed matches personal — 2026-07-26
+- **Status**: `attempted`
+- **What**: Two fixes. (1) `arena_img` wasn't in BASE_QUOTA (defaulted to 4) and — more importantly — every existing feed item predated the arena_img worker deploy, so NO are.na images were stored. Added `arena_img: 6` to BASE_QUOTA; regenerating batches now stores + shows them. (2) Class feed was thin (6 artwork from the lone vague syllabus topic "Text adventure") and structurally unlike the personal feed. `getClassTopics` now seeds with the **class SUBJECT** (`classes.name` = "Interactive Design Concepts") first, then week topics, then trending student likes — guaranteeing the class feed pulls the same diverse types (paper/arena_img/artwork/channel/article) even when the syllabus is sparse. Verified both feeds materialize all 5 kinds incl. arena_img.
+- **Note**: existing feeds only backfill on the next batch (fetch more / daily refresh); regenerated the instructor's personal + class feeds to confirm.
+
 ## Inspiration — liked/disliked views + are.na images
 
 ### See what you've liked/disliked + are.na topical images — 2026-07-26

@@ -25,7 +25,7 @@ export const EXPIRE_DAYS = 7;
 const EXPIRE_MS = EXPIRE_DAYS * 24 * 60 * 60 * 1000;
 const REFRESH_MS = 20 * 60 * 60 * 1000; // auto-batch "every day or so"
 
-const BASE_QUOTA = { paper: 5, artwork: 9, channel: 4, article: 3, link: 4 };
+const BASE_QUOTA = { paper: 5, arena_img: 6, artwork: 9, channel: 4, article: 3, link: 4 };
 const STOPWORDS = new Set(['this', 'that', 'with', 'from', 'what', 'when', 'where', 'which', 'their', 'about', 'into', 'have', 'been', 'were', 'untitled', 'series']);
 
 const rowToItem = (r) => ({
@@ -307,6 +307,15 @@ function cleanTopic(s) {
 }
 
 async function getClassTopics(db, classId) {
+	// The class SUBJECT is always the broad seed — it guarantees the class
+	// feed pulls the same diverse recommendation types (papers, museum +
+	// are.na images, channels) as a personal feed, even when the syllabus
+	// is sparse. Week topics + trending student likes layer on top.
+	const cls = (await db.execute({
+		sql: 'SELECT name FROM classes WHERE id = ?', args: [classId]
+	})).rows[0];
+	const subject = cls?.name ? cleanTopic(cls.name) : '';
+
 	const wp = (await db.execute({
 		sql: 'SELECT headline, topic_preview FROM week_plans WHERE class_id = ? ORDER BY week',
 		args: [classId]
@@ -324,7 +333,9 @@ async function getClassTopics(db, classId) {
 		      GROUP BY lower(title) HAVING c >= 2 ORDER BY c DESC LIMIT 3`,
 		args: []
 	})).rows.map((r) => String(r.title).split(/\s+/).slice(0, 4).join(' '));
-	return { topics: [...syllabus.slice(0, 6), ...trending].filter(Boolean).join(', ').slice(0, 300), trending };
+	const topics = [subject, ...syllabus.slice(0, 5), ...trending]
+		.filter(Boolean).join(', ').slice(0, 300);
+	return { topics, trending };
 }
 
 async function enqueueClassBatch(db, classId) {
