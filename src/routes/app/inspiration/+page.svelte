@@ -20,6 +20,23 @@
 	let view = $state('fresh'); // fresh | saved | history
 	let historyLoaded = $state(false);
 	let pollTimer = null;
+	// Poll a bounded number of times while a batch is in flight — a stuck
+	// batch (worker down) must NOT poll forever, which would hammer the
+	// API from every open tab. 10 × 10s ≈ 100s, then give up quietly.
+	let pollsLeft = 0;
+	const POLL_EVERY = 10000;
+	const MAX_POLLS = 10;
+
+	function schedulePoll() {
+		if (pollTimer || pollsLeft <= 0) return;
+		pollTimer = setTimeout(() => {
+			pollTimer = null;
+			// Don't poll a backgrounded tab.
+			if (typeof document !== 'undefined' && document.hidden) { pollsLeft = 0; return; }
+			pollsLeft -= 1;
+			load(view === 'history');
+		}, POLL_EVERY);
+	}
 
 	async function load(history = false) {
 		try {
@@ -32,11 +49,9 @@
 				scoutOnline = !!j.scoutOnline;
 				pending = !!j.pending;
 				if (history) historyLoaded = true;
-				// Batch in flight → keep polling until it lands. Results
-				// merge in automatically since GET materializes them.
-				if (pending && !pollTimer) {
-					pollTimer = setTimeout(() => { pollTimer = null; load(view === 'history'); }, 6000);
-				}
+				// Batch in flight → keep polling (bounded) until it lands.
+				// Results merge in automatically since GET materializes them.
+				if (pending) schedulePoll(); else pollsLeft = 0;
 			}
 		} catch { /* empty state below */ }
 		loading = false;
@@ -44,6 +59,7 @@
 
 	async function fetchMore() {
 		pending = true;
+		pollsLeft = MAX_POLLS;
 		try {
 			await fetch('/api/inspiration', {
 				method: 'POST',
@@ -51,12 +67,12 @@
 				body: JSON.stringify({ more: true })
 			});
 		} catch { /* poll picks up state either way */ }
-		if (!pollTimer) pollTimer = setTimeout(() => { pollTimer = null; load(view === 'history'); }, 6000);
+		schedulePoll();
 	}
 
 	onMount(() => {
 		pageTitle.set('Inspiration');
-		load();
+		load().then(() => { if (pending) { pollsLeft = MAX_POLLS; schedulePoll(); } });
 		return () => clearTimeout(pollTimer);
 	});
 
@@ -117,7 +133,8 @@
 				topics = topicsDraft.trim() || interests;
 				editingTopics = false;
 				pending = true;
-				if (!pollTimer) pollTimer = setTimeout(() => { pollTimer = null; load(view === 'history'); }, 6000);
+				pollsLeft = MAX_POLLS;
+				schedulePoll();
 			}
 		} catch { /* stays open, user can retry */ }
 		topicsSaving = false;
@@ -205,6 +222,29 @@
 				{/if}
 			</div>
 		{/if}
+
+		<details class="library-note">
+			<summary><span class="msi">school</span> Reading paywalled papers with your Cooper login</summary>
+			<div class="library-note-body">
+				<p>
+					Most papers here link to a free, legal open-access copy. When one isn't available, the paper
+					shows a <span class="msi lock-inline">lock</span> and its link routes through <strong>Cooper
+					Union's library</strong> (OpenAthens) so you read it through the school's subscriptions instead
+					of hitting a paywall.
+				</p>
+				<p><strong>How it works:</strong></p>
+				<ol>
+					<li>Click a <span class="msi lock-inline">lock</span> paper. You'll land on an OpenAthens sign-in page.</li>
+					<li>Choose <strong>The Cooper Union</strong> if asked, then sign in with your Cooper email and password.</li>
+					<li>You'll be dropped straight onto the article, unlocked.</li>
+				</ol>
+				<p class="library-note-fine">
+					Access depends on what Cooper subscribes to — a few titles may still be unavailable. Off-campus is
+					fine; the login is what grants access, not your network. More at
+					<a href="https://library.cooper.edu/offsite" target="_blank" rel="noopener noreferrer">the library's remote-access page</a>.
+				</p>
+			</div>
+		</details>
 
 		<div class="view-row">
 			<button class="view-chip" class:active={view === 'fresh'} onclick={() => setView('fresh')}>Fresh</button>
@@ -318,6 +358,26 @@
 		outline: none;
 	}
 	.topics-input:focus { border-color: var(--ink); }
+
+	.library-note {
+		border: 1.5px solid var(--border); border-radius: 10px;
+		padding: 0.15rem 0.85rem; margin-bottom: 1rem;
+		background: var(--surface-2);
+	}
+	.library-note summary {
+		display: flex; align-items: center; gap: 0.45rem;
+		padding: 0.6rem 0; cursor: pointer; list-style: none;
+		font-size: 0.82rem; font-weight: 600; color: var(--ink);
+	}
+	.library-note summary::-webkit-details-marker { display: none; }
+	.library-note summary .msi { font-size: 18px; color: var(--md-sys-color-primary, var(--accent)); }
+	.library-note-body { font-size: 0.82rem; color: var(--muted-fg); line-height: 1.55; padding-bottom: 0.6rem; }
+	.library-note-body p { margin: 0 0 0.6rem; }
+	.library-note-body ol { margin: 0 0 0.6rem; padding-left: 1.2rem; display: flex; flex-direction: column; gap: 0.3rem; }
+	.library-note-body strong { color: var(--ink); }
+	.library-note-body a { color: var(--md-sys-color-primary, var(--accent)); }
+	.library-note-fine { font-size: 0.76rem; opacity: 0.9; }
+	.lock-inline { font-size: 14px; vertical-align: -2px; }
 
 	.view-row { display: flex; gap: 0.4rem; margin-bottom: 1.5rem; flex-wrap: wrap; }
 	.export-chip { display: inline-flex; align-items: center; gap: 0.3rem; margin-left: auto; }

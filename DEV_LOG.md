@@ -283,6 +283,17 @@ The following major areas need to be built. None are started yet.
   - Customizer group "Custom page — MySpace mode": Build your own page → seeds a starter template (their name/bio/current gradient, a marquee, a sparkle-trail script) → editor modal with side-by-side textarea + debounced live-preview iframe (same sandbox), Tab-inserts-tab, char counter, Save & publish. Remove is two-step.
   - Owner clicking ✨ Customize while a custom page is live falls back to the standard card view so preset controls stay reachable; toggling off returns to the custom page.
 
+## Inspiration — library access, link reliability, load
+
+### OpenAthens (Cooper Library), landing-page links, polling cap — 2026-07-26
+- **Status**: `attempted`
+- **Cooper library proxy**: found via library.cooper.edu/offsite/prefix — Cooper uses **OpenAthens**, not EZProxy. Prefix `https://go.openathens.net/redirector/cooper.edu?url=<enc>`. Verified it 302s to the resource's Shibboleth SP with Cooper's IdP (idp.cooper.edu). Paywalled papers' links are wrapped in this prefix client-side (`linkFor`) so students sign in with Cooper creds and land on the article. Added a `<details>` explainer on the Inspiration page describing the login flow.
+- **Dead OA links (user hit "file couldn't be found on the server")**: worker preferred `best_oa_location.pdf_url` — direct repository PDF links rot/404. Now prefers `landing_page_url` (stable article page with the download) over pdf_url. Label simplified to "free to read".
+- **Request load**: page polled every 6s with NO cap while a batch was pending → a stuck batch hammered the API from every open tab forever. Now bounded: 10 polls × 10s then stop, and skips backgrounded tabs. Worker POLL_MS 15s→30s (default + kahan scout.env).
+
+### ⚠️ Vercel deploy stalled — 2026-07-26
+- **Blocker**: Auto-deploy stopped after commit `a112577` (basic Inspiration tab). SIX commits unshipped (Fetch More, feedback loop, header fixes, topics/export, OA links, paywall+OpenAthens). Confirmed via production sanitizer probe: POSTing a result with `paywalled:true` stored WITHOUT the field = old endpoint code live. `npm run build` passes clean locally (only optional-dep warnings), so it is NOT a build failure — appears Vercel-side (stuck/paused/queued). Worker changes take effect regardless (kahan), but all frontend + server-route changes are gated on this deploy. USER must check Vercel dashboard.
+
 ## Scout — kahan web-research worker for Gemma
 
 ### Pull-worker scraper API (are.na + Wikipedia inspiration links) — 2026-07-25

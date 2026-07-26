@@ -13,7 +13,7 @@
 
 const APP = (process.env.EATING_URL ?? 'https://eating.computer').replace(/\/$/, '');
 const TOKEN = process.env.SCOUT_TOKEN;
-const POLL_MS = Number(process.env.POLL_MS ?? 15000);
+const POLL_MS = Number(process.env.POLL_MS ?? 30000);
 const UA = 'eating.computer-scout/1.0 (Cooper Union class project; contact: richardyurewitch@gmail.com)';
 
 if (!TOKEN) {
@@ -71,13 +71,15 @@ async function searchOpenAlexSeminal(q) {
 			const venue = w.primary_location?.source?.display_name ?? '';
 			// Serve the ARTICLE, not the paywall: when OpenAlex knows a legal
 			// open-access copy (publisher OA, arXiv, PubMed Central, author
-			// repositories), link straight to its PDF (or OA landing page).
-			// DOI is the fallback for genuinely closed papers, labeled so
-			// students know before they click.
+			// repositories), link to it. Prefer the LANDING PAGE over the raw
+			// pdf_url — direct repository PDF links rot and 404 ("file not
+			// found on the server"), while the landing page stays put and has
+			// the download on it. DOI is the fallback for closed papers,
+			// labeled so students know before they click.
 			const oa = w.best_oa_location ?? {};
 			const isOa = !!w.open_access?.is_oa;
-			const oaUrl = isOa ? (oa.pdf_url || oa.landing_page_url || w.open_access?.oa_url) : null;
-			const access = oaUrl ? (oa.pdf_url ? 'free PDF' : 'free to read') : 'may be paywalled';
+			const oaUrl = isOa ? (oa.landing_page_url || oa.pdf_url || w.open_access?.oa_url) : null;
+			const access = oaUrl ? 'free to read' : 'may be paywalled';
 			return {
 				kind: 'paper',
 				title: w.display_name,
