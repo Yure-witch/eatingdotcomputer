@@ -12,7 +12,7 @@
 	let actionItems = $state([]);
 
 	onMount(async () => {
-		pageTitle.set('Goals');
+		pageTitle.set('Tasks');
 		try {
 			const r = await fetch('/api/gemma/goal');
 			if (r.ok) {
@@ -125,7 +125,7 @@
 	};
 </script>
 
-<svelte:head><title>Goals — eating.computer</title></svelte:head>
+<svelte:head><title>Tasks — eating.computer</title></svelte:head>
 
 {#snippet goalRow(g)}
 	<li class="goal" class:done={g.done}>
@@ -160,7 +160,7 @@
 <div class="goals-shell">
 	<main>
 		<div class="page-head">
-			<h1>🎯 Goals</h1>
+			<h1>🎯 Tasks</h1>
 			<p class="page-sub">Gemma keeps this list from what you say (and what people ask of you) in chat. Check things off, remove what doesn't belong — completed goals stay below as history.</p>
 		</div>
 

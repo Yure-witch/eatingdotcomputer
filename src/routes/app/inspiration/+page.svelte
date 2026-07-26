@@ -103,7 +103,7 @@
 	}
 
 	onMount(() => {
-		pageTitle.set('Inspiration');
+		pageTitle.set('Recommendations');
 		load().then(() => { if (pending) { pollsLeft = MAX_POLLS; schedulePoll(); } });
 		return () => clearTimeout(pollTimer);
 	});
@@ -231,7 +231,7 @@
 	}
 </script>
 
-<svelte:head><title>Inspiration — eating.computer</title></svelte:head>
+<svelte:head><title>Recommendations — eating.computer</title></svelte:head>
 
 {#snippet itemActions(item)}
 	<span class="act-cluster">
@@ -250,7 +250,7 @@
 <div class="inspo-shell">
 	<main>
 		<div class="page-head">
-			<h1>Inspiration</h1>
+			<h1>Recommendations</h1>
 			<p class="page-sub">
 				{#if scope === 'class'}
 					A shared feed built from the class syllabus. Everyone sees the same finds — <strong>👍 what resonates</strong>,

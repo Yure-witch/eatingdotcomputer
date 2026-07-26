@@ -1946,7 +1946,7 @@
 			<a class="conv-item" href="/app/goals" class:active={$page.url.pathname === '/app/goals'} draggable="false">
 				<span class="avatar-wrap gemma-goals-icon">🎯</span>
 				<div class="member-text">
-					<span class="member-name">Goals</span>
+					<span class="member-name">Tasks</span>
 					<span class="conv-last conv-last-empty">Your todo list, past &amp; present</span>
 				</div>
 			</a>
@@ -1955,7 +1955,7 @@
 			<a class="conv-item" href="/app/inspiration" class:active={$page.url.pathname === '/app/inspiration'} draggable="false">
 				<span class="avatar-wrap gemma-goals-icon">✨</span>
 				<div class="member-text">
-					<span class="member-name">Inspiration</span>
+					<span class="member-name">Recommendations</span>
 					<span class="conv-last conv-last-empty">Daily finds for your interests</span>
 				</div>
 			</a>

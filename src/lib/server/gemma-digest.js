@@ -663,7 +663,7 @@ function templateDigest({ name, recapLines, incomplete, interests, doneGoals = [
 	if (doneGoals.length) {
 		parts.push(`🎉 You checked off: ${doneGoals.map((g) => g.label).join('; ')} — nicely done!`);
 	}
-	if (newGoalsCount > 0) parts.push(`\u{1F3AF} ${newGoalsCount} new goal${newGoalsCount === 1 ? '' : 's'} added \u2014 see your Goals list.`);
+	if (newGoalsCount > 0) parts.push(`\u{1F3AF} ${newGoalsCount} new task${newGoalsCount === 1 ? '' : 's'} added \u2014 see your Tasks list.`);
 	if (recapLines.length) {
 		parts.push(`Today in class: ${recapLines.length} messages across the channels. A few highlights:`);
 		for (const l of recapLines.slice(-3)) parts.push(`- ${fmtRecapLine(l)}`);
@@ -825,7 +825,7 @@ async function sendGemmaDigestInner({ userId, classId = DEFAULT_CLASS, recapLine
 			'PERSONAL GOALS they have voiced in chat (tracked as their own checklist):',
 			goals.length ? goals.map((g) => `- ${g.label}${g.requestedBy ? ` (asked by ${g.requestedBy})` : ''}`).join('\n') : '(none tracked)',
 			'',
-			`NEW GOALS ADDED THIS RUN: ${newGoalsCount} — if more than zero, add one line telling them their Goals list was updated ("N new goals added — see your Goals list").`,
+			`NEW TASKS ADDED THIS RUN: ${newGoalsCount} — if more than zero, add one line telling them their Tasks list was updated ("N new tasks added — see your Tasks list").`,
 			'',
 			'GOALS THEY JUST COMPLETED (congratulate them warmly for these, one short line):',
 			doneGoals.length ? doneGoals.map((g) => `- ${g.label}`).join('\n') : '(none)'
