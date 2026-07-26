@@ -294,6 +294,7 @@ The following major areas need to be built. None are started yet.
   - **Observability**: `?status=all` response now carries `scout: {online, lastSeen, queued}`; Manage → Gemma shows "● Scout online / ○ offline (last seen …)".
   - **Deploy**: `scp -r scout cooper-kahan:~/scout`, paste token into `scout.env`, `nohup ./run.sh &` (or the included systemd user unit). `SCOUT_TOKEN` generated into local `.env` — must also be added to Vercel env.
   - **Verified E2E locally**: queued a job in Turso, ran the worker against localhost:5175 — claimed job #1, posted 14 real results (are.na channels + Wikipedia), heartbeat recorded, bad token → 401.
+- **Deployed 2026-07-25**: worker live on kahan at `/zooper2/richard.yurewitch/scout` (nohup, Node v22; AFS home is broken so everything lives in /zooper2 and key auth is impossible — password via expect). GOTCHA: `EATING_URL` must be `https://www.eating.computer` — the apex 307-redirects to www and Node fetch drops the Authorization header on cross-host redirects (worker got 401s until pointed at www). Also: pkill patterns in ssh commands must use `scout[.]js` bracket trick or they kill their own session. Verified in prod: heartbeat 4s, test job → 14 real results.
 - **Note**: while testing, a bare `GET /api/gemma/digest` locally ran the real cron path (local .env has no `CRON_SECRET`, and the guard is `if (env.CRON_SECRET && …)`) — sent one real digest to the instructor account.
 
 ## Chat — desktop margin scrolling
