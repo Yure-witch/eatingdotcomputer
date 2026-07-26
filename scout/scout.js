@@ -49,41 +49,6 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let seed = null;
 const rot = (m) => (seed ?? Math.floor(Date.now() / 86400000)) % m;
 
-// Catalog-record / link-resolver hosts that OpenAlex sometimes lists as
-// "open access" but which serve only a bibliographic stub, not fulltext
-// (e.g. the Bavarian union catalog bib-bvb.de F?func=service resolver).
-// Linking these gives students "file not found". Reject them.
-const JUNK_OA = /bib-bvb\.de|\bfunc=service\b|doc_library=|func_code=|worldcat\.org|base-search\.net|\.opac\b|webcache/i;
-
-// Pick the most reliable legal free copy across ALL of a work's locations.
-// Prefers the published version and stable DOI / known-good repositories;
-// rejects catalog stubs. Returns a URL or null (→ treat as paywalled and
-// route through Cooper access, never serve a dead link).
-function bestOaUrl(w) {
-	const cands = [];
-	const add = (loc) => {
-		if (!loc || !loc.is_oa) return;
-		const ver = loc.version || '';
-		if (loc.landing_page_url) cands.push({ url: loc.landing_page_url, ver, pdf: false });
-		if (loc.pdf_url) cands.push({ url: loc.pdf_url, ver, pdf: true });
-	};
-	add(w.best_oa_location);
-	for (const l of (w.locations ?? [])) add(l);
-	if (w.open_access?.oa_url) cands.push({ url: w.open_access.oa_url, ver: '', pdf: /\.pdf($|\?)/i.test(w.open_access.oa_url) });
-
-	const clean = cands.filter((c) => c.url && /^https?:\/\//i.test(c.url) && !JUNK_OA.test(c.url));
-	if (!clean.length) return null;
-	const score = (c) => {
-		let s = c.ver === 'publishedVersion' ? 100 : c.ver === 'acceptedVersion' ? 60 : c.ver === 'submittedVersion' ? 30 : 0;
-		if (/(^|\.)doi\.org\//i.test(c.url)) s += 12;          // stable resolver
-		if (/arxiv\.org|ncbi\.nlm\.nih\.gov|europepmc\.org|hal\.science|figshare\.com|\.springeropen\.com|plos\.org/i.test(c.url)) s += 6;
-		if (!c.pdf) s += 4;                                     // landing page > raw pdf (files rot)
-		return s;
-	};
-	clean.sort((a, b) => score(b) - score(a));
-	return clean[0].url;
-}
-
 // Seminal papers: OpenAlex sorted by RELEVANCE first (raw citation sort
 // surfaces off-topic AI megapapers), then the top-25 relevant re-ranked
 // by citations. Result: the most-cited works about THIS topic — the
@@ -104,22 +69,27 @@ async function searchOpenAlexSeminal(q) {
 		.map((w) => {
 			const auth = (w.authorships ?? []).slice(0, 2).map((a) => a.author?.display_name).filter(Boolean).join(', ');
 			const venue = w.primary_location?.source?.display_name ?? '';
-			// Serve the ARTICLE, not the paywall: link to the best vetted
-			// legal free copy (bestOaUrl rejects catalog stubs + prefers the
-			// published version / stable DOI). If there's no reliable free
-			// copy, fall through to the DOI and mark it paywalled so the app
-			// routes it through Cooper access — never a dead file.
-			const oaUrl = bestOaUrl(w);
-			const access = oaUrl ? 'free to read' : 'may be paywalled';
+			// ALWAYS link papers via the DOI (canonical, permanent) and route
+			// them through Cooper's OpenAthens proxy on the app side. This
+			// deliberately avoids OpenAlex's OA location URLs — those point at
+			// repository files and catalog-record stubs (e.g. bib-bvb.de) that
+			// rot, 404, or are HTML-mangled. The DOI always resolves to the
+			// live article; Cooper's login unlocks it (free if OA, subscription
+			// otherwise). `open_access.is_oa` is kept only as an info label.
+			const doiUrl = w.doi
+				|| (w.ids?.doi ? (String(w.ids.doi).startsWith('http') ? w.ids.doi : `https://doi.org/${w.ids.doi}`) : null)
+				|| w.primary_location?.landing_page_url
+				|| w.id;
+			const isOa = !!w.open_access?.is_oa;
 			return {
 				kind: 'paper',
 				title: w.display_name,
-				url: oaUrl || w.doi || w.primary_location?.landing_page_url || w.id,
+				url: doiUrl,
 				snippet: [auth + (w.authorships?.length > 2 ? ' et al.' : ''), w.publication_year, venue].filter(Boolean).join(' · '),
-				meta: `${(w.cited_by_count ?? 0).toLocaleString()} citations · ${access}`,
-				// No legal free copy → the app shows a lock + routes the link
-				// through Cooper's OpenAthens proxy for institutional access.
-				paywalled: !oaUrl,
+				meta: `${(w.cited_by_count ?? 0).toLocaleString()} citations${isOa ? ' · open access' : ''}`,
+				// Papers always go through Cooper Library (OpenAthens) on the app
+				// side; this flags the label, not the routing.
+				paywalled: !isOa,
 				source: 'openalex',
 				image: null
 			};

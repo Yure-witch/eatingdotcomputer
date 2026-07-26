@@ -89,7 +89,7 @@
 	});
 
 	const KIND_SECTIONS = [
-		{ key: 'paper', title: 'Seminal papers', sub: 'the most-cited scholarship on your interests — what everyone in the field has read. 🔒 opens through Cooper Library access.' },
+		{ key: 'paper', title: 'Seminal papers', sub: 'the most-cited scholarship on your interests — what everyone in the field has read. Opens through Cooper Library — sign in with your Cooper login.' },
 		{ key: 'artwork', title: 'From the museums', sub: 'The Met · Art Institute of Chicago · Cleveland · V&A' },
 		{ key: 'channel', title: 'are.na channels', sub: 'curated rabbit holes' },
 		{ key: 'article', title: 'Overviews', sub: 'ground-floor context' },
@@ -99,13 +99,17 @@
 		KIND_SECTIONS.map((s) => ({ ...s, items: visible.filter((i) => i.kind === s.key) })).filter((s) => s.items.length)
 	);
 
-	// Cooper Union's OpenAthens proxy — prepending it to a paywalled URL
-	// routes the click through Cooper's institutional subscriptions (the
-	// student signs in with their Cooper login and lands on the article,
-	// not the paywall). Open-access items link direct.
+	// Cooper Union's OpenAthens proxy. ALL papers route through it — the
+	// student signs in with their Cooper login and lands on the live
+	// article via the school's subscriptions (free if open access,
+	// unlocked if not). Sending papers straight to publisher/repository
+	// URLs led to dead files and paywalls; the DOI + Cooper login always
+	// resolves. Non-paper finds (art, are.na, wiki) link direct.
 	const COOPER_PROXY = 'https://go.openathens.net/redirector/cooper.edu?url=';
+	// Repair any HTML-mangled ampersands from bad legacy records before proxying.
+	const cleanUrl = (u) => String(u ?? '').replace(/&amp;/g, '&');
 	const linkFor = (item) =>
-		item.paywalled ? COOPER_PROXY + encodeURIComponent(item.url) : item.url;
+		item.kind === 'paper' ? COOPER_PROXY + encodeURIComponent(cleanUrl(item.url)) : item.url;
 
 	async function toggleSave(item) {
 		item.saved = !item.saved;
@@ -227,16 +231,15 @@
 			<summary><span class="msi">school</span> Reading paywalled papers with your Cooper login</summary>
 			<div class="library-note-body">
 				<p>
-					Most papers here link to a free, legal open-access copy. When one isn't available, the paper
-					shows a <span class="msi lock-inline">lock</span> and its link routes through <strong>Cooper
-					Union's library</strong> (OpenAthens) so you read it through the school's subscriptions instead
-					of hitting a paywall.
+					Every paper here opens through <strong>Cooper Union's library</strong> (OpenAthens), so you read it
+					with the school's access — free if it's open access, unlocked from behind the paywall if it isn't.
+					Look for the <span class="msi lock-inline">account_balance</span> icon.
 				</p>
 				<p><strong>How it works:</strong></p>
 				<ol>
-					<li>Click a <span class="msi lock-inline">lock</span> paper. You'll land on an OpenAthens sign-in page.</li>
+					<li>Click a paper. You'll land on an OpenAthens sign-in page.</li>
 					<li>Choose <strong>The Cooper Union</strong> if asked, then sign in with your Cooper email and password.</li>
-					<li>You'll be dropped straight onto the article, unlocked.</li>
+					<li>You'll be dropped straight onto the article.</li>
 				</ol>
 				<p class="library-note-fine">
 					Access depends on what Cooper subscribes to — a few titles may still be unavailable. Off-campus is
@@ -301,10 +304,10 @@
 									{/if}
 									<div class="row-body">
 										<a class="row-title" href={linkFor(item)} target="_blank" rel="noopener noreferrer">
-											{#if item.paywalled}<span class="msi lock-icon" title="Paywalled — opens through Cooper Library access">lock</span>{/if}{item.title}
+											{#if item.kind === 'paper'}<span class="msi lock-icon" title="Opens through Cooper Library — sign in with your Cooper login">account_balance</span>{/if}{item.title}
 										</a>
 										{#if item.snippet}<span class="row-snip">{item.snippet}</span>{/if}
-										{#if item.meta}<span class="row-meta" class:meta-paywall={item.paywalled}>{item.meta}{#if item.paywalled} · via Cooper Library{/if}{#if item.expired && !item.saved} · faded{/if}</span>{/if}
+										{#if item.meta}<span class="row-meta">{item.meta}{#if item.kind === 'paper'} · via Cooper Library{/if}{#if item.expired && !item.saved} · faded{/if}</span>{/if}
 									</div>
 									{@render itemActions(item)}
 								</li>
