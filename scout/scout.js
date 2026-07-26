@@ -182,36 +182,54 @@ async function searchVA(q) {
 	}));
 }
 
-async function searchArenaChannels(q) {
-	const r = await politeFetch(`https://api.are.na/v2/search/channels?q=${encodeURIComponent(q)}&per=4&page=${rot(5) + 1}`);
+// Top channels about the topic. Kept and returned so the "are.na channels"
+// section stays; also reused as the source for topical images below.
+async function arenaTopChannels(q, n = 3) {
+	const r = await politeFetch(`https://api.are.na/v2/search/channels?q=${encodeURIComponent(q)}&per=6&page=${rot(4) + 1}`);
 	if (!r.ok) return [];
 	const d = await r.json();
-	return (d.channels ?? []).map((c) => ({
+	return (d.channels ?? []).filter((c) => (c.length ?? 0) > 0).slice(0, n);
+}
+
+async function searchArenaChannels(q) {
+	const chans = await arenaTopChannels(q, 4);
+	return chans.map((c) => ({
 		kind: 'channel',
 		meta: `are.na · ${c.follower_count ?? 0} followers`,
 		title: c.title,
 		url: `https://www.are.na/${c.owner_slug}/${c.slug}`,
-		snippet: `are.na channel — ${c.length ?? 0} blocks, ${c.follower_count ?? 0} followers`,
+		snippet: `are.na channel — ${c.length ?? 0} blocks`,
 		source: 'are.na',
 		image: null
 	}));
 }
 
-async function searchArenaBlocks(q) {
-	const r = await politeFetch(`https://api.are.na/v2/search/blocks?q=${encodeURIComponent(q)}&per=4&page=${rot(5) + 1}`);
-	if (!r.ok) return [];
-	const d = await r.json();
-	return (d.blocks ?? [])
-		.map((b) => ({
-			kind: 'link',
-			meta: 'are.na block',
-			title: b.title || b.generated_title || '(untitled block)',
-			url: b.source?.url || `https://www.are.na/block/${b.id}`,
-			snippet: [b.class, b.description ? String(b.description).slice(0, 160) : null].filter(Boolean).join(' — '),
-			source: 'are.na',
-			image: b.image?.thumb?.url ?? null
-		}))
-		.filter((b) => b.url);
+// IMAGE blocks that live INSIDE the top channels about this topic. Curation
+// by a well-followed topical channel is the quality signal (are.na's search
+// doesn't expose per-block likes, and its block-search endpoint is flaky).
+// Pulls from the two strongest channels; the seed rotates which slice so
+// Fetch More brings new images.
+async function searchArenaImages(q) {
+	const chans = await arenaTopChannels(q, 2);
+	const out = [];
+	for (const ch of chans) {
+		const r = await politeFetch(`https://api.are.na/v2/channels/${ch.slug}/contents?per=16&direction=desc`);
+		if (!r.ok) continue;
+		const d = await r.json();
+		const imgs = (d.contents ?? []).filter((b) => b && b.class === 'Image' && b.image);
+		for (const b of imgs.slice(rot(4) * 3, rot(4) * 3 + 3)) {
+			out.push({
+				kind: 'arena_img',
+				title: b.title || b.generated_title || ch.title,
+				url: `https://www.are.na/block/${b.id}`,
+				snippet: `in “${ch.title}”`,
+				meta: `are.na · ${ch.follower_count ?? 0} followers`,
+				source: 'are.na',
+				image: b.image?.thumb?.url || b.image?.display?.url || null
+			});
+		}
+	}
+	return out.filter((b) => b.image);
 }
 
 async function searchWikipedia(q) {
@@ -250,17 +268,17 @@ async function runSearch(query) {
 	if (m) query = String(query).slice(0, m.index);
 	const out = [];
 	for (const part of splitQuery(query)) {
-		const [papers, chans, blocks, wiki, met, aic, cle, vam] = await Promise.all([
+		const [papers, chans, arenaImgs, wiki, met, aic, cle, vam] = await Promise.all([
 			searchOpenAlexSeminal(part).catch(() => []),
 			searchArenaChannels(part).catch(() => []),
-			searchArenaBlocks(part).catch(() => []),
+			searchArenaImages(part).catch(() => []),
 			searchWikipedia(part).catch(() => []),
 			searchMet(part).catch(() => []),
 			searchAIC(part).catch(() => []),
 			searchCleveland(part).catch(() => []),
 			searchVA(part).catch(() => [])
 		]);
-		out.push(...papers, ...chans, ...blocks, ...wiki, ...met, ...aic, ...cle, ...vam);
+		out.push(...papers, ...chans, ...arenaImgs, ...wiki, ...met, ...aic, ...cle, ...vam);
 	}
 	// de-dupe by URL, keep order
 	const seen = new Set();

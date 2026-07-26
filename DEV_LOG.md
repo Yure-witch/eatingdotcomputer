@@ -300,6 +300,14 @@ The following major areas need to be built. None are started yet.
 - **Status**: `attempted`
 - **What**: The always-DOI guard was silently DROPPING valuable no-DOI works — which turn out to be canonical BOOKS (Bringhurst *Elements of Typographic Style*, Geuss *Idea of a Critical Theory*, *Designing Interaction*). Books rarely have DOIs and can't route through OpenAthens (that's for e-journals). Now: DOI present → DOI link + Cooper OpenAthens (article); no DOI → **Google Books search** by title+author (`google.com/search?tbm=bks`) — never hidden, always lands on the book (preview + borrow/buy), linked direct. materialize `usableUrl` accepts doi.org OR google-books search for papers (still rejects catalog stubs). Frontend: `isDoiPaper` splits routing + icon (account_balance vs menu_book) + label (via Cooper Library vs book·find a copy). Verified a book-heavy query returns 10 papers, books as find-links, zero dropped.
 
+## Inspiration — liked/disliked views + are.na images
+
+### See what you've liked/disliked + are.na topical images — 2026-07-26
+- **Status**: `attempted`
+- **What**:
+  - **Liked / Disliked views**: Mine view-row gained 👍 Liked / 👎 Disliked / 🔖 Saved / History chips (Class got All / Liked / Saved). Liked/disliked/history load the FULL set (`?history=1`) since disliked + expired items are excluded from the default feed; `visible` filters by rating. Leaving a full view back to a live one refetches.
+  - **are.na images**: replaced the flaky block-search (`searchArenaBlocks`, kind 'link') with `searchArenaImages` (kind `arena_img`) — pulls Image blocks from the CONTENTS of the top 2 topical channels (curation-by-followed-channel is the quality signal; are.na search doesn't expose per-block likes and its block-search endpoint intermittently 503s HTML). Seed rotates the slice for Fetch More. New "are.na images" section renders in the image grid (IMAGE_KINDS = artwork + arena_img). Verified: "risograph" → 6 images from real channels + 4 channels.
+
 ## Inspiration — Class feed + personal + instructor view
 
 ### Two feeds (Class / Mine) + Students insights — 2026-07-26

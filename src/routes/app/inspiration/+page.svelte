@@ -26,8 +26,11 @@
 	let topicsSaving = $state(false);
 	let scoutOnline = $state(false);
 	let pending = $state(false); // a batch is in flight on the worker
-	let view = $state('fresh'); // fresh | saved | history (Mine only)
-	let historyLoaded = $state(false);
+	let view = $state('fresh'); // fresh | liked | disliked | saved | history (Mine only)
+	let fullLoaded = $state(false); // whether the complete set (incl. expired/disliked) is loaded
+	// Views that need the full set (disliked items + expired are excluded
+	// from the default feed query, so liked/disliked/history must pull all).
+	const FULL_VIEWS = ['liked', 'disliked', 'history'];
 	let insights = $state(null); // instructor Students view
 	let pollTimer = null;
 	// Poll a bounded number of times while a batch is in flight — a stuck
@@ -58,7 +61,7 @@
 			loading = false;
 			return;
 		}
-		const qs = scope === 'class' ? 'scope=class' : (view === 'history' ? 'history=1' : '');
+		const qs = scope === 'class' ? 'scope=class' : (FULL_VIEWS.includes(view) ? 'history=1' : '');
 		try {
 			const r = await fetch(`/api/inspiration${qs ? '?' + qs : ''}`);
 			if (r.ok) {
@@ -68,7 +71,7 @@
 				topics = j.topics ?? '';
 				scoutOnline = !!j.scoutOnline;
 				pending = !!j.pending;
-				if (scope === 'mine' && view === 'history') historyLoaded = true;
+				if (scope === 'mine' && FULL_VIEWS.includes(view)) fullLoaded = true;
 				if (pending) schedulePoll(); else pollsLeft = 0;
 			}
 		} catch { /* empty state below */ }
@@ -80,7 +83,7 @@
 		scope = s;
 		items = [];
 		insights = null;
-		historyLoaded = false;
+		fullLoaded = false;
 		view = 'fresh';
 		clearTimeout(pollTimer); pollTimer = null; pollsLeft = 0;
 		load();
@@ -106,13 +109,22 @@
 	});
 
 	function setView(v) {
+		const wasFull = FULL_VIEWS.includes(view);
 		view = v;
-		// History needs the full list (expired included) — fetch once.
-		if (v === 'history' && !historyLoaded) load();
+		// Liked / Disliked / History need the complete set (disliked +
+		// expired items are excluded from the default feed) — fetch it once,
+		// and refetch when leaving a full view back to a live one.
+		if ((FULL_VIEWS.includes(v) && !fullLoaded) || (!FULL_VIEWS.includes(v) && wasFull)) load();
 	}
 
 	const visible = $derived.by(() => {
-		if (scope === 'class') return items; // class feed: shared, ordered by aggregate
+		if (scope === 'class') {
+			if (view === 'liked') return items.filter((i) => i.rating === 1);
+			if (view === 'saved') return items.filter((i) => i.saved);
+			return items; // class feed: shared, ordered by aggregate
+		}
+		if (view === 'liked') return items.filter((i) => i.rating === 1);
+		if (view === 'disliked') return items.filter((i) => i.rating === -1);
 		if (view === 'saved') return items.filter((i) => i.saved);
 		if (view === 'history') return items;
 		return items.filter((i) => i.saved || !i.expired);
@@ -120,11 +132,14 @@
 
 	const KIND_SECTIONS = [
 		{ key: 'paper', title: 'Seminal papers', sub: 'the most-cited scholarship on your interests — what everyone in the field has read. Opens through Cooper Library — sign in with your Cooper login.' },
+		{ key: 'arena_img', title: 'are.na images', sub: 'pulled from channels people keep about these topics' },
 		{ key: 'artwork', title: 'From the museums', sub: 'The Met · Art Institute of Chicago · Cleveland · V&A' },
 		{ key: 'channel', title: 'are.na channels', sub: 'curated rabbit holes' },
 		{ key: 'article', title: 'Overviews', sub: 'ground-floor context' },
 		{ key: 'link', title: 'Elsewhere', sub: '' }
 	];
+	// Kinds that render as image cards in a grid (vs. list rows).
+	const IMAGE_KINDS = ['artwork', 'arena_img'];
 	const grouped = $derived(
 		KIND_SECTIONS.map((s) => ({ ...s, items: visible.filter((i) => i.kind === s.key) })).filter((s) => s.items.length)
 	);
@@ -361,11 +376,19 @@
 		{#if scope === 'mine'}
 			<div class="view-row">
 				<button class="view-chip" class:active={view === 'fresh'} onclick={() => setView('fresh')}>Fresh</button>
-				<button class="view-chip" class:active={view === 'saved'} onclick={() => setView('saved')}>Saved</button>
+				<button class="view-chip" class:active={view === 'liked'} onclick={() => setView('liked')}>👍 Liked</button>
+				<button class="view-chip" class:active={view === 'disliked'} onclick={() => setView('disliked')}>👎 Disliked</button>
+				<button class="view-chip" class:active={view === 'saved'} onclick={() => setView('saved')}>🔖 Saved</button>
 				<button class="view-chip" class:active={view === 'history'} onclick={() => setView('history')}>History</button>
 				<button class="view-chip export-chip" title="Download your topics, saves, likes/dislikes, and the derived taste model as JSON" onclick={exportAlgorithm}>
 					<span class="msi">download</span> Export my algorithm
 				</button>
+			</div>
+		{:else if scope === 'class'}
+			<div class="view-row">
+				<button class="view-chip" class:active={view === 'fresh'} onclick={() => setView('fresh')}>All</button>
+				<button class="view-chip" class:active={view === 'liked'} onclick={() => setView('liked')}>👍 Liked</button>
+				<button class="view-chip" class:active={view === 'saved'} onclick={() => setView('saved')}>🔖 Saved</button>
 			</div>
 		{/if}
 
@@ -378,6 +401,10 @@
 		{:else if !visible.length}
 			{#if view === 'saved'}
 				<p class="empty">Nothing saved yet. Hit the bookmark on anything you want to keep.</p>
+			{:else if view === 'liked'}
+				<p class="empty">Nothing liked yet. Hit 👍 on finds you're into — they shape what shows up next.</p>
+			{:else if view === 'disliked'}
+				<p class="empty">Nothing disliked. 👎 hides a find and steers the algorithm away from it.</p>
 			{:else if !scoutOnline && !items.length}
 				<p class="empty">Scout is offline right now, so no finds have come in yet — check back soon.</p>
 			{:else}
@@ -389,7 +416,7 @@
 					<h2>{sec.title}</h2>
 					{#if sec.sub}<p class="sec-sub">{sec.sub}</p>{/if}
 
-					{#if sec.key === 'artwork'}
+					{#if IMAGE_KINDS.includes(sec.key)}
 						<div class="art-grid">
 							{#each sec.items as item (item.id)}
 								<div class="art-card" class:expired={item.expired && !item.saved}>
@@ -431,7 +458,7 @@
 			{/each}
 		{/if}
 
-		{#if topics && !loading && view !== 'saved'}
+		{#if topics && !loading && view === 'fresh'}
 			<div class="more-row">
 				{#if pending}
 					<span class="more-pending"><span class="msi inspo-spin">progress_activity</span> Scout is out fetching a new batch — new finds drop in as they land…</span>
