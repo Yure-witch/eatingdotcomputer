@@ -69,12 +69,21 @@ async function searchOpenAlexSeminal(q) {
 		.map((w) => {
 			const auth = (w.authorships ?? []).slice(0, 2).map((a) => a.author?.display_name).filter(Boolean).join(', ');
 			const venue = w.primary_location?.source?.display_name ?? '';
+			// Serve the ARTICLE, not the paywall: when OpenAlex knows a legal
+			// open-access copy (publisher OA, arXiv, PubMed Central, author
+			// repositories), link straight to its PDF (or OA landing page).
+			// DOI is the fallback for genuinely closed papers, labeled so
+			// students know before they click.
+			const oa = w.best_oa_location ?? {};
+			const isOa = !!w.open_access?.is_oa;
+			const oaUrl = isOa ? (oa.pdf_url || oa.landing_page_url || w.open_access?.oa_url) : null;
+			const access = oaUrl ? (oa.pdf_url ? 'free PDF' : 'free to read') : 'may be paywalled';
 			return {
 				kind: 'paper',
 				title: w.display_name,
-				url: w.doi || w.primary_location?.landing_page_url || w.id,
+				url: oaUrl || w.doi || w.primary_location?.landing_page_url || w.id,
 				snippet: [auth + (w.authorships?.length > 2 ? ' et al.' : ''), w.publication_year, venue].filter(Boolean).join(' · '),
-				meta: `${(w.cited_by_count ?? 0).toLocaleString()} citations`,
+				meta: `${(w.cited_by_count ?? 0).toLocaleString()} citations · ${access}`,
 				source: 'openalex',
 				image: null
 			};
