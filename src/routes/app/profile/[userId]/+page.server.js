@@ -1,6 +1,7 @@
 import { redirect, error } from '@sveltejs/kit';
 import { getDb } from '$lib/server/turso.js';
 import { getAdminDb } from '$lib/server/firebase-admin.js';
+import { parseStyle } from '$lib/profile-style.js';
 
 export async function load({ locals, params, parent }) {
 	await parent();
@@ -15,7 +16,7 @@ export async function load({ locals, params, parent }) {
 	// users had carefully filled out came back blank on the view page —
 	// the data was in the DB, just never queried here.
 	const result = await db.execute({
-		sql: 'SELECT id, name, pronouns, bio, website, year, school, focus, role, created_at, avatar_kind, avatar_value FROM users WHERE id = ?',
+		sql: 'SELECT id, name, pronouns, bio, website, year, school, focus, role, created_at, avatar_kind, avatar_value, profile_style, profile_html FROM users WHERE id = ?',
 		args: [params.userId]
 	});
 
@@ -86,7 +87,9 @@ export async function load({ locals, params, parent }) {
 			avatarKind: u.avatar_kind ? String(u.avatar_kind) : 'gen',
 			avatarValue: u.avatar_value ? String(u.avatar_value) : null,
 			online,
-			lastSeen
+			lastSeen,
+			style: parseStyle(u.profile_style ? String(u.profile_style) : null),
+			customHtml: u.profile_html ? String(u.profile_html) : null
 		},
 		isOwnProfile: session.user.id === String(u.id),
 		currentUserId: session.user.id
