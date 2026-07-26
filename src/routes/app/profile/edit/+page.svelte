@@ -68,10 +68,6 @@
 <svelte:head><title>Edit profile — eating.computer</title></svelte:head>
 
 <div class="shell">
-	<header>
-		<a class="wordmark" href="/">eating.computer</a>
-	</header>
-
 	<main>
 		<a class="back" href="/app">← Back</a>
 
@@ -178,11 +174,7 @@
 <style>
 	.shell { min-height: 100vh; display: flex; flex-direction: column; background: var(--paper); }
 
-	header { display: flex; align-items: center; padding: 1rem 2rem; border-bottom: 1.5px solid var(--border); }
-	.wordmark { font-family: 'Avara', serif; font-size: 1.25rem; color: var(--ink); text-decoration: none; }
-	.wordmark:hover { opacity: 0.7; }
-
-	main { padding: 2rem; max-width: 480px; width: 100%; margin: 0 auto; }
+	main { padding: calc(1.5rem + var(--header-h, 52px)) 2rem 2rem; max-width: 480px; width: 100%; margin: 0 auto; }
 
 	.back { display: inline-block; font-size: 0.85rem; color: var(--muted-fg); text-decoration: none; margin-bottom: 1.5rem; }
 	.back:hover { color: var(--ink); }

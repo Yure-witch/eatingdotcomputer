@@ -1173,7 +1173,7 @@
 
 	main {
 		padding: 2rem;
-		padding-top: calc(2rem + 52px);
+		padding-top: calc(2rem + var(--header-h, 52px));
 		max-width: 860px;
 		width: 100%;
 		margin: 0 auto;

@@ -146,12 +146,14 @@ export async function getInspirationFeed(userId, { history = false } = {}) {
 	const db = getDb();
 	if (!db) return { items: [], interests: '', pending: false };
 
-	const u = (await db.execute({ sql: 'SELECT interests FROM users WHERE id = ?', args: [userId] })).rows[0];
+	const u = (await db.execute({ sql: 'SELECT interests, inspo_topics FROM users WHERE id = ?', args: [userId] })).rows[0];
 	const interests = u?.interests ? String(u.interests) : '';
+	// Search topics: the user-editable override; interests are the default.
+	const topics = (u?.inspo_topics ? String(u.inspo_topics) : '') || interests;
 
 	await materialize(db, userId);
-	if (interests && (await latestJobAge(db, userId)) > REFRESH_MS) {
-		await enqueueBatch(db, userId, interests);
+	if (topics && (await latestJobAge(db, userId)) > REFRESH_MS) {
+		await enqueueBatch(db, userId, topics);
 	}
 
 	const pending = !!(await db.execute({
@@ -168,7 +170,18 @@ export async function getInspirationFeed(userId, { history = false } = {}) {
 		args: [userId]
 	})).rows;
 
-	return { items: rows.map(rowToItem), interests, pending };
+	return { items: rows.map(rowToItem), interests, topics, pending };
+}
+
+export async function setInspirationTopics(userId, topics) {
+	const db = getDb();
+	if (!db) return false;
+	const t = String(topics ?? '').trim().slice(0, 300);
+	await db.execute({
+		sql: 'UPDATE users SET inspo_topics = ? WHERE id = ?',
+		args: [t || null, userId]
+	});
+	return true;
 }
 
 // "Fetch more": enqueue the next batch right now (no daily-gate). Returns
@@ -176,10 +189,10 @@ export async function getInspirationFeed(userId, { history = false } = {}) {
 export async function requestMoreInspiration(userId) {
 	const db = getDb();
 	if (!db) return false;
-	const u = (await db.execute({ sql: 'SELECT interests FROM users WHERE id = ?', args: [userId] })).rows[0];
-	const interests = u?.interests ? String(u.interests) : '';
-	if (!interests) return false;
-	await enqueueBatch(db, userId, interests); // no-op if one is already pending
+	const u = (await db.execute({ sql: 'SELECT interests, inspo_topics FROM users WHERE id = ?', args: [userId] })).rows[0];
+	const topics = (u?.inspo_topics ? String(u.inspo_topics) : '') || (u?.interests ? String(u.interests) : '');
+	if (!topics) return false;
+	await enqueueBatch(db, userId, topics); // no-op if one is already pending
 	return true;
 }
 
@@ -192,6 +205,48 @@ export async function setInspirationSaved(userId, itemId, saved) {
 		args: [saved ? 1 : 0, itemId, userId]
 	});
 	return res.rowsAffected > 0;
+}
+
+// Portable snapshot of the user's recommendation state: topics, every
+// signal (saves/likes/dislikes with their items), and the derived taste
+// model exactly as the next batch will apply it.
+export async function exportInspiration(userId) {
+	const db = getDb();
+	if (!db) return null;
+	const u = (await db.execute({ sql: 'SELECT name, interests, inspo_topics FROM users WHERE id = ?', args: [userId] })).rows[0];
+	const pick = (r) => ({ kind: String(r.kind), source: r.source, title: String(r.title), url: String(r.url), meta: r.meta ?? '' });
+	const saved = (await db.execute({ sql: 'SELECT * FROM inspiration_items WHERE user_id = ? AND saved = 1 ORDER BY saved_at DESC', args: [userId] })).rows.map(pick);
+	const liked = (await db.execute({ sql: 'SELECT * FROM inspiration_items WHERE user_id = ? AND rating = 1 ORDER BY id DESC', args: [userId] })).rows.map(pick);
+	const disliked = (await db.execute({ sql: 'SELECT * FROM inspiration_items WHERE user_id = ? AND rating = -1 ORDER BY id DESC', args: [userId] })).rows.map(pick);
+
+	const tallies = {};
+	for (const r of (await db.execute({
+		sql: `SELECT kind, SUM(CASE rating WHEN 1 THEN 1 WHEN -1 THEN -1 ELSE 0 END) AS t
+		      FROM inspiration_items WHERE user_id = ? GROUP BY kind`,
+		args: [userId]
+	})).rows) tallies[String(r.kind)] = Number(r.t ?? 0);
+	const counts = {};
+	for (const t of disliked.map((d) => d.title.toLowerCase())) {
+		for (const w of new Set(t.match(/[a-z]{4,}/g) ?? [])) {
+			if (!STOPWORDS.has(w)) counts[w] = (counts[w] ?? 0) + 1;
+		}
+	}
+	const blockedWords = Object.keys(counts).filter((w) => counts[w] >= 2);
+	const kindQuotas = {};
+	for (const [kind, base] of Object.entries(BASE_QUOTA)) {
+		kindQuotas[kind] = Math.max(1, Math.min(base * 2, base + (tallies[kind] ?? 0)));
+	}
+
+	return {
+		format: 'eating.computer-inspiration-v1',
+		exportedAt: new Date().toISOString(),
+		user: u?.name ? String(u.name) : userId,
+		interests: u?.interests ? String(u.interests) : '',
+		topics: (u?.inspo_topics ? String(u.inspo_topics) : '') || (u?.interests ? String(u.interests) : ''),
+		nextQuery: await buildQuery(db, userId, (u?.inspo_topics ? String(u.inspo_topics) : '') || (u?.interests ? String(u.interests) : '')),
+		algorithm: { kindTallies: tallies, kindQuotas, blockedWords, expireDays: EXPIRE_DAYS },
+		saved, liked, disliked
+	};
 }
 
 export async function setInspirationRating(userId, itemId, rating) {

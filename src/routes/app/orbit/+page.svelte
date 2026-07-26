@@ -392,7 +392,7 @@
 	main {
 		flex: 1;
 		padding: 2rem 1.5rem;
-		padding-top: calc(2rem + 52px);
+		padding-top: calc(2rem + var(--header-h, 52px));
 		max-width: 900px;
 		width: 100%;
 		margin: 0 auto;

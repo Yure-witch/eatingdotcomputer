@@ -306,6 +306,20 @@ The following major areas need to be built. None are started yet.
 - **What**: Inspiration items gained 👍/👎 (migration 051 `rating`). Feedback shapes batches three ways: liked/saved titles fold into the next Scout query; per-kind quotas move with the like−dislike tally (BASE±tally, clamped [1, 2×base] so taste can recover); words appearing in ≥2 disliked titles are blocked from new items. Disliked items leave the feed immediately (History keeps them). **Batch seeds**: each batch's query ends in `#sN` (N = user's prior job count); the worker parses the seed and pushes every source deeper — museum/are.na page rotation, OpenAlex citation-window slide (batch 0 stays canonical top-5). Seed-in-query also busts the scout result cache naturally. **Async model**: POST `{more:true}` enqueues and returns; GET materializes finished jobs idempotently (per-user URL unique index) + reports `pending`; the page polls every 6s — no long serverless holds, immune to Vercel function timeouts. Verified E2E: disliking 3 generic algorithm papers shrank the paper quota (5→2 on next batch), liking Galanter + a Nake piece steered the next query, Fetch More delivered 16 genuinely new items.
 - **Gotcha**: two commands ran from `scout/` cwd (a `cd scout` python block persisted) — dev server failed with "missing script" and debugtmp landed in `scout/src/...`. Watch cwd after cd-ing in Bash blocks.
 
+## App-wide — fixed header overlap
+
+### Every page now pads by the real measured header height — 2026-07-26
+- **Status**: `attempted`
+- **What**: The layout's fixed AppHeader publishes its true rendered height as `--header-h` (ResizeObserver), but pages compensated with a hardcoded 52px (wrong whenever the class-switcher subtitle/notch makes the header taller) or not at all. Audit + fix of every /app page:
+  - 52px → `var(--header-h, 52px)`: home, orbit, lab, manage (desktop rule; their mobile pager panels keep the reset), weeks, ai, lab/gif (incl. its sticky rail + fixed sidebar offsets).
+  - Added missing compensation: goals, inspiration (had none — always overlapped).
+  - **Removed legacy in-flow headers** (wordmark + ClassSwitcher rendered UNDER the fixed AppHeader = double header): files, assignments, profile/[userId], profile/edit. Files' mobile fixed-header CSS went too. Profile takeover mode (custom HTML page) pads the shell by --header-h.
+- **Rule for new pages**: never hardcode 52px; pad top-level content with `calc(<spacing> + var(--header-h, 52px))`, and mobile pager panels (home/orbit/lab/manage) reset it because .pager-track already offsets.
+
+### Inspiration: editable topics + algorithm export — 2026-07-26
+- **Status**: `attempted`
+- **What**: `users.inspo_topics` (migration 052) — user-editable search topics for the feed, falling back to profile interests when empty. "Searching for: … [Edit topics]" row on the page; saving immediately enqueues a fresh batch (and "Reset to interests" clears the override). "Export my algorithm" downloads `inspiration-algorithm.json`: topics, interests, the exact next-batch query, derived taste model (kind tallies → quotas, blocked words), and full saved/liked/disliked item lists (format `eating.computer-inspiration-v1`).
+
 ## Chat — desktop margin scrolling
 
 ### Wheel over page margins scrolls the chat — 2026-07-22

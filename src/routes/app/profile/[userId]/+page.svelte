@@ -371,14 +371,8 @@
 		<canvas class="fx-canvas" bind:this={fxCanvas}></canvas>
 	{/if}
 
-	<header>
-		<a class="wordmark" href="/">eating.computer</a>
-		<nav>
-			<a href="/app">Dashboard</a>
-			<a href="/app/chat">Chat</a>
-		</nav>
-	</header>
-
+	<!-- No in-flow header: the layout's fixed AppHeader covers /app pages;
+	     content pads below it by the measured --header-h. -->
 	{#if showCustomPage}
 		<!-- MySpace mode: the owner's own HTML document replaces the whole
 		     profile. sandbox WITHOUT allow-same-origin gives it an opaque
@@ -685,37 +679,8 @@
 		pointer-events: none;
 	}
 
-	header {
-		display: flex;
-		align-items: center;
-		gap: 2rem;
-		padding: 1rem 2rem;
-		border-bottom: 1.5px solid var(--border);
-		position: relative;
-		z-index: 1;
-	}
-	.vibed header {
-		background: color-mix(in srgb, var(--paper) 70%, transparent);
-		backdrop-filter: blur(10px);
-		-webkit-backdrop-filter: blur(10px);
-		border-bottom-color: color-mix(in srgb, var(--border) 50%, transparent);
-	}
-
-	.wordmark {
-		font-family: 'Avara', serif;
-		font-size: 1.25rem;
-		color: var(--ink);
-		text-decoration: none;
-		flex-shrink: 0;
-	}
-	.wordmark:hover { opacity: 0.7; }
-
-	nav { display: flex; gap: 1.25rem; font-size: 0.875rem; }
-	nav a { color: var(--muted-fg); text-decoration: none; font-weight: 500; }
-	nav a:hover { color: var(--ink); }
-
 	main {
-		padding: 2rem;
+		padding: calc(1.5rem + var(--header-h, 52px)) 2rem 2rem;
 		max-width: 640px;
 		width: 100%;
 		margin: 0 auto;
@@ -980,6 +945,9 @@
 	.shell.takeover {
 		height: 100dvh;
 		overflow: hidden;
+		/* Custom page sits below the fixed global header. */
+		padding-top: var(--header-h, 52px);
+		box-sizing: border-box;
 	}
 	.custom-bar {
 		display: flex;

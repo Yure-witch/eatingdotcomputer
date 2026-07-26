@@ -1,6 +1,5 @@
 <script>
 	import { enhance } from '$app/forms';
-	import ClassSwitcher from '$lib/components/ClassSwitcher.svelte';
 
 	let { data, form } = $props();
 	const isInstructor = data.role === 'instructor';
@@ -24,13 +23,8 @@
 </svelte:head>
 
 <div class="shell">
-	<header>
-		<div class="wordmark-wrap">
-			<a class="wordmark" href="/">eating.computer</a>
-			<ClassSwitcher currentClass={data.currentClass} allClasses={data.allClasses} />
-		</div>
-	</header>
-
+	<!-- No in-flow header: the layout's fixed AppHeader covers every /app
+	     page — main pads below it by the measured --header-h instead. -->
 	<main>
 		<div class="page-header">
 			<h1>Assignments</h1>
@@ -227,36 +221,8 @@
 		background: var(--paper);
 	}
 
-	header {
-		display: flex;
-		align-items: center;
-		gap: 2rem;
-		padding: 1rem 2rem;
-		border-bottom: 1.5px solid var(--border);
-	}
-
-	.wordmark-wrap {
-		display: flex;
-		flex-direction: column;
-		gap: 0.1rem;
-		flex-shrink: 0;
-	}
-
-	.wordmark {
-		font-family: 'Avara', serif;
-		font-size: 1.25rem;
-		color: var(--ink);
-		text-decoration: none;
-	}
-	.wordmark:hover { opacity: 0.7; }
-
-
-	nav { display: flex; gap: 1.25rem; font-size: 0.875rem; }
-	nav a { color: var(--muted-fg); text-decoration: none; font-weight: 500; }
-	nav a:hover, nav a.active { color: var(--ink); }
-
 	main {
-		padding: 2rem;
+		padding: calc(1.5rem + var(--header-h, 52px)) 2rem 2rem;
 		max-width: 760px;
 		width: 100%;
 		margin: 0 auto;

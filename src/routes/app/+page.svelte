@@ -1008,7 +1008,7 @@
 
 	/* Main */
 	main {
-		flex: 1; padding: 2.5rem 1.5rem; padding-top: calc(2.5rem + 52px); max-width: 680px;
+		flex: 1; padding: 2.5rem 1.5rem; padding-top: calc(2.5rem + var(--header-h, 52px)); max-width: 680px;
 		width: 100%; margin: 0 auto; box-sizing: border-box;
 	}
 

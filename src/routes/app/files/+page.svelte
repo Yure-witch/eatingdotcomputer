@@ -1,6 +1,5 @@
 <script>
 	import { onMount } from 'svelte';
-	import ClassSwitcher from '$lib/components/ClassSwitcher.svelte';
 	import FileTypeIcon from '$lib/components/FileTypeIcon.svelte';
 
 	let { data } = $props();
@@ -49,13 +48,8 @@
 <svelte:head><title>Files — eating.computer</title></svelte:head>
 
 <div class="shell">
-	<header>
-		<div class="wordmark-wrap">
-			<a class="wordmark" href="/">eating.computer</a>
-			<ClassSwitcher currentClass={data.currentClass} allClasses={data.allClasses} />
-		</div>
-	</header>
-
+	<!-- No in-flow header: the layout's fixed AppHeader covers every /app
+	     page — main pads below it by the measured --header-h instead. -->
 	<main>
 		<div class="page-header">
 			<h1>Files</h1>
@@ -165,41 +159,10 @@
 		background: var(--paper);
 	}
 
-	/* ── Header ── */
-	header {
-		display: flex;
-		align-items: center;
-		gap: 2rem;
-		padding: 1rem 2rem;
-		border-bottom: 1.5px solid var(--border);
-		flex-shrink: 0;
-	}
-	.wordmark-wrap {
-		display: flex;
-		flex-direction: column;
-		gap: 0.1rem;
-		flex-shrink: 0;
-	}
-	.wordmark {
-		font-family: 'Avara', serif;
-		font-size: 1.25rem;
-		color: var(--ink);
-		text-decoration: none;
-		white-space: nowrap;
-	}
-	.wordmark:hover { opacity: 0.7; }
-	.back-link {
-		font-size: 0.82rem;
-		color: var(--muted-fg);
-		text-decoration: none;
-		font-weight: 500;
-	}
-	.back-link:hover { color: var(--ink); }
-
 	/* ── Main ── */
 	main {
 		flex: 1;
-		padding: 2rem 1.5rem;
+		padding: calc(1.5rem + var(--header-h, 52px)) 1.5rem 2rem;
 		max-width: 900px;
 		width: 100%;
 		margin: 0 auto;
@@ -359,14 +322,9 @@
 
 	/* ── Mobile ── */
 	@media (max-width: 640px) {
-		header {
-			position: fixed; top: 0; left: 0; right: 0; z-index: 10;
-			background: var(--paper);
-			padding: 0.75rem 1rem;
-		}
 		main {
 			padding: 1.25rem 1rem;
-			padding-top: 3.75rem;
+			padding-top: calc(1rem + var(--header-h, 52px));
 			padding-bottom: calc(56px + env(safe-area-inset-bottom, 0px) + 1.25rem);
 		}
 		h1 { font-size: 1.5rem; }

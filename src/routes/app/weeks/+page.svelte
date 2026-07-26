@@ -257,7 +257,7 @@
 	.weeks-page {
 		min-height: 100dvh;
 		background: var(--paper);
-		padding: calc(2rem + 52px) 2rem 4rem;
+		padding: calc(2rem + var(--header-h, 52px)) 2rem 4rem;
 		max-width: 1120px;
 		margin: 0 auto;
 		box-sizing: border-box;
@@ -701,7 +701,7 @@
 	/* ── Responsive ───────────────────────────── */
 	@media (max-width: 800px) {
 		.weeks-page {
-			padding: calc(1.25rem + 52px) 1rem;
+			padding: calc(1.25rem + var(--header-h, 52px)) 1rem;
 			padding-bottom: calc(56px + env(safe-area-inset-bottom, 0px) + 1.25rem);
 		}
 		.hero {

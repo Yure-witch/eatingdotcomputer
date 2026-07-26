@@ -128,7 +128,7 @@
 		display: flex;
 		align-items: flex-start;
 		justify-content: center;
-		padding: calc(2rem + 52px) 1.5rem 4rem;
+		padding: calc(2rem + var(--header-h, 52px)) 1.5rem 4rem;
 		box-sizing: border-box;
 	}
 	.ai-card { width: 100%; max-width: 520px; }

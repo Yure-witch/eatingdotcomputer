@@ -221,7 +221,7 @@
 
 <style>
 	.goals-shell { min-height: 100%; background: var(--paper); }
-	main { max-width: 640px; margin: 0 auto; padding: 1.5rem 1.25rem 4rem; }
+	main { max-width: 640px; margin: 0 auto; padding: calc(1rem + var(--header-h, 52px)) 1.25rem 4rem; }
 	.page-head h1 { font-family: 'Avara', serif; font-size: 1.5rem; margin: 0 0 0.35rem; }
 	.page-sub { font-size: 0.85rem; color: var(--muted-fg); margin: 0 0 1.5rem; line-height: 1.5; }
 	.goals-section { margin-bottom: 1.75rem; }

@@ -11,6 +11,10 @@
 	let loading = $state(true);
 	let items = $state([]);
 	let interests = $state('');
+	let topics = $state('');
+	let editingTopics = $state(false);
+	let topicsDraft = $state('');
+	let topicsSaving = $state(false);
 	let scoutOnline = $state(false);
 	let pending = $state(false); // a batch is in flight on the worker
 	let view = $state('fresh'); // fresh | saved | history
@@ -24,6 +28,7 @@
 				const j = await r.json();
 				items = j.items ?? [];
 				interests = j.interests ?? '';
+				topics = j.topics ?? '';
 				scoutOnline = !!j.scoutOnline;
 				pending = !!j.pending;
 				if (history) historyLoaded = true;
@@ -90,6 +95,37 @@
 		} catch { item.saved = !item.saved; }
 	}
 
+	// Edit the search topics. Saving immediately enqueues a fresh batch so
+	// the change is felt right away; '' resets back to profile interests.
+	async function saveTopics() {
+		topicsSaving = true;
+		try {
+			const r = await fetch('/api/inspiration', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ topics: topicsDraft })
+			});
+			if (r.ok) {
+				topics = topicsDraft.trim() || interests;
+				editingTopics = false;
+				pending = true;
+				if (!pollTimer) pollTimer = setTimeout(() => { pollTimer = null; load(view === 'history'); }, 6000);
+			}
+		} catch { /* stays open, user can retry */ }
+		topicsSaving = false;
+	}
+
+	// Download the whole "algorithm" — topics, every signal, and the
+	// derived taste model — as a JSON file.
+	function exportAlgorithm() {
+		const a = document.createElement('a');
+		a.href = '/api/inspiration?export=1';
+		a.download = 'inspiration-algorithm.json';
+		document.body.appendChild(a);
+		a.click();
+		a.remove();
+	}
+
 	// Like/dislike — teaches the algorithm (likes steer the next batch's
 	// query; dislikes shrink that kind's quota + block recurring words).
 	// Disliking removes the item from the feed on the spot.
@@ -137,15 +173,43 @@
 			</p>
 		</div>
 
+		{#if interests || topics}
+			<div class="topics-row">
+				{#if editingTopics}
+					<input
+						class="topics-input"
+						bind:value={topicsDraft}
+						placeholder="e.g. risograph printing, algorithmic composition, brutalism"
+						maxlength="300"
+						onkeydown={(e) => { if (e.key === 'Enter') saveTopics(); if (e.key === 'Escape') editingTopics = false; }}
+					/>
+					<button class="view-chip" disabled={topicsSaving} onclick={saveTopics}>{topicsSaving ? 'Saving…' : 'Save & search'}</button>
+					<button class="view-chip" onclick={() => (editingTopics = false)}>Cancel</button>
+					{#if topics !== interests}
+						<button class="view-chip" onclick={() => { topicsDraft = ''; saveTopics(); }}>Reset to interests</button>
+					{/if}
+				{:else}
+					<span class="topics-label">Searching for:</span>
+					<span class="topics-value">{topics}</span>
+					<button class="topics-edit" title="Change the topics the feed searches for" onclick={() => { topicsDraft = topics; editingTopics = true; }}>
+						<span class="msi">edit</span> Edit topics
+					</button>
+				{/if}
+			</div>
+		{/if}
+
 		<div class="view-row">
 			<button class="view-chip" class:active={view === 'fresh'} onclick={() => setView('fresh')}>Fresh</button>
 			<button class="view-chip" class:active={view === 'saved'} onclick={() => setView('saved')}>Saved</button>
 			<button class="view-chip" class:active={view === 'history'} onclick={() => setView('history')}>History</button>
+			<button class="view-chip export-chip" title="Download your topics, saves, likes/dislikes, and the derived taste model as JSON" onclick={exportAlgorithm}>
+				<span class="msi">download</span> Export my algorithm
+			</button>
 		</div>
 
 		{#if loading}
 			<p class="empty"><span class="msi inspo-spin">progress_activity</span> Gemma is out looking for new things…</p>
-		{:else if !interests}
+		{:else if !topics}
 			<p class="empty">No interests on file yet — add them in your <a href="/app/profile/edit">profile</a> (or ask your instructor to fill them in on the Manage page) and check back tomorrow.</p>
 		{:else if !visible.length}
 			{#if view === 'saved'}
@@ -201,7 +265,7 @@
 			{/each}
 		{/if}
 
-		{#if interests && !loading && view !== 'saved'}
+		{#if topics && !loading && view !== 'saved'}
 			<div class="more-row">
 				{#if pending}
 					<span class="more-pending"><span class="msi inspo-spin">progress_activity</span> Scout is out fetching a new batch — new finds drop in as they land…</span>
@@ -218,12 +282,36 @@
 
 <style>
 	.inspo-shell { min-height: 100%; background: var(--paper); }
-	main { max-width: 680px; margin: 0 auto; padding: 1.5rem 1.25rem 4rem; }
+	main { max-width: 680px; margin: 0 auto; padding: calc(1rem + var(--header-h, 52px)) 1.25rem 4rem; }
 	.page-head h1 { font-family: 'Avara', serif; font-size: 1.5rem; margin: 0 0 0.35rem; }
 	.page-sub { font-size: 0.85rem; color: var(--muted-fg); margin: 0 0 1rem; line-height: 1.5; }
 	.page-sub strong { color: var(--ink); font-weight: 600; }
 
-	.view-row { display: flex; gap: 0.4rem; margin-bottom: 1.5rem; }
+	.topics-row {
+		display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
+		margin-bottom: 0.75rem; font-size: 0.82rem;
+	}
+	.topics-label { color: var(--muted-fg); font-weight: 600; flex-shrink: 0; }
+	.topics-value { color: var(--ink); }
+	.topics-edit {
+		display: inline-flex; align-items: center; gap: 0.25rem;
+		background: none; border: none; padding: 0.15rem 0.3rem;
+		font-family: inherit; font-size: 0.78rem; font-weight: 600;
+		color: var(--md-sys-color-primary, var(--accent)); cursor: pointer;
+	}
+	.topics-edit:hover { text-decoration: underline; }
+	.topics-edit .msi { font-size: 15px; }
+	.topics-input {
+		flex: 1; min-width: 220px;
+		padding: 0.45rem 0.7rem; border: 1.5px solid var(--border); border-radius: 8px;
+		font-family: inherit; font-size: 0.85rem; color: var(--ink); background: var(--paper);
+		outline: none;
+	}
+	.topics-input:focus { border-color: var(--ink); }
+
+	.view-row { display: flex; gap: 0.4rem; margin-bottom: 1.5rem; flex-wrap: wrap; }
+	.export-chip { display: inline-flex; align-items: center; gap: 0.3rem; margin-left: auto; }
+	.export-chip .msi { font-size: 15px; }
 	.view-chip {
 		padding: 0.35rem 0.9rem; font-family: inherit; font-size: 0.8rem; font-weight: 600;
 		background: none; color: var(--muted-fg); border: 1.5px solid var(--border);

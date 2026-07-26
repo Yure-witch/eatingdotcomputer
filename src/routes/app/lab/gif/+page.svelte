@@ -1126,12 +1126,12 @@
 	.shell {
 		min-height: 100dvh;
 		background: var(--paper);
-		padding-top: 52px;
+		padding-top: var(--header-h, 52px);
 		box-sizing: border-box;
 	}
 	.topbar {
 		position: sticky;
-		top: 52px;
+		top: var(--header-h, 52px);
 		z-index: 5;
 		display: flex;
 		align-items: center;
@@ -1169,7 +1169,7 @@
 		box-sizing: border-box;
 	}
 
-	.preview-wrap { position: sticky; top: calc(52px + 4rem); align-self: start; }
+	.preview-wrap { position: sticky; top: calc(var(--header-h, 52px) + 4rem); align-self: start; }
 	.preview-frame {
 		border-radius: 16px;
 		overflow: hidden;
