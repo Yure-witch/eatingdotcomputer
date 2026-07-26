@@ -16,7 +16,7 @@
 	// window into what each student likes, personally and for the class.
 	const isInstructor = $derived($page.data?.currentUser?.role === 'instructor');
 	let scope = $state('class'); // class | mine | students
-	let classMode = $state('all'); // all (whole syllabus mixed) | weekly (per week)
+	let classMode = $state('weekly'); // weekly (per week, default) | all (whole syllabus mixed)
 	let weeks = $state([]); // per-week feeds when classMode === 'weekly'
 
 	let loading = $state(true);
@@ -103,7 +103,7 @@
 		insights = null;
 		fullLoaded = false;
 		view = 'fresh';
-		classMode = 'all';
+		classMode = 'weekly';
 		clearTimeout(pollTimer); pollTimer = null; pollsLeft = 0;
 		load();
 	}
