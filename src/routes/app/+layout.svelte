@@ -1951,6 +1951,15 @@
 				</div>
 			</a>
 		</div>
+		<div class="member-row">
+			<a class="conv-item" href="/app/inspiration" class:active={$page.url.pathname === '/app/inspiration'} draggable="false">
+				<span class="avatar-wrap gemma-goals-icon">✨</span>
+				<div class="member-text">
+					<span class="member-name">Inspiration</span>
+					<span class="conv-last conv-last-empty">Daily finds for your interests</span>
+				</div>
+			</a>
+		</div>
 	</div>
 
 	{#if data.channels?.length}

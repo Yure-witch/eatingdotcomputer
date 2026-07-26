@@ -65,10 +65,12 @@ export async function POST({ request }) {
 	} else {
 		let result = Array.isArray(body.result) ? body.result : [];
 		// Cap stored payload — a result is a handful of links, not a dump.
-		result = result.slice(0, 20).map((r) => ({
+		result = result.slice(0, 40).map((r) => ({
+			kind: String(r?.kind ?? 'link').slice(0, 20),
 			title: String(r?.title ?? '').slice(0, 200),
 			url: String(r?.url ?? '').slice(0, 500),
 			snippet: String(r?.snippet ?? '').slice(0, 300),
+			meta: String(r?.meta ?? '').slice(0, 120),
 			source: String(r?.source ?? '').slice(0, 40),
 			image: r?.image ? String(r.image).slice(0, 500) : null
 		})).filter((r) => r.url.startsWith('http'));
