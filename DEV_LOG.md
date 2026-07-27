@@ -300,6 +300,12 @@ The following major areas need to be built. None are started yet.
 - **Status**: `attempted`
 - **What**: The always-DOI guard was silently DROPPING valuable no-DOI works — which turn out to be canonical BOOKS (Bringhurst *Elements of Typographic Style*, Geuss *Idea of a Critical Theory*, *Designing Interaction*). Books rarely have DOIs and can't route through OpenAthens (that's for e-journals). Now: DOI present → DOI link + Cooper OpenAthens (article); no DOI → **Google Books search** by title+author (`google.com/search?tbm=bks`) — never hidden, always lands on the book (preview + borrow/buy), linked direct. materialize `usableUrl` accepts doi.org OR google-books search for papers (still rejects catalog stubs). Frontend: `isDoiPaper` splits routing + icon (account_balance vs menu_book) + label (via Cooper Library vs book·find a copy). Verified a book-heavy query returns 10 papers, books as find-links, zero dropped.
 
+## Recommendations — Rijksmuseum (new keyless Linked Art API)
+
+### Rijksmuseum source — prints / graphic design / typography — 2026-07-26
+- **Status**: `attempted`
+- **What**: Rijksmuseum's legacy keyed API is gone (410); moved to a keyless **Linked Art** API. Worked out the shape: `GET data.rijksmuseum.nl/search/collection?description=<q>&imageAvailable=true` → `orderedItems[].id` (Linked Open Data IDs), and the image is FOUR hops deep — object (`identified_by` Name = title, Identifier = object number for the web URL; `shows` → VisualItem) → VisualItem (`digitally_shown_by` → DigitalObject) → DigitalObject (`access_point[].id` = IIIF `.../full/max/0/default.jpg`, resized to `/full/400,/`). So `searchRijks` resolves only the top 2 hits (rot-rotated) to bound the fetch cost. Trusted like V&A (its English `description` search is genuinely on-topic; Dutch titles wouldn't survive a keyword re-filter). source 'rijks' (not strict). Verified typography/graphic-design/poster → real prints (Escher-adjacent, cover designs) with loading IIIF images.
+
 ## Recommendations — Harvard Art Museums + better stemming
 
 ### Harvard source (Bauhaus/design/typography) — 2026-07-26

@@ -162,7 +162,7 @@
 	const KIND_SECTIONS = [
 		{ key: 'paper', title: 'Seminal papers', sub: 'the most-cited scholarship on your interests — what everyone in the field has read. Opens through Cooper Library — sign in with your Cooper login.' },
 		{ key: 'arena_img', title: 'are.na images', sub: 'pulled from channels people keep about these topics' },
-		{ key: 'artwork', title: 'From the museums & archives', sub: 'V&A · Europeana (Ars Electronica, ZKM…) · Harvard · The Met · Art Institute · Cleveland' },
+		{ key: 'artwork', title: 'From the museums & archives', sub: 'V&A · Europeana (Ars Electronica, ZKM…) · Harvard · Rijksmuseum · The Met · Art Institute · Cleveland' },
 		{ key: 'channel', title: 'are.na channels', sub: 'curated rabbit holes' },
 		{ key: 'article', title: 'Overviews', sub: 'ground-floor context' },
 		{ key: 'link', title: 'Elsewhere', sub: '' }

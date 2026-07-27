@@ -325,6 +325,49 @@ async function searchHarvard(q) {
 	return topSlice(items.filter((a) => matchesQuery(a._hay, stems))).map(({ _hay, ...a }) => a);
 }
 
+// Rijksmuseum — keyless now, but on a new Linked Art API (data.rijksmuseum.nl)
+// where an image lives four hops deep: search → object → VisualItem →
+// DigitalObject → IIIF url. So we resolve only the top 2 hits. Its English
+// `description` search is genuinely on-topic (matches the concept in the
+// record), so it's trusted like V&A — no keyword re-filter (Dutch titles
+// wouldn't contain the English query anyway). Great for prints / graphic
+// design / typography.
+async function rijksResolve(objId) {
+	const o = await (await politeFetch(objId)).json();
+	const idBy = o.identified_by ?? [];
+	const title = idBy.find((x) => x.type === 'Name')?.content;
+	const objNum = idBy.find((x) => x.type === 'Identifier' && /^[A-Za-z]/.test(x.content ?? ''))?.content;
+	const visualId = o.shows?.[0]?.id;
+	if (!visualId) return null;
+	const v = await (await politeFetch(visualId)).json();
+	const digId = v.digitally_shown_by?.[0]?.id;
+	if (!digId) return null;
+	const dobj = await (await politeFetch(digId)).json();
+	const iiif = dobj.access_point?.[0]?.id;
+	if (!iiif) return null;
+	return {
+		kind: 'artwork',
+		title: title || 'Untitled',
+		url: objNum ? `https://www.rijksmuseum.nl/en/collection/${objNum}` : objId,
+		snippet: '',
+		meta: 'Rijksmuseum',
+		source: 'rijks',
+		image: iiif.replace('/full/max/', '/full/400,/')
+	};
+}
+
+async function searchRijks(q) {
+	const r = await politeFetch(`https://data.rijksmuseum.nl/search/collection?description=${encodeURIComponent(q)}&imageAvailable=true`);
+	if (!r.ok) return [];
+	const d = await r.json();
+	const ids = (d.orderedItems ?? []).slice(rot(2), rot(2) + 2).map((x) => x.id).filter(Boolean);
+	const out = [];
+	for (const objId of ids) {
+		try { const it = await rijksResolve(objId); if (it) out.push(it); } catch { /* skip */ }
+	}
+	return out;
+}
+
 // Top channels about the topic. Kept and returned so the "are.na channels"
 // section stays; also reused as the source for topical images below.
 async function arenaTopChannels(q, n = 3) {
@@ -411,7 +454,7 @@ async function runSearch(query) {
 	if (m) query = String(query).slice(0, m.index);
 	const out = [];
 	for (const part of splitQuery(query)) {
-		const [papers, chans, arenaImgs, wiki, met, aic, cle, vam, euro, pioneers, harvard] = await Promise.all([
+		const [papers, chans, arenaImgs, wiki, met, aic, cle, vam, euro, pioneers, harvard, rijks] = await Promise.all([
 			searchOpenAlexSeminal(part).catch(() => []),
 			searchArenaChannels(part).catch(() => []),
 			searchArenaImages(part).catch(() => []),
@@ -422,9 +465,10 @@ async function runSearch(query) {
 			searchVA(part).catch(() => []),
 			searchEuropeana(part).catch(() => []),
 			searchPioneers(part).catch(() => []),
-			searchHarvard(part).catch(() => [])
+			searchHarvard(part).catch(() => []),
+			searchRijks(part).catch(() => [])
 		]);
-		out.push(...pioneers, ...papers, ...chans, ...arenaImgs, ...wiki, ...met, ...aic, ...cle, ...vam, ...euro, ...harvard);
+		out.push(...pioneers, ...papers, ...chans, ...arenaImgs, ...wiki, ...met, ...aic, ...cle, ...vam, ...euro, ...harvard, ...rijks);
 	}
 	// de-dupe by URL, keep order
 	const seen = new Set();
