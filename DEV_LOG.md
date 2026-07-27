@@ -300,6 +300,16 @@ The following major areas need to be built. None are started yet.
 - **Status**: `attempted`
 - **What**: The always-DOI guard was silently DROPPING valuable no-DOI works — which turn out to be canonical BOOKS (Bringhurst *Elements of Typographic Style*, Geuss *Idea of a Critical Theory*, *Designing Interaction*). Books rarely have DOIs and can't route through OpenAthens (that's for e-journals). Now: DOI present → DOI link + Cooper OpenAthens (article); no DOI → **Google Books search** by title+author (`google.com/search?tbm=bks`) — never hidden, always lands on the book (preview + borrow/buy), linked direct. materialize `usableUrl` accepts doi.org OR google-books search for papers (still rejects catalog stubs). Frontend: `isDoiPaper` splits routing + icon (account_balance vs menu_book) + label (via Cooper Library vs book·find a copy). Verified a book-heavy query returns 10 papers, books as find-links, zero dropped.
 
+## Recommendations — moved storage to Firebase RTDB
+
+### Recs + reactions now live in RTDB (was Turso); stable order — 2026-07-27
+- **Status**: `attempted`
+- **What**: The "recs change on the same page" was Turso re-materializing + re-sorting on every poll. Moved the STORE to **Firebase RTDB** (Turso keeps only the scout_jobs QUEUE + syllabus + users). New modules: `recs-filter.js` (pure filter/quota, DB-free) and `recs-rtdb.js` (read/write via firebase-admin). Paths: `recs/users/{uid}/items/{k}` (personal, saved/rating on the node), `recs/class/{cid}/blended/{k}`, `recs/class/{cid}/weeks/{n}/{k}`, `recs/class/{cid}/reactions/{k}/{uid}` (every student's like visible → instructor Students view aggregates them). `k` = sha1(url) so re-writing a batch never reshuffles — items keep their original createdAt, order is stable.
+  - **"kahan posts to RTDB"**: the worker POSTs results to `/api/scout/jobs` as before; that handler now calls `writeJobRecs(tag, query, results)` — the app (which holds the Firebase creds) writes them straight to RTDB. Kahan itself stays credential-free.
+  - `inspiration.js` rewritten: enqueue/queue logic stays in Turso, all reads + reactions go through RTDB. Reaction itemId is now the RTDB key (string), not an int — API + frontend already pass `item.id`.
+  - Migrated existing Turso rows → RTDB (99 personal, 42 blended, 16 weekly items).
+- **Latent bug the migration surfaced + fixed**: the paper-URL check `/(^|\.)doi\.org\//` REJECTED every real DOI (host is preceded by `//`, not `.`). It went unnoticed because old DOI papers persisted in Turso from before the check was added — fresh RTDB exposed it (no papers). Fixed to `/^https?:\/\/([a-z0-9-]+\.)*doi\.org\//` (+ spoof-safe). Old Turso tables left in place (unused, non-destructive).
+
 ## Recommendations — de-dup All-topics vs By-week
 
 ### Class 'All topics' excludes what 'By week' already shows — 2026-07-27

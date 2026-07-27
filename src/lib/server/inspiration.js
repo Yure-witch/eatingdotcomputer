@@ -1,75 +1,73 @@
-// Inspiration feed — per-user recommendations built from Scout results
-// (seminal papers via OpenAlex, artworks from four museums, are.na
-// channels, Wikipedia overviews), keyed off users.interests.
+// Inspiration / Recommendations — orchestration.
 //
-// Batch model (async — no long serverless holds):
-//   - a "batch" is one Scout job with query `<signals> #s<seed>`; the seed
-//     counts the user's prior jobs and pushes every source deeper into
-//     its results, so Fetch More brings genuinely new finds
-//   - GET materializes any completed-but-unmaterialized jobs (idempotent
-//     via the per-user URL unique index), auto-enqueues when stale, and
-//     reports `pending` so the client can poll
+// STORAGE split:
+//   • Turso  — the Scout job QUEUE (scout_jobs) + syllabus (week_plans) +
+//              users (interests/topics). This is where batches are enqueued
+//              and where the worker picks up work.
+//   • RTDB   — the recommendations themselves and every reaction (see
+//              recs-rtdb.js). Written when the worker POSTs a finished job
+//              (api/scout/jobs → writeJobRecs), read here. RTDB is the single
+//              source of truth for what's shown, so items keep a stable order
+//              and the whole class's likes are visible/aggregatable.
 //
-// Feedback loop (rating: 1 liked / -1 disliked, plus saved):
-//   - liked + saved titles are folded into the next batch's query
-//   - per-kind quotas shift with the like/dislike tally (dislike papers →
-//     fewer papers next time, never zero so taste can recover)
-//   - words recurring across disliked titles are blocked from new items
-//   - disliked items leave the feed immediately (History still shows them)
-//
-// Unsaved items EXPIRE out of the main feed after EXPIRE_DAYS but stay in
-// the History view.
+// This module: builds queries from interests/syllabus, enqueues batches
+// (Turso), and reads/reacts through RTDB.
 import { getDb } from '$lib/server/turso.js';
+import {
+	readUserFeed, readClassBlended, readClassWeekly,
+	setUserReaction, setClassReaction,
+	readClassReactionsRaw, readUserLikes, readClassItemsByKey
+} from '$lib/server/recs-rtdb.js';
 
 export const EXPIRE_DAYS = 7;
-const EXPIRE_MS = EXPIRE_DAYS * 24 * 60 * 60 * 1000;
 const REFRESH_MS = 20 * 60 * 60 * 1000; // auto-batch "every day or so"
 
-const BASE_QUOTA = { paper: 5, arena_img: 6, artwork: 12, channel: 4, article: 3, link: 4 };
-const STOPWORDS = new Set(['this', 'that', 'with', 'from', 'what', 'when', 'where', 'which', 'their', 'about', 'into', 'have', 'been', 'were', 'untitled', 'series']);
-
-const rowToItem = (r) => ({
-	id: Number(r.id),
-	kind: String(r.kind),
-	source: r.source ? String(r.source) : null,
-	title: String(r.title),
-	url: String(r.url),
-	snippet: r.snippet ? String(r.snippet) : '',
-	meta: r.meta ? String(r.meta) : '',
-	image: r.image ? String(r.image) : null,
-	paywalled: !!Number(r.paywalled),
-	saved: !!Number(r.saved),
-	rating: Number(r.rating ?? 0),
-	savedAt: r.saved_at ? String(r.saved_at) : null,
-	createdAt: String(r.created_at),
-	expired: Date.now() - new Date(String(r.created_at).replace(' ', 'T') + 'Z').getTime() > EXPIRE_MS
-});
-
 const tag = (userId) => `inspo:${userId}`;
+const classTag = (classId) => `inspo:class:${classId}`;
+const weekTag = (classId, w) => `inspo:class:${classId}:w${w}`;
 
-// Fold positive signals into the query — liked/saved titles steer the
-// next batch toward what the user actually responded to.
-async function buildQuery(db, userId, interests) {
-	const liked = (await db.execute({
-		sql: `SELECT title FROM inspiration_items WHERE user_id = ? AND (saved = 1 OR rating = 1)
-		      ORDER BY COALESCE(saved_at, created_at) DESC LIMIT 3`,
-		args: [userId]
-	})).rows;
-	const terms = liked.map((s) => String(s.title).split(/\s+/).slice(0, 4).join(' '));
+// ── Turso queue helpers ────────────────────────────────────────────────────
+async function isPending(db, t) {
+	return !!(await db.execute({
+		sql: `SELECT id FROM scout_jobs WHERE requested_by = ? AND status IN ('queued','running') LIMIT 1`,
+		args: [t]
+	})).rows[0];
+}
+async function jobAge(db, t) {
+	const latest = (await db.execute({
+		sql: `SELECT MAX(created_at) latest FROM scout_jobs WHERE requested_by = ?`, args: [t]
+	})).rows[0]?.latest;
+	return latest ? Date.now() - new Date(String(latest).replace(' ', 'T') + 'Z').getTime() : Infinity;
+}
+async function seedFor(db, t) {
+	return Number((await db.execute({
+		sql: `SELECT COUNT(*) AS n FROM scout_jobs WHERE requested_by = ?`, args: [t]
+	})).rows[0]?.n ?? 0);
+}
+async function enqueue(db, t, query) {
+	if (!query || await isPending(db, t)) return false;
+	const seed = await seedFor(db, t);
+	await db.execute({
+		sql: `INSERT INTO scout_jobs (kind, query, requested_by) VALUES ('search', ?, ?)`,
+		args: [`${query} #s${seed}`, t]
+	});
+	return true;
+}
+
+// ── Personal feed ("Mine") ─────────────────────────────────────────────────
+
+// Fold liked/saved titles into the next query so the feed leans toward what
+// the student actually responded to (their likes now live in RTDB).
+async function buildQuery(userId, interests) {
+	const likes = (await readUserLikes(userId)).slice(0, 3);
+	const terms = likes.map((l) => String(l.title).split(/\s+/).slice(0, 4).join(' '));
 	return [interests, ...terms].filter(Boolean).join(', ').slice(0, 280);
 }
 
-async function enqueueBatch(db, userId, interests) {
-	const pending = (await db.execute({
-		sql: `SELECT id FROM scout_jobs WHERE requested_by = ? AND status IN ('queued','running') LIMIT 1`,
-		args: [tag(userId)]
-	})).rows[0];
-	if (pending) return false;
-	const seed = Number((await db.execute({
-		sql: `SELECT COUNT(*) AS n FROM scout_jobs WHERE requested_by = ?`,
-		args: [tag(userId)]
-	})).rows[0]?.n ?? 0);
-	const query = `${await buildQuery(db, userId, interests)} #s${seed}`;
+async function enqueuePersonal(db, userId, interests) {
+	if (!interests || await isPending(db, tag(userId))) return false;
+	const seed = await seedFor(db, tag(userId));
+	const query = `${await buildQuery(userId, interests)} #s${seed}`;
 	await db.execute({
 		sql: `INSERT INTO scout_jobs (kind, query, requested_by) VALUES ('search', ?, ?)`,
 		args: [query, tag(userId)]
@@ -77,246 +75,65 @@ async function enqueueBatch(db, userId, interests) {
 	return true;
 }
 
-// Taste model applied at materialize time: per-kind quotas move with the
-// like/dislike tally; words that recur across disliked titles are blocked.
-async function tasteFilter(db, userId, results) {
-	const tallies = {};
-	for (const r of (await db.execute({
-		sql: `SELECT kind, SUM(CASE rating WHEN 1 THEN 1 WHEN -1 THEN -1 ELSE 0 END) AS t
-		      FROM inspiration_items WHERE user_id = ? GROUP BY kind`,
-		args: [userId]
-	})).rows) tallies[String(r.kind)] = Number(r.t ?? 0);
-
-	const dislikedTitles = (await db.execute({
-		sql: `SELECT title FROM inspiration_items WHERE user_id = ? AND rating = -1 ORDER BY id DESC LIMIT 40`,
-		args: [userId]
-	})).rows.map((r) => String(r.title).toLowerCase());
-	const counts = {};
-	for (const t of dislikedTitles) {
-		for (const w of new Set(t.match(/[a-z]{4,}/g) ?? [])) {
-			if (!STOPWORDS.has(w)) counts[w] = (counts[w] ?? 0) + 1;
-		}
-	}
-	const blocked = new Set(Object.keys(counts).filter((w) => counts[w] >= 2));
-
-	const taken = {};
-	return results.filter((r) => {
-		const kind = r.kind ?? 'link';
-		const base = BASE_QUOTA[kind] ?? 4;
-		const quota = Math.max(1, Math.min(base * 2, base + (tallies[kind] ?? 0)));
-		const title = String(r.title ?? '').toLowerCase();
-		for (const w of blocked) if (title.includes(w)) return false;
-		taken[kind] = (taken[kind] ?? 0) + 1;
-		return taken[kind] <= quota;
-	});
-}
-
-// Library catalog-record / link-resolver stubs OpenAlex sometimes lists as
-// "open access" — bibliographic records, not fulltext, and often malformed
-// (ports, HTML-encoded ampersands). They 404 or break the OpenAthens
-// redirector ("Bad Request"). Reject on the way in, belt-and-suspenders
-// against any stale cached job result — the worker no longer emits them.
-const JUNK_URL = /bib-bvb\.de|func=service|doc_library=|func_code=|worldcat\.org|base-search\.net/i;
-
-// A paper link must be resolvable. The worker emits exactly two shapes:
-// a DOI (journal articles) or a Google Books search (no-DOI books). Anything
-// else on a paper is a legacy/mangled catalog stub and is dropped — but we
-// no longer hide no-DOI books, they arrive as find-a-copy search links.
-function usableUrl(r) {
-	const url = String(r?.url ?? '').replace(/&amp;/g, '&');
-	if (!/^https?:\/\//i.test(url) || JUNK_URL.test(url)) return null;
-	if ((r.kind ?? 'link') === 'paper' && !/(^|\.)doi\.org\//i.test(url) && !/google\.[^/]+\/search/i.test(url)) return null;
-	return url;
-}
-
-// Museum relevance guard — mirrors the worker so STALE cached job results
-// (generated before the worker's museum filter) can't re-materialize
-// classical filler into the feed. The encyclopedic fine-art museums must
-// contain a query word in the fields we show; V&A (the design museum) and
-// are.na images are trusted by their own ranking.
-const MUSEUM_STRICT = new Set(['met', 'artic', 'cleveland', 'harvard']);
-const GENERIC_Q = new Set(['concepts', 'concept', 'introduction', 'intro', 'studio', 'class', 'week', 'course', 'design', 'designs', 'making', 'basics', 'fundamentals', 'academic', 'writing', 'research', 'scholarship']);
-const stemWord = (w) => (w.length >= 6 ? w.replace(/(ically|ical|isms?|ists?|ives?|ions?|ings?|ances?|ences?|ers?|ors?|als?|ics?|ies|ys?|es|s)$/, '') : w);
-const queryStems = (q) => (String(q).toLowerCase().replace(/#s\d+\s*$/, '').match(/[a-z]{4,}/g) || [])
-	.filter((w) => !GENERIC_Q.has(w)).map(stemWord).filter((w) => w.length >= 4);
-function museumRelevant(r, stems) {
-	if ((r.kind ?? '') !== 'artwork' || !MUSEUM_STRICT.has(r.source)) return true;
-	if (!stems.length) return true;
-	const t = `${r.title ?? ''} ${r.snippet ?? ''} ${r.meta ?? ''}`.toLowerCase();
-	return stems.some((w) => t.includes(w));
-}
-
-// Insert results from every completed-but-recent job. Idempotent: the
-// per-user URL unique index makes re-materializing a no-op.
-async function materialize(db, userId) {
-	const jobs = (await db.execute({
-		sql: `SELECT id, query, result FROM scout_jobs
-		      WHERE requested_by = ? AND status = 'done' AND updated_at > datetime('now', '-2 days')`,
-		args: [tag(userId)]
-	})).rows;
-	for (const job of jobs) {
-		let results;
-		try { results = JSON.parse(String(job.result)); } catch { continue; }
-		if (!Array.isArray(results)) continue;
-		const stems = queryStems(job.query ?? '');
-		for (const r of await tasteFilter(db, userId, results)) {
-			if (!museumRelevant(r, stems)) continue;
-			const url = usableUrl(r);
-			if (!url) continue;
-			await db.execute({
-				sql: `INSERT OR IGNORE INTO inspiration_items (user_id, kind, source, title, url, snippet, meta, image, paywalled)
-				      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-				args: [userId, r.kind ?? 'link', r.source ?? null, r.title ?? '(untitled)', url, r.snippet ?? '', r.meta ?? '', r.image ?? null, r.paywalled ? 1 : 0]
-			});
-		}
-	}
-}
-
-async function latestJobAge(db, userId) {
-	const row = (await db.execute({
-		sql: `SELECT MAX(created_at) AS latest FROM scout_jobs WHERE requested_by = ?`,
-		args: [tag(userId)]
-	})).rows[0];
-	if (!row?.latest) return Infinity;
-	return Date.now() - new Date(String(row.latest).replace(' ', 'T') + 'Z').getTime();
-}
-
 export async function getInspirationFeed(userId, { history = false } = {}) {
 	const db = getDb();
-	if (!db) return { items: [], interests: '', pending: false };
-
+	if (!db) return { items: [], interests: '', topics: '', pending: false };
 	const u = (await db.execute({ sql: 'SELECT interests, inspo_topics FROM users WHERE id = ?', args: [userId] })).rows[0];
 	const interests = u?.interests ? String(u.interests) : '';
-	// Search topics: the user-editable override; interests are the default.
 	const topics = (u?.inspo_topics ? String(u.inspo_topics) : '') || interests;
 
-	await materialize(db, userId);
-	if (topics && (await latestJobAge(db, userId)) > REFRESH_MS) {
-		await enqueueBatch(db, userId, topics);
-	}
+	if (topics && (await jobAge(db, tag(userId))) > REFRESH_MS) await enqueuePersonal(db, userId, topics);
 
-	const pending = !!(await db.execute({
-		sql: `SELECT id FROM scout_jobs WHERE requested_by = ? AND status IN ('queued','running') LIMIT 1`,
-		args: [tag(userId)]
-	})).rows[0];
-
-	const rows = (await db.execute({
-		sql: history
-			? `SELECT * FROM inspiration_items WHERE user_id = ? ORDER BY created_at DESC, id DESC LIMIT 400`
-			: `SELECT * FROM inspiration_items WHERE user_id = ? AND rating > -1
-			   AND (saved = 1 OR created_at > datetime('now', '-${EXPIRE_DAYS} days'))
-			   ORDER BY created_at DESC, id DESC LIMIT 150`,
-		args: [userId]
-	})).rows;
-
-	return { items: rows.map(rowToItem), interests, topics, pending };
+	const all = await readUserFeed(userId);
+	const items = history ? all : all.filter((i) => i.rating > -1 && (i.saved || !i.expired));
+	return { items, interests, topics, pending: await isPending(db, tag(userId)) };
 }
 
 export async function setInspirationTopics(userId, topics) {
 	const db = getDb();
 	if (!db) return false;
-	const t = String(topics ?? '').trim().slice(0, 300);
-	await db.execute({
-		sql: 'UPDATE users SET inspo_topics = ? WHERE id = ?',
-		args: [t || null, userId]
-	});
+	await db.execute({ sql: 'UPDATE users SET inspo_topics = ? WHERE id = ?', args: [String(topics ?? '').trim().slice(0, 300) || null, userId] });
 	return true;
 }
 
-// "Fetch more": enqueue the next batch right now (no daily-gate). Returns
-// whether a batch is now in flight (false only when interests are empty).
 export async function requestMoreInspiration(userId) {
 	const db = getDb();
 	if (!db) return false;
 	const u = (await db.execute({ sql: 'SELECT interests, inspo_topics FROM users WHERE id = ?', args: [userId] })).rows[0];
 	const topics = (u?.inspo_topics ? String(u.inspo_topics) : '') || (u?.interests ? String(u.interests) : '');
 	if (!topics) return false;
-	await enqueueBatch(db, userId, topics); // no-op if one is already pending
+	await enqueuePersonal(db, userId, topics);
 	return true;
 }
 
 export async function setInspirationSaved(userId, itemId, saved) {
-	const db = getDb();
-	if (!db) return false;
-	const res = await db.execute({
-		sql: `UPDATE inspiration_items SET saved = ?, saved_at = ${saved ? "datetime('now')" : 'NULL'}
-		      WHERE id = ? AND user_id = ?`,
-		args: [saved ? 1 : 0, itemId, userId]
-	});
-	return res.rowsAffected > 0;
+	return setUserReaction(userId, String(itemId), { saved });
+}
+export async function setInspirationRating(userId, itemId, rating) {
+	return setUserReaction(userId, String(itemId), { rating: Number(rating) });
 }
 
-// Portable snapshot of the user's recommendation state: topics, every
-// signal (saves/likes/dislikes with their items), and the derived taste
-// model exactly as the next batch will apply it.
 export async function exportInspiration(userId) {
 	const db = getDb();
 	if (!db) return null;
 	const u = (await db.execute({ sql: 'SELECT name, interests, inspo_topics FROM users WHERE id = ?', args: [userId] })).rows[0];
-	const pick = (r) => ({ kind: String(r.kind), source: r.source, title: String(r.title), url: String(r.url), meta: r.meta ?? '', paywalled: !!Number(r.paywalled) });
-	const saved = (await db.execute({ sql: 'SELECT * FROM inspiration_items WHERE user_id = ? AND saved = 1 ORDER BY saved_at DESC', args: [userId] })).rows.map(pick);
-	const liked = (await db.execute({ sql: 'SELECT * FROM inspiration_items WHERE user_id = ? AND rating = 1 ORDER BY id DESC', args: [userId] })).rows.map(pick);
-	const disliked = (await db.execute({ sql: 'SELECT * FROM inspiration_items WHERE user_id = ? AND rating = -1 ORDER BY id DESC', args: [userId] })).rows.map(pick);
-
-	const tallies = {};
-	for (const r of (await db.execute({
-		sql: `SELECT kind, SUM(CASE rating WHEN 1 THEN 1 WHEN -1 THEN -1 ELSE 0 END) AS t
-		      FROM inspiration_items WHERE user_id = ? GROUP BY kind`,
-		args: [userId]
-	})).rows) tallies[String(r.kind)] = Number(r.t ?? 0);
-	const counts = {};
-	for (const t of disliked.map((d) => d.title.toLowerCase())) {
-		for (const w of new Set(t.match(/[a-z]{4,}/g) ?? [])) {
-			if (!STOPWORDS.has(w)) counts[w] = (counts[w] ?? 0) + 1;
-		}
-	}
-	const blockedWords = Object.keys(counts).filter((w) => counts[w] >= 2);
-	const kindQuotas = {};
-	for (const [kind, base] of Object.entries(BASE_QUOTA)) {
-		kindQuotas[kind] = Math.max(1, Math.min(base * 2, base + (tallies[kind] ?? 0)));
-	}
-
+	const all = await readUserFeed(userId);
+	const pick = (i) => ({ kind: i.kind, source: i.source, title: i.title, url: i.url, meta: i.meta, paywalled: i.paywalled });
+	const topics = (u?.inspo_topics ? String(u.inspo_topics) : '') || (u?.interests ? String(u.interests) : '');
 	return {
 		format: 'eating.computer-inspiration-v1',
 		exportedAt: new Date().toISOString(),
 		user: u?.name ? String(u.name) : userId,
 		interests: u?.interests ? String(u.interests) : '',
-		topics: (u?.inspo_topics ? String(u.inspo_topics) : '') || (u?.interests ? String(u.interests) : ''),
-		nextQuery: await buildQuery(db, userId, (u?.inspo_topics ? String(u.inspo_topics) : '') || (u?.interests ? String(u.interests) : '')),
-		algorithm: { kindTallies: tallies, kindQuotas, blockedWords, expireDays: EXPIRE_DAYS },
-		saved, liked, disliked
+		topics,
+		nextQuery: await buildQuery(userId, topics),
+		saved: all.filter((i) => i.saved).map(pick),
+		liked: all.filter((i) => i.rating === 1).map(pick),
+		disliked: all.filter((i) => i.rating === -1).map(pick)
 	};
 }
 
-export async function setInspirationRating(userId, itemId, rating) {
-	const db = getDb();
-	if (!db) return false;
-	const r = rating === 1 ? 1 : rating === -1 ? -1 : 0;
-	const res = await db.execute({
-		sql: `UPDATE inspiration_items SET rating = ? WHERE id = ? AND user_id = ?`,
-		args: [r, itemId, userId]
-	});
-	return res.rowsAffected > 0;
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-// CLASS FEED — one shared set of items generated from the syllabus. Same
-// base algorithm for everyone; ordering is driven by AGGREGATE student
-// reactions (a class favorite floats up). Each student's own like/save is
-// stored per-item in inspiration_reactions (the item row is shared, so it
-// can't hold one student's state). Popular PERSONAL likes also feed back
-// into the class query — what the class is into shapes what it's shown.
-// ─────────────────────────────────────────────────────────────────────────
-
-const classOwner = (classId) => `class:${classId}`;
-const classTag = (classId) => `inspo:class:${classId}`;
-
-// Search topics for the class: the syllabus (week headlines + topic
-// previews) plus what's "trending" — titles many students liked in their
-// personal feeds. The syllabus part is stable (same for the class); the
-// trending part is the aggregate influence.
-// Strip inline emote/effect tokens ([tg:..], [ce:..], …) and PUA glyphs so
-// chat-flavored syllabus text becomes clean search terms.
+// ── Class syllabus → search terms ──────────────────────────────────────────
 function cleanTopic(s) {
 	return String(s ?? '')
 		.replace(/\[(?:tg|tgc|ce|ek|tfx|img)[^\]]*\]/gi, '')
@@ -324,290 +141,151 @@ function cleanTopic(s) {
 		.replace(/\s+/g, ' ')
 		.trim();
 }
-
-async function getClassTopics(db, classId) {
-	// The class SUBJECT is always the broad seed — it guarantees the class
-	// feed pulls the same diverse recommendation types (papers, museum +
-	// are.na images, channels) as a personal feed, even when the syllabus
-	// is sparse. Week topics + trending student likes layer on top.
-	const cls = (await db.execute({
-		sql: 'SELECT name FROM classes WHERE id = ?', args: [classId]
-	})).rows[0];
-	const subject = cls?.name ? cleanTopic(cls.name) : '';
-
-	const wp = (await db.execute({
-		sql: 'SELECT headline, topic_preview FROM week_plans WHERE class_id = ? ORDER BY week',
-		args: [classId]
-	})).rows;
-	const syllabus = [];
-	for (const r of wp) {
-		// The headline is the TOPIC name (best search term); the preview is
-		// usually a chatty note — use it only when there's no headline.
-		const term = cleanTopic(r.headline) || cleanTopic(r.topic_preview);
-		if (term && term.length > 2) syllabus.push(term);
-	}
-	const trending = (await db.execute({
-		sql: `SELECT title, COUNT(DISTINCT user_id) c FROM inspiration_items
-		      WHERE user_id NOT LIKE 'class:%' AND rating = 1
-		      GROUP BY lower(title) HAVING c >= 2 ORDER BY c DESC LIMIT 3`,
-		args: []
-	})).rows.map((r) => String(r.title).split(/\s+/).slice(0, 4).join(' '));
-	const topics = [subject, ...syllabus.slice(0, 5), ...trending]
-		.filter(Boolean).join(', ').slice(0, 300);
-	return { topics, trending };
+function cleanDemo(s) {
+	return cleanTopic(s)
+		.replace(/^(finish|complete|do|make|start|build|read|watch|submit|create|design|write|draw|study)(\s+(the|your|a|an|our))?\s+/i, '')
+		.replace(/[!?.]+$/, '')
+		.trim();
 }
 
-// ── Generic shared-feed helpers (used by the blended class feed AND each
-//    per-week feed — they differ only by owner/tag/query) ────────────────
+// The whole syllabus as an ordered, deduped term list — broad subject first,
+// then every week topic, then every demo/assignment label.
+async function getClassTermList(db, classId) {
+	const cls = (await db.execute({ sql: 'SELECT name FROM classes WHERE id = ?', args: [classId] })).rows[0];
+	const terms = [];
+	const seen = new Set();
+	const push = (t) => {
+		const c = (t ?? '').trim();
+		if (c.length > 2 && !seen.has(c.toLowerCase())) { seen.add(c.toLowerCase()); terms.push(c); }
+	};
+	if (cls?.name) push(cleanTopic(String(cls.name)).replace(/\b(concepts?|introduction|studio|fundamentals|basics|course|i{1,3}|101)\b/gi, '').replace(/\s+/g, ' ').trim());
+	const wp = (await db.execute({ sql: 'SELECT id, headline, topic_preview FROM week_plans WHERE class_id = ? ORDER BY week', args: [classId] })).rows;
+	for (const w of wp) {
+		push(cleanTopic(w.headline) || cleanTopic(w.topic_preview));
+		const items = (await db.execute({ sql: 'SELECT label FROM week_items WHERE week_plan_id = ? ORDER BY sort_order', args: [w.id] })).rows;
+		for (const it of items) push(cleanDemo(it.label));
+	}
+	return terms;
+}
 
-async function enqueueSharedBatch(db, tag, query) {
-	if (!query) return false;
-	const pending = (await db.execute({
-		sql: `SELECT id FROM scout_jobs WHERE requested_by = ? AND status IN ('queued','running') LIMIT 1`,
-		args: [tag]
-	})).rows[0];
-	if (pending) return false;
-	const seed = Number((await db.execute({
-		sql: `SELECT COUNT(*) AS n FROM scout_jobs WHERE requested_by = ?`, args: [tag]
-	})).rows[0]?.n ?? 0);
+async function getClassTopics(db, classId) {
+	return (await getClassTermList(db, classId)).join(', ').slice(0, 300);
+}
+
+// "All topics" batches rotate a 3-term window through the full syllabus list.
+async function enqueueClassBlended(db, classId) {
+	const t = classTag(classId);
+	if (await isPending(db, t)) return false;
+	const terms = await getClassTermList(db, classId);
+	if (!terms.length) return false;
+	const seed = await seedFor(db, t);
+	const win = [];
+	for (let i = 0; i < Math.min(3, terms.length); i++) win.push(terms[(seed * 3 + i) % terms.length]);
 	await db.execute({
 		sql: `INSERT INTO scout_jobs (kind, query, requested_by) VALUES ('search', ?, ?)`,
-		args: [`${query} #s${seed}`, tag]
+		args: [`${win.join(', ')} #s${seed}`, t]
 	});
 	return true;
 }
 
-async function materializeOwner(db, owner, tag) {
-	const jobs = (await db.execute({
-		sql: `SELECT query, result FROM scout_jobs WHERE requested_by = ? AND status = 'done' AND updated_at > datetime('now', '-2 days')`,
-		args: [tag]
-	})).rows;
-	for (const job of jobs) {
-		let results;
-		try { results = JSON.parse(String(job.result)); } catch { continue; }
-		if (!Array.isArray(results)) continue;
-		const stems = queryStems(job.query ?? '');
-		const taken = {};
-		for (const r of results) {
-			if (!museumRelevant(r, stems)) continue;
-			const url = usableUrl(r);
-			if (!url) continue;
-			const kind = r.kind ?? 'link';
-			const quota = BASE_QUOTA[kind] ?? 4;
-			taken[kind] = (taken[kind] ?? 0) + 1;
-			if (taken[kind] > quota) continue;
-			await db.execute({
-				sql: `INSERT OR IGNORE INTO inspiration_items (user_id, kind, source, title, url, snippet, meta, image, paywalled)
-				      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-				args: [owner, kind, r.source ?? null, r.title ?? '(untitled)', url, r.snippet ?? '', r.meta ?? '', r.image ?? null, r.paywalled ? 1 : 0]
-			});
-		}
-	}
+// Each week with a usable topic; the subject is folded in for context.
+async function getWeekList(db, classId) {
+	const cls = (await db.execute({ sql: 'SELECT name FROM classes WHERE id = ?', args: [classId] })).rows[0];
+	const subject = cls?.name ? cleanTopic(cls.name) : '';
+	const wp = (await db.execute({ sql: 'SELECT week, headline, topic_preview FROM week_plans WHERE class_id = ? ORDER BY week', args: [classId] })).rows;
+	return wp.map((r) => {
+		const topic = cleanTopic(r.headline) || cleanTopic(r.topic_preview);
+		return { week: Number(r.week), headline: cleanTopic(r.headline) || `Week ${r.week}`, topic, query: [topic, subject].filter(Boolean).join(', ') };
+	}).filter((w) => w.topic && w.topic.length > 2);
 }
 
-async function jobAge(db, tag) {
-	const latest = (await db.execute({
-		sql: `SELECT MAX(created_at) latest FROM scout_jobs WHERE requested_by = ?`, args: [tag]
-	})).rows[0]?.latest;
-	return latest ? Date.now() - new Date(String(latest).replace(' ', 'T') + 'Z').getTime() : Infinity;
-}
-
-async function isPending(db, tag) {
-	return !!(await db.execute({
-		sql: `SELECT id FROM scout_jobs WHERE requested_by = ? AND status IN ('queued','running') LIMIT 1`,
-		args: [tag]
-	})).rows[0];
-}
-
-// Read one shared feed's items with the viewer's own reactions + aggregate.
-// `excludeLike` (a user_id LIKE pattern) drops items whose URL also appears
-// under those owners — used so the blended "All topics" view doesn't repeat
-// what the per-week view already shows.
-async function readSharedItems(db, userId, owner, excludeLike = null) {
-	const rows = (await db.execute({
-		sql: `SELECT i.*,
-		         COALESCE(SUM(rx.rating), 0) AS agg_score,
-		         COALESCE(SUM(CASE WHEN rx.saved = 1 THEN 1 ELSE 0 END), 0) AS agg_saves,
-		         MAX(CASE WHEN rx.user_id = ? THEN rx.rating END) AS my_rating,
-		         MAX(CASE WHEN rx.user_id = ? THEN rx.saved END)  AS my_saved
-		      FROM inspiration_items i
-		      LEFT JOIN inspiration_reactions rx ON rx.item_id = i.id
-		      WHERE i.user_id = ?
-		        ${excludeLike ? `AND i.url NOT IN (SELECT url FROM inspiration_items WHERE user_id LIKE ?)` : ''}
-		      GROUP BY i.id
-		      HAVING COALESCE(SUM(rx.rating), 0) > -2
-		      ORDER BY agg_score DESC, i.created_at DESC
-		      LIMIT 120`,
-		args: excludeLike ? [userId, userId, owner, excludeLike] : [userId, userId, owner]
-	})).rows;
-	return rows.map((r) => ({
-		...rowToItem(r),
-		saved: !!Number(r.my_saved),
-		rating: Number(r.my_rating ?? 0),
-		aggScore: Number(r.agg_score ?? 0),
-		aggSaves: Number(r.agg_saves ?? 0),
-		expired: false
-	}));
-}
-
-// The blended class feed — whole syllabus mixed together.
+// ── Class feeds (read from RTDB) ────────────────────────────────────────────
 export async function getClassFeed(userId, classId) {
 	const db = getDb();
 	if (!db) return { items: [], pending: false, topics: '' };
-	const owner = classOwner(classId), tag = classTag(classId);
-	await materializeOwner(db, owner, tag);
-	if ((await jobAge(db, tag)) > REFRESH_MS) {
-		const { topics } = await getClassTopics(db, classId);
-		await enqueueSharedBatch(db, tag, topics);
-	}
-	// Exclude anything the per-week view already shows, so "All topics" stays
-	// a distinct, fresh blend rather than repeating the weekly breakdown.
-	const items = await readSharedItems(db, userId, owner, `class:${classId}:w%`);
-	const { topics } = await getClassTopics(db, classId);
-	return { items, pending: await isPending(db, tag), topics };
+	const t = classTag(classId);
+	if ((await jobAge(db, t)) > REFRESH_MS) await enqueueClassBlended(db, classId);
+	return { items: await readClassBlended(userId, classId), pending: await isPending(db, t), topics: await getClassTopics(db, classId) };
 }
 
 export async function requestMoreClass(classId) {
 	const db = getDb();
 	if (!db) return false;
-	const { topics } = await getClassTopics(db, classId);
-	return enqueueSharedBatch(db, classTag(classId), topics);
+	return enqueueClassBlended(db, classId);
 }
 
-// ── Per-week feeds ───────────────────────────────────────────────────────
-const weekOwner = (classId, w) => `class:${classId}:w${w}`;
-const weekTag = (classId, w) => `inspo:class:${classId}:w${w}`;
-
-// Each week that has a usable topic. The class SUBJECT is folded into each
-// week's query so even a terse week ("Text adventure") still pulls the full
-// content suite in the right disciplinary context.
-async function getWeekList(db, classId) {
-	const cls = (await db.execute({ sql: 'SELECT name FROM classes WHERE id = ?', args: [classId] })).rows[0];
-	const subject = cls?.name ? cleanTopic(cls.name) : '';
-	const wp = (await db.execute({
-		sql: 'SELECT week, headline, topic_preview FROM week_plans WHERE class_id = ? ORDER BY week',
-		args: [classId]
-	})).rows;
-	return wp.map((r) => {
-		const topic = cleanTopic(r.headline) || cleanTopic(r.topic_preview);
-		return {
-			week: Number(r.week),
-			headline: cleanTopic(r.headline) || `Week ${r.week}`,
-			topic,
-			query: [topic, subject].filter(Boolean).join(', ')
-		};
-	}).filter((w) => w.topic && w.topic.length > 2);
-}
-
-// The week-by-week class view: one full content suite per week topic.
 export async function getClassWeeklyFeeds(userId, classId) {
 	const db = getDb();
 	if (!db) return { weeks: [] };
 	const weeks = await getWeekList(db, classId);
-	const out = [];
 	for (const wk of weeks) {
-		const owner = weekOwner(classId, wk.week), tag = weekTag(classId, wk.week);
-		await materializeOwner(db, owner, tag);
-		if ((await jobAge(db, tag)) > REFRESH_MS) await enqueueSharedBatch(db, tag, wk.query);
-		out.push({
-			week: wk.week,
-			headline: wk.headline,
-			topic: wk.topic,
-			items: await readSharedItems(db, userId, owner),
-			pending: await isPending(db, tag)
-		});
+		if ((await jobAge(db, weekTag(classId, wk.week))) > REFRESH_MS) await enqueue(db, weekTag(classId, wk.week), wk.query);
 	}
-	return { weeks: out };
+	const feeds = await readClassWeekly(userId, classId, weeks);
+	// Attach pending flags.
+	for (const f of feeds) f.pending = await isPending(db, weekTag(classId, f.week));
+	return { weeks: feeds };
 }
 
-// "Fetch more" for the weekly view enqueues a fresh batch for every week.
 export async function requestMoreWeekly(classId) {
 	const db = getDb();
 	if (!db) return false;
 	const weeks = await getWeekList(db, classId);
 	let any = false;
-	for (const wk of weeks) {
-		if (await enqueueSharedBatch(db, weekTag(classId, wk.week), wk.query)) any = true;
-	}
+	for (const wk of weeks) if (await enqueue(db, weekTag(classId, wk.week), wk.query)) any = true;
 	return any;
 }
 
-// A student reacting to a shared class item → upsert into the reactions
-// table (never touches the shared item row).
-export async function reactClassItem(userId, itemId, { rating, saved }) {
-	const db = getDb();
-	if (!db) return false;
-	const cur = (await db.execute({
-		sql: `SELECT rating, saved FROM inspiration_reactions WHERE user_id = ? AND item_id = ?`,
-		args: [userId, itemId]
-	})).rows[0] ?? { rating: 0, saved: 0 };
-	const nextRating = rating === undefined ? Number(cur.rating ?? 0) : (rating === 1 ? 1 : rating === -1 ? -1 : 0);
-	const nextSaved = saved === undefined ? Number(cur.saved ?? 0) : (saved ? 1 : 0);
-	await db.execute({
-		sql: `INSERT INTO inspiration_reactions (user_id, item_id, rating, saved, updated_at)
-		      VALUES (?, ?, ?, ?, datetime('now'))
-		      ON CONFLICT(user_id, item_id) DO UPDATE SET rating = excluded.rating, saved = excluded.saved, updated_at = datetime('now')`,
-		args: [userId, itemId, nextRating, nextSaved]
-	});
-	return true;
+export async function reactClassItem(userId, classId, itemId, { rating, saved }) {
+	return setClassReaction(userId, classId, String(itemId), { rating, saved });
 }
 
-// Instructor view: what every student likes, personally and for the class.
+// ── Instructor insights (RTDB reactions + Turso names) ─────────────────────
 export async function getStudentInsights(classId) {
 	const db = getDb();
 	if (!db) return { students: [], classFavorites: [], trending: [] };
-	const owner = classOwner(classId);
 
 	const students = (await db.execute({
 		sql: `SELECT id, name, interests, inspo_topics FROM users WHERE role != 'instructor' ORDER BY name`,
 		args: []
 	})).rows;
 
+	const reactions = await readClassReactionsRaw(classId); // { key: { uid: {rating,saved} } }
+	const itemsByKey = await readClassItemsByKey(classId);
+	const classLikesByUser = {};
+	const favAgg = {};
+	for (const [k, byUser] of Object.entries(reactions)) {
+		let score = 0, saves = 0;
+		for (const [uid, rx] of Object.entries(byUser || {})) {
+			const rating = Number(rx?.rating ?? 0), saved = !!Number(rx?.saved);
+			score += rating; if (saved) saves += 1;
+			if (rating === 1 || saved) (classLikesByUser[uid] ??= []).push(k);
+		}
+		if (score > 0 || saves > 0) favAgg[k] = { score, saves };
+	}
+
 	const out = [];
 	for (const s of students) {
 		const uid = String(s.id);
-		const personalLikes = (await db.execute({
-			sql: `SELECT kind, title, url, meta FROM inspiration_items
-			      WHERE user_id = ? AND (rating = 1 OR saved = 1) ORDER BY saved DESC, id DESC LIMIT 8`,
-			args: [uid]
-		})).rows.map((r) => ({ kind: String(r.kind), title: String(r.title), url: String(r.url), meta: r.meta ? String(r.meta) : '' }));
-		const classLikes = (await db.execute({
-			sql: `SELECT i.title, i.url, i.kind FROM inspiration_reactions rx
-			      JOIN inspiration_items i ON i.id = rx.item_id
-			      WHERE rx.user_id = ? AND (rx.rating = 1 OR rx.saved = 1)
-			      ORDER BY rx.saved DESC, rx.updated_at DESC LIMIT 8`,
-			args: [uid]
-		})).rows.map((r) => ({ kind: String(r.kind), title: String(r.title), url: String(r.url) }));
-		const counts = (await db.execute({
-			sql: `SELECT
-			        SUM(CASE WHEN rating = 1 THEN 1 ELSE 0 END) likes,
-			        SUM(CASE WHEN saved = 1 THEN 1 ELSE 0 END) saves
-			      FROM inspiration_items WHERE user_id = ?`,
-			args: [uid]
-		})).rows[0] ?? {};
+		const personal = await readUserLikes(uid);
 		out.push({
 			id: uid,
 			name: String(s.name ?? 'Unnamed'),
 			interests: s.interests ? String(s.interests) : '',
 			topics: s.inspo_topics ? String(s.inspo_topics) : '',
-			likeCount: Number(counts.likes ?? 0),
-			saveCount: Number(counts.saves ?? 0),
-			personalLikes,
-			classLikes
+			likeCount: personal.filter((l) => l.rating === 1).length,
+			saveCount: personal.filter((l) => l.saved).length,
+			personalLikes: personal.slice(0, 8).map((l) => ({ kind: l.kind, title: l.title, url: l.url, meta: l.meta })),
+			classLikes: (classLikesByUser[uid] ?? []).map((k) => itemsByKey[k]).filter(Boolean).slice(0, 8).map((i) => ({ kind: i.kind, title: i.title, url: i.url }))
 		});
 	}
 
-	// What the class as a whole rates highest among the shared items.
-	const classFavorites = (await db.execute({
-		sql: `SELECT i.title, i.url, i.kind,
-		        SUM(rx.rating) score, SUM(CASE WHEN rx.saved = 1 THEN 1 ELSE 0 END) saves
-		      FROM inspiration_items i JOIN inspiration_reactions rx ON rx.item_id = i.id
-		      WHERE i.user_id = ?
-		      GROUP BY i.id HAVING score > 0 OR saves > 0
-		      ORDER BY score DESC, saves DESC LIMIT 12`,
-		args: [owner]
-	})).rows.map((r) => ({ kind: String(r.kind), title: String(r.title), url: String(r.url), score: Number(r.score ?? 0), saves: Number(r.saves ?? 0) }));
+	const classFavorites = Object.entries(favAgg)
+		.map(([k, v]) => ({ ...v, item: itemsByKey[k] }))
+		.filter((f) => f.item)
+		.sort((a, b) => (b.score - a.score) || (b.saves - a.saves))
+		.slice(0, 12)
+		.map((f) => ({ kind: f.item.kind, title: f.item.title, url: f.item.url, score: f.score, saves: f.saves }));
 
-	const { trending } = await getClassTopics(db, classId);
-	return { students: out, classFavorites, trending };
+	return { students: out, classFavorites, trending: [] };
 }

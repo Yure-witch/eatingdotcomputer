@@ -85,15 +85,16 @@ export async function POST({ locals, request }) {
 		return json({ ok: true, pending: queued });
 	}
 
-	const itemId = Number(body?.itemId);
+	// itemId is the RTDB rec key (a hash string), not a number.
+	const itemId = String(body?.itemId ?? '').trim();
 	if (!itemId) error(400, 'Missing itemId');
 
 	if (scope === 'class') {
-		// Reactions to shared class items live in inspiration_reactions.
+		// Reactions to shared class items live under recs/class/…/reactions.
 		const patch = {};
 		if ('rating' in body) patch.rating = Number(body.rating);
 		if ('saved' in body) patch.saved = !!body.saved;
-		const ok = await reactClassItem(session.user.id, itemId, patch);
+		const ok = await reactClassItem(session.user.id, DEFAULT_CLASS, itemId, patch);
 		if (!ok) error(404, 'Item not found');
 		return json({ ok: true });
 	}

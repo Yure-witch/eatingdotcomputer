@@ -1,6 +1,7 @@
 import { json, error } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
 import { getDb } from '$lib/server/turso.js';
+import { writeJobRecs } from '$lib/server/recs-rtdb.js';
 
 // Job feed for the Scout worker on kahan. The worker is outside our auth
 // world (a headless box), so it authenticates with a shared bearer token.
@@ -75,10 +76,19 @@ export async function POST({ request }) {
 			paywalled: r?.paywalled ? 1 : 0,
 			image: r?.image ? String(r.image).slice(0, 500) : null
 		})).filter((r) => r.url.startsWith('http'));
+		// Keep the raw result in Turso (queue history) AND materialize the
+		// recommendations straight into RTDB — the single source of truth the
+		// app reads. This is "kahan posting recs to RTDB": the worker POSTs
+		// here, the app (which holds the Firebase creds) writes them through.
+		const job = (await db.execute({ sql: 'SELECT requested_by, query FROM scout_jobs WHERE id = ?', args: [id] })).rows[0];
 		await db.execute({
 			sql: `UPDATE scout_jobs SET status = 'done', result = ?, error = NULL, updated_at = datetime('now') WHERE id = ?`,
 			args: [JSON.stringify(result), id]
 		});
+		if (job?.requested_by) {
+			try { await writeJobRecs(String(job.requested_by), String(job.query ?? ''), result); }
+			catch (e) { console.error('writeJobRecs failed', e); }
+		}
 	}
 
 	return json({ ok: true });
