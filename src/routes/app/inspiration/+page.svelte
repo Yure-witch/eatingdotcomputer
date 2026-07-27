@@ -164,6 +164,7 @@
 		{ key: 'arena_img', title: 'are.na images', sub: 'pulled from channels people keep about these topics' },
 		{ key: 'artwork', title: 'From the museums & archives', sub: 'V&A · Europeana (Ars Electronica, ZKM…) · Harvard · Rijksmuseum · The Met · Art Institute · Cleveland' },
 		{ key: 'channel', title: 'are.na channels', sub: 'curated rabbit holes' },
+		{ key: 'channel_orbit', title: 'Outer-orbit are.na channels', sub: 'one hop out — channels that share content with the top ones' },
 		{ key: 'article', title: 'Overviews', sub: 'ground-floor context' },
 		{ key: 'link', title: 'Elsewhere', sub: '' }
 	];
@@ -281,7 +282,11 @@
 {#snippet feedSections(list)}
 	{#each groupItems(list) as sec (sec.key)}
 		<section class="inspo-section">
-			<h2>{sec.title}</h2>
+			<div class="sec-head">
+				<h2>{sec.title}</h2>
+				<span class="sec-count">{sec.items.length}</span>
+				<span class="sec-rule"></span>
+			</div>
 			{#if sec.sub}<p class="sec-sub">{sec.sub}</p>{/if}
 			{#if IMAGE_KINDS.includes(sec.key)}
 				<div class="art-grid">
@@ -327,8 +332,10 @@
 
 <div class="inspo-shell">
 	<main>
-		<div class="page-head">
+		<header class="masthead">
+			<div class="masthead-eyebrow">Curated finds</div>
 			<h1>Recommendations</h1>
+			<p class="masthead-sources">V&amp;A · Ars Electronica · The Met · Rijksmuseum · Harvard · are.na · Cooper Library</p>
 			<p class="page-sub">
 				{#if scope === 'class'}
 					A shared feed built from the class syllabus. Everyone sees the same finds — <strong>👍 what resonates</strong>,
@@ -341,7 +348,7 @@
 					feed, and shared favorites nudge the class feed for everyone.
 				{/if}
 			</p>
-		</div>
+		</header>
 
 		<div class="scope-tabs">
 			<button class="scope-tab" class:active={scope === 'class'} onclick={() => switchScope('class')}>Class</button>
@@ -555,14 +562,28 @@
 
 <style>
 	.inspo-shell { min-height: 100%; background: var(--paper); }
-	main { max-width: 680px; margin: 0 auto; padding: calc(1rem + var(--header-h, 52px)) 1.25rem 4rem; }
-	.page-head h1 { font-family: 'Avara', serif; font-size: 1.5rem; margin: 0 0 0.35rem; }
-	.page-sub { font-size: 0.85rem; color: var(--muted-fg); margin: 0 0 1rem; line-height: 1.5; }
+	main { max-width: 700px; margin: 0 auto; padding: calc(1.5rem + var(--header-h, 52px)) 1.25rem 5rem; }
+
+	/* ── Masthead ── */
+	.masthead { margin-bottom: 1.75rem; }
+	.masthead-eyebrow {
+		font-size: 0.66rem; font-weight: 600; letter-spacing: 0.18em; text-transform: uppercase;
+		color: var(--accent); margin-bottom: 0.55rem;
+	}
+	.masthead h1 {
+		font-family: 'Avara', serif; font-weight: 400;
+		font-size: clamp(2rem, 6vw, 2.6rem); line-height: 1; letter-spacing: -0.015em;
+		margin: 0; color: var(--ink);
+	}
+	.masthead-sources {
+		font-size: 0.72rem; color: var(--muted-fg); margin: 0.6rem 0 0; line-height: 1.5;
+	}
+	.page-sub { font-size: 0.85rem; color: var(--muted-fg); margin: 0.85rem 0 0; line-height: 1.55; max-width: 52ch; }
 	.page-sub strong { color: var(--ink); font-weight: 600; }
 
 	.scope-tabs {
 		display: flex; gap: 0.25rem; margin-bottom: 1rem;
-		border-bottom: 1.5px solid var(--border);
+		border-bottom: 1px solid var(--border);
 	}
 	.scope-tab {
 		padding: 0.5rem 1rem; font-family: inherit; font-size: 0.9rem; font-weight: 600;
@@ -576,27 +597,30 @@
 	.submode-row { display: flex; gap: 0.4rem; margin-bottom: 0.85rem; }
 	.submode-tab {
 		padding: 0.3rem 0.85rem; font-family: inherit; font-size: 0.8rem; font-weight: 600;
-		background: none; color: var(--muted-fg); border: 1.5px solid var(--border);
+		background: none; color: var(--muted-fg); border: 1px solid var(--border);
 		border-radius: 999px; cursor: pointer; transition: all 0.12s;
 	}
 	.submode-tab:hover { border-color: var(--ink); color: var(--ink); }
 	.submode-tab.active { background: var(--ink); color: var(--paper); border-color: var(--ink); }
 
-	.week-block { margin-bottom: 2.5rem; }
+	.week-block { margin-bottom: 3rem; }
 	.week-head {
-		display: flex; align-items: baseline; gap: 0.6rem;
-		padding-bottom: 0.5rem; margin-bottom: 1rem;
-		border-bottom: 2px solid var(--ink);
+		display: flex; flex-direction: column; gap: 0.15rem;
+		padding-bottom: 0.7rem; margin-bottom: 1.5rem;
+		border-bottom: 1.5px solid var(--ink);
 	}
 	.week-num {
-		font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
-		color: var(--paper); background: var(--ink); padding: 0.15rem 0.5rem; border-radius: 6px;
+		font-size: 0.64rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.14em;
+		color: var(--accent);
 	}
-	.week-topic { font-family: 'Avara', serif; font-size: 1.2rem; color: var(--ink); }
+	.week-topic {
+		font-family: 'Avara', serif; font-weight: 400; font-size: 1.5rem;
+		letter-spacing: -0.015em; line-height: 1.02; color: var(--ink);
+	}
 	.week-empty { font-size: 0.82rem; color: var(--muted-fg); }
 
 	.student-card {
-		border: 1.5px solid var(--border); border-radius: 12px;
+		border: 1px solid var(--border); border-radius: 12px;
 		padding: 0.85rem 1rem; margin-bottom: 0.7rem;
 	}
 	.student-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem; }
@@ -627,14 +651,14 @@
 	.topics-edit .msi { font-size: 15px; }
 	.topics-input {
 		flex: 1; min-width: 220px;
-		padding: 0.45rem 0.7rem; border: 1.5px solid var(--border); border-radius: 8px;
+		padding: 0.45rem 0.7rem; border: 1px solid var(--border); border-radius: 8px;
 		font-family: inherit; font-size: 0.85rem; color: var(--ink); background: var(--paper);
 		outline: none;
 	}
 	.topics-input:focus { border-color: var(--ink); }
 
 	.library-note {
-		border: 1.5px solid var(--border); border-radius: 10px;
+		border: 1px solid var(--border); border-radius: 10px;
 		padding: 0.15rem 0.85rem; margin-bottom: 1rem;
 		background: var(--surface-2);
 	}
@@ -662,7 +686,7 @@
 	.refresh-chip .inspo-spin { display: inline-block; }
 	.view-chip {
 		padding: 0.35rem 0.9rem; font-family: inherit; font-size: 0.8rem; font-weight: 600;
-		background: none; color: var(--muted-fg); border: 1.5px solid var(--border);
+		background: none; color: var(--muted-fg); border: 1px solid var(--border);
 		border-radius: 999px; cursor: pointer; transition: all 0.12s;
 	}
 	.view-chip:hover { border-color: var(--ink); color: var(--ink); }
@@ -673,52 +697,72 @@
 	.inspo-spin { display: inline-block; vertical-align: -0.2em; animation: spin 1s linear infinite; }
 	@keyframes spin { to { transform: rotate(360deg); } }
 
-	.inspo-section { margin-bottom: 2rem; }
-	.inspo-section h2 {
-		font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
-		color: var(--md-sys-color-primary, var(--accent));
-		margin: 0 0 0.15rem;
+	/* ── Section header: an exhibition-catalog divider ── */
+	.inspo-section { margin-bottom: 2.5rem; }
+	.sec-head { display: flex; align-items: baseline; gap: 0.75rem; margin-bottom: 0.2rem; }
+	.sec-head h2 {
+		font-family: 'Avara', serif; font-weight: 400; font-size: 1.15rem; letter-spacing: -0.01em;
+		color: var(--ink); margin: 0; flex-shrink: 0;
 	}
-	.sec-sub { font-size: 0.75rem; color: var(--muted-fg); margin: 0 0 0.75rem; }
+	.sec-rule { flex: 1; height: 0; border-top: 1px solid var(--border); align-self: center; }
+	.sec-count {
+		font-size: 0.68rem; font-weight: 600; letter-spacing: 0.08em; color: var(--muted-fg);
+		flex-shrink: 0; font-variant-numeric: tabular-nums;
+	}
+	.sec-sub { font-size: 0.76rem; color: var(--muted-fg); margin: 0 0 1rem; line-height: 1.5; }
 
-	/* papers / channels / articles — list rows */
-	.row-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+	/* papers / channels / articles — an index / bibliography of hairline rows */
+	.row-list { list-style: none; margin: 0; padding: 0; }
 	.row {
-		display: flex; align-items: flex-start; gap: 0.7rem;
-		border: 1.5px solid var(--border); border-radius: 12px;
-		padding: 0.7rem 0.85rem;
+		display: flex; align-items: flex-start; gap: 0.9rem;
+		padding: 0.9rem 0.1rem; border-top: 1px solid var(--border);
 	}
-	.row.expired { opacity: 0.55; }
-	.row-thumb { width: 44px; height: 44px; object-fit: cover; border-radius: 8px; flex-shrink: 0; }
-	.row-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.15rem; }
+	.row:first-child { border-top: 0; padding-top: 0.25rem; }
+	.row.expired { opacity: 0.5; }
+	.row-thumb {
+		width: 50px; height: 50px; object-fit: cover; border-radius: 3px; flex-shrink: 0;
+		border: 1px solid var(--border);
+	}
+	.row-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.25rem; }
 	.row-title {
-		font-size: 0.88rem; font-weight: 600; color: var(--ink);
-		text-decoration: none; line-height: 1.35;
+		font-size: 0.92rem; font-weight: 600; color: var(--ink);
+		text-decoration: none; line-height: 1.4; transition: color 0.12s;
 	}
-	.row-title:hover { text-decoration: underline; text-underline-offset: 2px; }
-	.row-snip { font-size: 0.76rem; color: var(--muted-fg); line-height: 1.4; }
-	.row-meta { font-size: 0.72rem; color: var(--md-sys-color-primary, var(--accent)); font-weight: 600; }
-	.row-meta.meta-paywall { color: var(--muted-fg); }
+	.row-title:hover { color: var(--accent); }
+	.row-snip { font-size: 0.78rem; color: var(--muted-fg); line-height: 1.45; }
+	.row-meta { font-size: 0.72rem; color: var(--muted-fg); font-weight: 500; }
 	.lock-icon {
-		font-size: 14px; vertical-align: -2px; margin-right: 0.15rem;
-		color: var(--muted-fg);
+		font-size: 14px; vertical-align: -2px; margin-right: 0.2rem;
+		color: var(--accent);
 	}
 
-	/* artworks — image grid */
-	.art-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0.75rem; }
-	.art-card { position: relative; border: 1.5px solid var(--border); border-radius: 12px; overflow: hidden; }
-	.art-card.expired { opacity: 0.55; }
-	.art-link { display: flex; flex-direction: column; text-decoration: none; color: var(--ink); }
-	.art-link img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; background: var(--surface-2); }
-	.art-noimg { width: 100%; aspect-ratio: 1; display: flex; align-items: center; justify-content: center; font-size: 2rem; background: var(--surface-2); }
-	.art-title { font-size: 0.78rem; font-weight: 600; padding: 0.5rem 0.6rem 0; line-height: 1.3; }
-	.art-snip { font-size: 0.7rem; color: var(--muted-fg); padding: 0.1rem 0.6rem 0; line-height: 1.3; }
-	.art-meta { font-size: 0.66rem; color: var(--md-sys-color-primary, var(--accent)); font-weight: 600; padding: 0.15rem 0.6rem 0.55rem; }
+	/* artworks — framed plates with a museum wall-label beneath */
+	.art-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 1.4rem 1rem; }
+	.art-card { position: relative; }
+	.art-card.expired { opacity: 0.5; }
+	.art-link { display: block; text-decoration: none; color: var(--ink); }
+	.art-link img, .art-noimg {
+		width: 100%; aspect-ratio: 1; object-fit: cover; display: block; border-radius: 4px;
+		background: var(--surface-2); border: 1px solid var(--border);
+		box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 6px 16px rgba(0, 0, 0, 0.06);
+		transition: transform 0.22s ease, box-shadow 0.22s ease;
+	}
+	.art-card:hover .art-link img {
+		transform: translateY(-3px) scale(1.012);
+		box-shadow: 0 4px 8px rgba(0, 0, 0, 0.08), 0 16px 34px rgba(0, 0, 0, 0.14);
+	}
+	.art-noimg { display: flex; align-items: center; justify-content: center; font-size: 2rem; }
+	.art-title { display: block; font-size: 0.82rem; font-weight: 600; line-height: 1.34; margin-top: 0.65rem; }
+	.art-snip { display: block; font-size: 0.72rem; color: var(--muted-fg); font-style: italic; line-height: 1.35; margin-top: 0.15rem; }
+	.art-meta {
+		display: block; font-size: 0.6rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase;
+		color: var(--muted-fg); margin-top: 0.4rem;
+	}
 	.expired-tag {
-		position: absolute; top: 0.4rem; left: 0.4rem;
-		font-size: 0.62rem; font-weight: 700; text-transform: uppercase;
-		background: rgba(0, 0, 0, 0.55); color: #fff;
-		padding: 0.1rem 0.4rem; border-radius: 99px;
+		position: absolute; top: 0.5rem; left: 0.5rem;
+		font-size: 0.58rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+		background: color-mix(in srgb, var(--ink) 78%, transparent); color: var(--paper);
+		padding: 0.12rem 0.45rem; border-radius: 99px; backdrop-filter: blur(4px);
 	}
 
 	.act-cluster { display: inline-flex; gap: 0.1rem; flex-shrink: 0; align-items: center; }
@@ -733,11 +777,17 @@
 	.act-btn.on-up { color: #2e7d32; }
 	.act-btn.on-down { color: #c62828; }
 	.act-btn.on-save { color: var(--md-sys-color-primary, var(--accent)); }
+	/* On art plates the actions hide until hover (revealed on touch devices) */
+	.art-actions {
+		position: absolute; top: 0.5rem; right: 0.5rem;
+		opacity: 0; transition: opacity 0.16s ease;
+	}
+	.art-card:hover .art-actions, .art-card:focus-within .art-actions { opacity: 1; }
+	@media (hover: none) { .art-actions { opacity: 1; } }
 	.art-actions .act-cluster {
-		position: absolute; top: 0.3rem; right: 0.3rem;
-		background: color-mix(in srgb, var(--paper) 82%, transparent);
-		border-radius: 99px; backdrop-filter: blur(6px);
-		padding: 0 0.15rem;
+		background: color-mix(in srgb, var(--paper) 88%, transparent);
+		border-radius: 99px; backdrop-filter: blur(8px);
+		padding: 0.05rem 0.2rem; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.16);
 	}
 	.msi-fill { font-variation-settings: 'FILL' 1; }
 

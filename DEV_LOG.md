@@ -300,6 +300,18 @@ The following major areas need to be built. None are started yet.
 - **Status**: `attempted`
 - **What**: The always-DOI guard was silently DROPPING valuable no-DOI works — which turn out to be canonical BOOKS (Bringhurst *Elements of Typographic Style*, Geuss *Idea of a Critical Theory*, *Designing Interaction*). Books rarely have DOIs and can't route through OpenAthens (that's for e-journals). Now: DOI present → DOI link + Cooper OpenAthens (article); no DOI → **Google Books search** by title+author (`google.com/search?tbm=bks`) — never hidden, always lands on the book (preview + borrow/buy), linked direct. materialize `usableUrl` accepts doi.org OR google-books search for papers (still rejects catalog stubs). Frontend: `isDoiPaper` splits routing + icon (account_balance vs menu_book) + label (via Cooper Library vs book·find a copy). Verified a book-heavy query returns 10 papers, books as find-links, zero dropped.
 
+## Recommendations — visual redesign (exhibition-catalog direction)
+
+### Editorial redesign of the Recommendations tab — 2026-07-27
+- **Status**: `attempted`
+- **What**: Reworked the page's visual design (frontend-design skill) within the brand system (cream #f7f2ea / ink / amber #ffa305 / Avara serif). Direction: an **exhibition-catalog / gallery wall-label** treatment fitting the art+reading discovery subject.
+  - Masthead: "Curated finds" amber kicker + large Avara "Recommendations" + a sources byline (V&A · Ars Electronica · … · Cooper Library) + scope-aware sub.
+  - Section headers: Avara serif name + item count + hairline rule (catalog divider) — replaced the tiny uppercase-amber eyebrows.
+  - Artworks: framed image plates (1px frame + soft shadow, hover lift) with a museum WALL-LABEL beneath — title / italic creator·date / uppercase institution. Actions reveal on hover (always shown on touch).
+  - Readings: a hairline-separated bibliography (title hover→amber, source citation line) instead of bordered cards.
+  - Week dividers: amber "WEEK N" kicker + big Avara topic + ink underline.
+  - All chunky 1.5px borders → 1px hairlines for precision. No logic changed. Verified via headless-Chrome preview screenshot.
+
 ## Recommendations — moved storage to Firebase RTDB
 
 ### Recs + reactions now live in RTDB (was Turso); stable order — 2026-07-27
