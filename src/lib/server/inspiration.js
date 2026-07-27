@@ -25,7 +25,7 @@ export const EXPIRE_DAYS = 7;
 const EXPIRE_MS = EXPIRE_DAYS * 24 * 60 * 60 * 1000;
 const REFRESH_MS = 20 * 60 * 60 * 1000; // auto-batch "every day or so"
 
-const BASE_QUOTA = { paper: 5, arena_img: 6, artwork: 9, channel: 4, article: 3, link: 4 };
+const BASE_QUOTA = { paper: 5, arena_img: 6, artwork: 12, channel: 4, article: 3, link: 4 };
 const STOPWORDS = new Set(['this', 'that', 'with', 'from', 'what', 'when', 'where', 'which', 'their', 'about', 'into', 'have', 'been', 'were', 'untitled', 'series']);
 
 const rowToItem = (r) => ({

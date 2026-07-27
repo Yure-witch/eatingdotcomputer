@@ -227,6 +227,35 @@ async function searchVA(q) {
 	return topSlice(kept.length >= 2 ? kept : items).map(({ _hay, ...a }) => a);
 }
 
+// Europeana — aggregates 3,000+ European institutions incl. Ars Electronica
+// and ZKM (the media / computer / generative-art archives the encyclopedic
+// US museums lack). Relevance-ranked and genuinely on-topic, so trusted like
+// V&A. Free API; api2demo works but a personal key (pro.europeana.eu) lifts
+// the rate limit — set EUROPEANA_KEY to use it. Each result shows its real
+// providing institution (Ars Electronica, Computer Museum, …) as the label.
+async function searchEuropeana(q) {
+	const stems = queryStems(q);
+	const key = process.env.EUROPEANA_KEY || 'api2demo';
+	const r = await politeFetch(
+		`https://api.europeana.eu/record/v2/search.json?wskey=${key}&query=${encodeURIComponent(q)}&rows=15&media=true&qf=TYPE:IMAGE&profile=rich`
+	);
+	if (!r.ok) return [];
+	const d = await r.json();
+	const first = (v) => (Array.isArray(v) ? v[0] : v);
+	const items = (d.items ?? []).filter((it) => it.edmPreview).map((it) => ({
+		kind: 'artwork',
+		title: first(it.title) || '(untitled)',
+		url: first(it.edmIsShownAt) || it.guid,
+		snippet: [first(it.dcCreator), first(it.year)].filter(Boolean).join(' · '),
+		meta: first(it.dataProvider) || 'Europeana',
+		source: 'europeana',
+		image: first(it.edmPreview),
+		_hay: `${Array.isArray(it.title) ? it.title.join(' ') : (it.title ?? '')} ${first(it.dcCreator) ?? ''}`
+	})).filter((a) => a.url);
+	const kept = items.filter((a) => matchesQuery(a._hay, stems));
+	return topSlice(kept.length >= 2 ? kept : items).map(({ _hay, ...a }) => a);
+}
+
 // Top channels about the topic. Kept and returned so the "are.na channels"
 // section stays; also reused as the source for topical images below.
 async function arenaTopChannels(q, n = 3) {
@@ -313,7 +342,7 @@ async function runSearch(query) {
 	if (m) query = String(query).slice(0, m.index);
 	const out = [];
 	for (const part of splitQuery(query)) {
-		const [papers, chans, arenaImgs, wiki, met, aic, cle, vam] = await Promise.all([
+		const [papers, chans, arenaImgs, wiki, met, aic, cle, vam, euro] = await Promise.all([
 			searchOpenAlexSeminal(part).catch(() => []),
 			searchArenaChannels(part).catch(() => []),
 			searchArenaImages(part).catch(() => []),
@@ -321,9 +350,10 @@ async function runSearch(query) {
 			searchMet(part).catch(() => []),
 			searchAIC(part).catch(() => []),
 			searchCleveland(part).catch(() => []),
-			searchVA(part).catch(() => [])
+			searchVA(part).catch(() => []),
+			searchEuropeana(part).catch(() => [])
 		]);
-		out.push(...papers, ...chans, ...arenaImgs, ...wiki, ...met, ...aic, ...cle, ...vam);
+		out.push(...papers, ...chans, ...arenaImgs, ...wiki, ...met, ...aic, ...cle, ...vam, ...euro);
 	}
 	// de-dupe by URL, keep order
 	const seen = new Set();

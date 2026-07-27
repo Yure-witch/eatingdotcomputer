@@ -300,6 +300,13 @@ The following major areas need to be built. None are started yet.
 - **Status**: `attempted`
 - **What**: The always-DOI guard was silently DROPPING valuable no-DOI works — which turn out to be canonical BOOKS (Bringhurst *Elements of Typographic Style*, Geuss *Idea of a Critical Theory*, *Designing Interaction*). Books rarely have DOIs and can't route through OpenAthens (that's for e-journals). Now: DOI present → DOI link + Cooper OpenAthens (article); no DOI → **Google Books search** by title+author (`google.com/search?tbm=bks`) — never hidden, always lands on the book (preview + borrow/buy), linked direct. materialize `usableUrl` accepts doi.org OR google-books search for papers (still rejects catalog stubs). Frontend: `isDoiPaper` splits routing + icon (account_balance vs menu_book) + label (via Cooper Library vs book·find a copy). Verified a book-heavy query returns 10 papers, books as find-links, zero dropped.
 
+## Recommendations — added Europeana (Ars Electronica / ZKM / media art)
+
+### Europeana source — the media/generative/design archives US museums lack — 2026-07-26
+- **Status**: `attempted`
+- **What**: User asked what the Met has on generative art (answer: almost nothing — 0 Manfred Mohr, 8 Vera Molnár; and its topic-search ranks classical art on top, so trusting it = junk). Added **Europeana** (`searchEuropeana`) — aggregates 3,000+ European institutions incl. **Ars Electronica** and **ZKM**, the media/computer/generative-art archives. Relevance-ranked + genuinely on-topic, so trusted like V&A (lenient keyword filter, fallback to top). Each result labels its real provider (Ars Electronica, Computer Museum, Museum of Things…). Free API; `api2demo` key works, `EUROPEANA_KEY` env overrides for a higher rate limit. artwork BASE_QUOTA 9→12 for the extra good sources; section renamed "From the museums & archives". Verified "generative art, algorithms" → V&A + Ars Electronica, zero Met/AIC.
+- **Other options noted for the user**: Smithsonian/Cooper Hewitt, Harvard Art Museums, Rijksmuseum — all strong + public APIs but need a free key.
+
 ## Recommendations — stop stale jobs re-injecting museum junk
 
 ### materialize() museum-relevance guard — 2026-07-26
