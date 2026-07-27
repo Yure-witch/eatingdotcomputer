@@ -562,7 +562,10 @@
 
 <style>
 	.inspo-shell { min-height: 100%; background: var(--paper); }
-	main { max-width: 700px; margin: 0 auto; padding: calc(1.5rem + var(--header-h, 52px)) 1.25rem 5rem; }
+	/* Wider column so the image grids run 4-across at a generous size; text
+	   blocks (readings, subs) keep a comfortable reading measure below. */
+	main { max-width: 920px; margin: 0 auto; padding: calc(1.5rem + var(--header-h, 52px)) 1.5rem 5rem; }
+	.row-list, .sec-sub, .library-note, .student-card { max-width: 680px; }
 
 	/* ── Masthead ── */
 	.masthead { margin-bottom: 1.75rem; }
@@ -736,8 +739,11 @@
 		color: var(--accent);
 	}
 
-	/* artworks — framed plates with a museum wall-label beneath */
-	.art-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 1.4rem 1rem; }
+	/* artworks — framed plates with a museum wall-label beneath.
+	   Fixed 4-across, uniform, wide; step down on smaller screens. */
+	.art-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.6rem 1.15rem; }
+	@media (max-width: 760px) { .art-grid { grid-template-columns: repeat(3, 1fr); gap: 1.2rem 0.9rem; } }
+	@media (max-width: 460px) { .art-grid { grid-template-columns: repeat(2, 1fr); } }
 	.art-card { position: relative; }
 	.art-card.expired { opacity: 0.5; }
 	.art-link { display: block; text-decoration: none; color: var(--ink); }
