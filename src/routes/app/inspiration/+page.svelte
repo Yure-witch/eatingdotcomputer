@@ -561,11 +561,14 @@
 </div>
 
 <style>
-	.inspo-shell { min-height: 100%; background: var(--paper); }
-	/* One consistent column width — everything (masthead, controls, section
-	   rules, readings, image grids) aligns to the same left and right edges.
-	   Wide enough for a generous 4-across image grid. */
-	main { max-width: 840px; margin: 0 auto; padding: calc(1.5rem + var(--header-h, 52px)) 1.5rem 5rem; }
+	/* width:100% so the shell fills the content area instead of shrinking to
+	   its content — otherwise a section with little content would size the
+	   whole column narrower. */
+	.inspo-shell { min-height: 100%; width: 100%; background: var(--paper); overflow-x: clip; }
+	/* One consistent, LEFT-anchored column — everything (masthead, controls,
+	   section rules, readings, image grids) starts at the same left edge and
+	   runs to the same right edge, whatever a section contains. */
+	main { max-width: 840px; margin: 0; text-align: left; padding: calc(1.5rem + var(--header-h, 52px)) 1.5rem 5rem; }
 
 	/* ── Masthead ── */
 	.masthead { margin-bottom: 1.75rem; }
@@ -733,6 +736,7 @@
 	.row-title {
 		font-size: 0.92rem; font-weight: 600; color: var(--ink);
 		text-decoration: none; line-height: 1.4; transition: color 0.12s;
+		overflow-wrap: anywhere;
 	}
 	.row-title:hover { color: var(--accent); }
 	.row-snip { font-size: 0.78rem; color: var(--muted-fg); line-height: 1.45; }
@@ -743,15 +747,18 @@
 	}
 
 	/* artworks — framed plates with a museum wall-label beneath.
-	   Fixed 4-across, uniform, wide; step down on smaller screens. */
-	.art-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.6rem 1.15rem; }
-	@media (max-width: 760px) { .art-grid { grid-template-columns: repeat(3, 1fr); gap: 1.2rem 0.9rem; } }
-	@media (max-width: 460px) { .art-grid { grid-template-columns: repeat(2, 1fr); } }
-	.art-card { position: relative; }
+	   Fixed 4-across, uniform, wide; step down on smaller screens.
+	   minmax(0,1fr) + min-width:0 lets the tracks shrink below the images'
+	   intrinsic width instead of overflowing the page. */
+	.art-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1.6rem 1.15rem; }
+	@media (max-width: 760px) { .art-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1.2rem 0.9rem; } }
+	@media (max-width: 460px) { .art-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+	.art-card { position: relative; min-width: 0; }
 	.art-card.expired { opacity: 0.5; }
 	.art-link { display: block; text-decoration: none; color: var(--ink); }
+	.art-title, .art-snip, .art-meta { overflow-wrap: anywhere; }
 	.art-link img, .art-noimg {
-		width: 100%; aspect-ratio: 1; object-fit: cover; display: block; border-radius: 4px;
+		width: 100%; max-width: 100%; aspect-ratio: 1; object-fit: cover; display: block; border-radius: 4px;
 		background: var(--surface-2); border: 1px solid var(--border);
 		box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 6px 16px rgba(0, 0, 0, 0.06);
 		transition: transform 0.22s ease, box-shadow 0.22s ease;
