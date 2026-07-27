@@ -562,10 +562,10 @@
 
 <style>
 	.inspo-shell { min-height: 100%; background: var(--paper); }
-	/* Wider column so the image grids run 4-across at a generous size; text
-	   blocks (readings, subs) keep a comfortable reading measure below. */
-	main { max-width: 920px; margin: 0 auto; padding: calc(1.5rem + var(--header-h, 52px)) 1.5rem 5rem; }
-	.row-list, .sec-sub, .library-note, .student-card { max-width: 680px; }
+	/* One consistent column width — everything (masthead, controls, section
+	   rules, readings, image grids) aligns to the same left and right edges.
+	   Wide enough for a generous 4-across image grid. */
+	main { max-width: 840px; margin: 0 auto; padding: calc(1.5rem + var(--header-h, 52px)) 1.5rem 5rem; }
 
 	/* ── Masthead ── */
 	.masthead { margin-bottom: 1.75rem; }
@@ -701,18 +701,21 @@
 	@keyframes spin { to { transform: rotate(360deg); } }
 
 	/* ── Section header: an exhibition-catalog divider ── */
-	.inspo-section { margin-bottom: 2.5rem; }
-	.sec-head { display: flex; align-items: baseline; gap: 0.75rem; margin-bottom: 0.2rem; }
+	.inspo-section { margin-bottom: 2.75rem; }
+	.sec-head { display: flex; align-items: baseline; gap: 0.5rem; margin: 0; }
 	.sec-head h2 {
 		font-family: 'Avara', serif; font-weight: 400; font-size: 1.15rem; letter-spacing: -0.01em;
 		color: var(--ink); margin: 0; flex-shrink: 0;
 	}
-	.sec-rule { flex: 1; height: 0; border-top: 1px solid var(--border); align-self: center; }
 	.sec-count {
 		font-size: 0.68rem; font-weight: 600; letter-spacing: 0.08em; color: var(--muted-fg);
-		flex-shrink: 0; font-variant-numeric: tabular-nums;
+		flex-shrink: 0; font-variant-numeric: tabular-nums; margin-right: 0.1rem;
 	}
-	.sec-sub { font-size: 0.76rem; color: var(--muted-fg); margin: 0 0 1rem; line-height: 1.5; }
+	.sec-rule { flex: 1; height: 0; border-top: 1px solid var(--border); align-self: center; }
+	.sec-sub { font-size: 0.76rem; color: var(--muted-fg); margin: 0.35rem 0 0; line-height: 1.5; }
+	/* Consistent gap from the header to its content whether or not a sub line
+	   is present. */
+	.inspo-section .art-grid, .inspo-section .row-list { margin-top: 0.95rem; }
 
 	/* papers / channels / articles — an index / bibliography of hairline rows */
 	.row-list { list-style: none; margin: 0; padding: 0; }
