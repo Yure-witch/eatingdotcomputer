@@ -565,13 +565,12 @@
 	   its content — otherwise a section with little content would size the
 	   whole column narrower. */
 	.inspo-shell { min-height: 100%; width: 100%; background: var(--paper); overflow-x: clip; }
-	/* One consistent, LEFT-anchored column — everything (masthead, controls,
-	   section rules, readings, image grids) starts at the same left edge and
-	   runs to the same right edge, whatever a section contains. */
-	main { max-width: 840px; margin: 0; text-align: left; padding: calc(1.5rem + var(--header-h, 52px)) 1.5rem 5rem; }
+	/* Consistent 840px column, centered in the content area. Body text is
+	   left-aligned (the masthead centers itself below). */
+	main { max-width: 840px; margin: 0 auto; text-align: left; padding: calc(1.5rem + var(--header-h, 52px)) 1.5rem 5rem; }
 
-	/* ── Masthead ── */
-	.masthead { margin-bottom: 1.75rem; }
+	/* ── Masthead — centered; everything below the tabs stays left. ── */
+	.masthead { margin-bottom: 1.75rem; text-align: center; }
 	.masthead-eyebrow {
 		font-size: 0.66rem; font-weight: 600; letter-spacing: 0.18em; text-transform: uppercase;
 		color: var(--accent); margin-bottom: 0.55rem;
@@ -584,7 +583,7 @@
 	.masthead-sources {
 		font-size: 0.72rem; color: var(--muted-fg); margin: 0.6rem 0 0; line-height: 1.5;
 	}
-	.page-sub { font-size: 0.85rem; color: var(--muted-fg); margin: 0.85rem 0 0; line-height: 1.55; max-width: 52ch; }
+	.page-sub { font-size: 0.85rem; color: var(--muted-fg); margin: 0.85rem auto 0; line-height: 1.55; max-width: 52ch; }
 	.page-sub strong { color: var(--ink); font-weight: 600; }
 
 	.scope-tabs {
