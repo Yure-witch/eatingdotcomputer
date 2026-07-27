@@ -300,6 +300,14 @@ The following major areas need to be built. None are started yet.
 - **Status**: `attempted`
 - **What**: The always-DOI guard was silently DROPPING valuable no-DOI works — which turn out to be canonical BOOKS (Bringhurst *Elements of Typographic Style*, Geuss *Idea of a Critical Theory*, *Designing Interaction*). Books rarely have DOIs and can't route through OpenAthens (that's for e-journals). Now: DOI present → DOI link + Cooper OpenAthens (article); no DOI → **Google Books search** by title+author (`google.com/search?tbm=bks`) — never hidden, always lands on the book (preview + borrow/buy), linked direct. materialize `usableUrl` accepts doi.org OR google-books search for papers (still rejects catalog stubs). Frontend: `isDoiPaper` splits routing + icon (account_balance vs menu_book) + label (via Cooper Library vs book·find a copy). Verified a book-heavy query returns 10 papers, books as find-links, zero dropped.
 
+## Recommendations — pioneer-artist search (Molnár, Mohr, …)
+
+### Named generative-art pioneers via V&A artist search — 2026-07-26
+- **Status**: `attempted`
+- **What**: User wanted Vera Molnár "from the Met" — but the Met genuinely doesn't have her (its 8 "Vera Molnar" hits are Hans Memling etc., false keyword matches; verification rejected them). The V&A DOES hold the canon: Molnár, Mohr, Csuri, Nake, Nees, Schwartz all verified by maker name. So `searchPioneers` (fires when the query is in GEN_DOMAIN — generative/algorithm/computational/procedural/media art) searches the V&A for a seed-rotated trio of pioneers, verifies `_primaryMaker.name` (de-accented — "Molnár" vs "Molnar"), and returns one work each as source `museum_artist` (trusted, bypasses the keyword filter). Verified: "generative art, algorithms" now includes Molnár "Letters from my Mother", Mohr "Scratch Code", Schwartz "Fish". Rotation surfaces different pioneers on Fetch More.
+- **Dead ends**: Met has none (encyclopedic); Europeana's `who:`/creator index is too sparse for these artists (0 for Molnár/Nake/Nees). V&A is the reliable holder.
+- **Rijksmuseum**: user notes it's now keyless, but the legacy endpoints 410/400 — needs the new data.rijksmuseum.nl Linked-Art endpoint worked out before adding.
+
 ## Recommendations — added Europeana (Ars Electronica / ZKM / media art)
 
 ### Europeana source — the media/generative/design archives US museums lack — 2026-07-26

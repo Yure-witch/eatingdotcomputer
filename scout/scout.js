@@ -132,6 +132,49 @@ const matchesQuery = (text, stems) => {
 	return stems.some((w) => t.includes(w));
 };
 
+// When the topic is generative / computer / algorithmic art, search the
+// museums by the PIONEER ARTISTS directly — a verified artist match is
+// inherently relevant, so these bypass the keyword filter (source
+// 'museum_artist' is trusted downstream). The encyclopedic US museums don't
+// actually hold these artists (the Met's "Vera Molnar" hits are false
+// keyword matches), but the V&A does — its collection covers Molnár, Mohr,
+// Csuri, Nake, Nees, Schwartz, and more.
+const GEN_DOMAIN = /generat|algorithm|computational|procedural|software art|new media|media art|computer art|cybernetic|plotter|op[\s-]?art|kinetic|\bcode\b/i;
+const GEN_PIONEERS = [
+	'Vera Molnar', 'Manfred Mohr', 'Charles Csuri', 'Lillian Schwartz', 'Herbert W. Franke',
+	'Waldemar Cordeiro', 'Channa Horwitz', 'Hiroshi Kawano', 'Frieder Nake', 'Georg Nees',
+	'Roman Verostko', 'Jean-Pierre Hébert', 'Harold Cohen', 'Bridget Riley', 'François Morellet'
+];
+
+const deaccent = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+
+async function searchPioneers(q) {
+	if (!GEN_DOMAIN.test(q)) return [];
+	const n = GEN_PIONEERS.length;
+	const base = rot(n);
+	const picks = [GEN_PIONEERS[base], GEN_PIONEERS[(base + 1) % n], GEN_PIONEERS[(base + 3) % n]];
+	const out = [];
+	for (const name of picks) {
+		const surname = deaccent(name.split(' ').pop());
+		const r = await politeFetch(`https://api.vam.ac.uk/v2/objects/search?q=${encodeURIComponent(name)}&page_size=6&images_exist=true`);
+		if (!r.ok) continue;
+		const d = await r.json();
+		// Verify the maker really is this pioneer (search can be loose).
+		const hit = (d.records ?? []).find((o) => o._primaryImageId && deaccent(o._primaryMaker?.name).includes(surname));
+		if (!hit) continue;
+		out.push({
+			kind: 'artwork',
+			title: hit._primaryTitle || hit.objectType || 'Untitled',
+			url: `https://collections.vam.ac.uk/item/${hit.systemNumber}`,
+			snippet: [hit._primaryMaker?.name, hit._primaryDate].filter(Boolean).join(' · '),
+			meta: 'V&A Museum',
+			source: 'museum_artist',
+			image: `https://framemark.vam.ac.uk/collections/${hit._primaryImageId}/full/!400,400/0/default.jpg`
+		});
+	}
+	return out;
+}
+
 async function searchMet(q) {
 	const stems = queryStems(q);
 	const r = await politeFetch(`https://collectionapi.metmuseum.org/public/collection/v1/search?q=${encodeURIComponent(q)}&hasImages=true`);
@@ -342,7 +385,7 @@ async function runSearch(query) {
 	if (m) query = String(query).slice(0, m.index);
 	const out = [];
 	for (const part of splitQuery(query)) {
-		const [papers, chans, arenaImgs, wiki, met, aic, cle, vam, euro] = await Promise.all([
+		const [papers, chans, arenaImgs, wiki, met, aic, cle, vam, euro, pioneers] = await Promise.all([
 			searchOpenAlexSeminal(part).catch(() => []),
 			searchArenaChannels(part).catch(() => []),
 			searchArenaImages(part).catch(() => []),
@@ -351,9 +394,10 @@ async function runSearch(query) {
 			searchAIC(part).catch(() => []),
 			searchCleveland(part).catch(() => []),
 			searchVA(part).catch(() => []),
-			searchEuropeana(part).catch(() => [])
+			searchEuropeana(part).catch(() => []),
+			searchPioneers(part).catch(() => [])
 		]);
-		out.push(...papers, ...chans, ...arenaImgs, ...wiki, ...met, ...aic, ...cle, ...vam, ...euro);
+		out.push(...pioneers, ...papers, ...chans, ...arenaImgs, ...wiki, ...met, ...aic, ...cle, ...vam, ...euro);
 	}
 	// de-dupe by URL, keep order
 	const seen = new Set();
