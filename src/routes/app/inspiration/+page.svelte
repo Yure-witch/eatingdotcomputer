@@ -39,8 +39,8 @@
 	// batch (worker down) must NOT poll forever, which would hammer the
 	// API from every open tab. 10 × 10s ≈ 100s, then give up quietly.
 	let pollsLeft = 0;
-	const POLL_EVERY = 10000;
-	const MAX_POLLS = 10;
+	const POLL_EVERY = 6000;
+	const MAX_POLLS = 16;
 
 	function schedulePoll() {
 		if (pollTimer || pollsLeft <= 0) return;
@@ -462,6 +462,9 @@
 				<button class="view-chip" class:active={view === 'disliked'} onclick={() => setView('disliked')}>👎 Disliked</button>
 				<button class="view-chip" class:active={view === 'saved'} onclick={() => setView('saved')}>🔖 Saved</button>
 				<button class="view-chip" class:active={view === 'history'} onclick={() => setView('history')}>History</button>
+				<button class="view-chip refresh-chip" disabled={pending} title="Fetch a fresh batch now" onclick={fetchMore}>
+					<span class="msi" class:inspo-spin={pending}>{pending ? 'progress_activity' : 'refresh'}</span> {pending ? 'Refreshing…' : 'Refresh'}
+				</button>
 				<button class="view-chip export-chip" title="Download your topics, saves, likes/dislikes, and the derived taste model as JSON" onclick={exportAlgorithm}>
 					<span class="msi">download</span> Export my algorithm
 				</button>
@@ -471,6 +474,9 @@
 				<button class="view-chip" class:active={view === 'fresh'} onclick={() => setView('fresh')}>All</button>
 				<button class="view-chip" class:active={view === 'liked'} onclick={() => setView('liked')}>👍 Liked</button>
 				<button class="view-chip" class:active={view === 'saved'} onclick={() => setView('saved')}>🔖 Saved</button>
+				<button class="view-chip refresh-chip" disabled={pending} title="Fetch a fresh batch now" onclick={fetchMore}>
+					<span class="msi" class:inspo-spin={pending}>{pending ? 'progress_activity' : 'refresh'}</span> {pending ? 'Refreshing…' : 'Refresh'}
+				</button>
 			</div>
 		{/if}
 
@@ -648,8 +654,12 @@
 	.lock-inline { font-size: 14px; vertical-align: -2px; }
 
 	.view-row { display: flex; gap: 0.4rem; margin-bottom: 1.5rem; flex-wrap: wrap; }
-	.export-chip { display: inline-flex; align-items: center; gap: 0.3rem; margin-left: auto; }
+	.export-chip { display: inline-flex; align-items: center; gap: 0.3rem; }
 	.export-chip .msi { font-size: 15px; }
+	.refresh-chip { display: inline-flex; align-items: center; gap: 0.3rem; margin-left: auto; }
+	.refresh-chip .msi { font-size: 15px; }
+	.refresh-chip:disabled { opacity: 0.65; cursor: default; }
+	.refresh-chip .inspo-spin { display: inline-block; }
 	.view-chip {
 		padding: 0.35rem 0.9rem; font-family: inherit; font-size: 0.8rem; font-weight: 600;
 		background: none; color: var(--muted-fg); border: 1.5px solid var(--border);

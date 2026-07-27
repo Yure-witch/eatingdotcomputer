@@ -13,7 +13,7 @@
 
 const APP = (process.env.EATING_URL ?? 'https://eating.computer').replace(/\/$/, '');
 const TOKEN = process.env.SCOUT_TOKEN;
-const POLL_MS = Number(process.env.POLL_MS ?? 30000);
+const POLL_MS = Number(process.env.POLL_MS ?? 15000);
 const UA = 'eating.computer-scout/1.0 (Cooper Union class project; contact: richardyurewitch@gmail.com)';
 
 if (!TOKEN) {

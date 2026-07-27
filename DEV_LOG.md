@@ -300,6 +300,13 @@ The following major areas need to be built. None are started yet.
 - **Status**: `attempted`
 - **What**: The always-DOI guard was silently DROPPING valuable no-DOI works — which turn out to be canonical BOOKS (Bringhurst *Elements of Typographic Style*, Geuss *Idea of a Critical Theory*, *Designing Interaction*). Books rarely have DOIs and can't route through OpenAthens (that's for e-journals). Now: DOI present → DOI link + Cooper OpenAthens (article); no DOI → **Google Books search** by title+author (`google.com/search?tbm=bks`) — never hidden, always lands on the book (preview + borrow/buy), linked direct. materialize `usableUrl` accepts doi.org OR google-books search for papers (still rejects catalog stubs). Frontend: `isDoiPaper` splits routing + icon (account_balance vs menu_book) + label (via Cooper Library vs book·find a copy). Verified a book-heavy query returns 10 papers, books as find-links, zero dropped.
 
+## Recommendations — on-demand Refresh + responsiveness
+
+### Refresh button + faster polling; class-feed materialize was a deploy lag — 2026-07-27
+- **Status**: `attempted`
+- **What**: User's class blended feed showed empty with "Scout is out fetching…" — diagnosed: job 53 was DONE with 36 items but 0 materialized. Local getClassFeed worked fine (materialized 20) → it was a Vercel DEPLOY LAG, not a code bug (running getClassFeed locally against shared Turso populated it). To make refresh feel on-the-fly: (1) explicit "↻ Refresh" chip in the Mine + Class-All view-rows (enqueue + poll, spinner while pending) — discoverable even when the feed is empty; (2) client poll cadence 10s→6s, attempts 10→16 (~96s window); (3) worker POLL_MS 30s→15s (the cost concern that drove 30s was resolved by the capped client polling). 
+- **Note**: recurring theme — Vercel deploys lag this session, so server-code changes (materialize, getClassFeed) don't take effect until deploy; running the function locally against shared Turso is the manual workaround.
+
 ## Recommendations — Rijksmuseum (new keyless Linked Art API)
 
 ### Rijksmuseum source — prints / graphic design / typography — 2026-07-26
