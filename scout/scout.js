@@ -123,7 +123,7 @@ const GENERIC_Q = new Set(['concepts', 'concept', 'introduction', 'intro', 'stud
 // Stem to a root so morphological variants match: generative→generat
 // (generated/generation), algorithms→algorithm (algorithmic). Only stems
 // words long enough that the root stays distinctive.
-const stem = (w) => (w.length >= 6 ? w.replace(/(ives?|ions?|ings?|ers?|als?|ics?|es|s)$/, '') : w);
+const stem = (w) => (w.length >= 6 ? w.replace(/(ically|ical|isms?|ists?|ives?|ions?|ings?|ances?|ences?|ers?|ors?|als?|ics?|ies|ys?|es|s)$/, '') : w);
 const queryStems = (q) => (String(q).toLowerCase().match(/[a-z]{4,}/g) || [])
 	.filter((w) => !GENERIC_Q.has(w)).map(stem).filter((w) => w.length >= 4);
 const matchesQuery = (text, stems) => {
@@ -299,6 +299,32 @@ async function searchEuropeana(q) {
 	return topSlice(kept.length >= 2 ? kept : items).map(({ _hay, ...a }) => a);
 }
 
+// Harvard Art Museums — strong on Bauhaus / design / typography / modern
+// (Moholy-Nagy et al.). Encyclopedic, so like the Met it's strict-filtered:
+// contributes for design topics, nothing when it has no real match. Needs a
+// free key (HARVARD_KEY).
+async function searchHarvard(q) {
+	const key = process.env.HARVARD_KEY;
+	if (!key) return [];
+	const stems = queryStems(q);
+	const r = await politeFetch(
+		`https://api.harvardartmuseums.org/object?apikey=${key}&q=${encodeURIComponent(q)}&hasimage=1&size=15&sort=rank&fields=objectid,title,people,dated,primaryimageurl,url,classification,medium`
+	);
+	if (!r.ok) return [];
+	const d = await r.json();
+	const items = (d.records ?? []).filter((o) => o.primaryimageurl).map((o) => ({
+		kind: 'artwork',
+		title: o.title || 'Untitled',
+		url: o.url || `https://harvardartmuseums.org/collections/object/${o.objectid}`,
+		snippet: [o.people?.[0]?.name, o.dated].filter(Boolean).join(' · '),
+		meta: 'Harvard Art Museums',
+		source: 'harvard',
+		image: `${o.primaryimageurl}?height=400&width=400`,
+		_hay: `${o.title ?? ''} ${o.people?.[0]?.name ?? ''} ${o.classification ?? ''} ${o.medium ?? ''}`
+	}));
+	return topSlice(items.filter((a) => matchesQuery(a._hay, stems))).map(({ _hay, ...a }) => a);
+}
+
 // Top channels about the topic. Kept and returned so the "are.na channels"
 // section stays; also reused as the source for topical images below.
 async function arenaTopChannels(q, n = 3) {
@@ -385,7 +411,7 @@ async function runSearch(query) {
 	if (m) query = String(query).slice(0, m.index);
 	const out = [];
 	for (const part of splitQuery(query)) {
-		const [papers, chans, arenaImgs, wiki, met, aic, cle, vam, euro, pioneers] = await Promise.all([
+		const [papers, chans, arenaImgs, wiki, met, aic, cle, vam, euro, pioneers, harvard] = await Promise.all([
 			searchOpenAlexSeminal(part).catch(() => []),
 			searchArenaChannels(part).catch(() => []),
 			searchArenaImages(part).catch(() => []),
@@ -395,9 +421,10 @@ async function runSearch(query) {
 			searchCleveland(part).catch(() => []),
 			searchVA(part).catch(() => []),
 			searchEuropeana(part).catch(() => []),
-			searchPioneers(part).catch(() => [])
+			searchPioneers(part).catch(() => []),
+			searchHarvard(part).catch(() => [])
 		]);
-		out.push(...pioneers, ...papers, ...chans, ...arenaImgs, ...wiki, ...met, ...aic, ...cle, ...vam, ...euro);
+		out.push(...pioneers, ...papers, ...chans, ...arenaImgs, ...wiki, ...met, ...aic, ...cle, ...vam, ...euro, ...harvard);
 	}
 	// de-dupe by URL, keep order
 	const seen = new Set();

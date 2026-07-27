@@ -300,6 +300,12 @@ The following major areas need to be built. None are started yet.
 - **Status**: `attempted`
 - **What**: The always-DOI guard was silently DROPPING valuable no-DOI works — which turn out to be canonical BOOKS (Bringhurst *Elements of Typographic Style*, Geuss *Idea of a Critical Theory*, *Designing Interaction*). Books rarely have DOIs and can't route through OpenAthens (that's for e-journals). Now: DOI present → DOI link + Cooper OpenAthens (article); no DOI → **Google Books search** by title+author (`google.com/search?tbm=bks`) — never hidden, always lands on the book (preview + borrow/buy), linked direct. materialize `usableUrl` accepts doi.org OR google-books search for papers (still rejects catalog stubs). Frontend: `isDoiPaper` splits routing + icon (account_balance vs menu_book) + label (via Cooper Library vs book·find a copy). Verified a book-heavy query returns 10 papers, books as find-links, zero dropped.
 
+## Recommendations — Harvard Art Museums + better stemming
+
+### Harvard source (Bauhaus/design/typography) — 2026-07-26
+- **Status**: `attempted`
+- **What**: Added Harvard Art Museums (`searchHarvard`, needs HARVARD_KEY — stored in .env + kahan scout.env, NOT committed). Strong on Bauhaus/design/typography/modern (Moholy-Nagy et al.) but encyclopedic, so strict-filtered like Met/AIC (added 'harvard' to materialize MUSEUM_STRICT): contributes for design topics, nothing for generative (its "generative art" search returns 225k junk). IIIF images resized via ?height/width. Also **improved the stemmer** (both worker + materialize) — was too weak: "typography" didn't match "typographical". Now strips ical/ic/y/ism/ist/ance/… so typography/typographic/typographical→typograph, generative→generat, algorithmic→algorithm. Verified Harvard "typography" → Otto Rittweger typographic designs (Bauhaus era), zero junk.
+
 ## Recommendations — pioneer-artist search (Molnár, Mohr, …)
 
 ### Named generative-art pioneers via V&A artist search — 2026-07-26

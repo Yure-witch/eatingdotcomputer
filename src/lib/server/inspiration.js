@@ -134,9 +134,9 @@ function usableUrl(r) {
 // classical filler into the feed. The encyclopedic fine-art museums must
 // contain a query word in the fields we show; V&A (the design museum) and
 // are.na images are trusted by their own ranking.
-const MUSEUM_STRICT = new Set(['met', 'artic', 'cleveland']);
+const MUSEUM_STRICT = new Set(['met', 'artic', 'cleveland', 'harvard']);
 const GENERIC_Q = new Set(['concepts', 'concept', 'introduction', 'intro', 'studio', 'class', 'week', 'course', 'design', 'designs', 'making', 'basics', 'fundamentals', 'academic', 'writing', 'research', 'scholarship']);
-const stemWord = (w) => (w.length >= 6 ? w.replace(/(ives?|ions?|ings?|ers?|als?|ics?|es|s)$/, '') : w);
+const stemWord = (w) => (w.length >= 6 ? w.replace(/(ically|ical|isms?|ists?|ives?|ions?|ings?|ances?|ences?|ers?|ors?|als?|ics?|ies|ys?|es|s)$/, '') : w);
 const queryStems = (q) => (String(q).toLowerCase().replace(/#s\d+\s*$/, '').match(/[a-z]{4,}/g) || [])
 	.filter((w) => !GENERIC_Q.has(w)).map(stemWord).filter((w) => w.length >= 4);
 function museumRelevant(r, stems) {
