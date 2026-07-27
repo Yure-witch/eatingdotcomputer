@@ -300,6 +300,12 @@ The following major areas need to be built. None are started yet.
 - **Status**: `attempted`
 - **What**: The always-DOI guard was silently DROPPING valuable no-DOI works — which turn out to be canonical BOOKS (Bringhurst *Elements of Typographic Style*, Geuss *Idea of a Critical Theory*, *Designing Interaction*). Books rarely have DOIs and can't route through OpenAthens (that's for e-journals). Now: DOI present → DOI link + Cooper OpenAthens (article); no DOI → **Google Books search** by title+author (`google.com/search?tbm=bks`) — never hidden, always lands on the book (preview + borrow/buy), linked direct. materialize `usableUrl` accepts doi.org OR google-books search for papers (still rejects catalog stubs). Frontend: `isDoiPaper` splits routing + icon (account_balance vs menu_book) + label (via Cooper Library vs book·find a copy). Verified a book-heavy query returns 10 papers, books as find-links, zero dropped.
 
+## Recommendations — museum relevance
+
+### Museum results actually relate to the query — 2026-07-26
+- **Status**: `attempted`
+- **What**: "From the museums" was returning a few relevant pieces + lots of unrelated ones. Cause: the Fetch-More rotation paged DEEP (Met slice up to idx 21, AIC page 8, Cleveland skip 21, V&A page 8) into loosely-keyword-matched tails. Museum APIs are relevance-ranked, so now all four stay in the TOP ~9 and rotate which 3 within that window (`topSlice` = slice rot(3)*3). AIC additionally drops weak matches below 35% of the top _score. Verified "typography" → Typography / Design for lettering / Colophon… instead of random works.
+
 ## Recommendations — Class: All topics vs By week
 
 ### Weekly per-topic feeds under the Class tab — 2026-07-26

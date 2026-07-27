@@ -105,11 +105,18 @@ async function searchOpenAlexSeminal(q) {
 		});
 }
 
+// Museum searches are RELEVANCE-ranked by each API, so the top matches are
+// the ones that actually relate to the query. We stay inside the top ~9 and
+// rotate WHICH 3 of those per seed — variety for Fetch More without paging
+// off into loosely-keyword-matched junk (the old deep paging was pulling
+// mostly-unrelated pieces).
+const topSlice = (arr) => arr.slice(rot(3) * 3, rot(3) * 3 + 3);
+
 async function searchMet(q) {
 	const r = await politeFetch(`https://collectionapi.metmuseum.org/public/collection/v1/search?q=${encodeURIComponent(q)}&hasImages=true`);
 	if (!r.ok) return [];
 	const d = await r.json();
-	const ids = (d.objectIDs ?? []).slice(rot(8) * 3, rot(8) * 3 + 3);
+	const ids = topSlice(d.objectIDs ?? []);
 	const out = [];
 	for (const id of ids) {
 		const or = await politeFetch(`https://collectionapi.metmuseum.org/public/collection/v1/objects/${id}`);
@@ -130,31 +137,34 @@ async function searchMet(q) {
 }
 
 async function searchAIC(q) {
+	// _score lets us drop weak keyword matches; AIC's top hits for a solid
+	// query score well into the double digits, tangential ones far lower.
 	const r = await politeFetch(
-		`https://api.artic.edu/api/v1/artworks/search?q=${encodeURIComponent(q)}&limit=3&page=${rot(8) + 1}&fields=id,title,artist_title,date_display,image_id`
+		`https://api.artic.edu/api/v1/artworks/search?q=${encodeURIComponent(q)}&limit=12&fields=id,title,artist_title,date_display,image_id,score`
 	);
 	if (!r.ok) return [];
 	const d = await r.json();
-	return (d.data ?? [])
-		.filter((a) => a.image_id)
-		.map((a) => ({
-			kind: 'artwork',
-			title: a.title,
-			url: `https://www.artic.edu/artworks/${a.id}`,
-			snippet: [a.artist_title, a.date_display].filter(Boolean).join(' · '),
-			meta: 'Art Institute of Chicago',
-			source: 'artic',
-			image: `https://www.artic.edu/iiif/2/${a.image_id}/full/400,/0/default.jpg`
-		}));
+	const scored = (d.data ?? []).filter((a) => a.image_id);
+	const top = scored[0]?._score ?? scored[0]?.score ?? 0;
+	const relevant = scored.filter((a) => (a._score ?? a.score ?? 0) >= Math.max(1, top * 0.35));
+	return topSlice(relevant.length ? relevant : scored).map((a) => ({
+		kind: 'artwork',
+		title: a.title,
+		url: `https://www.artic.edu/artworks/${a.id}`,
+		snippet: [a.artist_title, a.date_display].filter(Boolean).join(' · '),
+		meta: 'Art Institute of Chicago',
+		source: 'artic',
+		image: `https://www.artic.edu/iiif/2/${a.image_id}/full/400,/0/default.jpg`
+	}));
 }
 
 async function searchCleveland(q) {
 	const r = await politeFetch(
-		`https://openaccess-api.clevelandart.org/api/artworks/?q=${encodeURIComponent(q)}&limit=3&skip=${rot(8) * 3}&has_image=1`
+		`https://openaccess-api.clevelandart.org/api/artworks/?q=${encodeURIComponent(q)}&limit=12&has_image=1`
 	);
 	if (!r.ok) return [];
 	const d = await r.json();
-	return (d.data ?? []).map((a) => ({
+	return topSlice(d.data ?? []).map((a) => ({
 		kind: 'artwork',
 		title: a.title,
 		url: a.url,
@@ -167,11 +177,11 @@ async function searchCleveland(q) {
 
 async function searchVA(q) {
 	const r = await politeFetch(
-		`https://api.vam.ac.uk/v2/objects/search?q=${encodeURIComponent(q)}&page_size=3&page=${rot(8) + 1}&images_exist=true`
+		`https://api.vam.ac.uk/v2/objects/search?q=${encodeURIComponent(q)}&page_size=12&page=1&images_exist=true`
 	);
 	if (!r.ok) return [];
 	const d = await r.json();
-	return (d.records ?? []).map((o) => ({
+	return topSlice(d.records ?? []).map((o) => ({
 		kind: 'artwork',
 		title: o._primaryTitle || o.objectType || '(untitled)',
 		url: `https://collections.vam.ac.uk/item/${o.systemNumber}`,
