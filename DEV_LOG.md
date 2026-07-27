@@ -300,6 +300,12 @@ The following major areas need to be built. None are started yet.
 - **Status**: `attempted`
 - **What**: The always-DOI guard was silently DROPPING valuable no-DOI works — which turn out to be canonical BOOKS (Bringhurst *Elements of Typographic Style*, Geuss *Idea of a Critical Theory*, *Designing Interaction*). Books rarely have DOIs and can't route through OpenAthens (that's for e-journals). Now: DOI present → DOI link + Cooper OpenAthens (article); no DOI → **Google Books search** by title+author (`google.com/search?tbm=bks`) — never hidden, always lands on the book (preview + borrow/buy), linked direct. materialize `usableUrl` accepts doi.org OR google-books search for papers (still rejects catalog stubs). Frontend: `isDoiPaper` splits routing + icon (account_balance vs menu_book) + label (via Cooper Library vs book·find a copy). Verified a book-heavy query returns 10 papers, books as find-links, zero dropped.
 
+## Recommendations — museum relevance, take 3 (V&A trust + stemming)
+
+### Fine-art museums no longer flood design topics; V&A trusted — 2026-07-26
+- **Status**: `attempted`
+- **What**: For "generative art, algorithms" the genuinely-relevant museum pieces (Verostko/Nake/Nees/Hébert/Hammersley/Neagu) are ALL V&A — it holds the computer-art collection — while Met/AIC returned classical filler (Botticelli, Seurat, porcelain). But V&A's search records don't expose the metadata it matched on, so a perfect hit's TITLE often lacks the query word → the strict keyword filter would wrongly drop Nake too. Fix: (1) **V&A trusts its own ranking** — keyword-filter only when that still leaves ≥2, else take the top results as-is (it's the design museum, authoritative for these topics). Met/AIC/Cleveland stay strict (must contain a query stem in title/medium/classification), so their classical noise drops to nothing when they have no real match. (2) **Stemming** (`generative`→`generat`, `algorithms`→`algorithm`) so morphological variants match. Verified "generative art, algorithms" → V&A Neagu/Hammersley/Hébert/Verostko/Nake, zero Met/AIC junk. (3) One-time cleanup: purged the user's 40 accumulated irrelevant Met/AIC/Cleveland artworks (kept 17 V&A).
+
 ## Recommendations — museum keyword-relevance guard
 
 ### Museums must contain a query word (no more On Kawara for text adventure) — 2026-07-26

@@ -120,15 +120,20 @@ const topSlice = (arr) => arr.slice(rot(3) * 3, rot(3) * 3 + 3);
 // hits (e.g. "text adventure"), that source simply returns nothing rather
 // than something insulting.
 const GENERIC_Q = new Set(['concepts', 'concept', 'introduction', 'intro', 'studio', 'class', 'week', 'course', 'design', 'designs', 'making', 'basics', 'fundamentals']);
-const queryWords = (q) => (String(q).toLowerCase().match(/[a-z]{4,}/g) || []).filter((w) => !GENERIC_Q.has(w));
-const matchesQuery = (text, words) => {
-	if (!words.length) return true;
+// Stem to a root so morphological variants match: generative→generat
+// (generated/generation), algorithms→algorithm (algorithmic). Only stems
+// words long enough that the root stays distinctive.
+const stem = (w) => (w.length >= 6 ? w.replace(/(ives?|ions?|ings?|ers?|als?|ics?|es|s)$/, '') : w);
+const queryStems = (q) => (String(q).toLowerCase().match(/[a-z]{4,}/g) || [])
+	.filter((w) => !GENERIC_Q.has(w)).map(stem).filter((w) => w.length >= 4);
+const matchesQuery = (text, stems) => {
+	if (!stems.length) return true;
 	const t = String(text).toLowerCase();
-	return words.some((w) => t.includes(w));
+	return stems.some((w) => t.includes(w));
 };
 
 async function searchMet(q) {
-	const words = queryWords(q);
+	const stems = queryStems(q);
 	const r = await politeFetch(`https://collectionapi.metmuseum.org/public/collection/v1/search?q=${encodeURIComponent(q)}&hasImages=true`);
 	if (!r.ok) return [];
 	const d = await r.json();
@@ -149,14 +154,14 @@ async function searchMet(q) {
 			source: 'met',
 			image: o.primaryImageSmall
 		};
-		if (matchesQuery(`${item.title} ${item.snippet} ${o.medium ?? ''} ${o.classification ?? ''}`, words)) out.push(item);
+		if (matchesQuery(`${item.title} ${item.snippet} ${o.medium ?? ''} ${o.classification ?? ''}`, stems)) out.push(item);
 		if (out.length >= 3) break;
 	}
 	return out;
 }
 
 async function searchAIC(q) {
-	const words = queryWords(q);
+	const stems = queryStems(q);
 	const r = await politeFetch(
 		`https://api.artic.edu/api/v1/artworks/search?q=${encodeURIComponent(q)}&limit=15&fields=id,title,artist_title,date_display,image_id,medium_display,classification_title`
 	);
@@ -172,11 +177,11 @@ async function searchAIC(q) {
 		image: `https://www.artic.edu/iiif/2/${a.image_id}/full/400,/0/default.jpg`,
 		_hay: `${a.title} ${a.artist_title ?? ''} ${a.medium_display ?? ''} ${a.classification_title ?? ''}`
 	}));
-	return topSlice(items.filter((a) => matchesQuery(a._hay, words))).map(({ _hay, ...a }) => a);
+	return topSlice(items.filter((a) => matchesQuery(a._hay, stems))).map(({ _hay, ...a }) => a);
 }
 
 async function searchCleveland(q) {
-	const words = queryWords(q);
+	const stems = queryStems(q);
 	const r = await politeFetch(
 		`https://openaccess-api.clevelandart.org/api/artworks/?q=${encodeURIComponent(q)}&limit=15&has_image=1`
 	);
@@ -192,11 +197,17 @@ async function searchCleveland(q) {
 		image: a.images?.web?.url ?? null,
 		_hay: `${a.title} ${a.technique ?? ''} ${a.type ?? ''} ${a.department ?? ''}`
 	})).filter((a) => a.url);
-	return topSlice(items.filter((a) => matchesQuery(a._hay, words))).map(({ _hay, ...a }) => a);
+	return topSlice(items.filter((a) => matchesQuery(a._hay, stems))).map(({ _hay, ...a }) => a);
 }
 
 async function searchVA(q) {
-	const words = queryWords(q);
+	// V&A is THE design museum — its search is authoritative for design /
+	// generative / computer-art topics (it holds the Nake/Verostko/Nees
+	// computer-art collection). Its search records don't expose the rich
+	// metadata it matched on, so the topic word often isn't in the title
+	// even for a perfect hit. So: trust V&A's ranking — keyword-filter only
+	// when that still leaves a healthy set, else take the top results as-is.
+	const stems = queryStems(q);
 	const r = await politeFetch(
 		`https://api.vam.ac.uk/v2/objects/search?q=${encodeURIComponent(q)}&page_size=15&page=1&images_exist=true`
 	);
@@ -212,7 +223,8 @@ async function searchVA(q) {
 		image: o._primaryImageId ? `https://framemark.vam.ac.uk/collections/${o._primaryImageId}/full/!400,400/0/default.jpg` : null,
 		_hay: `${o._primaryTitle ?? ''} ${o.objectType ?? ''} ${o._primaryMaker?.name ?? ''}`
 	}));
-	return topSlice(items.filter((a) => matchesQuery(a._hay, words))).map(({ _hay, ...a }) => a);
+	const kept = items.filter((a) => matchesQuery(a._hay, stems));
+	return topSlice(kept.length >= 2 ? kept : items).map(({ _hay, ...a }) => a);
 }
 
 // Top channels about the topic. Kept and returned so the "are.na channels"
