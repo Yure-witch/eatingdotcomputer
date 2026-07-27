@@ -300,6 +300,13 @@ The following major areas need to be built. None are started yet.
 - **Status**: `attempted`
 - **What**: The always-DOI guard was silently DROPPING valuable no-DOI works — which turn out to be canonical BOOKS (Bringhurst *Elements of Typographic Style*, Geuss *Idea of a Critical Theory*, *Designing Interaction*). Books rarely have DOIs and can't route through OpenAthens (that's for e-journals). Now: DOI present → DOI link + Cooper OpenAthens (article); no DOI → **Google Books search** by title+author (`google.com/search?tbm=bks`) — never hidden, always lands on the book (preview + borrow/buy), linked direct. materialize `usableUrl` accepts doi.org OR google-books search for papers (still rejects catalog stubs). Frontend: `isDoiPaper` splits routing + icon (account_balance vs menu_book) + label (via Cooper Library vs book·find a copy). Verified a book-heavy query returns 10 papers, books as find-links, zero dropped.
 
+## Recommendations — museum keyword-relevance guard
+
+### Museums must contain a query word (no more On Kawara for text adventure) — 2026-07-26
+- **Status**: `attempted`
+- **What**: Top-ranking alone still let coincidental metadata matches through (On Kawara date paintings "matched" text adventure via the word "text" in a description). Added `matchesQuery`: a museum piece is kept only if a real query word (≥4 chars, minus generic filler like design/concepts/studio) appears in the title/artist/medium/classification we actually show. When a topic has no true museum hits, that source returns nothing instead of junk. Applied to Met/AIC/Cleveland/V&A (each now fetches ~15 and filters, Met fetches top 6 details and keeps ≤3 matches). Verified "text adventure" → Adventures of Ulysses, Alice's Adventures in Wonderland, a Dickens manuscript — not On Kawara.
+- **Refresh note**: class feeds cache for REFRESH_MS (20h) so a worker change doesn't auto-refresh existing feeds; cleared the class blended + per-week items/jobs to force regeneration. Users can force it themselves with "Fetch more for every week".
+
 ## Recommendations — museum relevance
 
 ### Museum results actually relate to the query — 2026-07-26

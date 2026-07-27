@@ -112,18 +112,35 @@ async function searchOpenAlexSeminal(q) {
 // mostly-unrelated pieces).
 const topSlice = (arr) => arr.slice(rot(3) * 3, rot(3) * 3 + 3);
 
+// Keyword relevance guard for museums. Their search matches ANY indexed
+// field (incl. descriptions we never see), so a date-painting can "match"
+// text adventure via the word "text". Require a real query word (≥4 chars,
+// minus generic filler) to appear in what we actually show — title/artist/
+// date. Drops the coincidental matches; when a topic has no true museum
+// hits (e.g. "text adventure"), that source simply returns nothing rather
+// than something insulting.
+const GENERIC_Q = new Set(['concepts', 'concept', 'introduction', 'intro', 'studio', 'class', 'week', 'course', 'design', 'designs', 'making', 'basics', 'fundamentals']);
+const queryWords = (q) => (String(q).toLowerCase().match(/[a-z]{4,}/g) || []).filter((w) => !GENERIC_Q.has(w));
+const matchesQuery = (text, words) => {
+	if (!words.length) return true;
+	const t = String(text).toLowerCase();
+	return words.some((w) => t.includes(w));
+};
+
 async function searchMet(q) {
+	const words = queryWords(q);
 	const r = await politeFetch(`https://collectionapi.metmuseum.org/public/collection/v1/search?q=${encodeURIComponent(q)}&hasImages=true`);
 	if (!r.ok) return [];
 	const d = await r.json();
-	const ids = topSlice(d.objectIDs ?? []);
+	// Fetch the top few (relevance-ranked) and keep only genuine matches.
+	const ids = (d.objectIDs ?? []).slice(0, 6);
 	const out = [];
 	for (const id of ids) {
 		const or = await politeFetch(`https://collectionapi.metmuseum.org/public/collection/v1/objects/${id}`);
 		if (!or.ok) continue;
 		const o = await or.json();
 		if (!o.primaryImageSmall) continue;
-		out.push({
+		const item = {
 			kind: 'artwork',
 			title: o.title || '(untitled)',
 			url: o.objectURL,
@@ -131,65 +148,71 @@ async function searchMet(q) {
 			meta: 'The Met',
 			source: 'met',
 			image: o.primaryImageSmall
-		});
+		};
+		if (matchesQuery(`${item.title} ${item.snippet} ${o.medium ?? ''} ${o.classification ?? ''}`, words)) out.push(item);
+		if (out.length >= 3) break;
 	}
 	return out;
 }
 
 async function searchAIC(q) {
-	// _score lets us drop weak keyword matches; AIC's top hits for a solid
-	// query score well into the double digits, tangential ones far lower.
+	const words = queryWords(q);
 	const r = await politeFetch(
-		`https://api.artic.edu/api/v1/artworks/search?q=${encodeURIComponent(q)}&limit=12&fields=id,title,artist_title,date_display,image_id,score`
+		`https://api.artic.edu/api/v1/artworks/search?q=${encodeURIComponent(q)}&limit=15&fields=id,title,artist_title,date_display,image_id,medium_display,classification_title`
 	);
 	if (!r.ok) return [];
 	const d = await r.json();
-	const scored = (d.data ?? []).filter((a) => a.image_id);
-	const top = scored[0]?._score ?? scored[0]?.score ?? 0;
-	const relevant = scored.filter((a) => (a._score ?? a.score ?? 0) >= Math.max(1, top * 0.35));
-	return topSlice(relevant.length ? relevant : scored).map((a) => ({
+	const items = (d.data ?? []).filter((a) => a.image_id).map((a) => ({
 		kind: 'artwork',
 		title: a.title,
 		url: `https://www.artic.edu/artworks/${a.id}`,
 		snippet: [a.artist_title, a.date_display].filter(Boolean).join(' · '),
 		meta: 'Art Institute of Chicago',
 		source: 'artic',
-		image: `https://www.artic.edu/iiif/2/${a.image_id}/full/400,/0/default.jpg`
+		image: `https://www.artic.edu/iiif/2/${a.image_id}/full/400,/0/default.jpg`,
+		_hay: `${a.title} ${a.artist_title ?? ''} ${a.medium_display ?? ''} ${a.classification_title ?? ''}`
 	}));
+	return topSlice(items.filter((a) => matchesQuery(a._hay, words))).map(({ _hay, ...a }) => a);
 }
 
 async function searchCleveland(q) {
+	const words = queryWords(q);
 	const r = await politeFetch(
-		`https://openaccess-api.clevelandart.org/api/artworks/?q=${encodeURIComponent(q)}&limit=12&has_image=1`
+		`https://openaccess-api.clevelandart.org/api/artworks/?q=${encodeURIComponent(q)}&limit=15&has_image=1`
 	);
 	if (!r.ok) return [];
 	const d = await r.json();
-	return topSlice(d.data ?? []).map((a) => ({
+	const items = (d.data ?? []).map((a) => ({
 		kind: 'artwork',
 		title: a.title,
 		url: a.url,
 		snippet: [(a.creators ?? []).map((c) => c.description).join(', '), a.creation_date].filter(Boolean).join(' · '),
 		meta: 'Cleveland Museum of Art',
 		source: 'cleveland',
-		image: a.images?.web?.url ?? null
+		image: a.images?.web?.url ?? null,
+		_hay: `${a.title} ${a.technique ?? ''} ${a.type ?? ''} ${a.department ?? ''}`
 	})).filter((a) => a.url);
+	return topSlice(items.filter((a) => matchesQuery(a._hay, words))).map(({ _hay, ...a }) => a);
 }
 
 async function searchVA(q) {
+	const words = queryWords(q);
 	const r = await politeFetch(
-		`https://api.vam.ac.uk/v2/objects/search?q=${encodeURIComponent(q)}&page_size=12&page=1&images_exist=true`
+		`https://api.vam.ac.uk/v2/objects/search?q=${encodeURIComponent(q)}&page_size=15&page=1&images_exist=true`
 	);
 	if (!r.ok) return [];
 	const d = await r.json();
-	return topSlice(d.records ?? []).map((o) => ({
+	const items = (d.records ?? []).map((o) => ({
 		kind: 'artwork',
 		title: o._primaryTitle || o.objectType || '(untitled)',
 		url: `https://collections.vam.ac.uk/item/${o.systemNumber}`,
 		snippet: [o._primaryMaker?.name, o._primaryDate].filter(Boolean).join(' · '),
 		meta: 'V&A Museum',
 		source: 'vam',
-		image: o._primaryImageId ? `https://framemark.vam.ac.uk/collections/${o._primaryImageId}/full/!400,400/0/default.jpg` : null
+		image: o._primaryImageId ? `https://framemark.vam.ac.uk/collections/${o._primaryImageId}/full/!400,400/0/default.jpg` : null,
+		_hay: `${o._primaryTitle ?? ''} ${o.objectType ?? ''} ${o._primaryMaker?.name ?? ''}`
 	}));
+	return topSlice(items.filter((a) => matchesQuery(a._hay, words))).map(({ _hay, ...a }) => a);
 }
 
 // Top channels about the topic. Kept and returned so the "are.na channels"
