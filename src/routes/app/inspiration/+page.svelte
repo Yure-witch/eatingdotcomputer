@@ -160,7 +160,7 @@
 	});
 
 	const KIND_SECTIONS = [
-		{ key: 'paper', title: 'Key readings', sub: 'the most-cited papers & books on your interests — what everyone in the field has read. Opens through Cooper Library — sign in with your Cooper login.' },
+		{ key: 'paper', title: 'Related readings', sub: 'the most-cited papers & books on your interests — what everyone in the field has read. Opens through Cooper Library — sign in with your Cooper login.' },
 		{ key: 'arena_img', title: 'are.na images', sub: 'pulled from channels people keep about these topics' },
 		{ key: 'artwork', title: 'From the museums & archives', sub: 'V&A · Europeana (Ars Electronica, ZKM…) · Harvard · Rijksmuseum · The Met · Art Institute · Cleveland' },
 		{ key: 'channel', title: 'are.na channels', sub: 'curated rabbit holes' },
