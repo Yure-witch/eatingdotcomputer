@@ -420,7 +420,10 @@ async function isPending(db, tag) {
 }
 
 // Read one shared feed's items with the viewer's own reactions + aggregate.
-async function readSharedItems(db, userId, owner) {
+// `excludeLike` (a user_id LIKE pattern) drops items whose URL also appears
+// under those owners — used so the blended "All topics" view doesn't repeat
+// what the per-week view already shows.
+async function readSharedItems(db, userId, owner, excludeLike = null) {
 	const rows = (await db.execute({
 		sql: `SELECT i.*,
 		         COALESCE(SUM(rx.rating), 0) AS agg_score,
@@ -430,11 +433,12 @@ async function readSharedItems(db, userId, owner) {
 		      FROM inspiration_items i
 		      LEFT JOIN inspiration_reactions rx ON rx.item_id = i.id
 		      WHERE i.user_id = ?
+		        ${excludeLike ? `AND i.url NOT IN (SELECT url FROM inspiration_items WHERE user_id LIKE ?)` : ''}
 		      GROUP BY i.id
 		      HAVING COALESCE(SUM(rx.rating), 0) > -2
 		      ORDER BY agg_score DESC, i.created_at DESC
 		      LIMIT 120`,
-		args: [userId, userId, owner]
+		args: excludeLike ? [userId, userId, owner, excludeLike] : [userId, userId, owner]
 	})).rows;
 	return rows.map((r) => ({
 		...rowToItem(r),
@@ -456,7 +460,9 @@ export async function getClassFeed(userId, classId) {
 		const { topics } = await getClassTopics(db, classId);
 		await enqueueSharedBatch(db, tag, topics);
 	}
-	const items = await readSharedItems(db, userId, owner);
+	// Exclude anything the per-week view already shows, so "All topics" stays
+	// a distinct, fresh blend rather than repeating the weekly breakdown.
+	const items = await readSharedItems(db, userId, owner, `class:${classId}:w%`);
 	const { topics } = await getClassTopics(db, classId);
 	return { items, pending: await isPending(db, tag), topics };
 }

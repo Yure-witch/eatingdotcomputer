@@ -300,6 +300,12 @@ The following major areas need to be built. None are started yet.
 - **Status**: `attempted`
 - **What**: The always-DOI guard was silently DROPPING valuable no-DOI works — which turn out to be canonical BOOKS (Bringhurst *Elements of Typographic Style*, Geuss *Idea of a Critical Theory*, *Designing Interaction*). Books rarely have DOIs and can't route through OpenAthens (that's for e-journals). Now: DOI present → DOI link + Cooper OpenAthens (article); no DOI → **Google Books search** by title+author (`google.com/search?tbm=bks`) — never hidden, always lands on the book (preview + borrow/buy), linked direct. materialize `usableUrl` accepts doi.org OR google-books search for papers (still rejects catalog stubs). Frontend: `isDoiPaper` splits routing + icon (account_balance vs menu_book) + label (via Cooper Library vs book·find a copy). Verified a book-heavy query returns 10 papers, books as find-links, zero dropped.
 
+## Recommendations — de-dup All-topics vs By-week
+
+### Class 'All topics' excludes what 'By week' already shows — 2026-07-27
+- **Status**: `attempted`
+- **What**: The two Class sub-views repeated a few entries — both queries include the class SUBJECT, so subject-level finds landed in the blended feed AND every week. `readSharedItems` gained an optional `excludeLike` (user_id LIKE pattern) that drops items whose URL also appears under those owners; `getClassFeed` passes `class:<id>:w%` so "All topics" excludes anything in the per-week feeds — making it a distinct, complementary blend. Verified: blended 12 / weekly 16 / overlap 0 (was a few). Blended stays healthy; as weeks grow, Refresh/Fetch-more keeps unique items flowing.
+
 ## Recommendations — on-demand Refresh + responsiveness
 
 ### Refresh button + faster polling; class-feed materialize was a deploy lag — 2026-07-27
