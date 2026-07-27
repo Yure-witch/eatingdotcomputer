@@ -129,11 +129,28 @@ function usableUrl(r) {
 	return url;
 }
 
+// Museum relevance guard — mirrors the worker so STALE cached job results
+// (generated before the worker's museum filter) can't re-materialize
+// classical filler into the feed. The encyclopedic fine-art museums must
+// contain a query word in the fields we show; V&A (the design museum) and
+// are.na images are trusted by their own ranking.
+const MUSEUM_STRICT = new Set(['met', 'artic', 'cleveland']);
+const GENERIC_Q = new Set(['concepts', 'concept', 'introduction', 'intro', 'studio', 'class', 'week', 'course', 'design', 'designs', 'making', 'basics', 'fundamentals', 'academic', 'writing', 'research', 'scholarship']);
+const stemWord = (w) => (w.length >= 6 ? w.replace(/(ives?|ions?|ings?|ers?|als?|ics?|es|s)$/, '') : w);
+const queryStems = (q) => (String(q).toLowerCase().replace(/#s\d+\s*$/, '').match(/[a-z]{4,}/g) || [])
+	.filter((w) => !GENERIC_Q.has(w)).map(stemWord).filter((w) => w.length >= 4);
+function museumRelevant(r, stems) {
+	if ((r.kind ?? '') !== 'artwork' || !MUSEUM_STRICT.has(r.source)) return true;
+	if (!stems.length) return true;
+	const t = `${r.title ?? ''} ${r.snippet ?? ''} ${r.meta ?? ''}`.toLowerCase();
+	return stems.some((w) => t.includes(w));
+}
+
 // Insert results from every completed-but-recent job. Idempotent: the
 // per-user URL unique index makes re-materializing a no-op.
 async function materialize(db, userId) {
 	const jobs = (await db.execute({
-		sql: `SELECT id, result FROM scout_jobs
+		sql: `SELECT id, query, result FROM scout_jobs
 		      WHERE requested_by = ? AND status = 'done' AND updated_at > datetime('now', '-2 days')`,
 		args: [tag(userId)]
 	})).rows;
@@ -141,7 +158,9 @@ async function materialize(db, userId) {
 		let results;
 		try { results = JSON.parse(String(job.result)); } catch { continue; }
 		if (!Array.isArray(results)) continue;
+		const stems = queryStems(job.query ?? '');
 		for (const r of await tasteFilter(db, userId, results)) {
+			if (!museumRelevant(r, stems)) continue;
 			const url = usableUrl(r);
 			if (!url) continue;
 			await db.execute({
@@ -360,15 +379,17 @@ async function enqueueSharedBatch(db, tag, query) {
 
 async function materializeOwner(db, owner, tag) {
 	const jobs = (await db.execute({
-		sql: `SELECT result FROM scout_jobs WHERE requested_by = ? AND status = 'done' AND updated_at > datetime('now', '-2 days')`,
+		sql: `SELECT query, result FROM scout_jobs WHERE requested_by = ? AND status = 'done' AND updated_at > datetime('now', '-2 days')`,
 		args: [tag]
 	})).rows;
 	for (const job of jobs) {
 		let results;
 		try { results = JSON.parse(String(job.result)); } catch { continue; }
 		if (!Array.isArray(results)) continue;
+		const stems = queryStems(job.query ?? '');
 		const taken = {};
 		for (const r of results) {
+			if (!museumRelevant(r, stems)) continue;
 			const url = usableUrl(r);
 			if (!url) continue;
 			const kind = r.kind ?? 'link';
