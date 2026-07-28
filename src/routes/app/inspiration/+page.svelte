@@ -610,7 +610,7 @@
 
 	.week-block { margin-bottom: 3rem; }
 	.week-head {
-		display: flex; flex-direction: column; gap: 0.2rem;
+		display: flex; flex-direction: column; gap: 0.95rem;
 		margin-bottom: 1.9rem;
 	}
 	.week-num {
