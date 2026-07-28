@@ -610,9 +610,8 @@
 
 	.week-block { margin-bottom: 3rem; }
 	.week-head {
-		display: flex; flex-direction: column; gap: 0.15rem;
-		padding-bottom: 0.7rem; margin-bottom: 2.4rem;
-		border-bottom: 1.5px solid var(--ink);
+		display: flex; flex-direction: column; gap: 0.2rem;
+		margin-bottom: 1.9rem;
 	}
 	.week-num {
 		font-size: 0.64rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.14em;
