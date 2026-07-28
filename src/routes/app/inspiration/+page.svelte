@@ -611,7 +611,7 @@
 	.week-block { margin-bottom: 3rem; }
 	.week-head {
 		display: flex; flex-direction: column; gap: 0.15rem;
-		padding-bottom: 0.7rem; margin-bottom: 1.5rem;
+		padding-bottom: 0.7rem; margin-bottom: 2.4rem;
 		border-bottom: 1.5px solid var(--ink);
 	}
 	.week-num {
