@@ -262,6 +262,22 @@ main {
 	background: color-mix(in srgb, currentColor 30%, transparent);
 }
 
+/* Auto-linked URLs in chat bubbles. Underlined + accent-tinted so they
+   read as tappable; sent bubbles use currentColor so the link stays
+   legible on the accent bubble regardless of tone. */
+.chat-link {
+	color: var(--accent);
+	text-decoration: underline;
+	text-underline-offset: 2px;
+	text-decoration-thickness: 1px;
+	word-break: break-word;
+}
+.chat-link:hover { text-decoration-thickness: 2px; }
+.message.mine .chat-link {
+	color: inherit;
+	text-decoration-color: color-mix(in srgb, currentColor 60%, transparent);
+}
+
 /* Deep-link landing highlight — when a notification or other deep link
    targets a specific message (`?msg=ID`), scrollToMessage() adds the
    `.flash` class to its `.message` wrapper for ~1.6 s so the user

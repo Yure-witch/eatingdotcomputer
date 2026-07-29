@@ -349,6 +349,46 @@ export function createContentRenderer({ hljs = null, codeIcons = {}, getCeMap = 
 	}
 
 	const _wrapEmoji = wrapEmoji || defaultWrapEmoji;
+
+	// Auto-link pasted URLs. Runs on RAW (un-escaped) text chunks: it wraps
+	// http(s):// and www. URLs in a clickable <a>, and hands every non-URL run
+	// to _wrapEmoji (which escapes + emoji-wraps). Only used on plain, un-
+	// effected text — code blocks are handled on a separate branch and never
+	// reach here, and URLs carrying text effects are rare enough to skip.
+	const URL_RE = /(https?:\/\/[^\s<>"']+|www\.[^\s<>"']+)/gi;
+	const _urlPunct = /[.,;:!?'"”’)\]}>…]/;
+	function _trimUrl(u) {
+		let core = u, trail = '';
+		while (core.length) {
+			const last = core[core.length - 1];
+			if (!_urlPunct.test(last)) break;
+			// keep a closing bracket that balances an opener inside the URL
+			// (e.g. en.wikipedia.org/wiki/Foo_(bar) ), otherwise it's punctuation.
+			if (last === ')' && (core.match(/\(/g) || []).length >= (core.match(/\)/g) || []).length) break;
+			if (last === ']' && (core.match(/\[/g) || []).length >= (core.match(/\]/g) || []).length) break;
+			trail = last + trail;
+			core = core.slice(0, -1);
+		}
+		return [core, trail];
+	}
+	function linkifyRaw(chunk) {
+		if (!chunk) return '';
+		if (chunk.indexOf('http') === -1 && chunk.indexOf('www.') === -1) return _wrapEmoji(chunk);
+		URL_RE.lastIndex = 0;
+		let out = '', last = 0, m;
+		while ((m = URL_RE.exec(chunk)) !== null) {
+			const [core, trail] = _trimUrl(m[0]);
+			if (!core) continue; // pure punctuation somehow — leave to the tail wrap
+			if (m.index > last) out += _wrapEmoji(chunk.slice(last, m.index));
+			const href = /^www\./i.test(core) ? 'https://' + core : core;
+			out += `<a class="chat-link" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(core)}</a>`;
+			if (trail) out += _wrapEmoji(trail);
+			last = m.index + m[0].length;
+		}
+		if (last < chunk.length) out += _wrapEmoji(chunk.slice(last));
+		return out;
+	}
+
 	const EK_RE = /\[ek:([a-z0-9]+):([0-9a-f-]+):([0-9a-f-]+)\]/gi;
 	const CE_RE = /\[ce:([a-zA-Z0-9_-]{1,32})\]/gi;
 	const TG_RE = /\[tg:([0-9a-f-]+)\]/gi;
@@ -399,7 +439,7 @@ export function createContentRenderer({ hljs = null, codeIcons = {}, getCeMap = 
 		const hasTg = text.indexOf('[tg:') !== -1;
 		const hasTgc = text.indexOf('[tgc:') !== -1;
 		const hasFx = /[\uE100-\uE1FF]/.test(text);
-		if (!hasEk && !hasCe && !hasTg && !hasTgc && !hasFx) return _wrapEmoji(text);
+		if (!hasEk && !hasCe && !hasTg && !hasTgc && !hasFx) return linkifyRaw(text);
 
 		const segs = markupToSegments(normalizeLegacyMarkup(text));
 		if (!segs.length) return escapeHtml(text);
@@ -408,7 +448,7 @@ export function createContentRenderer({ hljs = null, codeIcons = {}, getCeMap = 
 
 		function renderText(chunk, fxStack) {
 			if (!chunk) return '';
-			if (!fxStack.length) return _wrapEmoji(chunk);
+			if (!fxStack.length) return linkifyRaw(chunk);
 			// `flip` mirrors each EMOJI grapheme in place (emotes are mirrored
 			// in the emote branch). Plain letters keep their normal flow — so
 			// we split per-grapheme and only flip the emoji ones.
