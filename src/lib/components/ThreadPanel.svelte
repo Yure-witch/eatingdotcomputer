@@ -17,6 +17,7 @@
 	import { getCachedCustomEmojiMap } from '$lib/custom-emoji-store.js';
 	import FormattedInput from './FormattedInput.svelte';
 	import ExpressionTip from './ExpressionTip.svelte';
+	import MessageAttachment from './MessageAttachment.svelte';
 	import { wrapEmojiInText } from '$lib/emoji-tip.js';
 
 	let {
@@ -190,7 +191,12 @@
 		<div class="thread-parent">
 			<div class="thread-msg-meta"><b>{parentSnapshot.userName}</b><span class="thread-time">{fmtTime(parentSnapshot.createdAt)}</span></div>
 			<!-- emoji/emote-only messages go jumbo, exactly like chat bubbles -->
-			<div class="thread-msg-body" class:jumbo={jumboEmojiCountM(parentSnapshot.content) > 0} style:font-size={bubbleFontSize(parentSnapshot.content, 1)}>{@html contentHtml(parentSnapshot.content)}</div>
+			{#if parentSnapshot.content}
+				<div class="thread-msg-body" class:jumbo={jumboEmojiCountM(parentSnapshot.content) > 0} style:font-size={bubbleFontSize(parentSnapshot.content, 1)}>{@html contentHtml(parentSnapshot.content)}</div>
+			{/if}
+			{#if parentSnapshot.attachment}
+				<div class="thread-att"><MessageAttachment attachment={parentSnapshot.attachment} /></div>
+			{/if}
 		</div>
 		<div class="thread-count-rule">
 			{#if loading}
@@ -206,13 +212,7 @@
 					<div class="thread-msg-body" class:jumbo={jumboEmojiCountM(r.content) > 0} style:font-size={bubbleFontSize(r.content, 1)}>{@html contentHtml(r.content)}</div>
 				{/if}
 				{#if r.attachment}
-					{#if r.attachment.mimetype?.startsWith('image/')}
-						<a class="thread-att-img" href={r.attachment.url} target="_blank" rel="noreferrer">
-							<img src={r.attachment.url} alt={r.attachment.filename || 'attachment'} loading="lazy" />
-						</a>
-					{:else}
-						<a class="thread-att-file" href={r.attachment.url} target="_blank" rel="noreferrer">📎 {r.attachment.filename || 'file'}</a>
-					{/if}
+					<div class="thread-att"><MessageAttachment attachment={r.attachment} mine={r.userId === currentUser?.id} /></div>
 				{/if}
 			</div>
 		{/each}
@@ -331,14 +331,7 @@
 	.tpa-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	.tpa-x { background: none; border: none; color: var(--muted-fg); cursor: pointer; font-size: 0.8rem; padding: 0.2rem; }
 	.tpa-x:hover { color: var(--ink); }
-	.thread-att-img { display: block; margin-top: 0.25rem; max-width: 260px; }
-	.thread-att-img img { max-width: 100%; border-radius: 10px; border: 1.5px solid var(--border); display: block; }
-	.thread-att-file {
-		display: inline-flex; align-items: center; gap: 0.3rem; margin-top: 0.25rem;
-		padding: 0.3rem 0.6rem; border: 1.5px solid var(--border); border-radius: 8px;
-		font-size: 0.8rem; color: var(--ink); text-decoration: none; background: var(--surface-2);
-	}
-	.thread-att-file:hover { border-color: var(--ink); }
+	.thread-att { margin-top: 0.25rem; }
 	/* jumbo (emoji-only) messages keep their glyph scale like chat bubbles */
 	.thread-msg-body.jumbo { line-height: 1.2; }
 	.thread-send {

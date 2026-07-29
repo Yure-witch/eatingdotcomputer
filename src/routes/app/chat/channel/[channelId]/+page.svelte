@@ -31,6 +31,7 @@
 	import ProfileHover from '$lib/components/ProfileHover.svelte';
 	import ExpressionTip from '$lib/components/ExpressionTip.svelte';
 	import ThreadPanel from '$lib/components/ThreadPanel.svelte';
+	import MessageAttachment from '$lib/components/MessageAttachment.svelte';
 	import Avatar from '$lib/components/Avatar.svelte';
 	import UserMenu from '$lib/components/UserMenu.svelte';
 	import { loadEmojiNames, getEmojiName } from '$lib/emoji-names.js';
@@ -4013,11 +4014,16 @@
 	{#if pmsg}
 		<div class="react-msg-preview" class:mine={pmsg.userId === data.currentUser.id}>
 			<div class="rmp-inner">
-				<p class="bubble" class:jumbo-emoji={jumboEmojiCountM(pmsg.content) > 0 && !pmsg.replyTo}
-					style:font-size={bubbleFontSize(pmsg.content, pmsg.fontSize)}
-					style:font-weight={pmsg.fontWeight && pmsg.fontWeight !== 400 ? pmsg.fontWeight : null}
-					style:font-stretch={pmsg.fontStretch && pmsg.fontStretch !== 100 ? `${pmsg.fontStretch}%` : null}
-				>{@html bubbleHtmlM(pmsg.content, pmsg.mentions, !pmsg.noSplit)}</p>
+				{#if pmsg.content}
+					<p class="bubble" class:jumbo-emoji={jumboEmojiCountM(pmsg.content) > 0 && !pmsg.replyTo}
+						style:font-size={bubbleFontSize(pmsg.content, pmsg.fontSize)}
+						style:font-weight={pmsg.fontWeight && pmsg.fontWeight !== 400 ? pmsg.fontWeight : null}
+						style:font-stretch={pmsg.fontStretch && pmsg.fontStretch !== 100 ? `${pmsg.fontStretch}%` : null}
+					>{@html bubbleHtmlM(pmsg.content, pmsg.mentions, !pmsg.noSplit)}</p>
+				{/if}
+				{#if pmsg.attachment}
+					<MessageAttachment attachment={pmsg.attachment} mine={pmsg.userId === data.currentUser.id} compact />
+				{/if}
 				{#if Object.values(pmReactions).some((u) => Object.keys(u).length > 0)}
 					<div class="reactions">
 						{#each Object.entries(pmReactions) as [emoji, users]}
