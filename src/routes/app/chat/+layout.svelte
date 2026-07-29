@@ -27,6 +27,7 @@
 	let _retryTimer = null;
 	let _connWatch = null;          // unsubscribe for the .info/connected listener
 	let _resyncTimer = null;        // debounce for the force-reconnect kick
+	let _initWatchdog = null;       // last-resort reload if init never completes
 	let _destroyed = false;
 
 	// A sign-in that never resolves (half-open socket after sleep) would wedge
@@ -93,6 +94,7 @@
 
 	function onConnected() {
 		stopRetryLoop();
+		clearTimeout(_initWatchdog);
 		firebaseError = false;
 		firebaseReady = true;
 		reloadCount = 0;
@@ -170,6 +172,18 @@
 		document.addEventListener('visibilitychange', handleVisible);
 		watchConnection();
 
+		// Last-resort watchdog: if the chat still hasn't initialized after 25s
+		// (any unforeseen hang), reload once instead of sitting on a blank
+		// screen — bounded by the same reload budget so a real outage can't
+		// loop. No-ops once firebaseReady is true (connected OR error banner).
+		_initWatchdog = setTimeout(() => {
+			if (_destroyed || firebaseReady || !online) return;
+			if (reloadCount < MAX_RELOADS) {
+				try { sessionStorage.setItem(RELOAD_KEY, String(reloadCount + 1)); } catch { /* private mode */ }
+				location.reload();
+			}
+		}, 25000);
+
 		// Initial connect: 5 attempts with linear-ish backoff to ride
 		// out short flaps quickly. If that whole sequence fails we
 		// surface the error banner AND start the 3s background
@@ -197,6 +211,7 @@
 		_destroyed = true;
 		stopRetryLoop();
 		clearTimeout(_resyncTimer);
+		clearTimeout(_initWatchdog);
 		if (_connWatch) { try { _connWatch(); } catch { /* already off */ } _connWatch = null; }
 		if (typeof window !== 'undefined') {
 			window.removeEventListener('online', handleOnline);
