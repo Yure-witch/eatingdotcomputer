@@ -118,9 +118,7 @@
 
 	// Same upload pipeline as the chat compose: R2 via /api/upload,
 	// then the attachment descriptor rides on the reply.
-	async function onFilePick(e) {
-		const file = e.target?.files?.[0];
-		if (fileEl) fileEl.value = '';
+	async function uploadAtt(file) {
 		if (!file) return;
 		uploading = true;
 		try {
@@ -133,6 +131,26 @@
 			if (res.ok) pendingAtt = await res.json();
 		} catch { /* leave pendingAtt unset */ }
 		uploading = false;
+	}
+	async function onFilePick(e) {
+		const file = e.target?.files?.[0];
+		if (fileEl) fileEl.value = '';
+		await uploadAtt(file);
+	}
+
+	// Drag-and-drop upload onto the thread panel.
+	let dragActive = $state(false);
+	let _dragDepth = 0;
+	const _dragHasFiles = (e) => Array.from(e.dataTransfer?.types ?? []).includes('Files');
+	function onDragEnter(e) { if (!_dragHasFiles(e)) return; e.preventDefault(); _dragDepth++; dragActive = true; }
+	function onDragOver(e) { if (_dragHasFiles(e)) e.preventDefault(); }
+	function onDragLeave(e) { if (!_dragHasFiles(e)) return; _dragDepth = Math.max(0, _dragDepth - 1); if (!_dragDepth) dragActive = false; }
+	function onDrop(e) {
+		_dragDepth = 0; dragActive = false;
+		const file = e.dataTransfer?.files?.[0];
+		if (!file) return;
+		e.preventDefault();
+		uploadAtt(file);
 	}
 	function removePendingAtt() {
 		if (pendingAtt?.id) fetch(`/api/upload/${pendingAtt.id}`, { method: 'DELETE' }).catch(() => {});
@@ -181,7 +199,15 @@
 <!-- |global: transitions are LOCAL by default, and the {#key} wrapper the
      pages use for thread-switch remounts made the mount belong to an outer
      block — silently skipping the intro. Global plays it on every mount. -->
-<aside class="thread-panel" bind:this={panelEl} aria-label="Thread" transition:fly|global={{ x: 420, duration: 260, easing: cubicOut }}>
+<aside class="thread-panel" bind:this={panelEl} aria-label="Thread" transition:fly|global={{ x: 420, duration: 260, easing: cubicOut }} ondragenter={onDragEnter} ondragover={onDragOver} ondragleave={onDragLeave} ondrop={onDrop}>
+	{#if dragActive}
+		<div class="thread-drop" aria-hidden="true">
+			<div class="thread-drop-card">
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="12 3 12 15"/><polyline points="7 8 12 3 17 8"/></svg>
+				<span>Drop to send</span>
+			</div>
+		</div>
+	{/if}
 	<header class="thread-head">
 		<span class="thread-title">Thread</span>
 		<button class="thread-close" onclick={onClose} title="Close thread" aria-label="Close thread">✕</button>
@@ -332,6 +358,19 @@
 	.tpa-x { background: none; border: none; color: var(--muted-fg); cursor: pointer; font-size: 0.8rem; padding: 0.2rem; }
 	.tpa-x:hover { color: var(--ink); }
 	.thread-att { margin-top: 0.25rem; }
+	.thread-drop {
+		position: absolute; inset: 0; z-index: 5; pointer-events: none;
+		display: flex; align-items: center; justify-content: center;
+		background: color-mix(in srgb, var(--accent) 12%, transparent);
+		backdrop-filter: blur(1.5px);
+	}
+	.thread-drop-card {
+		display: flex; flex-direction: column; align-items: center; gap: 0.5rem;
+		padding: 1.2rem 1.8rem; border-radius: 16px;
+		border: 2px dashed var(--accent); background: var(--paper); color: var(--accent);
+		font-weight: 700; font-size: 0.9rem;
+	}
+	.thread-drop-card svg { width: 30px; height: 30px; }
 	/* jumbo (emoji-only) messages keep their glyph scale like chat bubbles */
 	.thread-msg-body.jumbo { line-height: 1.2; }
 	.thread-send {

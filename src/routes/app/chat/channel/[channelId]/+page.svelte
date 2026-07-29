@@ -3241,10 +3241,8 @@
 		});
 	}
 
-	async function handleFileSelect(e) {
-		const file = e.target.files?.[0];
+	async function uploadAttachment(file) {
 		if (!file) return;
-		e.target.value = '';
 		uploading = true;
 		try {
 			const fd = new FormData();
@@ -3261,6 +3259,28 @@
 		} finally {
 			uploading = false;
 		}
+	}
+	async function handleFileSelect(e) {
+		const file = e.target.files?.[0];
+		if (!file) return;
+		e.target.value = '';
+		await uploadAttachment(file);
+	}
+
+	// Drag-and-drop upload. A depth counter rides over the many dragenter/
+	// dragleave events children fire, so the overlay doesn't flicker.
+	let dragActive = $state(false);
+	let _dragDepth = 0;
+	const _dragHasFiles = (e) => Array.from(e.dataTransfer?.types ?? []).includes('Files');
+	function onDragEnter(e) { if (!_dragHasFiles(e)) return; e.preventDefault(); _dragDepth++; dragActive = true; }
+	function onDragOver(e) { if (_dragHasFiles(e)) e.preventDefault(); }
+	function onDragLeave(e) { if (!_dragHasFiles(e)) return; _dragDepth = Math.max(0, _dragDepth - 1); if (!_dragDepth) dragActive = false; }
+	function onDrop(e) {
+		_dragDepth = 0; dragActive = false;
+		const file = e.dataTransfer?.files?.[0];
+		if (!file) return;
+		e.preventDefault();
+		uploadAttachment(file);
 	}
 
 	function formatSize(bytes) {
@@ -3731,11 +3751,20 @@
 <!-- expression hover info (EK sources / CE shortcode / emoji names) — shared component -->
 <ExpressionTip root={listEl} />
 
+{#if dragActive}
+	<div class="drop-overlay" aria-hidden="true">
+		<div class="drop-card">
+			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="12 3 12 15"/><polyline points="7 8 12 3 17 8"/></svg>
+			<span>Drop to send</span>
+		</div>
+	</div>
+{/if}
+
 <!-- chat-header removed — channel name now publishes to the global
      AppHeader via pageTitle. On mobile, BottomNav's Chat button opens
      the chat sidebar, replacing what the local sidebar-toggle used to
      do here. -->
-<div class="message-list" bind:this={listEl} style:padding-bottom="{inputAreaHeight}px" onscroll={onListScroll} oncopy={onMsgListCopy}>
+<div class="message-list" bind:this={listEl} style:padding-bottom="{inputAreaHeight}px" onscroll={onListScroll} oncopy={onMsgListCopy} ondragenter={onDragEnter} ondragover={onDragOver} ondragleave={onDragLeave} ondrop={onDrop}>
 	{#if loadingMore}
 		<div class="load-more-spinner"><span class="sending-spinner"></span></div>
 	{/if}
@@ -4079,7 +4108,7 @@
 	{/key}
 {/if}
 
-<div class="input-area" class:kb-open={keyboardOpen} class:picker-open={_anyComposePicker} bind:clientHeight={inputAreaHeight} style:--input-area-h="{inputAreaHeight}px">
+<div class="input-area" class:kb-open={keyboardOpen} class:picker-open={_anyComposePicker} bind:clientHeight={inputAreaHeight} style:--input-area-h="{inputAreaHeight}px" ondragenter={onDragEnter} ondragover={onDragOver} ondragleave={onDragLeave} ondrop={onDrop}>
 	{#if replyingTo}
 		<div class="reply-bar">
 			<div class="reply-bar-content">
@@ -4851,6 +4880,23 @@
 	.att-btn-icon { width: 13px; height: 13px; flex-shrink: 0; }
 	.message.mine .att-btn { border-color: color-mix(in srgb, currentColor 25%, transparent); }
 	.message.mine .att-btn:hover { background: color-mix(in srgb, currentColor 10%, transparent); }
+
+	/* Drag-and-drop upload overlay. pointer-events:none so the drop lands on
+	   the message-list / input-area underneath (which own the drop handler);
+	   this layer is purely the visual affordance. */
+	.drop-overlay {
+		position: fixed; inset: 52px 0 0 0; z-index: 60; pointer-events: none;
+		display: flex; align-items: center; justify-content: center;
+		background: color-mix(in srgb, var(--accent) 12%, transparent);
+		backdrop-filter: blur(1.5px);
+	}
+	.drop-card {
+		display: flex; flex-direction: column; align-items: center; gap: 0.6rem;
+		padding: 1.6rem 2.4rem; border-radius: 18px;
+		border: 2px dashed var(--accent); background: var(--paper); color: var(--accent);
+		font-weight: 700; font-size: 0.95rem; box-shadow: 0 12px 40px rgba(0,0,0,0.18);
+	}
+	.drop-card svg { width: 34px; height: 34px; }
 
 	/* File viewer modal */
 	.file-viewer-overlay {

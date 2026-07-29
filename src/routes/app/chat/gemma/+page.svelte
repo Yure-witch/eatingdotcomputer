@@ -112,9 +112,7 @@
 		return typeof m.content === 'string' ? null : (m.content.find((p) => p.type === 'image_url')?.image_url?.url ?? null);
 	}
 
-	async function onPickImage(e) {
-		const file = e.target.files?.[0];
-		e.target.value = '';
+	async function processImageFile(file) {
 		if (!file || !file.type.startsWith('image/')) return;
 		// downscale client-side: multimodal models don't need more than
 		// ~1280px, and data URLs ride inside the JSON request body
@@ -125,6 +123,27 @@
 		cv.height = Math.round(bmp.height * k);
 		cv.getContext('2d').drawImage(bmp, 0, 0, cv.width, cv.height);
 		pendingImg = { dataUrl: cv.toDataURL('image/jpeg', 0.85), name: file.name };
+	}
+	async function onPickImage(e) {
+		const file = e.target.files?.[0];
+		e.target.value = '';
+		await processImageFile(file);
+	}
+
+	// Drag-and-drop — Gemma is vision-only, so only images are accepted.
+	let dragActive = $state(false);
+	let _dragDepth = 0;
+	const _dragHasFiles = (e) => Array.from(e.dataTransfer?.types ?? []).includes('Files');
+	function onDragEnter(e) { if (!_dragHasFiles(e)) return; e.preventDefault(); _dragDepth++; dragActive = true; }
+	function onDragOver(e) { if (_dragHasFiles(e)) e.preventDefault(); }
+	function onDragLeave(e) { if (!_dragHasFiles(e)) return; _dragDepth = Math.max(0, _dragDepth - 1); if (!_dragDepth) dragActive = false; }
+	function onDrop(e) {
+		_dragDepth = 0; dragActive = false;
+		const file = e.dataTransfer?.files?.[0];
+		if (!file) return;
+		e.preventDefault();
+		if (file.type.startsWith('image/')) processImageFile(file);
+		else errorText = 'Gemma can only read images, not files.';
 	}
 
 	async function send() {
@@ -215,7 +234,16 @@
 
 <svelte:head><title>Gemma — eating.computer</title></svelte:head>
 
-<main class="gm-page">
+<main class="gm-page" ondragenter={onDragEnter} ondragover={onDragOver} ondragleave={onDragLeave} ondrop={onDrop}>
+
+	{#if dragActive}
+		<div class="gm-drop" aria-hidden="true">
+			<div class="gm-drop-card">
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="12 3 12 15"/><polyline points="7 8 12 3 17 8"/></svg>
+				<span>Drop an image for Gemma</span>
+			</div>
+		</div>
+	{/if}
 
 	{#if checked && !hasKey}
 		<div class="gm-setup">
@@ -318,7 +346,21 @@
 		padding: 0; /* global main padding (2rem) was shoving the scroll area down */
 		background: var(--paper);
 		box-sizing: border-box;
+		position: relative;
 	}
+	.gm-drop {
+		position: absolute; inset: 0; z-index: 20; pointer-events: none;
+		display: flex; align-items: center; justify-content: center;
+		background: color-mix(in srgb, var(--accent) 12%, transparent);
+		backdrop-filter: blur(1.5px);
+	}
+	.gm-drop-card {
+		display: flex; flex-direction: column; align-items: center; gap: 0.5rem;
+		padding: 1.3rem 2rem; border-radius: 16px;
+		border: 2px dashed var(--accent); background: var(--paper); color: var(--accent);
+		font-weight: 700; font-size: 0.9rem;
+	}
+	.gm-drop-card svg { width: 30px; height: 30px; }
 
 	.gm-setup {
 		max-width: 560px; margin: 3rem auto; padding: 0 1.5rem;
