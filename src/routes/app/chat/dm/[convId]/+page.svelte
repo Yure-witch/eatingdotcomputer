@@ -835,12 +835,14 @@
 				globalWi += gs.filter(g => !/^\s+$/.test(g)).length;
 				return;
 			}
-			// `ripple` is per-grapheme.
+			// `ripple` is per-grapheme. Negative delay → all letters ripple
+			// from t=0 at different phases (and any rainbow shows instantly),
+			// matching the sent-bubble renderer.
 			if (fxStack.includes('ripple')) {
 				const gs = [..._segmenter.segment(text)].map(g => g.segment);
 				gs.forEach((g, i) => {
 					if (/^\s+$/.test(g)) nodes.push(document.createTextNode(g));
-					else nodes.push(makeFxNode(fxStack, g, `${((globalWi + i) * 0.08).toFixed(2)}s`));
+					else nodes.push(makeFxNode(fxStack, g, `-${((globalWi + i) * 0.08).toFixed(2)}s`));
 				});
 				globalWi += gs.filter(g => !/^\s+$/.test(g)).length;
 				return;
@@ -4166,7 +4168,7 @@
 			{#each TEXT_FXS as fx}
 				<button class="text-fx-btn" onmousedown={(e) => { e.preventDefault(); applyTextFx(fx.name); }}>
 					{#if fx.name === 'ripple'}
-						{@html [...fx.label].map((c, i) => `<span class="tfx tfx-ripple" style="animation-delay:${(i * 0.08).toFixed(2)}s;display:inline-block">${c}</span>`).join('')}
+						{@html [...fx.label].map((c, i) => `<span class="tfx tfx-ripple" style="animation-delay:-${(i * 0.08).toFixed(2)}s;display:inline-block">${c}</span>`).join('')}
 					{:else}
 						<span class="tfx tfx-{fx.name}">{fx.label}</span>
 					{/if}

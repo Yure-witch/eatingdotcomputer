@@ -519,12 +519,17 @@ export function createContentRenderer({ hljs = null, codeIcons = {}, getCeMap = 
 				globalWi += graphemes.filter(g => !/^\s+$/.test(g)).length;
 				return out;
 			}
-			// `ripple` / `grow` / `shrink` apply per-grapheme — a staggered
-			// wave that travels through the text one letter at a time.
+			// `ripple` / `grow` / `shrink` apply per-grapheme. Use a NEGATIVE
+			// animation-delay so every letter starts at t=0 but sits at a
+			// different phase — the wave is fully alive immediately (letters
+			// at different vertical positions) instead of waking up one at a
+			// time. Any co-applied rainbow rides the same delay, so its hue
+			// is offset per letter yet present instantly rather than bleeding
+			// in letter by letter.
 			if (_segmenter && PER_GRAPHEME_FXS.some((f) => fxStack.includes(f))) {
 				const graphemes = [..._segmenter.segment(chunk)].map(g => g.segment);
 				const html = graphemes.map((g, i) =>
-					/^\s+$/.test(g) ? escapeHtml(g) : nestedFxHtml(fxStack, escapeHtml(g), `${((globalWi + i) * 0.08).toFixed(2)}s`)
+					/^\s+$/.test(g) ? escapeHtml(g) : nestedFxHtml(fxStack, escapeHtml(g), `-${((globalWi + i) * 0.08).toFixed(2)}s`)
 				).join('');
 				globalWi += graphemes.filter(g => !/^\s+$/.test(g)).length;
 				return html;
