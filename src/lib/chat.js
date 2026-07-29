@@ -63,6 +63,13 @@ export function normaliseMessage(id, raw, userMap) {
 			.map((m) => ({ uid: m.u, offset: m.o, len: m.l }))
 		: [];
 
+	// Opt-in link chips: compact `{ u, t }` → `{ url, title }`.
+	const links = Array.isArray(raw.lk)
+		? raw.lk
+			.filter((l) => l && typeof l.u === 'string')
+			.map((l) => ({ url: l.u, title: l.t ?? '' }))
+		: [];
+
 	return {
 		id,
 		userId,
@@ -73,6 +80,7 @@ export function normaliseMessage(id, raw, userMap) {
 		replyTo,
 		attachment,
 		mentions,
+		links,
 		edited: !!(raw.ed),
 		fx: raw.fx ?? null,
 		fontSize: raw.fs ?? 1,

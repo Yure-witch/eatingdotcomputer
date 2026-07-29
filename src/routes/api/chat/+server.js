@@ -11,7 +11,7 @@ export async function POST({ request, locals }) {
 	const session = await locals.auth();
 	await requireClassAccess(session);
 
-	const { content, channelId, to, reply_to, attachment, effect, fontSize, fontWeight, fontStretch, noSplit, wiggleSize, mentions, tgFx } = await request.json();
+	const { content, channelId, to, reply_to, attachment, effect, fontSize, fontWeight, fontStretch, noSplit, wiggleSize, mentions, tgFx, links } = await request.json();
 	if (!content?.trim() && !attachment?.url) error(400, 'Empty message');
 	if (content && content.length > 20000) error(400, 'Message too long (max 20,000 characters)');
 
@@ -47,6 +47,17 @@ export async function POST({ request, locals }) {
 			.map((m) => ({ u: m.uid, o: m.offset, l: m.len }))
 		: [];
 	if (mentionList.length) msg.mn = mentionList;
+
+	// Opt-in link chips: compact [{ u:url, t:title }] the sender chose to
+	// render as a favicon+title chip in place of the inline link. `u` is the
+	// URL exactly as it appears in the content; drop any that don't.
+	const linkList = Array.isArray(links)
+		? links
+			.filter((l) => l && typeof l.url === 'string' && l.url.length > 3 && (content ?? '').includes(l.url))
+			.slice(0, 4)
+			.map((l) => ({ u: l.url.slice(0, 500), t: String(l.title ?? '').slice(0, 160) }))
+		: [];
+	if (linkList.length) msg.lk = linkList;
 
 	// Confirm the uploaded file so it isn't swept by the stale-upload cleanup
 	if (attachment?.id) {

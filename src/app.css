@@ -278,6 +278,26 @@ main {
 	text-decoration-color: color-mix(in srgb, currentColor 60%, transparent);
 }
 
+/* Opt-in link chip — a URL the sender chose to show as a favicon + page
+   title pill instead of a raw link. */
+.link-chip {
+	display: inline-flex; align-items: center; gap: 0.4em;
+	max-width: 100%; vertical-align: middle;
+	padding: 0.15em 0.55em 0.15em 0.4em;
+	border-radius: 999px; border: 1px solid var(--border);
+	background: var(--surface-2); color: var(--ink);
+	text-decoration: none; font-size: 0.92em; line-height: 1.4;
+}
+.link-chip:hover { border-color: var(--accent); }
+.link-chip-fav { width: 1.05em; height: 1.05em; border-radius: 3px; flex-shrink: 0; }
+.link-chip-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 34ch; }
+.message.mine .link-chip {
+	background: color-mix(in srgb, currentColor 12%, transparent);
+	border-color: color-mix(in srgb, currentColor 22%, transparent);
+	color: inherit;
+}
+.message.mine .link-chip:hover { border-color: color-mix(in srgb, currentColor 45%, transparent); }
+
 /* Deep-link landing highlight — when a notification or other deep link
    targets a specific message (`?msg=ID`), scrollToMessage() adds the
    `.flash` class to its `.message` wrapper for ~1.6 s so the user

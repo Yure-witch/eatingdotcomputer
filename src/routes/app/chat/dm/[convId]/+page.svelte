@@ -389,15 +389,15 @@
 	// each mention's offset, runs surrounding text through the rich
 	// renderer, inlines a `.mention-pill` link at each mention slice.
 	const _escHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
-	function bubbleHtmlM(content, mentions, splitWords) {
-		if (!Array.isArray(mentions) || !mentions.length) return contentHtmlM(content, splitWords);
+	function bubbleHtmlM(content, mentions, splitWords, links = null) {
+		if (!Array.isArray(mentions) || !mentions.length) return contentHtmlM(content, splitWords, links);
 		const segs = segmentMentions(content, mentions);
 		let html = '';
 		for (const s of segs) {
 			if (s.type === 'mention') {
 				html += `<a class="mention-pill" href="/app/profile/${encodeURIComponent(s.uid)}">@${_escHtml(s.name)}</a>`;
 			} else if (s.text) {
-				html += contentHtmlM(s.text, splitWords);
+				html += contentHtmlM(s.text, splitWords, links);
 			}
 		}
 		return html;
@@ -3046,6 +3046,7 @@
 			{ id: data.currentUser.id, name: data.currentUser.name }
 		];
 		const _sendMentions = resolveMentionsFromText(_sendContent, _mentionRoster);
+		const _sendLinks = optedLinks.filter((l) => _sendContent.includes(l.url));
 		const optimistic = {
 			id: `opt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, userId: data.currentUser.id,
 			userName: data.currentUser.name, userRole: data.currentUser.role,
@@ -3054,7 +3055,8 @@
 			fontSize: szSnap ?? 1, fontWeight: wghtSnap ?? 400, fontStretch: wdthSnap ?? 100, noSplit,
 			wiggleSize: wigSnap,
 			tgFx: !!tgFxSnap,
-			mentions: _sendMentions
+			mentions: _sendMentions,
+			links: _sendLinks
 		};
 		messages = [...messages, optimistic];
 		setTimeout(() => { if (messages.some(m => m.id === optimistic.id && m.pending)) slowPendingIds = new Set([...slowPendingIds, optimistic.id]); }, 400);
@@ -3062,6 +3064,7 @@
 		undoStack = []; redoStack = [];
 		_savedCeSel = null; _lastInlineTypo = {};
 		replyingTo = null;
+		resetLinkChips();
 		pendingAttachment = null;
 		messageEffect = null;
 		showEffectPanel = false;
@@ -3075,7 +3078,7 @@
 		fetch('/api/chat', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ content: _sendContent, to: otherUser.id, reply_to: replySnap, attachment: attSnap, effect: fxSnap || undefined, fontSize: szSnap, fontWeight: wghtSnap, fontStretch: wdthSnap, noSplit: noSplit || undefined, wiggleSize: wigSnap, tgFx: tgFxSnap, mentions: _sendMentions.length ? _sendMentions : undefined })
+			body: JSON.stringify({ content: _sendContent, to: otherUser.id, reply_to: replySnap, attachment: attSnap, effect: fxSnap || undefined, fontSize: szSnap, fontWeight: wghtSnap, fontStretch: wdthSnap, noSplit: noSplit || undefined, wiggleSize: wigSnap, tgFx: tgFxSnap, mentions: _sendMentions.length ? _sendMentions : undefined, links: _sendLinks.length ? _sendLinks : undefined })
 		}).then(() => {
 			if (messages.some((m) => m.id === optimistic.id && m.pending)) {
 				messages = messages.filter((m) => m.id !== optimistic.id);
@@ -3131,6 +3134,53 @@
 		if (!file) return;
 		e.preventDefault();
 		uploadAttachment(file);
+	}
+
+	// ── Proactive link chip (see channel page for the rationale) ─────────
+	let linkSuggestion = $state(null);   // { url, title }
+	let optedLinks = $state([]);          // [{ url, title }] the user accepted
+	let _dismissedLinks = new Set();
+	let _linkDebounce = null;
+	const _URL_DETECT = /(https?:\/\/[^\s<>"']+|www\.[^\s<>"']+)/gi;
+	function detectComposeUrls(text) {
+		_URL_DETECT.lastIndex = 0;
+		const urls = []; let m;
+		while ((m = _URL_DETECT.exec(text)) !== null) {
+			const u = m[0].replace(/[.,;:!?'")\]}>…]+$/, '');
+			if (u.length > 4) urls.push(u);
+		}
+		return urls;
+	}
+	function chipHost(url) {
+		try { return new URL(/^https?:/i.test(url) ? url : 'https://' + url).hostname.replace(/^www\./, ''); } catch { return ''; }
+	}
+	$effect(() => {
+		const text = (input || '').replace(/​/g, '');
+		clearTimeout(_linkDebounce);
+		_linkDebounce = setTimeout(async () => {
+			const urls = detectComposeUrls(text);
+			const opted = new Set(optedLinks.map((l) => l.url));
+			const cand = urls.find((u) => !opted.has(u) && !_dismissedLinks.has(u));
+			if (!cand) { linkSuggestion = null; return; }
+			if (linkSuggestion?.url === cand) return;
+			const href = /^www\./i.test(cand) ? 'https://' + cand : cand;
+			let title = '';
+			try { const r = await fetch(`/api/link-meta?url=${encodeURIComponent(href)}`); if (r.ok) title = (await r.json())?.title ?? ''; } catch { /* offline */ }
+			if (!detectComposeUrls(input || '').includes(cand)) return;
+			linkSuggestion = { url: cand, title };
+		}, 450);
+	});
+	function acceptLinkChip() {
+		if (!linkSuggestion) return;
+		optedLinks = [...optedLinks, { url: linkSuggestion.url, title: linkSuggestion.title }];
+		linkSuggestion = null;
+		inputEl?.focus();
+	}
+	function dismissLinkChip() {
+		if (linkSuggestion) { _dismissedLinks.add(linkSuggestion.url); linkSuggestion = null; }
+	}
+	function resetLinkChips() {
+		linkSuggestion = null; optedLinks = []; _dismissedLinks = new Set();
 	}
 
 	function formatSize(bytes) {
@@ -3701,7 +3751,7 @@
 				{:else}
 					{#key replayCounts[msg.id]}
 					<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-					<p class="bubble" use:scallopedClip={{ active: msg.fx === 'scalloped', ws: msg.wiggleSize || 6 }} use:starburstClip={{ active: msg.fx === 'starburst', ws: msg.wiggleSize || 6 }} class:fx-rainbow={msg.fx === 'rainbow'} class:fx-rainbow-fill={msg.fx === 'rainbow-fill'} class:fx-hearts={msg.fx === 'hearts'} class:fx-slam={msg.fx === 'slam'} class:fx-loud={msg.fx === 'loud'} class:fx-gentle={msg.fx === 'gentle'} class:fx-invisible={msg.fx === 'invisible'} class:fx-shake={msg.fx === 'shake'} class:fx-bounce={msg.fx === 'bounce'} class:fx-wave={msg.fx === 'wave'} class:fx-jitter={msg.fx === 'jitter'} class:fx-big={msg.fx === 'big'} class:fx-small={msg.fx === 'small'} class:fx-wiggly={msg.fx === 'wiggly'} class:fx-cursed={msg.fx === 'cursed'} class:fx-scalloped={msg.fx === 'scalloped'} class:fx-starburst={msg.fx === 'starburst'} class:revealed={revealedInvisible.has(msg.id)} class:jumbo-emoji={jumboEmojiCountM(msg.content) > 0 && !msg.replyTo} class:has-reply={!!msg.replyTo} style:font-size={bubbleFontSize(msg.content, msg.fontSize)} style:font-weight={msg.fontWeight && msg.fontWeight !== 400 ? msg.fontWeight : null} style:font-stretch={msg.fontStretch && msg.fontStretch !== 100 ? `${msg.fontStretch}%` : null} style:--ws={msg.fx === 'wiggly' && msg.wiggleSize ? `${msg.wiggleSize}px` : msg.fx === 'cursed' && msg.wiggleSize ? msg.wiggleSize : null} data-font-size={msg.fontSize && msg.fontSize !== 1 ? msg.fontSize : null} data-font-weight={msg.fontWeight && msg.fontWeight !== 400 ? msg.fontWeight : null} data-font-stretch={msg.fontStretch && msg.fontStretch !== 100 ? msg.fontStretch : null} onclick={msg.fx === 'invisible' && !revealedInvisible.has(msg.id) ? () => revealInvisible(msg.id) : undefined}>{#if msg.replyTo}<button class="reply-quote" onclick={(e) => { e.stopPropagation(); scrollToMessage(msg.replyTo.id); }}><span class="reply-author">{msg.replyTo.userName}</span><span class="reply-text">{@html contentHtmlM(stripFormatting(msg.replyTo.content))}</span></button>{/if}{@html bubbleHtmlM(msg.content, msg.mentions, !msg.noSplit)}{#if msg.edited}<span class="edited-tag"> (edited)</span>{/if}</p>
+					<p class="bubble" use:scallopedClip={{ active: msg.fx === 'scalloped', ws: msg.wiggleSize || 6 }} use:starburstClip={{ active: msg.fx === 'starburst', ws: msg.wiggleSize || 6 }} class:fx-rainbow={msg.fx === 'rainbow'} class:fx-rainbow-fill={msg.fx === 'rainbow-fill'} class:fx-hearts={msg.fx === 'hearts'} class:fx-slam={msg.fx === 'slam'} class:fx-loud={msg.fx === 'loud'} class:fx-gentle={msg.fx === 'gentle'} class:fx-invisible={msg.fx === 'invisible'} class:fx-shake={msg.fx === 'shake'} class:fx-bounce={msg.fx === 'bounce'} class:fx-wave={msg.fx === 'wave'} class:fx-jitter={msg.fx === 'jitter'} class:fx-big={msg.fx === 'big'} class:fx-small={msg.fx === 'small'} class:fx-wiggly={msg.fx === 'wiggly'} class:fx-cursed={msg.fx === 'cursed'} class:fx-scalloped={msg.fx === 'scalloped'} class:fx-starburst={msg.fx === 'starburst'} class:revealed={revealedInvisible.has(msg.id)} class:jumbo-emoji={jumboEmojiCountM(msg.content) > 0 && !msg.replyTo} class:has-reply={!!msg.replyTo} style:font-size={bubbleFontSize(msg.content, msg.fontSize)} style:font-weight={msg.fontWeight && msg.fontWeight !== 400 ? msg.fontWeight : null} style:font-stretch={msg.fontStretch && msg.fontStretch !== 100 ? `${msg.fontStretch}%` : null} style:--ws={msg.fx === 'wiggly' && msg.wiggleSize ? `${msg.wiggleSize}px` : msg.fx === 'cursed' && msg.wiggleSize ? msg.wiggleSize : null} data-font-size={msg.fontSize && msg.fontSize !== 1 ? msg.fontSize : null} data-font-weight={msg.fontWeight && msg.fontWeight !== 400 ? msg.fontWeight : null} data-font-stretch={msg.fontStretch && msg.fontStretch !== 100 ? msg.fontStretch : null} onclick={msg.fx === 'invisible' && !revealedInvisible.has(msg.id) ? () => revealInvisible(msg.id) : undefined}>{#if msg.replyTo}<button class="reply-quote" onclick={(e) => { e.stopPropagation(); scrollToMessage(msg.replyTo.id); }}><span class="reply-author">{msg.replyTo.userName}</span><span class="reply-text">{@html contentHtmlM(stripFormatting(msg.replyTo.content))}</span></button>{/if}{@html bubbleHtmlM(msg.content, msg.mentions, !msg.noSplit, msg.links)}{#if msg.edited}<span class="edited-tag"> (edited)</span>{/if}</p>
 					{/key}
 				{/if}
 				{#if !msg.pending}
@@ -3868,7 +3918,7 @@
 						style:font-size={bubbleFontSize(pmsg.content, pmsg.fontSize)}
 						style:font-weight={pmsg.fontWeight && pmsg.fontWeight !== 400 ? pmsg.fontWeight : null}
 						style:font-stretch={pmsg.fontStretch && pmsg.fontStretch !== 100 ? `${pmsg.fontStretch}%` : null}
-					>{@html bubbleHtmlM(pmsg.content, pmsg.mentions, !pmsg.noSplit)}</p>
+					>{@html bubbleHtmlM(pmsg.content, pmsg.mentions, !pmsg.noSplit, pmsg.links)}</p>
 				{/if}
 				{#if pmsg.attachment}
 					<MessageAttachment attachment={pmsg.attachment} mine={pmsg.userId === data.currentUser.id} compact />
@@ -3934,6 +3984,21 @@
 				<span class="reply-bar-text reply-quote-preview">{@html contentHtmlM(stripFormatting(replyingTo.content))}</span>
 			</div>
 			<button class="reply-bar-close" onclick={() => replyingTo = null}>×</button>
+		</div>
+	{/if}
+	{#if linkSuggestion}
+		<div class="link-suggest">
+			<button class="link-suggest-chip" onclick={acceptLinkChip} title="Show this link as a card">
+				{#if chipHost(linkSuggestion.url)}
+					<img class="link-suggest-fav" src="https://www.google.com/s2/favicons?domain={encodeURIComponent(chipHost(linkSuggestion.url))}&sz=64" alt="" onerror={(e) => e.target.remove()} />
+				{/if}
+				<span class="link-suggest-body">
+					<span class="link-suggest-title">{linkSuggestion.title || chipHost(linkSuggestion.url) || linkSuggestion.url}</span>
+					<span class="link-suggest-host">{chipHost(linkSuggestion.url)}</span>
+				</span>
+				<span class="link-suggest-add">Tap to add card</span>
+			</button>
+			<button class="reply-bar-close" onclick={dismissLinkChip} title="Dismiss">×</button>
 		</div>
 	{/if}
 	{#if pendingAttachment}
@@ -4691,6 +4756,24 @@
 		font-weight: 700; font-size: 0.95rem; box-shadow: 0 12px 40px rgba(0,0,0,0.18);
 	}
 	.drop-card svg { width: 34px; height: 34px; }
+
+	/* Proactive link chip suggestion above the composer (opt-in). */
+	.link-suggest { display: flex; align-items: center; gap: 0.4rem; padding: 0.3rem 0.5rem; }
+	.link-suggest-chip {
+		flex: 1; min-width: 0; display: flex; align-items: center; gap: 0.55rem;
+		padding: 0.4rem 0.6rem; border: 1px solid var(--border); border-radius: 12px;
+		background: var(--surface-2); color: var(--ink); cursor: pointer; text-align: left;
+		font-family: inherit; transition: border-color 0.12s, background 0.12s;
+	}
+	.link-suggest-chip:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--surface-2)); }
+	.link-suggest-fav { width: 20px; height: 20px; border-radius: 4px; flex-shrink: 0; }
+	.link-suggest-body { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+	.link-suggest-title { font-size: 0.85rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.link-suggest-host { font-size: 0.7rem; opacity: 0.6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.link-suggest-add {
+		flex-shrink: 0; font-size: 0.68rem; font-weight: 700; letter-spacing: 0.02em;
+		color: var(--accent); text-transform: uppercase;
+	}
 	.file-viewer-overlay {
 		position: fixed; inset: 0; z-index: 10000;
 		background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center;

@@ -371,7 +371,16 @@ export function createContentRenderer({ hljs = null, codeIcons = {}, getCeMap = 
 		}
 		return [core, trail];
 	}
-	function linkifyRaw(chunk) {
+	// An opted-in URL (in `linkMap`) renders as a favicon+title chip instead
+	// of a plain link — the sender's choice, carried on the message as `lk`.
+	function linkChipHtml(href, title) {
+		let host = '';
+		try { host = new URL(href).hostname.replace(/^www\./, ''); } catch { /* keep blank */ }
+		const label = (title && title.trim()) || host || href;
+		const fav = host ? `<img class="link-chip-fav" src="https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=64" alt="" loading="lazy" onerror="this.remove()" />` : '';
+		return `<a class="link-chip" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${fav}<span class="link-chip-title">${escapeHtml(label)}</span></a>`;
+	}
+	function linkifyRaw(chunk, linkMap = null) {
 		if (!chunk) return '';
 		if (chunk.indexOf('http') === -1 && chunk.indexOf('www.') === -1) return _wrapEmoji(chunk);
 		URL_RE.lastIndex = 0;
@@ -381,7 +390,11 @@ export function createContentRenderer({ hljs = null, codeIcons = {}, getCeMap = 
 			if (!core) continue; // pure punctuation somehow — leave to the tail wrap
 			if (m.index > last) out += _wrapEmoji(chunk.slice(last, m.index));
 			const href = /^www\./i.test(core) ? 'https://' + core : core;
-			out += `<a class="chat-link" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(core)}</a>`;
+			const chipTitle = linkMap
+				? (linkMap.has(core) ? linkMap.get(core) : (linkMap.has(href) ? linkMap.get(href) : undefined))
+				: undefined;
+			if (chipTitle !== undefined) out += linkChipHtml(href, chipTitle);
+			else out += `<a class="chat-link" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(core)}</a>`;
 			if (trail) out += _wrapEmoji(trail);
 			last = m.index + m[0].length;
 		}
@@ -394,8 +407,10 @@ export function createContentRenderer({ hljs = null, codeIcons = {}, getCeMap = 
 	const TG_RE = /\[tg:([0-9a-f-]+)\]/gi;
 	const TGC_RE = /\[tgc:([A-Za-z0-9_]+):(\d+)\]/g;
 
-	function contentHtml(text, split = true) {
+	function contentHtml(text, split = true, links = null) {
 		if (!text) return '';
+		// Opted-in link chips: url → title lookup for linkifyRaw.
+		const linkMap = (Array.isArray(links) && links.length) ? new Map(links.map((l) => [l.url, l.title ?? ''])) : null;
 		// Per-user hide-Telegram-emoji switch: drop sticker tokens before any
 		// parsing so they never reach the DOM for this user.
 		if (isTgHidden() && (text.includes('[tg:') || text.includes('[tgc:'))) {
@@ -420,7 +435,7 @@ export function createContentRenderer({ hljs = null, codeIcons = {}, getCeMap = 
 				}
 				const trimmed = p.content.replace(/^\n+/, '').replace(/\n+$/, '');
 				if (!trimmed) return '';
-				return contentHtml(trimmed, split);
+				return contentHtml(trimmed, split, links);
 			}).join('');
 		}
 		if (text.includes('`')) {
@@ -430,7 +445,7 @@ export function createContentRenderer({ hljs = null, codeIcons = {}, getCeMap = 
 				return splitParts.map(part => {
 					if (part.startsWith('<code class="inline-code">')) return part;
 					const raw = part.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
-					return contentHtml(raw, split);
+					return contentHtml(raw, split, links);
 				}).join('');
 			}
 		}
@@ -439,7 +454,7 @@ export function createContentRenderer({ hljs = null, codeIcons = {}, getCeMap = 
 		const hasTg = text.indexOf('[tg:') !== -1;
 		const hasTgc = text.indexOf('[tgc:') !== -1;
 		const hasFx = /[\uE100-\uE1FF]/.test(text);
-		if (!hasEk && !hasCe && !hasTg && !hasTgc && !hasFx) return linkifyRaw(text);
+		if (!hasEk && !hasCe && !hasTg && !hasTgc && !hasFx) return linkifyRaw(text, linkMap);
 
 		const segs = markupToSegments(normalizeLegacyMarkup(text));
 		if (!segs.length) return escapeHtml(text);
@@ -448,7 +463,7 @@ export function createContentRenderer({ hljs = null, codeIcons = {}, getCeMap = 
 
 		function renderText(chunk, fxStack) {
 			if (!chunk) return '';
-			if (!fxStack.length) return linkifyRaw(chunk);
+			if (!fxStack.length) return linkifyRaw(chunk, linkMap);
 			// `flip` mirrors each EMOJI grapheme in place (emotes are mirrored
 			// in the emote branch). Plain letters keep their normal flow — so
 			// we split per-grapheme and only flip the emoji ones.
@@ -572,10 +587,13 @@ export function createContentRenderer({ hljs = null, codeIcons = {}, getCeMap = 
 	}
 
 	const _htmlCache = new Map();
-	function contentHtmlM(text, split = true) {
-		const key = (split ? '1' : '0') + text;
+	function contentHtmlM(text, split = true, links = null) {
+		// links rarely present — fold a compact signature into the cache key
+		// so an opted-in chip renders (and never leaks into a plain message).
+		const lsig = (Array.isArray(links) && links.length) ? '' + links.map((l) => l.url + '' + (l.title ?? '')).join('') : '';
+		const key = (split ? '1' : '0') + lsig + ' ' + text;
 		let v = _htmlCache.get(key);
-		if (v === undefined) { v = contentHtml(text, split); _htmlCache.set(key, v); }
+		if (v === undefined) { v = contentHtml(text, split, links); _htmlCache.set(key, v); }
 		return v;
 	}
 
