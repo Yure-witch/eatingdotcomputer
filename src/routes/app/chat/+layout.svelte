@@ -1,8 +1,9 @@
 <script>
 	import { onMount, onDestroy } from 'svelte';
 	import { page } from '$app/stores';
-	import { auth } from '$lib/firebase.js';
+	import { auth, db } from '$lib/firebase.js';
 	import { signInWithCustomToken } from 'firebase/auth';
+	import { ref, onValue, goOffline, goOnline } from 'firebase/database';
 	import { preload as preloadEK } from '$lib/components/EmojiKitchen.svelte';
 	import ConvSkeleton from '$lib/components/ConvSkeleton.svelte';
 
@@ -22,8 +23,15 @@
 	let retryAttempts = $state(0);
 	let online = $state(true);      // navigator.onLine, kept live via events
 	let reloadCount = $state(0);    // how many times we've auto-reloaded this tab session
+	let rtdbConnected = $state(true); // RTDB .info/connected — drops when the socket dies
 	let _retryTimer = null;
+	let _connWatch = null;          // unsubscribe for the .info/connected listener
+	let _resyncTimer = null;        // debounce for the force-reconnect kick
 	let _destroyed = false;
+
+	// A sign-in that never resolves (half-open socket after sleep) would wedge
+	// the whole "Connecting…" gate — so every attempt is raced against this.
+	const CONNECT_TIMEOUT_MS = 8000;
 
 	// After this many failed in-place retries (while online) we give the
 	// window a full reload — a last-resort recovery when re-signing-in
@@ -37,16 +45,43 @@
 	const MAX_RELOADS = 3;
 	const RELOAD_KEY = 'ec:chat-reloads';
 
-	// One sign-in attempt. Resolves true on success, false on failure
-	// (so callers can drive their own retry cadence without needing to
-	// try/catch around the Firebase SDK).
+	// A fresh custom token — the one from page load expires after ~1h, so a
+	// tab resumed from a long sleep needs a new one. Falls back to the baked-in
+	// token if the fetch fails (still valid within the first hour).
+	async function freshToken() {
+		try {
+			const r = await fetch('/api/firebase-token', { cache: 'no-store' });
+			if (r.ok) return (await r.json())?.token ?? data.firebaseToken;
+		} catch { /* offline — use the page-load token */ }
+		return data.firebaseToken;
+	}
+
+	// One sign-in attempt. Resolves true on success, false on failure or
+	// timeout — the timeout is the key fix: a hung sign-in used to block the
+	// initial connect loop forever, leaving the chat stuck on "Connecting…".
 	async function tryConnect() {
 		try {
-			await signInWithCustomToken(auth, data.firebaseToken);
+			const token = await freshToken();
+			if (!token) return false;
+			await Promise.race([
+				signInWithCustomToken(auth, token),
+				new Promise((_, reject) => setTimeout(() => reject(new Error('connect-timeout')), CONNECT_TIMEOUT_MS))
+			]);
 			return true;
 		} catch {
 			return false;
 		}
+	}
+
+	// Kick the RTDB SDK to rebuild a dead websocket (common after sleep/wake).
+	// Auth persists across this, so no re-sign-in is needed — it just forces
+	// the transport to reconnect instead of waiting on the SDK's own backoff.
+	function forceReconnect() {
+		clearTimeout(_resyncTimer);
+		_resyncTimer = setTimeout(() => {
+			if (_destroyed || !online) return;
+			try { goOffline(db); goOnline(db); } catch { /* SDK not ready */ }
+		}, 150);
 	}
 
 	function onConnected() {
@@ -82,10 +117,35 @@
 
 	function handleOnline() {
 		online = true;
-		// Back online — try immediately instead of waiting for the next tick.
-		if (firebaseError) tryConnect().then((ok) => { if (ok) onConnected(); });
+		// Back online — recover immediately instead of waiting for a tick.
+		if (firebaseError || !firebaseReady) tryConnect().then((ok) => { if (ok) onConnected(); });
+		else forceReconnect(); // authed already — just rebuild the socket
 	}
 	function handleOffline() { online = false; }
+
+	// Tab resumed (laptop woke, app foregrounded). The socket is usually dead
+	// but the SDK can be slow to notice — nudge it right away.
+	function handleVisible() {
+		if (document.visibilityState !== 'visible' || !online) return;
+		if (firebaseError || !firebaseReady) tryConnect().then((ok) => { if (ok) onConnected(); });
+		else if (!rtdbConnected) forceReconnect();
+	}
+
+	// Watch the live connection status. If the socket stays down for a few
+	// seconds while we believe we're connected, force a reconnect so a
+	// wedged post-sleep socket heals without the user refreshing.
+	function watchConnection() {
+		const connRef = ref(db, '.info/connected');
+		_connWatch = onValue(connRef, (snap) => {
+			const wasDown = !rtdbConnected;
+			rtdbConnected = snap.val() === true;
+			if (rtdbConnected) { clearTimeout(_resyncTimer); return; }
+			if (!wasDown && firebaseReady && online) {
+				clearTimeout(_resyncTimer);
+				_resyncTimer = setTimeout(() => { if (!rtdbConnected && online && !_destroyed) forceReconnect(); }, 4000);
+			}
+		});
+	}
 
 	onMount(async () => {
 		// Lock the document so the chat layout can't be scrolled by
@@ -98,6 +158,8 @@
 		try { reloadCount = Number(sessionStorage.getItem(RELOAD_KEY)) || 0; } catch { /* private mode */ }
 		window.addEventListener('online', handleOnline);
 		window.addEventListener('offline', handleOffline);
+		document.addEventListener('visibilitychange', handleVisible);
+		watchConnection();
 
 		// Initial connect: 5 attempts with linear-ish backoff to ride
 		// out short flaps quickly. If that whole sequence fails we
@@ -123,9 +185,12 @@
 	onDestroy(() => {
 		_destroyed = true;
 		stopRetryLoop();
+		clearTimeout(_resyncTimer);
+		if (_connWatch) { try { _connWatch(); } catch { /* already off */ } _connWatch = null; }
 		if (typeof window !== 'undefined') {
 			window.removeEventListener('online', handleOnline);
 			window.removeEventListener('offline', handleOffline);
+			document.removeEventListener('visibilitychange', handleVisible);
 		}
 		if (typeof document === 'undefined') return;
 		document.documentElement.classList.remove('in-chat');
@@ -163,6 +228,11 @@
 			</div>
 		</div>
 	{:else}
+		{#if online && !rtdbConnected}
+			<div class="reconnecting-pill" role="status">
+				<span class="dot"></span> Reconnecting…
+			</div>
+		{/if}
 		{#key $page.url.pathname}
 			{@render children()}
 		{/key}
@@ -170,6 +240,22 @@
 </div>
 
 <style>
+	/* Transient status when the socket dropped but auth is still good — the
+	   SDK (or our force-reconnect) is rebuilding it; chat stays usable. */
+	.reconnecting-pill {
+		position: fixed; top: calc(52px + 8px); left: 50%; transform: translateX(-50%);
+		z-index: 50; display: inline-flex; align-items: center; gap: 0.4rem;
+		padding: 0.3rem 0.75rem; border-radius: 999px;
+		background: var(--surface-2); color: var(--muted-fg);
+		border: 1px solid var(--border); font-size: 0.75rem; font-weight: 600;
+		box-shadow: 0 4px 14px rgba(0,0,0,0.12);
+	}
+	.reconnecting-pill .dot {
+		width: 7px; height: 7px; border-radius: 50%; background: var(--accent, #ffa305);
+		animation: reconnect-pulse 1.2s ease-in-out infinite;
+	}
+	@keyframes reconnect-pulse { 0%,100% { opacity: 0.3; } 50% { opacity: 1; } }
+
 	.chat-wrap {
 		display: flex;
 		flex-direction: column;
