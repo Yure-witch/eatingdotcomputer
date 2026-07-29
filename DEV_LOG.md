@@ -14,6 +14,18 @@ Each entry includes:
 
 ---
 
+### 2026-07-28 — Chat: links, attachment parity, drag-drop, opt-in link chips
+- **Status**: `attempted` (built + pushed, pending user confirmation)
+- **What**: Four-phase chat upgrade after user asked for files/images to render everywhere, pasted links to be clickable, and an opt-in favicon+title link chip.
+  1. **Linkify** — `linkifyRaw` in `src/lib/message-render.js` auto-links http(s)/www URLs in plain-text bubbles (runs on raw text pre-escape so `&` in query strings is safe; trims trailing punctuation, keeps balanced brackets; skips code blocks + effect spans). `.chat-link` styled in app.css. Lights up channel, DM, thread via the shared renderer.
+  2. **Attachment parity** — new shared `MessageAttachment.svelte` (+ `file-utils.js`) with self-contained styles, optional in-app `onView` callback, and `compact` mode. Wired into ThreadPanel replies (was a bare 📎), the thread PARENT (rendered nothing for file-only), and the react-preview/pinned bubbles in channel + DM (empty bubble for image/file-only msgs). Channel/DM main loops kept their existing inline markup.
+  3. **Drag-and-drop** — shared depth-counter drag handlers + "Drop to send" overlay on channel, DM, thread (any file → /api/upload → pendingAttachment). Gemma composer accepts dropped images only (vision model), warns on non-image drops. Chat previously had paste + picker only, no drop target.
+  4. **Opt-in link chip** — proactive bar above the composer: paste/type a URL → favicon+title suggestion (title from existing `/api/link-meta`, favicon from host via Google S2). Tap → opts the URL in; it renders as an inline chip in place of the raw link. Message model: `lk:[{u,t}]` on the RTDB node ↔ `links:[{url,title}]` in `normaliseMessage`, written by `/api/chat`. Renderer threads `links` through `contentHtml`/`bubbleHtmlM`; cache key includes a link signature so chips never leak into plain messages. Opt-in only.
+- **Gemma files**: confirmed model is vision-only (chatterbox OpenAI-compatible endpoint); reads images, not PDFs/docs. User chose images-only, so no file text extraction added.
+- **Notes**: Legacy `app/chat/[convId]` page (plain-text, no attachments) left untouched — appears unused vs `dm/[convId]`. Unread-badge favicon override still forces the dark PNG on all themes (separate, not addressed here).
+
+---
+
 ## Project Scaffold
 
 ### Initial scaffold — 2026-03-08
