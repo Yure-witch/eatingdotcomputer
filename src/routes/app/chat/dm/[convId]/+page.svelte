@@ -543,8 +543,8 @@
 					result += node.dataset.ek;
 				} else if (node.tagName === 'IMG' && node.dataset.ce) {
 					result += node.dataset.ce;
-				} else if (node.dataset?.lk) {
-					result += node.dataset.lk;
+				} else if (node.dataset?.lk || node.classList?.contains('lk-chip')) {
+					result += node.dataset?.lk || (node.querySelector?.('.lk-chip-url')?.textContent ?? '');
 				} else if (node.dataset?.tg) {
 					// Compose-box <img data-tg> AND bubble <span class="tg-emoji" data-tg>
 					// both carry the [tg:…]/[tgc:…] token in dataset.tg. The bubble span
@@ -764,13 +764,20 @@
 		}
 
 		function makeLinkChipNode(token) {
-			const wrap = document.createElement('span');
-			wrap.innerHTML = linkChipFromToken(token);
-			const chip = wrap.firstChild;
-			if (!chip) return document.createTextNode(token);
-			chip.setAttribute('contenteditable', 'false');
-			chip.dataset.lk = token;
-			return chip;
+			try {
+				const mm = /^\[lk:([A-Za-z0-9_-]+)\]$/.exec(token);
+				const d = mm ? decodeLinkToken(mm[1]) : null;
+				if (!d) return document.createTextNode(token);
+				const wrap = document.createElement('span');
+				wrap.innerHTML = linkChipFromToken(token);
+				const chip = wrap.firstChild;
+				if (!chip || chip.nodeType !== Node.ELEMENT_NODE) return document.createTextNode(d.url);
+				chip.setAttribute('contenteditable', 'false');
+				chip.dataset.lk = token;
+				return chip;
+			} catch {
+				return document.createTextNode(token);
+			}
 		}
 
 		function wrapInFx(el, fxStack, delay) {
@@ -3193,7 +3200,9 @@
 		if (!linkSuggestion) return;
 		const { url, title } = linkSuggestion;
 		const token = encodeLinkToken(url, title);
-		setCeInput((input || '').split(url).join(token));
+		if (decodeLinkToken(token.slice(4, -1))?.url === url && (input || '').includes(url)) {
+			setCeInput((input || '').split(url).join(token));
+		}
 		linkSuggestion = null;
 		inputEl?.focus();
 	}
@@ -3443,7 +3452,7 @@
 			const sel = window.getSelection();
 			if (sel?.isCollapsed && inputEl?.contains(sel.anchorNode)) {
 				// Backspace right after a link chip → turn it back into the raw URL.
-				{
+				try {
 					const rc = sel.getRangeAt(0);
 					const before = rc.startContainer.nodeType === Node.TEXT_NODE
 						? (rc.startOffset === 0 ? rc.startContainer.previousSibling : null)
@@ -3464,7 +3473,7 @@
 						_dismissedLinks.delete(d?.url ?? '');
 						return;
 					}
-				}
+				} catch { /* fall through to normal backspace handling */ }
 				const codeBlock = sel.anchorNode.closest?.('.code-block-ce') ?? sel.anchorNode.parentElement?.closest?.('.code-block-ce');
 				if (codeBlock && inputEl.contains(codeBlock)) {
 					const pre = codeBlock.querySelector('.code-block-ce-code');
