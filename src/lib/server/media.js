@@ -91,7 +91,18 @@ export async function removeBackground(inputBuffer, bgColor = null, tolerance = 
 // output preserves the animation (a dropped GIF → an animated WebP). Static
 // images are single-page, so this is a no-op for them.
 export async function toWebp(inputBuffer) {
-	const buf = await sharp(inputBuffer, { animated: true }).webp({ quality: 90 }).toBuffer();
+	const opts = { quality: 90 };
+	// Preserve the framerate. sharp/libwebp bump any frame delay below 20ms
+	// (including 0) up to 100ms = 10fps, which badly slows down fast GIFs.
+	// Re-time each frame with a 20ms (50fps) floor so a high-framerate GIF
+	// stays fast; delays of 20ms+ are kept exactly as exported.
+	try {
+		const meta = await sharp(inputBuffer, { animated: true }).metadata();
+		if ((meta.pages ?? 1) > 1 && Array.isArray(meta.delay)) {
+			opts.delay = meta.delay.map((d) => (d == null || d < 20 ? 20 : d));
+		}
+	} catch { /* fall back to sharp's default timing */ }
+	const buf = await sharp(inputBuffer, { animated: true }).webp(opts).toBuffer();
 	return { buffer: buf, mimetype: 'image/webp', ext: 'webp' };
 }
 
