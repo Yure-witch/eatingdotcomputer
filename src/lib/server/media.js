@@ -86,9 +86,12 @@ export async function removeBackground(inputBuffer, bgColor = null, tolerance = 
 	return { buffer: buf, mimetype: 'image/png', ext: 'png' };
 }
 
-// Convert any image buffer to WebP, returns { buffer, mimetype, ext }
+// Convert any image buffer to WebP, returns { buffer, mimetype, ext }.
+// `animated: true` reads every frame of a GIF / APNG / animated WebP, so the
+// output preserves the animation (a dropped GIF → an animated WebP). Static
+// images are single-page, so this is a no-op for them.
 export async function toWebp(inputBuffer) {
-	const buf = await sharp(inputBuffer).webp({ quality: 90 }).toBuffer();
+	const buf = await sharp(inputBuffer, { animated: true }).webp({ quality: 90 }).toBuffer();
 	return { buffer: buf, mimetype: 'image/webp', ext: 'webp' };
 }
 
