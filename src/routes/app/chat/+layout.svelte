@@ -47,24 +47,31 @@
 
 	// A fresh custom token — the one from page load expires after ~1h, so a
 	// tab resumed from a long sleep needs a new one. Falls back to the baked-in
-	// token if the fetch fails (still valid within the first hour).
+	// token if the fetch fails/times out (still valid within the first hour).
 	async function freshToken() {
 		try {
-			const r = await fetch('/api/firebase-token', { cache: 'no-store' });
+			const r = await fetch('/api/firebase-token', { cache: 'no-store', signal: AbortSignal.timeout(4000) });
 			if (r.ok) return (await r.json())?.token ?? data.firebaseToken;
-		} catch { /* offline — use the page-load token */ }
+		} catch { /* timeout / offline — use the page-load token */ }
 		return data.firebaseToken;
 	}
 
 	// One sign-in attempt. Resolves true on success, false on failure or
-	// timeout — the timeout is the key fix: a hung sign-in used to block the
-	// initial connect loop forever, leaving the chat stuck on "Connecting…".
-	async function tryConnect() {
+	// timeout. The ENTIRE operation (token fetch + sign-in) is bounded by the
+	// timeout — a half-open network after sleep can hang either step, and an
+	// unbounded await here is exactly what leaves the chat stuck initializing.
+	// `preferFresh=false` skips the token fetch and uses the page-load token
+	// (guaranteed fresh) so the very first connect never waits on the network
+	// for a token it already has.
+	async function tryConnect(preferFresh = true) {
 		try {
-			const token = await freshToken();
-			if (!token) return false;
+			const run = (async () => {
+				const token = preferFresh ? await freshToken() : (data.firebaseToken || await freshToken());
+				if (!token) throw new Error('no-token');
+				await signInWithCustomToken(auth, token);
+			})();
 			await Promise.race([
-				signInWithCustomToken(auth, token),
+				run,
 				new Promise((_, reject) => setTimeout(() => reject(new Error('connect-timeout')), CONNECT_TIMEOUT_MS))
 			]);
 			return true;
@@ -135,16 +142,18 @@
 	// seconds while we believe we're connected, force a reconnect so a
 	// wedged post-sleep socket heals without the user refreshing.
 	function watchConnection() {
-		const connRef = ref(db, '.info/connected');
-		_connWatch = onValue(connRef, (snap) => {
-			const wasDown = !rtdbConnected;
-			rtdbConnected = snap.val() === true;
-			if (rtdbConnected) { clearTimeout(_resyncTimer); return; }
-			if (!wasDown && firebaseReady && online) {
-				clearTimeout(_resyncTimer);
-				_resyncTimer = setTimeout(() => { if (!rtdbConnected && online && !_destroyed) forceReconnect(); }, 4000);
-			}
-		});
+		try {
+			const connRef = ref(db, '.info/connected');
+			_connWatch = onValue(connRef, (snap) => {
+				const wasDown = !rtdbConnected;
+				rtdbConnected = snap.val() === true;
+				if (rtdbConnected) { clearTimeout(_resyncTimer); return; }
+				if (!wasDown && firebaseReady && online) {
+					clearTimeout(_resyncTimer);
+					_resyncTimer = setTimeout(() => { if (!rtdbConnected && online && !_destroyed) forceReconnect(); }, 4000);
+				}
+			}, () => { /* listener error — ignore, don't wedge init */ });
+		} catch { /* never let connection monitoring block the connect flow */ }
 	}
 
 	onMount(async () => {
@@ -168,7 +177,9 @@
 		const MAX_RETRIES = 5;
 		let connected = false;
 		for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-			if (await tryConnect()) { connected = true; break; }
+			// First attempt uses the page-load token (no network wait); later
+			// attempts fetch a fresh one in case that token has gone stale.
+			if (await tryConnect(attempt > 1)) { connected = true; break; }
 			if (attempt < MAX_RETRIES) await new Promise((r) => setTimeout(r, 1000 * attempt));
 		}
 		if (connected) {
