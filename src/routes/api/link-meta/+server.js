@@ -24,7 +24,14 @@ export async function GET({ url, locals }) {
 	try {
 		const res = await fetch(targetUrl, {
 			signal: AbortSignal.timeout(6000),
-			headers: { 'User-Agent': 'Mozilla/5.0 (compatible; eating.computer/1.0; +https://eating.computer)' }
+			redirect: 'follow',
+			// Many sites serve Open Graph tags only to known link-preview
+			// crawlers, so impersonate the conventional unfurl UA. (Login-
+			// walled sites like Instagram/LinkedIn still return nothing.)
+			headers: {
+				'User-Agent': 'Mozilla/5.0 (compatible; facebookexternalhit/1.1; +http://www.facebook.com/externalhit_uatext.php)',
+				'Accept': 'text/html,application/xhtml+xml'
+			}
 		});
 		if (res.ok) {
 			const ct = res.headers.get('content-type') ?? '';

@@ -45,7 +45,7 @@
 		JUMBO_SIZES, EMOJI_RE_G,
 		escapeHtml, nestedFxHtml, ekTokenToUrl, normalizeLegacyMarkup, unicodeToReadable, readableToUnicode, stripMarkup, _segmenter, _isEmojiSeg,
 		stripFormatting, markupToSegments, segmentsToMarkup, jumboEmojiCount, jumboEmojiCountM, bubbleFontSize,
-		createContentRenderer, clearJumboCache
+		createContentRenderer, clearJumboCache, encodeLinkToken, decodeLinkToken, LK_RE
 	} from '$lib/message-render.js';
 	import hljs from 'highlight.js/lib/core';
 	import hljsJavascript from 'highlight.js/lib/languages/javascript';
@@ -395,7 +395,7 @@
 		envex: _codeIcon(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><text x="8" y="13" text-anchor="middle" font-size="14" font-weight="700" font-family="monospace" fill="#89d185">$</text></svg>`),
 		plain: _codeIcon(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><rect x="2" y="1" width="12" height="14" rx="1.5" fill="none" stroke="#9399b2" stroke-width="1.3"/><line x1="5" y1="5" x2="11" y2="5" stroke="#9399b2" stroke-width="1"/><line x1="5" y1="8" x2="11" y2="8" stroke="#9399b2" stroke-width="1"/><line x1="5" y1="11" x2="9" y2="11" stroke="#9399b2" stroke-width="1"/></svg>`),
 	};
-	const { contentHtml, contentHtmlM, clearCache: _clearHtmlCache } = createContentRenderer({ hljs, codeIcons: _ci, getCeMap: getCachedCustomEmojiMap, wrapEmoji: wrapEmojiInText });
+	const { contentHtml, contentHtmlM, clearCache: _clearHtmlCache, linkChipFromToken } = createContentRenderer({ hljs, codeIcons: _ci, getCeMap: getCachedCustomEmojiMap, wrapEmoji: wrapEmojiInText });
 	// Touch the reactive _ceMap so reaction chips re-render the instant the custom-
 	// emote map loads (contentHtml reads it through a getter Svelte can't track).
 	function reactionHtml(emoji) { void _ceMap; return contentHtml(emoji, false); }
@@ -406,15 +406,15 @@
 	// `.mention-pill` span at each mention's slice. The pill links to
 	// the mentioned user's profile.
 	const _escHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
-	function bubbleHtmlM(content, mentions, splitWords, links = null) {
-		if (!Array.isArray(mentions) || !mentions.length) return contentHtmlM(content, splitWords, links);
+	function bubbleHtmlM(content, mentions, splitWords) {
+		if (!Array.isArray(mentions) || !mentions.length) return contentHtmlM(content, splitWords);
 		const segs = segmentMentions(content, mentions);
 		let html = '';
 		for (const s of segs) {
 			if (s.type === 'mention') {
 				html += `<a class="mention-pill" href="/app/profile/${encodeURIComponent(s.uid)}">@${_escHtml(s.name)}</a>`;
 			} else if (s.text) {
-				html += contentHtmlM(s.text, splitWords, links);
+				html += contentHtmlM(s.text, splitWords);
 			}
 		}
 		return html;
@@ -564,6 +564,9 @@
 					result += node.dataset.ek;
 				} else if (node.tagName === 'IMG' && node.dataset.ce) {
 					result += node.dataset.ce;
+				} else if (node.dataset?.lk) {
+					// Atomic link chip → its [lk:…] token.
+					result += node.dataset.lk;
 				} else if (node.dataset?.tg) {
 					// Compose-box <img data-tg> AND bubble <span class="tg-emoji" data-tg>
 					// both carry the [tg:…]/[tgc:…] token in dataset.tg. The bubble span
@@ -772,6 +775,7 @@
 		const CE_RE = /\[ce:([a-zA-Z0-9_-]{1,32})\]/gi;
 		const TG_RE = /\[tg:([0-9a-f-]+)\]/gi;
 		const TGC_RE = /\[tgc:([A-Za-z0-9_]+):(\d+)\]/g;
+		const LK_RE_CE = /\[lk:([A-Za-z0-9_-]+)\]/g;
 		const segs = markupToSegments(normalizeLegacyMarkup(markup));
 		const nodes = [];
 		let globalWi = 0;
@@ -784,6 +788,19 @@
 			img.setAttribute('contenteditable', 'false');
 			img.setAttribute('alt', '');
 			return img;
+		}
+
+		// Atomic link-chip node: a contenteditable=false span carrying the
+		// [lk:…] token in data-lk (serializeCe reads it back). Backspace next
+		// to it turns it back into the raw URL (see the keydown handler).
+		function makeLinkChipNode(token) {
+			const wrap = document.createElement('span');
+			wrap.innerHTML = linkChipFromToken(token);
+			const chip = wrap.firstChild;
+			if (!chip) return document.createTextNode(token);
+			chip.setAttribute('contenteditable', 'false');
+			chip.dataset.lk = token;
+			return chip;
 		}
 
 		function wrapInFx(el, fxStack, delay) {
@@ -879,7 +896,8 @@
 			const hasCe = seg.text.includes('[ce:');
 			const hasTg = seg.text.includes('[tg:');
 			const hasTgc = seg.text.includes('[tgc:');
-			if (!hasEk && !hasCe && !hasTg && !hasTgc) { pushText(seg.text, seg.fxStack); continue; }
+			const hasLk = seg.text.includes('[lk:');
+			if (!hasEk && !hasCe && !hasTg && !hasTgc && !hasLk) { pushText(seg.text, seg.fxStack); continue; }
 			// Segment contains EK/CE tokens — split and wrap each in the segment's fxStack
 			// Build a combined regex for both token types and sort matches by position
 			let lastIdx = 0;
@@ -912,10 +930,19 @@
 					allMatches.push({ index: m.index, end: TGC_RE.lastIndex, type: 'tgc', match: m });
 				}
 			}
+			if (hasLk) {
+				LK_RE_CE.lastIndex = 0;
+				let m;
+				while ((m = LK_RE_CE.exec(seg.text)) !== null) {
+					allMatches.push({ index: m.index, end: LK_RE_CE.lastIndex, type: 'lk', match: m });
+				}
+			}
 			allMatches.sort((a, b) => a.index - b.index);
 			for (const item of allMatches) {
 				if (item.index > lastIdx) pushText(seg.text.slice(lastIdx, item.index), seg.fxStack);
-				if (item.type === 'ek') {
+				if (item.type === 'lk') {
+					nodes.push(wrapInFx(makeLinkChipNode(item.match[0]), seg.fxStack, undefined));
+				} else if (item.type === 'ek') {
 					const m = item.match;
 					const img = makeEkImg(m[0], m[1], m[2], m[3]);
 					nodes.push(wrapInFx(img, seg.fxStack, fxSplitWords ? `${(globalWi++ * 0.06).toFixed(2)}s` : undefined));
@@ -3189,7 +3216,6 @@
 			{ id: data.currentUser.id, name: data.currentUser.name }
 		];
 		const _sendMentions = resolveMentionsFromText(_sendContent, _mentionRoster);
-		const _sendLinks = optedLinks.filter((l) => _sendContent.includes(l.url));
 		const optimistic = {
 			id: `opt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, userId: data.currentUser.id,
 			userName: data.currentUser.name, userRole: data.currentUser.role,
@@ -3198,8 +3224,7 @@
 			fontSize: szSnap ?? 1, fontWeight: wghtSnap ?? 400, fontStretch: wdthSnap ?? 100, noSplit,
 			wiggleSize: wigSnap,
 			tgFx: !!tgFxSnap,
-			mentions: _sendMentions,
-			links: _sendLinks
+			mentions: _sendMentions
 		};
 		messages = [...messages, optimistic];
 		setTimeout(() => { if (messages.some(m => m.id === optimistic.id && m.pending)) slowPendingIds = new Set([...slowPendingIds, optimistic.id]); }, 400);
@@ -3225,7 +3250,7 @@
 		fetch('/api/chat', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ content: _sendContent, channelId: convId, reply_to: replySnap, attachment: attSnap, effect: fxSnap || undefined, fontSize: szSnap, fontWeight: wghtSnap, fontStretch: wdthSnap, noSplit: noSplit || undefined, wiggleSize: wigSnap, tgFx: tgFxSnap, mentions: _sendMentions.length ? _sendMentions : undefined, links: _sendLinks.length ? _sendLinks : undefined })
+			body: JSON.stringify({ content: _sendContent, channelId: convId, reply_to: replySnap, attachment: attSnap, effect: fxSnap || undefined, fontSize: szSnap, fontWeight: wghtSnap, fontStretch: wdthSnap, noSplit: noSplit || undefined, wiggleSize: wigSnap, tgFx: tgFxSnap, mentions: _sendMentions.length ? _sendMentions : undefined })
 		}).then(() => {
 			// Only remove if still pending (onChildAdded may have already replaced it)
 			if (messages.some((m) => m.id === optimistic.id && m.pending)) {
@@ -3288,11 +3313,10 @@
 
 	// ── Proactive link chip ─────────────────────────────────────────────
 	// When a URL sits in the compose box, offer a favicon+title chip above
-	// the composer. Tapping opts that link in (sent as msg.lk) so it renders
-	// as a chip in place of the raw link; ignore it and the link sends as a
-	// plain clickable link. Opt-in only — nothing changes unless tapped.
+	// the composer. Tapping replaces the raw URL in the message with an
+	// atomic `[lk:…]` chip token (backspace turns it back into the URL).
+	// Ignore it and the link sends as a plain clickable link. Opt-in only.
 	let linkSuggestion = $state(null);   // { url, title }
-	let optedLinks = $state([]);          // [{ url, title }] the user accepted
 	let _dismissedLinks = new Set();
 	let _linkDebounce = null;
 	const _URL_DETECT = /(https?:\/\/[^\s<>"']+|www\.[^\s<>"']+)/gi;
@@ -3313,8 +3337,7 @@
 		clearTimeout(_linkDebounce);
 		_linkDebounce = setTimeout(async () => {
 			const urls = detectComposeUrls(text);
-			const opted = new Set(optedLinks.map((l) => l.url));
-			const cand = urls.find((u) => !opted.has(u) && !_dismissedLinks.has(u));
+			const cand = urls.find((u) => !_dismissedLinks.has(u));
 			if (!cand) { linkSuggestion = null; return; }
 			if (linkSuggestion?.url === cand) return;
 			const href = /^www\./i.test(cand) ? 'https://' + cand : cand;
@@ -3326,7 +3349,10 @@
 	});
 	function acceptLinkChip() {
 		if (!linkSuggestion) return;
-		optedLinks = [...optedLinks, { url: linkSuggestion.url, title: linkSuggestion.title }];
+		const { url, title } = linkSuggestion;
+		// Replace the raw URL in the composer with an atomic chip token.
+		const token = encodeLinkToken(url, title);
+		setCeInput((input || '').split(url).join(token));
 		linkSuggestion = null;
 		inputEl?.focus();
 	}
@@ -3334,7 +3360,7 @@
 		if (linkSuggestion) { _dismissedLinks.add(linkSuggestion.url); linkSuggestion = null; }
 	}
 	function resetLinkChips() {
-		linkSuggestion = null; optedLinks = []; _dismissedLinks = new Set();
+		linkSuggestion = null; _dismissedLinks = new Set();
 	}
 
 	function formatSize(bytes) {
@@ -3582,6 +3608,31 @@
 		if (e.key === 'Backspace' && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
 			const sel = window.getSelection();
 			if (sel?.isCollapsed && inputEl?.contains(sel.anchorNode)) {
+				// Backspace right after a link chip → turn it back into the raw URL
+				// text (instead of deleting the whole chip).
+				{
+					const rc = sel.getRangeAt(0);
+					const before = rc.startContainer.nodeType === Node.TEXT_NODE
+						? (rc.startOffset === 0 ? rc.startContainer.previousSibling : null)
+						: (rc.startOffset > 0 ? rc.startContainer.childNodes[rc.startOffset - 1] : null);
+					const chipEl = before?.classList?.contains('lk-chip') ? before : before?.querySelector?.('.lk-chip');
+					if (chipEl?.dataset?.lk) {
+						e.preventDefault();
+						if (undoStack.length >= 50) undoStack.shift();
+						undoStack.push(input); redoStack.length = 0;
+						const mm = /\[lk:([A-Za-z0-9_-]+)\]/.exec(chipEl.dataset.lk);
+						const d = mm ? decodeLinkToken(mm[1]) : null;
+						const tn = document.createTextNode(d ? d.url : '');
+						before.replaceWith(tn);
+						const rr = document.createRange();
+						rr.setStart(tn, tn.length); rr.collapse(true);
+						sel.removeAllRanges(); sel.addRange(rr);
+						input = serializeCe(inputEl);
+						// re-suggest this URL so the chip can be re-added
+						_dismissedLinks.delete(d?.url ?? '');
+						return;
+					}
+				}
 				// Check if cursor is at position 0 inside a code block → unwrap
 				const codeBlock = sel.anchorNode.closest?.('.code-block-ce') ?? sel.anchorNode.parentElement?.closest?.('.code-block-ce');
 				if (codeBlock && inputEl.contains(codeBlock)) {
@@ -3920,7 +3971,7 @@
 				{:else}
 					{#key replayCounts[msg.id]}
 					<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-					<p class="bubble" use:scallopedClip={{ active: msg.fx === 'scalloped', ws: msg.wiggleSize || 6 }} use:starburstClip={{ active: msg.fx === 'starburst', ws: msg.wiggleSize || 6 }} class:fx-rainbow={msg.fx === 'rainbow'} class:fx-rainbow-fill={msg.fx === 'rainbow-fill'} class:fx-hearts={msg.fx === 'hearts'} class:fx-slam={msg.fx === 'slam'} class:fx-loud={msg.fx === 'loud'} class:fx-gentle={msg.fx === 'gentle'} class:fx-invisible={msg.fx === 'invisible'} class:fx-shake={msg.fx === 'shake'} class:fx-bounce={msg.fx === 'bounce'} class:fx-wave={msg.fx === 'wave'} class:fx-jitter={msg.fx === 'jitter'} class:fx-big={msg.fx === 'big'} class:fx-small={msg.fx === 'small'} class:fx-wiggly={msg.fx === 'wiggly'} class:fx-cursed={msg.fx === 'cursed'} class:fx-scalloped={msg.fx === 'scalloped'} class:fx-starburst={msg.fx === 'starburst'} class:revealed={revealedInvisible.has(msg.id)} class:jumbo-emoji={jumboEmojiCountM(msg.content) > 0 && !msg.replyTo} class:has-reply={!!msg.replyTo} style:font-size={bubbleFontSize(msg.content, msg.fontSize)} style:font-weight={msg.fontWeight && msg.fontWeight !== 400 ? msg.fontWeight : null} style:font-stretch={msg.fontStretch && msg.fontStretch !== 100 ? `${msg.fontStretch}%` : null} style:--ws={msg.fx === 'wiggly' && msg.wiggleSize ? `${msg.wiggleSize}px` : msg.fx === 'cursed' && msg.wiggleSize ? msg.wiggleSize : null} data-font-size={msg.fontSize && msg.fontSize !== 1 ? msg.fontSize : null} data-font-weight={msg.fontWeight && msg.fontWeight !== 400 ? msg.fontWeight : null} data-font-stretch={msg.fontStretch && msg.fontStretch !== 100 ? msg.fontStretch : null} onclick={msg.fx === 'invisible' && !revealedInvisible.has(msg.id) ? () => revealInvisible(msg.id) : undefined}>{#if msg.replyTo}<button class="reply-quote" onclick={(e) => { e.stopPropagation(); scrollToMessage(msg.replyTo.id); }}><span class="reply-author">{msg.replyTo.userName}</span><span class="reply-text">{@html contentHtmlM(stripFormatting(msg.replyTo.content))}</span></button>{/if}{@html bubbleHtmlM(msg.content, msg.mentions, !msg.noSplit, msg.links)}{#if msg.edited}<span class="edited-tag"> (edited)</span>{/if}</p>
+					<p class="bubble" use:scallopedClip={{ active: msg.fx === 'scalloped', ws: msg.wiggleSize || 6 }} use:starburstClip={{ active: msg.fx === 'starburst', ws: msg.wiggleSize || 6 }} class:fx-rainbow={msg.fx === 'rainbow'} class:fx-rainbow-fill={msg.fx === 'rainbow-fill'} class:fx-hearts={msg.fx === 'hearts'} class:fx-slam={msg.fx === 'slam'} class:fx-loud={msg.fx === 'loud'} class:fx-gentle={msg.fx === 'gentle'} class:fx-invisible={msg.fx === 'invisible'} class:fx-shake={msg.fx === 'shake'} class:fx-bounce={msg.fx === 'bounce'} class:fx-wave={msg.fx === 'wave'} class:fx-jitter={msg.fx === 'jitter'} class:fx-big={msg.fx === 'big'} class:fx-small={msg.fx === 'small'} class:fx-wiggly={msg.fx === 'wiggly'} class:fx-cursed={msg.fx === 'cursed'} class:fx-scalloped={msg.fx === 'scalloped'} class:fx-starburst={msg.fx === 'starburst'} class:revealed={revealedInvisible.has(msg.id)} class:jumbo-emoji={jumboEmojiCountM(msg.content) > 0 && !msg.replyTo} class:has-reply={!!msg.replyTo} style:font-size={bubbleFontSize(msg.content, msg.fontSize)} style:font-weight={msg.fontWeight && msg.fontWeight !== 400 ? msg.fontWeight : null} style:font-stretch={msg.fontStretch && msg.fontStretch !== 100 ? `${msg.fontStretch}%` : null} style:--ws={msg.fx === 'wiggly' && msg.wiggleSize ? `${msg.wiggleSize}px` : msg.fx === 'cursed' && msg.wiggleSize ? msg.wiggleSize : null} data-font-size={msg.fontSize && msg.fontSize !== 1 ? msg.fontSize : null} data-font-weight={msg.fontWeight && msg.fontWeight !== 400 ? msg.fontWeight : null} data-font-stretch={msg.fontStretch && msg.fontStretch !== 100 ? msg.fontStretch : null} onclick={msg.fx === 'invisible' && !revealedInvisible.has(msg.id) ? () => revealInvisible(msg.id) : undefined}>{#if msg.replyTo}<button class="reply-quote" onclick={(e) => { e.stopPropagation(); scrollToMessage(msg.replyTo.id); }}><span class="reply-author">{msg.replyTo.userName}</span><span class="reply-text">{@html contentHtmlM(stripFormatting(msg.replyTo.content))}</span></button>{/if}{@html bubbleHtmlM(msg.content, msg.mentions, !msg.noSplit)}{#if msg.edited}<span class="edited-tag"> (edited)</span>{/if}</p>
 					{/key}
 				{/if}
 				{#if !msg.pending}
@@ -4102,7 +4153,7 @@
 						style:font-size={bubbleFontSize(pmsg.content, pmsg.fontSize)}
 						style:font-weight={pmsg.fontWeight && pmsg.fontWeight !== 400 ? pmsg.fontWeight : null}
 						style:font-stretch={pmsg.fontStretch && pmsg.fontStretch !== 100 ? `${pmsg.fontStretch}%` : null}
-					>{@html bubbleHtmlM(pmsg.content, pmsg.mentions, !pmsg.noSplit, pmsg.links)}</p>
+					>{@html bubbleHtmlM(pmsg.content, pmsg.mentions, !pmsg.noSplit)}</p>
 				{/if}
 				{#if pmsg.attachment}
 					<MessageAttachment attachment={pmsg.attachment} mine={pmsg.userId === data.currentUser.id} compact />

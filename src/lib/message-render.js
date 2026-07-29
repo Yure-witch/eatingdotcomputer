@@ -127,6 +127,38 @@ export function nestedFxHtml(fxStack, innerHtml, delay = null) {
 	return html;
 }
 
+// ── Link chip token ──────────────────────────────────────────────────────
+// An opted-in link renders as an inline favicon + title (+ url underneath)
+// chip. It rides in the message content as `[lk:<base64url payload>]`, the
+// same way emotes ride as [ek:…]/[ce:…] — so it flows through serialize →
+// send → render (and the compose box) as one atomic unit.
+export const LK_RE = /\[lk:([A-Za-z0-9_-]+)\]/g;
+
+function _b64urlEncode(str) {
+	const b64 = (typeof btoa !== 'undefined' ? btoa : (s) => Buffer.from(s, 'binary').toString('base64'))(
+		unescape(encodeURIComponent(str))
+	);
+	return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function _b64urlDecode(b64) {
+	const s = b64.replace(/-/g, '+').replace(/_/g, '/');
+	const bin = (typeof atob !== 'undefined' ? atob : (x) => Buffer.from(x, 'base64').toString('binary'))(s);
+	return decodeURIComponent(escape(bin));
+}
+export function encodeLinkToken(url, title) {
+	return `[lk:${_b64urlEncode(JSON.stringify({ u: String(url ?? ''), t: String(title ?? '') }))}]`;
+}
+export function decodeLinkToken(b64) {
+	try {
+		const o = JSON.parse(_b64urlDecode(b64));
+		if (!o || typeof o.u !== 'string') return null;
+		return { url: o.u, title: o.t ?? '' };
+	} catch { return null; }
+}
+export function linkTokenHost(url) {
+	try { return new URL(/^https?:/i.test(url) ? url : 'https://' + url).hostname.replace(/^www\./, ''); } catch { return ''; }
+}
+
 export function ekTokenToUrl(d36, parentCp, childCp) {
 	const date = 20200000 + parseInt(d36, 36);
 	const pad = date < 20220500;
@@ -174,7 +206,7 @@ export function readableToUnicode(text) {
 }
 
 export function stripMarkup(text) {
-	const withoutEk = text.replace(/\[ek:[a-z0-9]+:[0-9a-f-]+:[0-9a-f-]+\]/gi, '').replace(/\[ce:[a-zA-Z0-9_-]{1,32}\]/gi, '').replace(/\[tg:[0-9a-f-]+\]/gi, '').replace(/\[tgc:[A-Za-z0-9_]+:\d+\]/g, '');
+	const withoutEk = text.replace(/\[ek:[a-z0-9]+:[0-9a-f-]+:[0-9a-f-]+\]/gi, '').replace(/\[ce:[a-zA-Z0-9_-]{1,32}\]/gi, '').replace(/\[tg:[0-9a-f-]+\]/gi, '').replace(/\[tgc:[A-Za-z0-9_]+:\d+\]/g, '').replace(/\[lk:[A-Za-z0-9_-]+\]/g, '');
 	const normalized = normalizeLegacyMarkup(withoutEk);
 	let result = '';
 	for (let i = 0; i < normalized.length; i++) {
@@ -371,16 +403,21 @@ export function createContentRenderer({ hljs = null, codeIcons = {}, getCeMap = 
 		}
 		return [core, trail];
 	}
-	// An opted-in URL (in `linkMap`) renders as a favicon+title chip instead
-	// of a plain link — the sender's choice, carried on the message as `lk`.
-	function linkChipHtml(href, title) {
+	// A link chip: favicon + title, with the original URL underneath (ellipsis
+	// when long). `asLink` wraps it in an <a> (rendered bubbles); the compose
+	// box builds the same markup as a contenteditable=false <span> instead.
+	function linkChipHtml(url, title, asLink = true) {
+		const href = /^https?:/i.test(url) ? url : 'https://' + url;
 		let host = '';
 		try { host = new URL(href).hostname.replace(/^www\./, ''); } catch { /* keep blank */ }
-		const label = (title && title.trim()) || host || href;
-		const fav = host ? `<img class="link-chip-fav" src="https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=64" alt="" loading="lazy" onerror="this.remove()" />` : '';
-		return `<a class="link-chip" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${fav}<span class="link-chip-title">${escapeHtml(label)}</span></a>`;
+		const label = (title && title.trim()) || host || url;
+		const fav = host ? `<img class="lk-chip-fav" src="https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=64" alt="" loading="lazy" onerror="this.remove()" />` : '';
+		const inner = `${fav}<span class="lk-chip-text"><span class="lk-chip-title">${escapeHtml(label)}</span><span class="lk-chip-url">${escapeHtml(url)}</span></span>`;
+		return asLink
+			? `<a class="lk-chip" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${inner}</a>`
+			: `<span class="lk-chip">${inner}</span>`;
 	}
-	function linkifyRaw(chunk, linkMap = null) {
+	function linkifyRaw(chunk) {
 		if (!chunk) return '';
 		if (chunk.indexOf('http') === -1 && chunk.indexOf('www.') === -1) return _wrapEmoji(chunk);
 		URL_RE.lastIndex = 0;
@@ -390,27 +427,28 @@ export function createContentRenderer({ hljs = null, codeIcons = {}, getCeMap = 
 			if (!core) continue; // pure punctuation somehow — leave to the tail wrap
 			if (m.index > last) out += _wrapEmoji(chunk.slice(last, m.index));
 			const href = /^www\./i.test(core) ? 'https://' + core : core;
-			const chipTitle = linkMap
-				? (linkMap.has(core) ? linkMap.get(core) : (linkMap.has(href) ? linkMap.get(href) : undefined))
-				: undefined;
-			if (chipTitle !== undefined) out += linkChipHtml(href, chipTitle);
-			else out += `<a class="chat-link" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(core)}</a>`;
+			out += `<a class="chat-link" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(core)}</a>`;
 			if (trail) out += _wrapEmoji(trail);
 			last = m.index + m[0].length;
 		}
 		if (last < chunk.length) out += _wrapEmoji(chunk.slice(last));
 		return out;
 	}
+	// Exposed for the compose box: build the atomic chip node markup for a token.
+	function linkChipFromToken(token) {
+		const m = /^\[lk:([A-Za-z0-9_-]+)\]$/.exec(token);
+		const d = m ? decodeLinkToken(m[1]) : null;
+		return d ? linkChipHtml(d.url, d.title, false) : escapeHtml(token);
+	}
 
 	const EK_RE = /\[ek:([a-z0-9]+):([0-9a-f-]+):([0-9a-f-]+)\]/gi;
 	const CE_RE = /\[ce:([a-zA-Z0-9_-]{1,32})\]/gi;
 	const TG_RE = /\[tg:([0-9a-f-]+)\]/gi;
 	const TGC_RE = /\[tgc:([A-Za-z0-9_]+):(\d+)\]/g;
+	const LK_RE_L = /\[lk:([A-Za-z0-9_-]+)\]/g;
 
-	function contentHtml(text, split = true, links = null) {
+	function contentHtml(text, split = true) {
 		if (!text) return '';
-		// Opted-in link chips: url → title lookup for linkifyRaw.
-		const linkMap = (Array.isArray(links) && links.length) ? new Map(links.map((l) => [l.url, l.title ?? ''])) : null;
 		// Per-user hide-Telegram-emoji switch: drop sticker tokens before any
 		// parsing so they never reach the DOM for this user.
 		if (isTgHidden() && (text.includes('[tg:') || text.includes('[tgc:'))) {
@@ -435,7 +473,7 @@ export function createContentRenderer({ hljs = null, codeIcons = {}, getCeMap = 
 				}
 				const trimmed = p.content.replace(/^\n+/, '').replace(/\n+$/, '');
 				if (!trimmed) return '';
-				return contentHtml(trimmed, split, links);
+				return contentHtml(trimmed, split);
 			}).join('');
 		}
 		if (text.includes('`')) {
@@ -445,7 +483,7 @@ export function createContentRenderer({ hljs = null, codeIcons = {}, getCeMap = 
 				return splitParts.map(part => {
 					if (part.startsWith('<code class="inline-code">')) return part;
 					const raw = part.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
-					return contentHtml(raw, split, links);
+					return contentHtml(raw, split);
 				}).join('');
 			}
 		}
@@ -453,8 +491,9 @@ export function createContentRenderer({ hljs = null, codeIcons = {}, getCeMap = 
 		const hasCe = text.indexOf('[ce:') !== -1;
 		const hasTg = text.indexOf('[tg:') !== -1;
 		const hasTgc = text.indexOf('[tgc:') !== -1;
+		const hasLk = text.indexOf('[lk:') !== -1;
 		const hasFx = /[\uE100-\uE1FF]/.test(text);
-		if (!hasEk && !hasCe && !hasTg && !hasTgc && !hasFx) return linkifyRaw(text, linkMap);
+		if (!hasEk && !hasCe && !hasTg && !hasTgc && !hasLk && !hasFx) return linkifyRaw(text);
 
 		const segs = markupToSegments(normalizeLegacyMarkup(text));
 		if (!segs.length) return escapeHtml(text);
@@ -463,7 +502,7 @@ export function createContentRenderer({ hljs = null, codeIcons = {}, getCeMap = 
 
 		function renderText(chunk, fxStack) {
 			if (!chunk) return '';
-			if (!fxStack.length) return linkifyRaw(chunk, linkMap);
+			if (!fxStack.length) return linkifyRaw(chunk);
 			// `flip` mirrors each EMOJI grapheme in place (emotes are mirrored
 			// in the emote branch). Plain letters keep their normal flow — so
 			// we split per-grapheme and only flip the emoji ones.
@@ -511,8 +550,16 @@ export function createContentRenderer({ hljs = null, codeIcons = {}, getCeMap = 
 			const segHasCe = s.text.includes('[ce:');
 			const segHasTg = s.text.includes('[tg:');
 			const segHasTgc = s.text.includes('[tgc:');
-			if (!segHasEk && !segHasCe && !segHasTg && !segHasTgc) return renderText(s.text, s.fxStack);
+			const segHasLk = s.text.includes('[lk:');
+			if (!segHasEk && !segHasCe && !segHasTg && !segHasTgc && !segHasLk) return renderText(s.text, s.fxStack);
 			const allMatches = [];
+			if (segHasLk) {
+				LK_RE_L.lastIndex = 0;
+				let m;
+				while ((m = LK_RE_L.exec(s.text)) !== null) {
+					allMatches.push({ index: m.index, end: LK_RE_L.lastIndex, type: 'lk', match: m });
+				}
+			}
 			if (segHasEk) {
 				EK_RE.lastIndex = 0;
 				let m;
@@ -546,7 +593,11 @@ export function createContentRenderer({ hljs = null, codeIcons = {}, getCeMap = 
 			let lastIdx = 0;
 			for (const item of allMatches) {
 				if (item.index > lastIdx) parts.push(renderText(s.text.slice(lastIdx, item.index), s.fxStack));
-				if (item.type === 'ek') {
+				if (item.type === 'lk') {
+					const d = decodeLinkToken(item.match[1]);
+					const chip = d ? linkChipHtml(d.url, d.title, true) : '';
+					parts.push(s.fxStack.length && chip ? nestedFxHtml(s.fxStack, chip) : chip);
+				} else if (item.type === 'ek') {
 					const m = item.match;
 					const url = ekTokenToUrl(m[1], m[2], m[3]);
 					const imgHtml = `<img class="ek-img" data-ek="${escapeHtml(m[0])}" src="${url}" loading="lazy" alt="" />`;
@@ -587,17 +638,15 @@ export function createContentRenderer({ hljs = null, codeIcons = {}, getCeMap = 
 	}
 
 	const _htmlCache = new Map();
-	function contentHtmlM(text, split = true, links = null) {
-		// links rarely present — fold a compact signature into the cache key
-		// so an opted-in chip renders (and never leaks into a plain message).
-		const lsig = (Array.isArray(links) && links.length) ? '' + links.map((l) => l.url + '' + (l.title ?? '')).join('') : '';
-		const key = (split ? '1' : '0') + lsig + ' ' + text;
+	function contentHtmlM(text, split = true) {
+		const key = (split ? '1' : '0') + text;
 		let v = _htmlCache.get(key);
-		if (v === undefined) { v = contentHtml(text, split, links); _htmlCache.set(key, v); }
+		if (v === undefined) { v = contentHtml(text, split); _htmlCache.set(key, v); }
 		return v;
 	}
 
 	function clearCache() { _htmlCache.clear(); }
 
-	return { contentHtml, contentHtmlM, clearCache };
+
+	return { contentHtml, contentHtmlM, clearCache, linkChipFromToken };
 }

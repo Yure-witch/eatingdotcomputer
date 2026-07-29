@@ -6,19 +6,25 @@ import { getConvId } from '$lib/convId.js';
 import { notifyUsers } from '$lib/server/push.js';
 import { requireClassAccess } from '$lib/server/access.js';
 import { mentionedUids } from '$lib/mentions.js';
+import { decodeLinkToken } from '$lib/message-render.js';
 
 export async function POST({ request, locals }) {
 	const session = await locals.auth();
 	await requireClassAccess(session);
 
-	const { content, channelId, to, reply_to, attachment, effect, fontSize, fontWeight, fontStretch, noSplit, wiggleSize, mentions, tgFx, links } = await request.json();
+	const { content, channelId, to, reply_to, attachment, effect, fontSize, fontWeight, fontStretch, noSplit, wiggleSize, mentions, tgFx } = await request.json();
 	if (!content?.trim() && !attachment?.url) error(400, 'Empty message');
 	if (content && content.length > 20000) error(400, 'Message too long (max 20,000 characters)');
 
 	const db = getAdminDb();
 	const senderName = session.user.name || session.user.email;
 	// Strip Unicode PUA effect markers (U+E100–U+E1FF) so notifications show clean plain text
-	const plainContent = content ? content.replace(/[\uE100-\uE1FF]/g, '').trim() : '';
+	const plainContent = content
+		? content
+			.replace(/\[lk:([A-Za-z0-9_-]+)\]/g, (_, b) => { const d = decodeLinkToken(b); return d ? `🔗 ${d.title || d.url}` : ''; })
+			.replace(/[-]/g, '')
+			.trim()
+		: '';
 	const preview = attachment ? `📎 ${attachment.filename}` : (plainContent.slice(0, 60) || '✨');
 	const now = Date.now();
 	// Compact format: { u, c, rt?, att?, fx?, fs? } — timestamp derived from push ID
@@ -48,16 +54,6 @@ export async function POST({ request, locals }) {
 		: [];
 	if (mentionList.length) msg.mn = mentionList;
 
-	// Opt-in link chips: compact [{ u:url, t:title }] the sender chose to
-	// render as a favicon+title chip in place of the inline link. `u` is the
-	// URL exactly as it appears in the content; drop any that don't.
-	const linkList = Array.isArray(links)
-		? links
-			.filter((l) => l && typeof l.url === 'string' && l.url.length > 3 && (content ?? '').includes(l.url))
-			.slice(0, 4)
-			.map((l) => ({ u: l.url.slice(0, 500), t: String(l.title ?? '').slice(0, 160) }))
-		: [];
-	if (linkList.length) msg.lk = linkList;
 
 	// Confirm the uploaded file so it isn't swept by the stale-upload cleanup
 	if (attachment?.id) {
