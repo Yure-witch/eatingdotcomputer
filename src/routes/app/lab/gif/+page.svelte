@@ -416,44 +416,53 @@
 	let fromCurrent = $state(false); // start the GIF at the preview's current frame instead of frame 0
 	let exportFmt = $state('gif');   // 'gif' | 'webp' (animated)
 
+	// Encode the current scene → { blob, name, fmt }. Shared by the download
+	// export and the in-page "Render" (drag-into-your-doc) flow.
+	async function produceRender() {
+		const W = outDims.w, H = outDims.h;
+		const frames = Math.max(2, Math.round(duration * fps));
+		// Fresh scene at export resolution, reset — encodeGif steps it per frame.
+		const exportScene = makeScene(mode, { W, H, getOpts: liveOpts, seed: 1337 });
+		// scenes with async init (three.js + font loads) expose ready() —
+		// wait it out or the first frames bake as bare background (black
+		// flash at the loop seam)
+		if (exportScene.ready) await exportScene.ready();
+		// "From current frame": replay the preview's elapsed sim-time into the
+		// fresh export scene so the GIF starts where the preview is now.
+		// Same seed + same step size = the same evolution (capped at 90s of
+		// pre-roll so a long-idle preview can't stall the export).
+		const preroll = fromCurrent ? Math.min(previewT, 90) : 0;
+		const preSteps = Math.round(preroll * fps);
+		for (let s = 0; s < preSteps; s++) {
+			exportScene.step(1 / fps);
+			if (s % 60 === 59) {
+				progress = (s / preSteps) * 0.25;
+				await new Promise((r) => setTimeout(r)); // let the progress bar paint
+			}
+		}
+		const pBase = preSteps ? 0.25 : 0;
+		const encode = exportFmt === 'webp' ? encodeWebP : encodeGif;
+		const bytes = await encode({
+			W, H, fps, frames, scene: exportScene,
+			delayMs: (1000 / fps) / gifSpeed,   // GIF speed = playback rate
+			stepDt: duration / frames,          // frames tile the loop exactly — no off-speed seam
+			onProgress: (p) => { progress = pBase + p * (1 - pBase); }
+		});
+		const fmt = exportFmt;
+		const name = (text.trim() || 'title').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() || 'title';
+		const blob = new Blob([bytes], { type: fmt === 'webp' ? 'image/webp' : 'image/gif' });
+		return { blob, name, fmt };
+	}
+
 	async function exportGif() {
-		if (exporting) return;
+		if (exporting || rendering) return;
 		exporting = true; progress = 0;
 		try {
-			const W = outDims.w, H = outDims.h;
-			const frames = Math.max(2, Math.round(duration * fps));
-			// Fresh scene at export resolution, reset — encodeGif steps it per frame.
-			const exportScene = makeScene(mode, { W, H, getOpts: liveOpts, seed: 1337 });
-			// scenes with async init (three.js + font loads) expose ready() —
-			// wait it out or the first frames bake as bare background (black
-			// flash at the loop seam)
-			if (exportScene.ready) await exportScene.ready();
-			// "From current frame": replay the preview's elapsed sim-time into the
-			// fresh export scene so the GIF starts where the preview is now.
-			// Same seed + same step size = the same evolution (capped at 90s of
-			// pre-roll so a long-idle preview can't stall the export).
-			const preroll = fromCurrent ? Math.min(previewT, 90) : 0;
-			const preSteps = Math.round(preroll * fps);
-			for (let s = 0; s < preSteps; s++) {
-				exportScene.step(1 / fps);
-				if (s % 60 === 59) {
-					progress = (s / preSteps) * 0.25;
-					await new Promise((r) => setTimeout(r)); // let the progress bar paint
-				}
-			}
-			const pBase = preSteps ? 0.25 : 0;
-			const encode = exportFmt === 'webp' ? encodeWebP : encodeGif;
-			const bytes = await encode({
-				W, H, fps, frames, scene: exportScene,
-				delayMs: (1000 / fps) / gifSpeed,   // GIF speed = playback rate
-				stepDt: duration / frames,          // frames tile the loop exactly — no off-speed seam
-				onProgress: (p) => { progress = pBase + p * (1 - pBase); }
-			});
-			const blob = new Blob([bytes], { type: exportFmt === 'webp' ? 'image/webp' : 'image/gif' });
+			const { blob, name, fmt } = await produceRender();
 			const url = URL.createObjectURL(blob);
 			const a = document.createElement('a');
 			a.href = url;
-			a.download = (text.trim() || 'title').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() + (exportFmt === 'webp' ? '.webp' : '.gif');
+			a.download = name + (fmt === 'webp' ? '.webp' : '.gif');
 			document.body.appendChild(a); a.click(); a.remove();
 			setTimeout(() => URL.revokeObjectURL(url), 2000);
 		} catch (e) {
@@ -462,6 +471,58 @@
 		} finally {
 			exporting = false;
 		}
+	}
+
+	// ── Render to page (drag straight into Google Slides / any doc) ──────────
+	let rendering = $state(false);
+	let renderedUrl = $state(null);      // public R2 URL of the last render (drag + <img>)
+	let renderedBlobUrl = $state(null);  // local blob URL for a reliable Download
+	let renderedName = $state('');       // filename for the drag-out / download
+	let renderedFmt = $state('gif');
+
+	async function renderToPage() {
+		if (exporting || rendering) return;
+		rendering = true; progress = 0;
+		try {
+			const { blob, name, fmt } = await produceRender();
+			// Publish to R2 so the result has a real URL a drop target can fetch.
+			const filename = name + (fmt === 'webp' ? '.webp' : '.gif');
+			const fd = new FormData();
+			fd.append('file', blob, filename);
+			fd.append('name', name);
+			const res = await fetch('/api/gif-upload', { method: 'POST', body: fd });
+			if (!res.ok) throw new Error(await res.text());
+			const data = await res.json();
+			if (renderedBlobUrl) URL.revokeObjectURL(renderedBlobUrl);
+			renderedBlobUrl = URL.createObjectURL(blob); // same-origin → Download works
+			renderedUrl = data.url;
+			renderedName = data.filename || filename;
+			renderedFmt = fmt;
+		} catch (e) {
+			console.error('[gif-studio] render failed', e);
+			alert('Render failed — ' + (e?.message || e));
+		} finally {
+			rendering = false;
+		}
+	}
+
+	// Make the in-page result drag out as a real file. The <img> already carries
+	// its public URL by default; we also set DownloadURL (for drag-to-desktop)
+	// and uri-list/plain so more drop targets accept it.
+	function onRenderedDragStart(e) {
+		if (!renderedUrl) return;
+		const mime = renderedFmt === 'webp' ? 'image/webp' : 'image/gif';
+		try { e.dataTransfer.setData('DownloadURL', `${mime}:${renderedName}:${renderedUrl}`); } catch { /* Safari */ }
+		try {
+			e.dataTransfer.setData('text/uri-list', renderedUrl);
+			e.dataTransfer.setData('text/plain', renderedUrl);
+		} catch { /* ignore */ }
+		e.dataTransfer.effectAllowed = 'copy';
+	}
+
+	async function copyRenderedUrl() {
+		if (!renderedUrl) return;
+		try { await navigator.clipboard.writeText(renderedUrl); } catch { /* denied */ }
 	}
 </script>
 
@@ -473,10 +534,35 @@
 			<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
 		</a>
 		<h1>GIF Studio</h1>
-		<button class="export-btn" onclick={exportGif} disabled={exporting || !text.trim()}>
+		<button class="render-btn" onclick={renderToPage} disabled={exporting || rendering || !text.trim()} title="Render and drag it straight into your doc — no download">
+			{#if rendering}Rendering {Math.round(progress * 100)}%{:else}Render GIF{/if}
+		</button>
+		<button class="export-btn" onclick={exportGif} disabled={exporting || rendering || !text.trim()}>
 			{#if exporting}Rendering {Math.round(progress * 100)}%{:else}Export GIF{/if}
 		</button>
 	</div>
+
+	{#if renderedUrl}
+		<div class="render-result" role="dialog" aria-label="Rendered GIF">
+			<div class="rr-head">
+				<span class="rr-title">Drag me into your slides ↗</span>
+				<button class="rr-close" onclick={() => (renderedUrl = null)} aria-label="Dismiss">✕</button>
+			</div>
+			<!-- draggable=true + a real public src = drops into Slides/Docs/desktop -->
+			<img
+				class="rr-img"
+				src={renderedUrl}
+				alt={renderedName}
+				draggable="true"
+				ondragstart={onRenderedDragStart}
+			/>
+			<p class="rr-hint">Click-drag the image right into Google Slides — no download needed.</p>
+			<div class="rr-actions">
+				<a class="rr-btn" href={renderedBlobUrl} download={renderedName}>Download</a>
+				<button class="rr-btn" onclick={copyRenderedUrl}>Copy link</button>
+			</div>
+		</div>
+	{/if}
 
 	{#if exporting}
 		<div class="progress"><span style:width="{progress * 100}%"></span></div>
@@ -1156,6 +1242,45 @@
 		min-width: 8rem;
 	}
 	.export-btn:disabled { opacity: 0.5; cursor: default; }
+	/* Render GIF = accent-filled primary; Export = outline secondary next to it */
+	.render-btn {
+		border: none; border-radius: 10px;
+		padding: 0.55rem 1.15rem;
+		background: var(--accent); color: #fff;
+		font-family: inherit; font-size: 0.85rem; font-weight: 600; cursor: pointer;
+		min-width: 8rem;
+	}
+	.render-btn:disabled { opacity: 0.5; cursor: default; }
+	.export-btn {
+		background: transparent; color: var(--ink);
+		border: 1.5px solid var(--border);
+	}
+
+	.render-result {
+		position: fixed; right: 1.25rem; bottom: 1.25rem; z-index: 60;
+		width: min(320px, calc(100vw - 2rem));
+		background: var(--paper); border: 1px solid var(--border); border-radius: 16px;
+		box-shadow: 0 16px 44px rgba(0,0,0,0.24); padding: 0.85rem;
+		display: flex; flex-direction: column; gap: 0.5rem;
+	}
+	.rr-head { display: flex; align-items: center; justify-content: space-between; }
+	.rr-title { font-size: 0.8rem; font-weight: 700; color: var(--accent); }
+	.rr-close { border: none; background: none; cursor: pointer; color: var(--muted-fg); font-size: 1rem; line-height: 1; padding: 0.1rem 0.25rem; }
+	.rr-img {
+		display: block; width: 100%; height: auto; max-height: 300px; object-fit: contain;
+		border-radius: 10px; background: var(--surface-2, #f0ebe3);
+		cursor: grab; border: 1px solid var(--border);
+	}
+	.rr-img:active { cursor: grabbing; }
+	.rr-hint { margin: 0; font-size: 0.72rem; color: var(--muted-fg); line-height: 1.35; }
+	.rr-actions { display: flex; gap: 0.4rem; }
+	.rr-btn {
+		flex: 1; text-align: center; text-decoration: none;
+		padding: 0.4rem 0.6rem; border-radius: 8px; cursor: pointer;
+		border: 1px solid var(--border); background: transparent; color: var(--ink);
+		font-family: inherit; font-size: 0.78rem; font-weight: 600;
+	}
+	.rr-btn:hover { border-color: var(--accent); }
 	.progress { height: 3px; background: color-mix(in srgb, var(--accent) 22%, transparent); }
 	.progress span { display: block; height: 100%; background: var(--accent); transition: width 0.1s linear; }
 
