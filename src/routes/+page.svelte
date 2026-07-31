@@ -21,13 +21,6 @@
 		{ css: '"Press Start 2P", monospace',                    scale: 0.9,  weight: 400 }
 	];
 
-	// Emoji that read as the letter — a → 🅰️ (blood-type button), etc. A glyph
-	// occasionally morphs to its look-alike instead of a font.
-	const EMOJI = {
-		e: '📧', a: '🅰️', t: '✝️', i: 'ℹ️', n: '🇳', g: '🌀',
-		c: '🌙', o: '🅾️', m: 'Ⓜ️', p: '🅿️', u: '🧲', r: '®️', '.': '🟠'
-	};
-
 	const chars = [...new Set([...phrase, SEP])];
 	let slotEm = $state({});       // char → fixed slot width (em)
 	let repeats = $state(24);      // phrase copies — recomputed to fill the page
@@ -52,19 +45,10 @@
 	function morphGlyph(g) {
 		if (!g) return;
 		const ch = g.dataset.ch;
-		const emoji = EMOJI[ch];
-		const useEmoji = emoji && Math.random() < 0.16;
 		const swap = () => {
-			if (useEmoji) {
-				g.textContent = emoji;
-				g.style.cssText = 'font-size:1.05em;';
-				g.classList.add('is-emoji');
-			} else {
-				const f = fonts[Math.floor(Math.random() * fonts.length)];
-				g.textContent = ch === ' ' ? '' : ch;
-				g.style.cssText = fontStyle(f);
-				g.classList.remove('is-emoji');
-			}
+			const f = fonts[Math.floor(Math.random() * fonts.length)];
+			g.textContent = ch === ' ' ? '' : ch;
+			g.style.cssText = fontStyle(f);
 		};
 		if (reducedMotion) { swap(); return; }
 		g.classList.remove('flip');
@@ -186,7 +170,9 @@
 		padding: 0;
 		font-size: clamp(1.3rem, 3.4vw, 2.6rem);
 		line-height: 1;
-		color: color-mix(in srgb, var(--ink) 82%, var(--paper));
+		/* Very low contrast against the paper — a quiet texture the log-in
+		   button reads clearly over. */
+		color: color-mix(in srgb, var(--ink) 12%, var(--paper));
 		user-select: none;
 		box-sizing: border-box;
 	}
@@ -199,7 +185,8 @@
 		height: 1.4em;
 		perspective: 500px; /* depth for the glyph's split-flap flip */
 	}
-	.slot.dot .glyph { color: var(--accent); }
+	/* keep the dot a touch warmer than the letters, still low-contrast */
+	.slot.dot .glyph { color: color-mix(in srgb, var(--accent) 30%, var(--paper)); }
 
 	.glyph {
 		display: inline-flex;
@@ -209,7 +196,6 @@
 		white-space: nowrap;
 		transform-origin: center;
 	}
-	.glyph.is-emoji { filter: saturate(1.05); }
 	.glyph.flip { animation: glyph-flip 0.44s cubic-bezier(0.5, 0, 0.5, 1); }
 	@keyframes glyph-flip {
 		0%   { transform: rotateX(0deg); }
@@ -233,7 +219,7 @@
 		text-decoration: none;
 		padding: 0.7rem 1.6rem;
 		border-radius: 999px;
-		box-shadow: 0 10px 34px rgba(0, 0, 0, 0.22), 0 0 0 6px color-mix(in srgb, var(--paper) 78%, transparent);
+		box-shadow: 0 10px 34px rgba(0, 0, 0, 0.22);
 		transition: transform 0.15s ease, background 0.2s;
 	}
 	.login-chip:hover {
