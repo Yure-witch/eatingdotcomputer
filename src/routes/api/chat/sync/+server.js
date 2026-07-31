@@ -2,6 +2,7 @@ import { json, error } from '@sveltejs/kit';
 import { getAdminDb } from '$lib/server/firebase-admin.js';
 import { getDb } from '$lib/server/turso.js';
 import { decodeReactionKey } from '$lib/reaction-key.js';
+import { sweepR2Prefix } from '$lib/server/r2.js';
 import { env } from '$env/dynamic/private';
 
 // Decode millisecond timestamp from the first 8 chars of a Firebase push ID
@@ -239,5 +240,10 @@ export async function GET({ request }) {
 		}
 	}
 
-	return json({ archived, archivedThreads, archivedNotifs });
+	// Backstop cleanup of ephemeral GIF Studio renders (also swept on each
+	// render + deleted by the client on dismiss/unload — this catches orphans).
+	let sweptRenders = 0;
+	try { sweptRenders = await sweepR2Prefix('gif-studio/', 30 * 60 * 1000); } catch { /* best-effort */ }
+
+	return json({ archived, archivedThreads, archivedNotifs, sweptRenders });
 }

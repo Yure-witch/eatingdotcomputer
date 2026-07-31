@@ -479,6 +479,23 @@
 	let renderedBlobUrl = $state(null);  // local blob URL for a reliable Download
 	let renderedName = $state('');       // filename for the drag-out / download
 	let renderedFmt = $state('gif');
+	let renderedKey = null;              // R2 key, so we can delete it when done
+
+	// Renders are ephemeral — delete from R2 the moment they're replaced or
+	// dismissed. `beacon` uses sendBeacon so it survives a page unload.
+	function deleteRender(key, beacon = false) {
+		if (!key) return;
+		const fd = new FormData();
+		fd.append('deleteKey', key);
+		if (beacon && navigator.sendBeacon) navigator.sendBeacon('/api/gif-upload', fd);
+		else fetch('/api/gif-upload', { method: 'POST', body: fd, keepalive: true }).catch(() => {});
+	}
+
+	function clearRender(beacon = false) {
+		deleteRender(renderedKey, beacon);
+		if (renderedBlobUrl) URL.revokeObjectURL(renderedBlobUrl);
+		renderedKey = null; renderedUrl = null; renderedBlobUrl = null; renderedName = '';
+	}
 
 	async function renderToPage() {
 		if (exporting || rendering) return;
@@ -493,9 +510,12 @@
 			const res = await fetch('/api/gif-upload', { method: 'POST', body: fd });
 			if (!res.ok) throw new Error(await res.text());
 			const data = await res.json();
+			// Drop the previous render (if any) — only one lives at a time.
+			deleteRender(renderedKey);
 			if (renderedBlobUrl) URL.revokeObjectURL(renderedBlobUrl);
 			renderedBlobUrl = URL.createObjectURL(blob); // same-origin → Download works
 			renderedUrl = data.url;
+			renderedKey = data.key;
 			renderedName = data.filename || filename;
 			renderedFmt = fmt;
 		} catch (e) {
@@ -505,6 +525,13 @@
 			rendering = false;
 		}
 	}
+
+	// Best-effort cleanup if the tab closes with a render still showing.
+	onMount(() => {
+		const onUnload = () => { if (renderedKey) deleteRender(renderedKey, true); };
+		window.addEventListener('pagehide', onUnload);
+		return () => window.removeEventListener('pagehide', onUnload);
+	});
 
 	// Make the in-page result drag out as a real file. The <img> already carries
 	// its public URL by default; we also set DownloadURL (for drag-to-desktop)
@@ -546,7 +573,7 @@
 		<div class="render-result" role="dialog" aria-label="Rendered GIF">
 			<div class="rr-head">
 				<span class="rr-title">Drag me into your slides ↗</span>
-				<button class="rr-close" onclick={() => (renderedUrl = null)} aria-label="Dismiss">✕</button>
+				<button class="rr-close" onclick={() => clearRender()} aria-label="Dismiss">✕</button>
 			</div>
 			<!-- draggable=true + a real public src = drops into Slides/Docs/desktop -->
 			<img

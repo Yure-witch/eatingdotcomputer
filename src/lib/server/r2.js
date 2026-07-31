@@ -51,6 +51,30 @@ export async function getR2Stream(key) {
 	return { body: response.Body, contentType: response.ContentType };
 }
 
+// Delete every object under `prefix` older than `maxAgeMs`. Best-effort and
+// non-throwing. Used to keep ephemeral GIF Studio renders from lingering.
+export async function sweepR2Prefix(prefix, maxAgeMs) {
+	const r2 = getR2Client();
+	if (!r2 || !env.R2_BUCKET) return 0;
+	const cutoff = Date.now() - maxAgeMs;
+	let deleted = 0;
+	try {
+		let token;
+		do {
+			const res = await r2.send(new ListObjectsV2Command({
+				Bucket: env.R2_BUCKET, Prefix: prefix, MaxKeys: 1000, ContinuationToken: token
+			}));
+			for (const o of res.Contents ?? []) {
+				if (o.Key && o.LastModified && o.LastModified.getTime() < cutoff) {
+					try { await r2.send(new DeleteObjectCommand({ Bucket: env.R2_BUCKET, Key: o.Key })); deleted++; } catch { /* skip one */ }
+				}
+			}
+			token = res.IsTruncated ? res.NextContinuationToken : undefined;
+		} while (token);
+	} catch (e) { console.error('R2 sweep failed', e); }
+	return deleted;
+}
+
 export async function listR2Assets() {
 	if (!env.R2_BUCKET) return [];
 	const r2 = getR2Client();
