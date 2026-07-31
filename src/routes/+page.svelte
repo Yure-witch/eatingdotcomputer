@@ -74,6 +74,13 @@
 		setTimeout(() => g.classList.remove('flip'), 440);
 	}
 
+	// Morph whatever glyph the cursor passes over — a trail of letters flipping
+	// under the pointer. Event-delegated so it works for the whole field.
+	function onFieldPointer(e) {
+		const g = e.target?.closest?.('.glyph');
+		if (g) morphGlyph(g);
+	}
+
 	function startMorphing() {
 		if (reducedMotion || !fieldEl) return;
 		morphTimer = setInterval(() => {
@@ -138,7 +145,7 @@
 
 <main class="field-main">
 	<h1 class="sr-only">eating.computer</h1>
-	<div class="field" bind:this={fieldEl} aria-hidden="true">
+	<div class="field" bind:this={fieldEl} aria-hidden="true" onmouseover={onFieldPointer}>
 		{#each cells as ch, i}
 			<span class="slot" class:dot={ch === '.'} style:width={`${slotEm[ch] ?? 0.6}em`}>
 				<span class="glyph" data-ch={ch} style={initialStyle(i)}>{ch === ' ' ? '' : ch}</span>
@@ -167,7 +174,7 @@
 		align-content: center;
 		justify-content: center;
 		gap: 0.12em 0.02em;
-		padding: 1.5rem;
+		padding: 0;
 		font-size: clamp(1.3rem, 3.4vw, 2.6rem);
 		line-height: 1;
 		color: color-mix(in srgb, var(--ink) 82%, var(--paper));
