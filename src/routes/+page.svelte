@@ -1,122 +1,237 @@
 <script>
 	import { onMount, tick } from 'svelte';
 
-	const text = 'eating.computer';
+	const phrase = 'eating.computer';
+	const SEP = ' '; // gap slot between repeats
 
+	// The cast of display faces each glyph morphs through. `scale` balances
+	// their visual size, `weight` picks the loaded cut.
 	const fonts = [
-		'"Avara", "Old English Text MT", serif',
-		'"Space Grotesk", "Helvetica Neue", Arial, sans-serif',
-		'"Pacifico", "Brush Script MT", cursive',
-		'"Press Start 2P", "VT323", monospace'
+		{ css: '"Avara", "Old English Text MT", serif',          scale: 1.5,  weight: 700 },
+		{ css: '"Space Grotesk", Arial, sans-serif',             scale: 1.2,  weight: 600 },
+		{ css: '"Playfair Display", Georgia, serif',             scale: 1.42, weight: 800 },
+		{ css: '"Pacifico", "Brush Script MT", cursive',         scale: 1.25, weight: 400 },
+		{ css: '"UnifrakturCook", "Old English Text MT", serif', scale: 1.6,  weight: 700 },
+		{ css: '"Bungee", Impact, sans-serif',                   scale: 1.0,  weight: 400 },
+		{ css: '"Space Mono", ui-monospace, monospace',          scale: 1.15, weight: 700 },
+		{ css: '"Caveat", "Comic Sans MS", cursive',             scale: 1.85, weight: 700 },
+		{ css: '"Monoton", sans-serif',                          scale: 1.2,  weight: 400 },
+		{ css: '"Rye", Georgia, serif',                          scale: 1.25, weight: 400 },
+		{ css: '"Silkscreen", "Press Start 2P", monospace',      scale: 1.05, weight: 400 },
+		{ css: '"Press Start 2P", monospace',                    scale: 0.9,  weight: 400 }
 	];
 
-	const letters = Array.from(text);
-	let letterFonts = letters.map(() => fonts[0]);
-	let letterWidths = letters.map(() => null);
-	let lineEl;
-
-	const scaleByFont = {
-		[fonts[0]]: 1.5,
-		[fonts[1]]: 1.2,
-		[fonts[2]]: 1.15,
-		[fonts[3]]: 1.1
+	// Emoji that read as the letter — a → 🅰️ (blood-type button), etc. A glyph
+	// occasionally morphs to its look-alike instead of a font.
+	const EMOJI = {
+		e: '📧', a: '🅰️', t: '✝️', i: 'ℹ️', n: '🇳', g: '🌀',
+		c: '🌙', o: '🅾️', m: 'Ⓜ️', p: '🅿️', u: '🧲', r: '®️', '.': '🟠'
 	};
 
-	function swapFont(letterIndex) {
-		const current = letterFonts[letterIndex];
-		const options = fonts.filter((family) => family !== current);
-		const next = options[Math.floor(Math.random() * options.length)];
-		letterFonts[letterIndex] = next;
-		letterFonts = [...letterFonts];
+	const chars = [...new Set([...phrase, SEP])];
+	let slotEm = $state({});       // char → fixed slot width (em)
+	let repeats = $state(24);      // phrase copies — recomputed to fill the page
+	let fieldEl;
+	let reducedMotion = false;
+	let morphTimer = null;
+
+	// One field cell per character across all repeats.
+	const cells = $derived.by(() => {
+		const unit = [...phrase, SEP];
+		const out = [];
+		for (let r = 0; r < repeats; r++) for (const ch of unit) out.push(ch);
+		return out;
+	});
+
+	const fontStyle = (f) => `font-family:${f.css}; font-weight:${f.weight}; font-size:${f.scale}em;`;
+	// Deterministic initial font per index (SSR-safe — no Math.random in render).
+	const initialStyle = (i) => fontStyle(fonts[(i * 7 + 3) % fonts.length]);
+
+	// Morph a single glyph element directly (no reactive churn across the whole
+	// field): flip it edge-on, swap face at the midpoint, settle.
+	function morphGlyph(g) {
+		if (!g) return;
+		const ch = g.dataset.ch;
+		const emoji = EMOJI[ch];
+		const useEmoji = emoji && Math.random() < 0.16;
+		const swap = () => {
+			if (useEmoji) {
+				g.textContent = emoji;
+				g.style.cssText = 'font-size:1.05em;';
+				g.classList.add('is-emoji');
+			} else {
+				const f = fonts[Math.floor(Math.random() * fonts.length)];
+				g.textContent = ch === ' ' ? '' : ch;
+				g.style.cssText = fontStyle(f);
+				g.classList.remove('is-emoji');
+			}
+		};
+		if (reducedMotion) { swap(); return; }
+		g.classList.remove('flip');
+		void g.offsetWidth;
+		g.classList.add('flip');
+		setTimeout(swap, 200);
+		setTimeout(() => g.classList.remove('flip'), 440);
 	}
 
-	async function measureWidths() {
-		if (!lineEl) return;
-		await tick();
+	function startMorphing() {
+		if (reducedMotion || !fieldEl) return;
+		morphTimer = setInterval(() => {
+			const all = fieldEl.querySelectorAll('.glyph');
+			if (!all.length) return;
+			const n = 2 + Math.floor(Math.random() * 3); // 2–4 letters per tick
+			for (let k = 0; k < n; k++) morphGlyph(all[Math.floor(Math.random() * all.length)]);
+		}, 260);
+	}
 
+	// Measure each char's widest form (em) across all faces, then fill the page.
+	async function measure() {
+		const REF = 100;
 		const sample = document.createElement('span');
-		sample.style.position = 'absolute';
-		sample.style.visibility = 'hidden';
-		sample.style.whiteSpace = 'pre';
-		sample.style.top = '-9999px';
-		sample.style.left = '-9999px';
-
-		const { fontSize, fontWeight, letterSpacing } = getComputedStyle(lineEl);
-		const baseSize = parseFloat(fontSize);
-		sample.style.fontSize = fontSize;
-		sample.style.fontWeight = fontWeight;
-		sample.style.letterSpacing = letterSpacing;
-
-		document.body.appendChild(sample);
-
-		letterWidths = letters.map((letter) => {
-			let max = 0;
-			for (const family of fonts) {
-				sample.style.fontFamily = family;
-				const scale = scaleByFont[family] ?? 1;
-				sample.style.fontSize = `${baseSize * scale}px`;
-				sample.textContent = letter;
-				const width = sample.getBoundingClientRect().width;
-				if (width > max) max = width;
-			}
-			return Math.ceil(max * 100) / 100;
+		Object.assign(sample.style, {
+			position: 'absolute', visibility: 'hidden', whiteSpace: 'pre', top: '-9999px', left: '-9999px'
 		});
-
+		document.body.appendChild(sample);
+		const widths = {};
+		for (const ch of chars) {
+			if (ch === ' ') { widths[ch] = 0.4; continue; }
+			let max = 0;
+			for (const f of fonts) {
+				sample.style.fontFamily = f.css;
+				sample.style.fontWeight = f.weight;
+				sample.style.fontSize = `${REF * f.scale}px`;
+				sample.textContent = ch;
+				const w = sample.getBoundingClientRect().width;
+				if (w > max) max = w;
+			}
+			widths[ch] = Math.max(0.5, Math.ceil((max / REF) * 1000) / 1000);
+		}
 		document.body.removeChild(sample);
+		slotEm = widths;
+
+		// Enough repeats to overflow the viewport (overflow:hidden clips the rest).
+		await tick();
+		const fontPx = parseFloat(getComputedStyle(fieldEl).fontSize) || 34;
+		const unitEm = [...phrase, SEP].reduce((a, ch) => a + (widths[ch] ?? 0.6) + 0.12, 0);
+		const unitPx = unitEm * fontPx;
+		const cols = Math.ceil(window.innerWidth / unitPx) + 1;
+		const rowPx = fontPx * 1.9;
+		const rows = Math.ceil(window.innerHeight / rowPx) + 1;
+		repeats = Math.min(160, Math.max(8, cols * rows));
 	}
 
 	onMount(() => {
-		measureWidths();
-		window.addEventListener('resize', measureWidths);
-		return () => window.removeEventListener('resize', measureWidths);
+		reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+		measure();
+		document.fonts?.ready?.then(measure);
+		startMorphing();
+		const onResize = () => measure();
+		window.addEventListener('resize', onResize);
+		return () => {
+			window.removeEventListener('resize', onResize);
+			if (morphTimer) clearInterval(morphTimer);
+		};
 	});
 </script>
 
-<main>
-	<div class="stage">
-		<div class="line" bind:this={lineEl}>
-			{#each letters as letter, letterIndex}
-				<span
-					class="letter"
-					style={`font-family: ${letterFonts[letterIndex]}; width: ${
-						letterWidths[letterIndex] ? `${letterWidths[letterIndex].toFixed(2)}px` : 'auto'
-					}; font-size: ${scaleByFont[letterFonts[letterIndex]] ?? 1}em;`}
-					on:mouseenter={() => swapFont(letterIndex)}
-				>
-					{#if letter === '.'}
-						<span class="dot">.</span>
-					{:else}
-						{letter}
-					{/if}
-				</span>
-			{/each}
-		</div>
-		<a class="login-btn" href="/login">log in</a>
+<svelte:head><title>eating.computer</title></svelte:head>
+
+<main class="field-main">
+	<h1 class="sr-only">eating.computer</h1>
+	<div class="field" bind:this={fieldEl} aria-hidden="true">
+		{#each cells as ch, i}
+			<span class="slot" class:dot={ch === '.'} style:width={`${slotEm[ch] ?? 0.6}em`}>
+				<span class="glyph" data-ch={ch} style={initialStyle(i)}>{ch === ' ' ? '' : ch}</span>
+			</span>
+		{/each}
 	</div>
+	<a class="login-chip" href="/login">log in</a>
 </main>
 
 <style>
-	.login-btn {
+	.field-main {
+		position: relative;
+		min-height: 100dvh;
+		width: 100%;
+		overflow: hidden;
+		background: var(--paper);
+		padding: 0;
+		display: block;
+	}
+
+	.field {
+		position: absolute;
+		inset: 0;
+		display: flex;
+		flex-wrap: wrap;
+		align-content: center;
+		justify-content: center;
+		gap: 0.12em 0.02em;
+		padding: 1.5rem;
+		font-size: clamp(1.3rem, 3.4vw, 2.6rem);
+		line-height: 1;
+		color: color-mix(in srgb, var(--ink) 82%, var(--paper));
+		user-select: none;
+		box-sizing: border-box;
+	}
+
+	.slot {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		flex: 0 0 auto;
+		height: 1.4em;
+		perspective: 500px; /* depth for the glyph's split-flap flip */
+	}
+	.slot.dot .glyph { color: var(--accent); }
+
+	.glyph {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		backface-visibility: hidden;
+		white-space: nowrap;
+		transform-origin: center;
+	}
+	.glyph.is-emoji { filter: saturate(1.05); }
+	.glyph.flip { animation: glyph-flip 0.44s cubic-bezier(0.5, 0, 0.5, 1); }
+	@keyframes glyph-flip {
+		0%   { transform: rotateX(0deg); }
+		46%  { transform: rotateX(88deg); }
+		54%  { transform: rotateX(-88deg); }
+		100% { transform: rotateX(0deg); }
+	}
+
+	/* A solid, legible focal point over the shifting field. */
+	.login-chip {
+		position: absolute;
+		left: 50%; top: 50%;
+		transform: translate(-50%, -50%);
+		z-index: 2;
 		font-family: 'Space Grotesk', sans-serif;
-		font-size: clamp(0.75rem, 2vw, 1rem);
-		font-weight: 500;
-		color: var(--muted-fg);
-		text-decoration: none;
+		font-size: clamp(0.95rem, 2.4vw, 1.15rem);
+		font-weight: 600;
 		letter-spacing: 0.02em;
-		transition: color 0.2s;
-		margin-top: 0.5rem;
+		color: var(--paper);
+		background: var(--ink);
+		text-decoration: none;
+		padding: 0.7rem 1.6rem;
+		border-radius: 999px;
+		box-shadow: 0 10px 34px rgba(0, 0, 0, 0.22), 0 0 0 6px color-mix(in srgb, var(--paper) 78%, transparent);
+		transition: transform 0.15s ease, background 0.2s;
 	}
-
-	.login-btn:hover {
+	.login-chip:hover {
+		background: var(--accent);
 		color: var(--ink);
+		transform: translate(-50%, -50%) scale(1.04);
 	}
 
-	@media (max-width: 600px) {
-		.line { display: none; }
-		.login-btn {
-			font-size: 1.25rem;
-			color: var(--ink);
-			margin-top: 0;
-		}
+	.sr-only {
+		position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+		overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.glyph.flip { animation: none; }
 	}
 </style>
