@@ -74,11 +74,20 @@
 		setTimeout(() => g.classList.remove('flip'), 440);
 	}
 
-	// Morph whatever glyph the cursor passes over — a trail of letters flipping
-	// under the pointer. Event-delegated so it works for the whole field.
-	function onFieldPointer(e) {
-		const g = e.target?.closest?.('.glyph');
-		if (g) morphGlyph(g);
+	// Morph whatever glyph is under the cursor — a trail of letters flipping
+	// under the pointer. ONE mousemove listener, rAF-throttled, hit-testing via
+	// elementsFromPoint. (Per-letter mouseover + a forced reflow each fire was
+	// the source of the lag.) Already-flipping glyphs are skipped.
+	let _ptrX = 0, _ptrY = 0, _ptrQueued = false;
+	function onFieldMove(e) {
+		_ptrX = e.clientX; _ptrY = e.clientY;
+		if (_ptrQueued) return;
+		_ptrQueued = true;
+		requestAnimationFrame(() => {
+			_ptrQueued = false;
+			const g = document.elementsFromPoint(_ptrX, _ptrY).find((el) => el.classList?.contains('glyph'));
+			if (g && !g.classList.contains('flip')) morphGlyph(g);
+		});
 	}
 
 	function startMorphing() {
@@ -145,7 +154,7 @@
 
 <main class="field-main">
 	<h1 class="sr-only">eating.computer</h1>
-	<div class="field" bind:this={fieldEl} aria-hidden="true" onmouseover={onFieldPointer}>
+	<div class="field" bind:this={fieldEl} aria-hidden="true" onmousemove={onFieldMove}>
 		{#each cells as ch, i}
 			<span class="slot" class:dot={ch === '.'} style:width={`${slotEm[ch] ?? 0.6}em`}>
 				<span class="glyph" data-ch={ch} style={initialStyle(i)}>{ch === ' ' ? '' : ch}</span>
