@@ -12,7 +12,9 @@ import { uploadToR2, deleteFromR2, sweepR2Prefix } from '$lib/server/r2.js';
 // daily cron. They are never meant to be kept.
 const MAX_BYTES = 30 * 1024 * 1024; // 30 MB
 const PREFIX = 'gif-studio/';
-export const RENDER_TTL_MS = 30 * 60 * 1000; // 30 min — long enough to drag out
+// 30 min — long enough to render + drag out. (Not exported: SvelteKit
+// +server.js only permits HTTP-verb exports + underscore-prefixed names.)
+const RENDER_TTL_MS = 30 * 60 * 1000;
 
 export async function POST({ request, locals }) {
 	const session = await locals.auth();
