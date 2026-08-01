@@ -1,5 +1,5 @@
 <script>
-	import { onMount, tick } from 'svelte';
+	import { onMount } from 'svelte';
 
 	const phrase = 'eating.computer';
 	const SEP = ' '; // gap slot between repeats
@@ -21,115 +21,189 @@
 		{ css: '"Press Start 2P", monospace',                    scale: 0.9,  weight: 400 }
 	];
 
-	const chars = [...new Set([...phrase, SEP])];
-	let slotEm = $state({});       // char → fixed slot width (em)
-	let repeats = $state(24);      // phrase copies — recomputed to fill the page
-	let fieldEl;
-	let reducedMotion = false;
-	let morphTimer = null;
-
-	// One field cell per character across all repeats.
-	const cells = $derived.by(() => {
-		const unit = [...phrase, SEP];
-		const out = [];
-		for (let r = 0; r < repeats; r++) for (const ch of unit) out.push(ch);
-		return out;
-	});
-
-	const fontStyle = (f) => `font-family:${f.css}; font-weight:${f.weight}; font-size:${f.scale}em;`;
-	// Deterministic initial font per index (SSR-safe — no Math.random in render).
-	const initialStyle = (i) => fontStyle(fonts[(i * 7 + 3) % fonts.length]);
-
-	// Morph a single glyph element directly (no reactive churn across the whole
-	// field): flip it edge-on, swap face at the midpoint, settle.
-	function morphGlyph(g) {
-		if (!g) return;
-		const ch = g.dataset.ch;
-		const swap = () => {
-			const f = fonts[Math.floor(Math.random() * fonts.length)];
-			g.textContent = ch === ' ' ? '' : ch;
-			g.style.cssText = fontStyle(f);
-		};
-		if (reducedMotion) { swap(); return; }
-		g.classList.remove('flip');
-		void g.offsetWidth;
-		g.classList.add('flip');
-		setTimeout(swap, 200);
-		setTimeout(() => g.classList.remove('flip'), 440);
-	}
-
-	// Morph whatever glyph is under the cursor — a trail of letters flipping
-	// under the pointer. ONE mousemove listener, rAF-throttled, hit-testing via
-	// elementsFromPoint. (Per-letter mouseover + a forced reflow each fire was
-	// the source of the lag.) Already-flipping glyphs are skipped.
-	let _ptrX = 0, _ptrY = 0, _ptrQueued = false;
-	function onFieldMove(e) {
-		_ptrX = e.clientX; _ptrY = e.clientY;
-		if (_ptrQueued) return;
-		_ptrQueued = true;
-		requestAnimationFrame(() => {
-			_ptrQueued = false;
-			const g = document.elementsFromPoint(_ptrX, _ptrY).find((el) => el.classList?.contains('glyph'));
-			if (g && !g.classList.contains('flip')) morphGlyph(g);
-		});
-	}
-
-	function startMorphing() {
-		if (reducedMotion || !fieldEl) return;
-		morphTimer = setInterval(() => {
-			const all = fieldEl.querySelectorAll('.glyph');
-			if (!all.length) return;
-			const n = 2 + Math.floor(Math.random() * 3); // 2–4 letters per tick
-			for (let k = 0; k < n; k++) morphGlyph(all[Math.floor(Math.random() * all.length)]);
-		}, 260);
-	}
-
-	// Measure each char's widest form (em) across all faces, then fill the page.
-	async function measure() {
-		const REF = 100;
-		const sample = document.createElement('span');
-		Object.assign(sample.style, {
-			position: 'absolute', visibility: 'hidden', whiteSpace: 'pre', top: '-9999px', left: '-9999px'
-		});
-		document.body.appendChild(sample);
-		const widths = {};
-		for (const ch of chars) {
-			if (ch === ' ') { widths[ch] = 0.4; continue; }
-			let max = 0;
-			for (const f of fonts) {
-				sample.style.fontFamily = f.css;
-				sample.style.fontWeight = f.weight;
-				sample.style.fontSize = `${REF * f.scale}px`;
-				sample.textContent = ch;
-				const w = sample.getBoundingClientRect().width;
-				if (w > max) max = w;
-			}
-			widths[ch] = Math.max(0.5, Math.ceil((max / REF) * 1000) / 1000);
-		}
-		document.body.removeChild(sample);
-		slotEm = widths;
-
-		// Enough repeats to overflow the viewport (overflow:hidden clips the rest).
-		await tick();
-		const fontPx = parseFloat(getComputedStyle(fieldEl).fontSize) || 34;
-		const unitEm = [...phrase, SEP].reduce((a, ch) => a + (widths[ch] ?? 0.6) + 0.12, 0);
-		const unitPx = unitEm * fontPx;
-		const cols = Math.ceil(window.innerWidth / unitPx) + 1;
-		const rowPx = fontPx * 1.9;
-		const rows = Math.ceil(window.innerHeight / rowPx) + 1;
-		repeats = Math.min(160, Math.max(8, cols * rows));
-	}
+	const FLIP_MS = 440;
+	let canvasEl;
 
 	onMount(() => {
-		reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
-		measure();
-		document.fonts?.ready?.then(measure);
-		startMorphing();
-		const onResize = () => measure();
-		window.addEventListener('resize', onResize);
+		const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+		const ctx = canvasEl.getContext('2d');
+		let cells = [];              // { ch, cx, cy, w, isDot, fi, anim } — anim: {start,from,to}|null
+		let active = new Set();      // cells currently flipping
+		let dpr = 1, cssW = 0, cssH = 0, fontPx = 34;
+		let inkRGB = '10,10,10', accentRGB = '255,163,5';
+		let running = false, ambientTimer = null, destroyed = false;
+		let pointer = { x: -1, y: -1, moved: false };
+		let lastHover = null;
+
+		const fontStr = (fi, px) => `${fonts[fi].weight} ${px * fonts[fi].scale}px ${fonts[fi].css}`;
+
+		function readColors() {
+			const cs = getComputedStyle(document.documentElement);
+			const toRGB = (v, fb) => {
+				v = (v || '').trim();
+				if (/^#([0-9a-f]{6})$/i.test(v)) {
+					const n = parseInt(v.slice(1), 16);
+					return `${(n >> 16) & 255},${(n >> 8) & 255},${n & 255}`;
+				}
+				const m = v.match(/(\d+)[,\s]+(\d+)[,\s]+(\d+)/);
+				return m ? `${m[1]},${m[2]},${m[3]}` : fb;
+			};
+			inkRGB = toRGB(cs.getPropertyValue('--ink'), '10,10,10');
+			accentRGB = toRGB(cs.getPropertyValue('--accent'), '255,163,5');
+		}
+
+		// Widest form of each character across all faces (px), so a face swap
+		// never changes the cell width.
+		function measureSlots() {
+			const out = {};
+			const pad = fontPx * 0.06;
+			for (const ch of new Set([...phrase, SEP])) {
+				if (ch === ' ') { out[ch] = fontPx * 0.4; continue; }
+				let max = 0;
+				for (let fi = 0; fi < fonts.length; fi++) {
+					ctx.font = fontStr(fi, fontPx);
+					const w = ctx.measureText(ch).width;
+					if (w > max) max = w;
+				}
+				out[ch] = max + pad;
+			}
+			return out;
+		}
+
+		// Lay the repeated phrase out into rows that wrap and bleed past both
+		// edges, vertically centered — the same woven field as before.
+		function layout() {
+			dpr = Math.min(2, window.devicePixelRatio || 1);
+			cssW = window.innerWidth;
+			cssH = window.innerHeight;
+			fontPx = Math.max(20, Math.min(0.034 * cssW, 42));
+			canvasEl.width = Math.round(cssW * dpr);
+			canvasEl.height = Math.round(cssH * dpr);
+			canvasEl.style.width = cssW + 'px';
+			canvasEl.style.height = cssH + 'px';
+			ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+			const slot = measureSlots();
+			const rowH = fontPx * 1.5;
+			const rows = Math.ceil(cssH / rowH) + 1;
+			const y0 = (cssH - rows * rowH) / 2 + rowH / 2;
+			const stream = [...phrase, SEP];
+			cells = [];
+			let si = 0;
+			for (let r = 0; r < rows; r++) {
+				// consume chars until the row overflows, then centre it (bleed).
+				const row = [];
+				let rw = 0;
+				while (rw < cssW + fontPx) {
+					const ch = stream[si % stream.length]; si++;
+					const w = slot[ch];
+					row.push({ ch, w });
+					rw += w + fontPx * 0.02;
+				}
+				let x = (cssW - rw) / 2;
+				const cy = y0 + r * rowH;
+				for (const c of row) {
+					if (c.ch !== ' ') {
+						cells.push({
+							ch: c.ch, cx: x + c.w / 2, cy, w: c.w,
+							isDot: c.ch === '.', fi: (cells.length * 7 + 3) % fonts.length, anim: null
+						});
+					}
+					x += c.w + fontPx * 0.02;
+				}
+			}
+			draw();
+		}
+
+		function draw() {
+			ctx.clearRect(0, 0, cssW, cssH);
+			ctx.textAlign = 'center';
+			ctx.textBaseline = 'middle';
+			const now = performance.now();
+			for (const cell of cells) {
+				let sy = 1, fi = cell.fi;
+				if (cell.anim) {
+					const t = (now - cell.anim.start) / FLIP_MS;
+					if (t >= 1) {
+						cell.fi = cell.anim.to; cell.anim = null; active.delete(cell); fi = cell.fi;
+					} else {
+						// edge-on split-flap: scaleY 1→0→1, face swaps at midpoint
+						sy = Math.abs(1 - 2 * t);
+						fi = t < 0.5 ? cell.anim.from : cell.anim.to;
+					}
+				}
+				ctx.font = fontStr(fi, fontPx);
+				ctx.fillStyle = cell.isDot ? `rgba(${accentRGB},0.34)` : `rgba(${inkRGB},0.13)`;
+				if (sy >= 0.999) {
+					ctx.fillText(cell.ch, cell.cx, cell.cy);
+				} else {
+					ctx.save();
+					ctx.translate(cell.cx, cell.cy);
+					ctx.scale(1, Math.max(0.02, sy));
+					ctx.fillText(cell.ch, 0, 0);
+					ctx.restore();
+				}
+			}
+		}
+
+		function morph(cell) {
+			if (!cell) return;
+			if (reduced) {
+				let to = cell.fi; while (to === cell.fi) to = (Math.random() * fonts.length) | 0;
+				cell.fi = to; draw(); return;
+			}
+			if (cell.anim) return; // already flipping
+			let to = cell.fi; while (to === cell.fi) to = (Math.random() * fonts.length) | 0;
+			cell.anim = { start: performance.now(), from: cell.fi, to };
+			active.add(cell);
+			ensureLoop();
+		}
+
+		function loop() {
+			if (destroyed) return;
+			// hit-test the pointer against cell rects (cheap plain-JS scan)
+			if (pointer.moved) {
+				pointer.moved = false;
+				const half = fontPx * 0.75;
+				let hit = null;
+				for (const c of cells) {
+					if (Math.abs(pointer.x - c.cx) <= c.w / 2 && Math.abs(pointer.y - c.cy) <= half) { hit = c; break; }
+				}
+				if (hit && hit !== lastHover) morph(hit);
+				lastHover = hit;
+			}
+			draw();
+			if (active.size) requestAnimationFrame(loop);
+			else running = false; // idle → stop drawing
+		}
+		function ensureLoop() { if (!running && !destroyed) { running = true; requestAnimationFrame(loop); } }
+
+		function onMove(e) { pointer.x = e.clientX; pointer.y = e.clientY; pointer.moved = true; ensureLoop(); }
+
+		// Ambient morphing — a few random cells flip on their own.
+		function startAmbient() {
+			if (reduced) return;
+			ambientTimer = setInterval(() => {
+				if (!cells.length || document.hidden) return;
+				const n = 2 + ((Math.random() * 3) | 0);
+				for (let k = 0; k < n; k++) morph(cells[(Math.random() * cells.length) | 0]);
+			}, 300);
+		}
+
+		readColors();
+		let ro;
+		// Fonts must be loaded before measuring or the widths are wrong.
+		(document.fonts?.ready ?? Promise.resolve()).then(() => { if (!destroyed) layout(); });
+		layout(); // first pass with fallback metrics; re-laid out once fonts land
+		startAmbient();
+		window.addEventListener('mousemove', onMove, { passive: true });
+		window.addEventListener('resize', () => { readColors(); layout(); });
+		document.addEventListener('visibilitychange', () => { if (!document.hidden) ensureLoop(); });
+
 		return () => {
-			window.removeEventListener('resize', onResize);
-			if (morphTimer) clearInterval(morphTimer);
+			destroyed = true;
+			clearInterval(ambientTimer);
+			window.removeEventListener('mousemove', onMove);
 		};
 	});
 </script>
@@ -138,13 +212,7 @@
 
 <main class="field-main">
 	<h1 class="sr-only">eating.computer</h1>
-	<div class="field" bind:this={fieldEl} aria-hidden="true" onmousemove={onFieldMove}>
-		{#each cells as ch, i}
-			<span class="slot" class:dot={ch === '.'} style:width={`${slotEm[ch] ?? 0.6}em`}>
-				<span class="glyph" data-ch={ch} style={initialStyle(i)}>{ch === ' ' ? '' : ch}</span>
-			</span>
-		{/each}
-	</div>
+	<canvas class="field-canvas" bind:this={canvasEl} aria-hidden="true"></canvas>
 	<a class="login-chip" href="/login">log in</a>
 </main>
 
@@ -159,49 +227,10 @@
 		display: block;
 	}
 
-	.field {
+	.field-canvas {
 		position: absolute;
 		inset: 0;
-		display: flex;
-		flex-wrap: wrap;
-		align-content: center;
-		justify-content: center;
-		gap: 0.12em 0.02em;
-		padding: 0;
-		font-size: clamp(1.3rem, 3.4vw, 2.6rem);
-		line-height: 1;
-		/* Very low contrast against the paper — a quiet texture the log-in
-		   button reads clearly over. */
-		color: color-mix(in srgb, var(--ink) 12%, var(--paper));
-		user-select: none;
-		box-sizing: border-box;
-	}
-
-	.slot {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		flex: 0 0 auto;
-		height: 1.4em;
-		perspective: 500px; /* depth for the glyph's split-flap flip */
-	}
-	/* keep the dot a touch warmer than the letters, still low-contrast */
-	.slot.dot .glyph { color: color-mix(in srgb, var(--accent) 30%, var(--paper)); }
-
-	.glyph {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		backface-visibility: hidden;
-		white-space: nowrap;
-		transform-origin: center;
-	}
-	.glyph.flip { animation: glyph-flip 0.44s cubic-bezier(0.5, 0, 0.5, 1); }
-	@keyframes glyph-flip {
-		0%   { transform: rotateX(0deg); }
-		46%  { transform: rotateX(88deg); }
-		54%  { transform: rotateX(-88deg); }
-		100% { transform: rotateX(0deg); }
+		display: block;
 	}
 
 	/* A solid, legible focal point over the shifting field. */
@@ -231,9 +260,5 @@
 	.sr-only {
 		position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
 		overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.glyph.flip { animation: none; }
 	}
 </style>
