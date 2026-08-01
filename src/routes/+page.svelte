@@ -21,17 +21,15 @@
 		{ css: '"Press Start 2P", monospace',                    scale: 0.9,  weight: 400 }
 	];
 
-	const FLIP_MS = 440;
 	let canvasEl;
 
 	onMount(() => {
 		const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
 		const ctx = canvasEl.getContext('2d');
-		let cells = [];              // { ch, cx, cy, w, isDot, fi, anim } — anim: {start,from,to}|null
-		let active = new Set();      // cells currently flipping
+		let cells = [];              // { ch, cx, cy, w, isDot, fi }
 		let dpr = 1, cssW = 0, cssH = 0, fontPx = 34;
 		let inkRGB = '10,10,10', accentRGB = '255,163,5';
-		let running = false, ambientTimer = null, destroyed = false;
+		let drawQueued = false, ambientTimer = null, destroyed = false;
 		let pointer = { x: -1, y: -1, moved: false };
 		let lastHover = null;
 
@@ -106,7 +104,7 @@
 					if (c.ch !== ' ') {
 						cells.push({
 							ch: c.ch, cx: x + c.w / 2, cy, w: c.w,
-							isDot: c.ch === '.', fi: (cells.length * 7 + 3) % fonts.length, anim: null
+							isDot: c.ch === '.', fi: (cells.length * 7 + 3) % fonts.length
 						});
 					}
 					x += c.w + fontPx * 0.02;
@@ -119,50 +117,33 @@
 			ctx.clearRect(0, 0, cssW, cssH);
 			ctx.textAlign = 'center';
 			ctx.textBaseline = 'middle';
-			const now = performance.now();
 			for (const cell of cells) {
-				let sy = 1, fi = cell.fi;
-				if (cell.anim) {
-					const t = (now - cell.anim.start) / FLIP_MS;
-					if (t >= 1) {
-						cell.fi = cell.anim.to; cell.anim = null; active.delete(cell); fi = cell.fi;
-					} else {
-						// edge-on split-flap: scaleY 1→0→1, face swaps at midpoint
-						sy = Math.abs(1 - 2 * t);
-						fi = t < 0.5 ? cell.anim.from : cell.anim.to;
-					}
-				}
-				ctx.font = fontStr(fi, fontPx);
+				ctx.font = fontStr(cell.fi, fontPx);
 				ctx.fillStyle = cell.isDot ? `rgba(${accentRGB},0.34)` : `rgba(${inkRGB},0.13)`;
-				if (sy >= 0.999) {
-					ctx.fillText(cell.ch, cell.cx, cell.cy);
-				} else {
-					ctx.save();
-					ctx.translate(cell.cx, cell.cy);
-					ctx.scale(1, Math.max(0.02, sy));
-					ctx.fillText(cell.ch, 0, 0);
-					ctx.restore();
-				}
+				ctx.fillText(cell.ch, cell.cx, cell.cy);
 			}
 		}
+		// Coalesce redraws to one per frame (a burst of morphs = one draw).
+		function queueDraw() {
+			if (drawQueued || destroyed) return;
+			drawQueued = true;
+			requestAnimationFrame(() => { drawQueued = false; draw(); });
+		}
 
+		// Hard swap — pick a new face instantly, no transition.
 		function morph(cell) {
 			if (!cell) return;
-			if (reduced) {
-				let to = cell.fi; while (to === cell.fi) to = (Math.random() * fonts.length) | 0;
-				cell.fi = to; draw(); return;
-			}
-			if (cell.anim) return; // already flipping
 			let to = cell.fi; while (to === cell.fi) to = (Math.random() * fonts.length) | 0;
-			cell.anim = { start: performance.now(), from: cell.fi, to };
-			active.add(cell);
-			ensureLoop();
+			cell.fi = to;
+			queueDraw();
 		}
 
-		function loop() {
-			if (destroyed) return;
-			// hit-test the pointer against cell rects (cheap plain-JS scan)
-			if (pointer.moved) {
+		// Pointer hit-test on a plain-JS cell scan, rAF-throttled.
+		function onMove(e) {
+			pointer.x = e.clientX; pointer.y = e.clientY;
+			if (pointer.moved) return;
+			pointer.moved = true;
+			requestAnimationFrame(() => {
 				pointer.moved = false;
 				const half = fontPx * 0.75;
 				let hit = null;
@@ -171,23 +152,17 @@
 				}
 				if (hit && hit !== lastHover) morph(hit);
 				lastHover = hit;
-			}
-			draw();
-			if (active.size) requestAnimationFrame(loop);
-			else running = false; // idle → stop drawing
+			});
 		}
-		function ensureLoop() { if (!running && !destroyed) { running = true; requestAnimationFrame(loop); } }
 
-		function onMove(e) { pointer.x = e.clientX; pointer.y = e.clientY; pointer.moved = true; ensureLoop(); }
-
-		// Ambient morphing — a few random cells flip on their own.
+		// Ambient morphing — a few random cells swap on their own.
 		function startAmbient() {
 			if (reduced) return;
 			ambientTimer = setInterval(() => {
 				if (!cells.length || document.hidden) return;
 				const n = 2 + ((Math.random() * 3) | 0);
 				for (let k = 0; k < n; k++) morph(cells[(Math.random() * cells.length) | 0]);
-			}, 300);
+			}, 400);
 		}
 
 		readColors();
@@ -198,7 +173,6 @@
 		startAmbient();
 		window.addEventListener('mousemove', onMove, { passive: true });
 		window.addEventListener('resize', () => { readColors(); layout(); });
-		document.addEventListener('visibilitychange', () => { if (!document.hidden) ensureLoop(); });
 
 		return () => {
 			destroyed = true;
