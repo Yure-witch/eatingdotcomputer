@@ -50,9 +50,10 @@ export const actions = {
 		const interests = String(data.get('interests') ?? '').trim().slice(0, 2000);
 
 		if (!name) return fail(400, { error: 'Name is required', name, pronouns, bio, website, year, school, focus, interests });
-		// Students pick their Cooper school + year; instructors skip that step.
-		if (session.user.role !== 'instructor' && (!school || !year)) {
-			return fail(400, { error: 'Pick your school and year', name, pronouns, bio, website, year, school, focus, interests });
+		// Students pick their Cooper school; instructors skip that. Year is NOT
+		// collected here — the instructor sets each student's year in Manage.
+		if (session.user.role !== 'instructor' && !school) {
+			return fail(400, { error: 'Pick your school', name, pronouns, bio, website, year, school, focus, interests });
 		}
 
 		const db = getDb();
@@ -93,11 +94,13 @@ export const actions = {
 
 		const nextStep = session.user.role === 'instructor' ? 'complete' : 'class';
 
+		// Note: `year` is intentionally NOT written here — it's instructor-managed
+		// in Manage, so re-running onboarding never clobbers an instructor's entry.
 		await db.execute({
-			sql: 'UPDATE users SET name = ?, pronouns = ?, bio = ?, website = ?, year = ?, school = ?, focus = ?, interests = ?, avatar_kind = ?, avatar_value = ?, onboarding_step = ? WHERE id = ?',
+			sql: 'UPDATE users SET name = ?, pronouns = ?, bio = ?, website = ?, school = ?, focus = ?, interests = ?, avatar_kind = ?, avatar_value = ?, onboarding_step = ? WHERE id = ?',
 			args: [
 				name, pronouns || null, bio || null, website || null,
-				year || null, school || null, focus || null, interests || null,
+				school || null, focus || null, interests || null,
 				avatarKind, avatarValue,
 				nextStep, session.user.id
 			]

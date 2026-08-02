@@ -1,12 +1,10 @@
 <script>
-	// Onboarding, Cooper Union edition — a 3-step wizard instead of one long
-	// form:
-	//   1. Who are you       — avatar, name, pronouns
-	//   2. You at Cooper     — school (the three Cooper schools as cards),
-	//                          year (1st–5th), focus/major
-	//   3. What do you make? — interests (feeds Gemma's digest inspiration —
-	//                          same users.interests the instructor edits in
-	//                          Manage), plus optional bio + portfolio.
+	// Onboarding, Cooper Union edition — a short 2-step wizard:
+	//   1. You      — avatar, name*, pronouns, and (students) which Cooper
+	//                 school* + optional focus.  (Year is NOT asked here — the
+	//                 instructor sets each student's year in Manage.)
+	//   2. Share about yourself — interests, bio, website. All optional; you can
+	//                 Finish with nothing filled and add it later on your profile.
 	// One form, one final submit — the steps are client-side, so the existing
 	// server action stays a single POST.
 	import { enhance } from '$app/forms';
@@ -21,12 +19,8 @@
 		{ id: 'Art', icon: '🎨', label: 'Art', full: 'School of Art' },
 		{ id: 'Engineering', icon: '⚙️', label: 'Engineering', full: 'Albert Nerken School of Engineering' }
 	];
-	const YEARS = ['1st year', '2nd year', '3rd year', '4th year', '5th year', 'Other'];
 
-	// Steps: instructors skip "You at Cooper".
-	const steps = isInstructor
-		? [{ id: 'who', label: 'You' }, { id: 'make', label: 'Interests' }]
-		: [{ id: 'who', label: 'You' }, { id: 'cooper', label: 'At Cooper' }, { id: 'make', label: 'Interests' }];
+	const steps = [{ id: 'who', label: 'You' }, { id: 'share', label: 'About you' }];
 	let stepIdx = $state(0);
 	const step = $derived(steps[stepIdx].id);
 
@@ -34,7 +28,6 @@
 	let name = $state(form?.name ?? data.prefill.name ?? '');
 	let pronouns = $state(form?.pronouns ?? data.prefill.pronouns ?? '');
 	let school = $state(form?.school ?? data.prefill.school ?? '');
-	let year = $state(form?.year ?? data.prefill.year ?? '');
 	let focus = $state(form?.focus ?? data.prefill.focus ?? '');
 	let interests = $state(form?.interests ?? data.prefill.interests ?? '');
 	let website = $state(form?.website ?? data.prefill.website ?? '');
@@ -47,8 +40,10 @@
 	let stepError = $state(null);
 	function next() {
 		stepError = null;
-		if (step === 'who' && !name.trim()) { stepError = 'Your name, at least!'; return; }
-		if (step === 'cooper' && (!school || !year)) { stepError = 'Pick your school and year.'; return; }
+		if (step === 'who') {
+			if (!name.trim()) { stepError = 'Your name, at least!'; return; }
+			if (!isInstructor && !school) { stepError = 'Pick your school.'; return; }
+		}
 		if (stepIdx < steps.length - 1) stepIdx += 1;
 	}
 	function back() { stepError = null; if (stepIdx > 0) stepIdx -= 1; }
@@ -83,7 +78,6 @@
 		<input type="hidden" name="name" value={name} />
 		<input type="hidden" name="pronouns" value={pronouns} />
 		<input type="hidden" name="school" value={school} />
-		<input type="hidden" name="year" value={year} />
 		<input type="hidden" name="focus" value={focus} />
 		<input type="hidden" name="interests" value={interests} />
 		<input type="hidden" name="website" value={website} />
@@ -111,44 +105,36 @@
 			</label>
 
 			<label>
-				<span>Pronouns</span>
+				<span>Pronouns <span class="opt">(optional)</span></span>
 				<input type="text" bind:value={pronouns} placeholder="e.g. she/her, they/them" />
 			</label>
 
-		{:else if step === 'cooper'}
-			<h1>You at Cooper</h1>
-			<p class="sub">Which school are you in, and where are you in the program?</p>
-
-			<div class="school-cards">
-				{#each SCHOOLS as s (s.id)}
-					<button type="button" class="school-card" class:selected={school === s.id} onclick={() => (school = s.id)}>
-						<span class="school-icon">{s.icon}</span>
-						<span class="school-label">{s.label}</span>
-						<span class="school-full">{s.full}</span>
-					</button>
-				{/each}
-			</div>
-
-			<div class="year-row">
-				<span class="field-title">Year <span class="req">*</span></span>
-				<div class="year-pills">
-					{#each YEARS as y (y)}
-						<button type="button" class="year-pill" class:selected={year === y} onclick={() => (year = y)}>{y}</button>
-					{/each}
+			{#if !isInstructor}
+				<div class="year-row">
+					<span class="field-title">Your school at Cooper <span class="req">*</span></span>
+					<div class="school-cards">
+						{#each SCHOOLS as s (s.id)}
+							<button type="button" class="school-card" class:selected={school === s.id} onclick={() => (school = s.id)}>
+								<span class="school-icon">{s.icon}</span>
+								<span class="school-label">{s.label}</span>
+								<span class="school-full">{s.full}</span>
+							</button>
+						{/each}
+					</div>
 				</div>
-			</div>
 
-			<label>
-				<span>Focus / concentration</span>
-				<input type="text" bind:value={focus} placeholder="e.g. Sculpture, Electrical Engineering, Drawing…" />
-			</label>
+				<label>
+					<span>Focus / concentration <span class="opt">(optional)</span></span>
+					<input type="text" bind:value={focus} placeholder="e.g. Sculpture, Electrical Engineering, Drawing…" />
+				</label>
+			{/if}
 
 		{:else}
-			<h1>What do you make?</h1>
-			<p class="sub">Tell me about your interests — what do you make, what do you want to learn or build? Gemma uses this to personalize your daily digest.</p>
+			<h1>Share about yourself</h1>
+			<p class="sub">Totally optional — but a little personality helps your classmates (and Gemma) get to know you. You can always add more later on your profile.</p>
 
 			<label>
-				<span>Your interests</span>
+				<span>Your interests <span class="opt">(optional)</span></span>
 				<textarea rows="4" bind:value={interests} placeholder="e.g. I make generative type posters and small synths. This semester I want to get better at creative coding and build an interactive installation…"></textarea>
 			</label>
 
