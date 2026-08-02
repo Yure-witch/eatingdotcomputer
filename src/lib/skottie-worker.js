@@ -199,6 +199,10 @@ function atlasAllocSlots(a, n) {
 // whatever is on screen bakes first; off-screen work is abandoned.
 const _rasterPending = new Map(); // key -> { url, px }
 let _rasterBusy = false;
+// Monotonic "scrolled-in" sequence — a cell's visibleAt is stamped each time it
+// enters the viewport, so the rasteriser can bake whatever the user scrolled to
+// MOST RECENTLY first (freshest-visible-first), not just any visible cell.
+let _visSeq = 0;
 
 function scheduleRasterize(url, px, fpsScale = 1) {
 	const key = url + '@' + px;
@@ -207,13 +211,20 @@ function scheduleRasterize(url, px, fpsScale = 1) {
 	pumpRaster();
 }
 
-// url@px keys that have at least one on-screen cell right now.
+// url@px keys with an on-screen cell right now → the freshest visibleAt among
+// those cells. A cell's visibleAt is bumped every time it scrolls INTO view, so
+// the highest number is whatever the user looked at most recently.
 function _visibleRasterKeys() {
-	const set = new Set();
+	const map = new Map();
 	for (const cell of _canvasCells.values()) {
-		if (cell.visible && cell.rasterized) set.add(cell.url + '@' + cell.w);
+		if (cell.visible && cell.rasterized) {
+			const k = cell.url + '@' + cell.w;
+			const at = cell.visibleAt || 0;
+			const prev = map.get(k);
+			if (prev === undefined || at > prev) map.set(k, at);
+		}
 	}
-	return set;
+	return map;
 }
 
 async function pumpRaster() {
@@ -222,13 +233,21 @@ async function pumpRaster() {
 	try {
 		while (_rasterPending.size) {
 			const vis = _visibleRasterKeys();
-			// Abandon anything no longer on screen.
+			// Abandon anything no longer on screen — deprioritise-to-drop: an
+			// emote that scrolled away never gets baked, freeing the pipeline
+			// for what's actually in view.
 			for (const key of [..._rasterPending.keys()]) {
 				if (!vis.has(key)) _rasterPending.delete(key);
 			}
 			if (!_rasterPending.size) break;
-			// Any remaining job is visible — take the first.
-			const [key, job] = _rasterPending.entries().next().value;
+			// Of the remaining (all visible) jobs, bake the one the user
+			// scrolled to MOST RECENTLY first — 100% recency priority.
+			let key = null, bestAt = -1;
+			for (const k of _rasterPending.keys()) {
+				const at = vis.get(k) ?? 0;
+				if (at > bestAt) { bestAt = at; key = k; }
+			}
+			const job = _rasterPending.get(key);
 			_rasterPending.delete(key);
 			_frameJobs.add(key);
 			try { await doRasterize(job.url, job.px, key, job.fpsScale || 1); }
@@ -982,6 +1001,7 @@ self.onmessage = async (e) => {
 				h: msg.h,
 				fpsScale: msg.fpsScale || 1,
 				visible: !!msg.visible,
+				visibleAt: msg.visible ? ++_visSeq : 0,
 				prebuilt: _built,
 				startTime: 0,
 				paintCount: 0,
@@ -999,7 +1019,10 @@ self.onmessage = async (e) => {
 			// Leave the last-drawn frame in place when hiding — the cell
 			// is off-screen so it's invisible anyway, and keeping it means
 			// instant content (no blank flash) when it scrolls back in.
-			if (c) c.visible = !!msg.visible;
+			if (c) {
+				if (msg.visible && !c.visible) c.visibleAt = ++_visSeq; // scrolled IN → freshest
+				c.visible = !!msg.visible;
+			}
 			break;
 		}
 		case 'tick': {

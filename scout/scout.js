@@ -418,6 +418,43 @@ async function searchArenaImages(q) {
 	return out.filter((b) => b.image);
 }
 
+// "Outer orbit" are.na channels — the relatedness graph. Take a few blocks
+// from the top topical channel and see which OTHER channels also hold them;
+// channels that share the most blocks (and have a following) are curated
+// neighbours, one hop out from the topic. Nested Channel-blocks are rare on
+// are.na, so co-occurrence is the real signal.
+async function searchArenaOrbit(q) {
+	const chans = await arenaTopChannels(q, 1);
+	if (!chans.length) return [];
+	const ch = chans[0];
+	const cr = await politeFetch(`https://api.are.na/v2/channels/${ch.slug}/contents?per=12&direction=desc`);
+	if (!cr.ok) return [];
+	const blocks = (await cr.json()).contents?.filter((b) => b && b.id && b.class !== 'Channel').slice(0, 3) ?? [];
+	const orbit = {};
+	for (const b of blocks) {
+		const r = await politeFetch(`https://api.are.na/v2/blocks/${b.id}/channels?per=15`);
+		if (!r.ok) continue;
+		for (const ic of ((await r.json()).channels ?? [])) {
+			if (!ic.slug || ic.slug === ch.slug || (ic.length ?? 0) < 8) continue;
+			orbit[ic.slug] ??= { title: ic.title, slug: ic.slug, owner: ic.owner_slug || ic.user?.slug, followers: ic.follower_count ?? 0, len: ic.length ?? 0, n: 0 };
+			orbit[ic.slug].n++;
+		}
+	}
+	return Object.values(orbit)
+		.filter((c) => c.followers >= 3 && c.owner)
+		.sort((a, b) => (b.n - a.n) || (b.followers - a.followers))
+		.slice(rot(2), rot(2) + 3)
+		.map((c) => ({
+			kind: 'channel_orbit',
+			title: c.title,
+			url: `https://www.are.na/${c.owner}/${c.slug}`,
+			snippet: `shares ${c.n} block${c.n === 1 ? '' : 's'} with “${ch.title}” · ${c.len} blocks`,
+			meta: `are.na · ${c.followers} followers`,
+			source: 'are.na',
+			image: null
+		}));
+}
+
 async function searchWikipedia(q) {
 	const r = await politeFetch(`https://en.wikipedia.org/w/rest.php/v1/search/page?q=${encodeURIComponent(q)}&limit=3`);
 	if (!r.ok) return [];
@@ -454,10 +491,11 @@ async function runSearch(query) {
 	if (m) query = String(query).slice(0, m.index);
 	const out = [];
 	for (const part of splitQuery(query)) {
-		const [papers, chans, arenaImgs, wiki, met, aic, cle, vam, euro, pioneers, harvard, rijks] = await Promise.all([
+		const [papers, chans, arenaImgs, arenaOrbit, wiki, met, aic, cle, vam, euro, pioneers, harvard, rijks] = await Promise.all([
 			searchOpenAlexSeminal(part).catch(() => []),
 			searchArenaChannels(part).catch(() => []),
 			searchArenaImages(part).catch(() => []),
+			searchArenaOrbit(part).catch(() => []),
 			searchWikipedia(part).catch(() => []),
 			searchMet(part).catch(() => []),
 			searchAIC(part).catch(() => []),
@@ -468,7 +506,7 @@ async function runSearch(query) {
 			searchHarvard(part).catch(() => []),
 			searchRijks(part).catch(() => [])
 		]);
-		out.push(...pioneers, ...papers, ...chans, ...arenaImgs, ...wiki, ...met, ...aic, ...cle, ...vam, ...euro, ...harvard, ...rijks);
+		out.push(...pioneers, ...papers, ...chans, ...arenaImgs, ...arenaOrbit, ...wiki, ...met, ...aic, ...cle, ...vam, ...euro, ...harvard, ...rijks);
 	}
 	// de-dupe by URL, keep order
 	const seen = new Set();

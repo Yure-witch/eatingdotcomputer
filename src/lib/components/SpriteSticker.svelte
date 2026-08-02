@@ -132,17 +132,22 @@
 	let skottieMod = null;
 	const isSkottieEngine = (eng) => eng === 'skottie' || eng === 'skottie-worker' || eng === 'skottie-webgpu' || eng === 'webgpu-rasterized' || eng === 'cpu-rasterized';
 
-	// Progressive resolution (LOD). Rasterise FAST at native res first (cheap to
-	// bake, instant), then — only if the cell actually dwells on screen ~0.3s —
-	// re-bake at the crisp `oversample` target (e.g. 2×). Cells that just scroll
-	// past never pay for the expensive high-res bake. `lodLevel` 1 = fast, 2 =
-	// upgraded; it only ever goes up (the high-res atlas entry stays cached).
+	// Progressive resolution (LOD). The PRIMARY canvas always bakes FAST at
+	// native res (cheap, instant). Then — only on a high-end device, only after
+	// the primary has actually rendered, and only if the cell stays closely on
+	// screen ~3s — a separate HIGH-RES canvas is overlaid, baked at the crisp
+	// `oversample` target (2×) + 1.5× fps, and CROSS-FADED in over the primary
+	// (no flash / gap). Cells that scroll past never pay for the high-res bake.
 	const _dpr = typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 2;
-	const _targetOS = Math.max(1, oversample || 1);
-	let lodLevel = $state(1);
+	const _targetOS = $derived(Math.max(1, oversample || 1));
+	const px = $derived(Math.round(size * _dpr * Math.min(1, _targetOS)));    // primary (low)
+	const _hiPx = $derived(Math.round(size * _dpr * _targetOS));              // overlay (crisp)
 	let _lodTimer = null;
-	const _curOS = $derived(lodLevel >= 2 ? _targetOS : Math.min(1, _targetOS));
-	const px = $derived(Math.round(size * _dpr * _curOS));
+	let hiActive = $state(false);   // the high-res overlay canvas is mounted
+	let hiCanvas = $state(null);
+	let hiCellId = null;
+	let hiOpacity = $state(0);      // 0 → 1 cross-fade once the overlay paints
+	let _hiFadeT = null;
 
 	// ──────────────────────────────────────────────────────────────────
 	//  Rlottie path
@@ -311,9 +316,9 @@
 				// a cached atlas and play them back by blitting (no per-frame
 				// render). Other worker engines render live each frame.
 				rasterized: eng === 'webgpu-rasterized',
-				// On the high-res upgrade (dwelled cell, high-end device) also
-				// bake at 1.5× the frame count → a smoother, higher-fps loop.
-				fpsScale: lodLevel >= 2 ? 1.5 : 1,
+				// Primary is always the cheap base-fps bake; the high-res overlay
+				// (mountHiRes) is what carries the 1.5× fps on capable devices.
+				fpsScale: 1,
 				// Fires after the confirmed paints of this cell — the canvas now
 				// holds the animation, so the CSS thumb backdrop can drop out.
 				onFirstPaint: () => { if (mounted) painted = true; }
@@ -481,19 +486,8 @@
 					if (!visible && mounted && activeEngine === 'rlottie') teardown_rlottie();
 				}, OFFSCREEN_RELEASE_MS);
 			}
-			// LOD upgrade: after the cell has been visible ~0.3s (jittered so a
-			// screenful doesn't re-bake in one synchronised blink), bump to the
-			// crisp target resolution + higher framerate — but ONLY on high-end
-			// devices. Low-end devices/GPUs stay at the cheap low-res, low-fps
-			// bake. Cancelled the moment it scrolls away.
-			if (visible && !wasVisible) {
-				if (lodLevel === 1 && _targetOS > 1 && $emoteHiTier) {
-					clearTimeout(_lodTimer);
-					_lodTimer = setTimeout(() => { if (visible && mounted) lodLevel = 2; }, 300 + Math.random() * 160);
-				}
-			} else if (!visible && wasVisible) {
-				clearTimeout(_lodTimer); _lodTimer = null;
-			}
+			// Left the viewport → cancel any pending high-res upgrade.
+			if (!visible && wasVisible) { clearTimeout(_lodTimer); _lodTimer = null; }
 			if (visible && !wasVisible) {
 				if (activeEngine === 'rlottie' && !eager) ensureLoaded();
 				if (isSkottieEngine(activeEngine)) {
@@ -509,6 +503,7 @@
 						if (skottieCanvasPath) mod.setCanvasCellVisible(skottieCellId, true);
 						else mod.setCellVisible(skottieCellId, true);
 					}
+					if (hiCellId != null) SkWorker.setCanvasCellVisible(hiCellId, true);
 					queueSkottieAnimation();
 				}
 			} else if (!visible && wasVisible && isSkottieEngine(activeEngine)) {
@@ -524,6 +519,8 @@
 					if (skottieCanvasPath) mod.setCanvasCellVisible(skottieCellId, false);
 					else mod.setCellVisible(skottieCellId, false);
 				}
+				// De-render the high-res overlay when it scrolls off too.
+				if (hiCellId != null) SkWorker.setCanvasCellVisible(hiCellId, false);
 				if (skottieAnimQueued && skottieUrl && !mod.isAnimationLoaded(skottieUrl)) {
 					releaseSkottieAnimation();
 				}
@@ -537,6 +534,8 @@
 		mounted = false;
 		clearTimeout(_offscreenT);
 		clearTimeout(_lodTimer);
+		clearTimeout(_hiFadeT);
+		if (hiCellId != null) { SkWorker.unregisterCanvasCell?.(hiCellId); hiCellId = null; }
 		observer?.disconnect();
 		teardownCurrent(activeEngine);
 	});
@@ -550,24 +549,69 @@
 		if (activeEngine === null || activeEngine === next) return;
 		const prev = activeEngine;
 		activeEngine = next;
+		// Drop the high-res overlay — it's specific to the old (worker) engine.
+		clearTimeout(_lodTimer); _lodTimer = null;
+		if (hiCellId != null) { SkWorker.unregisterCanvasCell?.(hiCellId); hiCellId = null; }
+		hiActive = false; hiOpacity = 0;
 		teardownCurrent(prev);
 		painted = false;
 		// Skottie variants load eagerly; rlottie waits for IO visibility.
 		if (isSkottieEngine(next) || visible) ensureLoaded();
 	});
 
-	// Resolution upgrade: when `px` grows (LOD 1→2), the {#key} recreates the
-	// canvas element; tear down the old-res cell and re-register at the new
-	// higher px so the worker bakes the crisp atlas entry into the fresh canvas.
-	let _lastPx = px;
+	// High-res upgrade trigger: only once the PRIMARY has actually rendered
+	// (painted), on a high-end device, for the worker atlas engine, and only if
+	// there IS a crisper target. After the cell has dwelled ~3s still visible +
+	// painted, mount the high-res overlay. Cancelled if it scrolls away first.
+	const _canUpgrade = $derived(
+		visible && painted && !hiActive && _targetOS > 1 && $emoteHiTier
+		&& engine === 'webgpu-rasterized' && skottieCanvasPath
+	);
 	$effect(() => {
-		const p = px;
-		if (activeEngine === null || p === _lastPx) { _lastPx = p; return; }
-		_lastPx = p;
-		teardownCurrent(activeEngine);
-		painted = false;
-		if (isSkottieEngine(activeEngine) || visible) ensureLoaded();
+		if (_canUpgrade) {
+			if (!_lodTimer) _lodTimer = setTimeout(() => {
+				_lodTimer = null;
+				if (mounted && visible && painted) hiActive = true;
+			}, 3000);
+		} else if (_lodTimer && !visible) {
+			clearTimeout(_lodTimer); _lodTimer = null;
+		}
 	});
+
+	// Once the overlay <canvas> exists, register it as a second worker cell at
+	// the crisp px + 1.5× fps. It bakes independently (shared built animation),
+	// then cross-fades in over the still-visible primary — no flash, no gap.
+	$effect(() => { if (hiActive && hiCanvas && hiCellId == null) mountHiRes(); });
+
+	async function mountHiRes() {
+		if (hiCellId != null || engine !== 'webgpu-rasterized') return;
+		let target;
+		try { target = hiCanvas.transferControlToOffscreen(); }
+		catch { hiActive = false; return; }
+		hiCellId = SkWorker.registerCanvasCell({
+			url,
+			canvas: target,
+			w: _hiPx,
+			h: _hiPx,
+			paused,
+			loop,
+			visible: true,
+			rasterized: true,
+			fpsScale: 1.5,
+			onFirstPaint: () => {
+				if (!mounted) return;
+				hiOpacity = 1; // CSS fades the crisp overlay in over the primary
+				clearTimeout(_hiFadeT);
+				_hiFadeT = setTimeout(() => {
+					// Overlay is fully faded in — free the low-res primary.
+					if (skottieCellId != null && skottieCanvasPath) {
+						SkWorker.unregisterCanvasCell?.(skottieCellId);
+						skottieCellId = null; skottieCanvasPath = false;
+					}
+				}, 260);
+			}
+		});
+	}
 
 	$effect(() => { hovering; visible; updatePlay(); });
 </script>
@@ -621,9 +665,15 @@
 		     so a canvas that was transferred (and can't get a 2D context,
 		     or be transferred twice) is replaced by a fresh one for the
 		     new engine. -->
-		{#key `${engine}|${px}`}
+		{#key engine}
 			<canvas bind:this={canvas} class="tg-canvas" width={px} height={px}></canvas>
 		{/key}
+		<!-- High-res cross-fade overlay: mounts once the primary has rendered and
+		     the cell dwells; baked crisp + higher-fps, then faded in over the
+		     primary so the sharpen is seamless (no thumb flash / gap). -->
+		{#if hiActive}
+			<canvas bind:this={hiCanvas} class="tg-canvas tg-canvas-hi" width={_hiPx} height={_hiPx} style:opacity={hiOpacity}></canvas>
+		{/if}
 	</span>
 {/if}
 
@@ -643,6 +693,8 @@
 		width: 100%;
 		height: 100%;
 	}
+	/* High-res overlay sits above the primary and fades in once it has painted. */
+	.tg-canvas-hi { z-index: 1; transition: opacity 0.26s ease; }
 	/* Adaptive placeholder: the silhouette (sprite cell or thumb image) is
 	   used as an alpha mask and filled with the live --ink, so the
 	   placeholder is the theme's text colour, not the sprite's baked tone.
