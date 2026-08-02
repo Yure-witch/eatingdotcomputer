@@ -22,20 +22,42 @@ export async function GET({ locals }) {
 export async function POST({ request, locals }) {
 	const session = await locals.auth();
 	if (!session?.user) error(401, 'Not authenticated');
-	const { goalId, done, remove } = await request.json().catch(() => ({}));
+	const { goalId, done, remove, pin } = await request.json().catch(() => ({}));
 	if (typeof goalId !== 'string' || !goalId) error(400, 'Missing goalId');
 	const db = getDb();
 	if (!db) error(500, 'No database');
-	const res = remove === true
-		? await db.execute({
+	let res;
+	if (remove === true) {
+		res = await db.execute({
 			sql: 'DELETE FROM gemma_goals WHERE id = ? AND user_id = ?',
 			args: [goalId, session.user.id]
-		})
-		: await db.execute({
+		});
+	} else if (typeof pin === 'boolean') {
+		// Pin as top priority (user override of Gemma's auto-rank). Pinning sets
+		// priority above every current task so it sorts first; unpinning releases
+		// it back to Gemma's ranking.
+		if (pin) {
+			const max = (await db.execute({
+				sql: 'SELECT COALESCE(MAX(priority), 0) AS m FROM gemma_goals WHERE user_id = ? AND done = 0',
+				args: [session.user.id]
+			})).rows[0]?.m ?? 0;
+			res = await db.execute({
+				sql: 'UPDATE gemma_goals SET priority_locked = 1, priority = ? WHERE id = ? AND user_id = ?',
+				args: [Number(max) + 1, goalId, session.user.id]
+			});
+		} else {
+			res = await db.execute({
+				sql: 'UPDATE gemma_goals SET priority_locked = 0 WHERE id = ? AND user_id = ?',
+				args: [goalId, session.user.id]
+			});
+		}
+	} else {
+		res = await db.execute({
 			sql: `UPDATE gemma_goals SET done = ?, done_at = CASE WHEN ? THEN datetime('now') ELSE NULL END
 			      WHERE id = ? AND user_id = ?`,
 			args: [done ? 1 : 0, done ? 1 : 0, goalId, session.user.id]
 		});
+	}
 	if (!res.rowsAffected) error(404, 'No such goal');
 	return json({ ok: true });
 }

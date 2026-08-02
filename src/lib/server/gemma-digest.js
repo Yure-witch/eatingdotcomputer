@@ -502,13 +502,14 @@ export async function getAllGoals(userId) {
 	const db = getDb();
 	if (!db) return [];
 	const rows = await db.execute({
-		sql: 'SELECT id, label, done, source_conv_id, source_msg_id, source_kind, requested_by, source_text, source_quote, created_at, done_at FROM gemma_goals WHERE user_id = ? ORDER BY done ASC, created_at DESC LIMIT 100',
+		sql: 'SELECT id, label, done, source_conv_id, source_msg_id, source_kind, requested_by, source_text, source_quote, created_at, done_at, priority, priority_locked FROM gemma_goals WHERE user_id = ? ORDER BY done ASC, priority_locked DESC, priority DESC, created_at DESC LIMIT 100',
 		args: [userId]
 	});
 	return rows.rows.map((r) => ({
 		goalId: String(r.id),
 		label: String(r.label),
 		done: Number(r.done) === 1,
+		priorityLocked: Number(r.priority_locked) === 1,
 		doneAt: r.done_at ? String(r.done_at) : null,
 		createdAt: r.created_at ? String(r.created_at) : null,
 		requestedBy: r.requested_by ? String(r.requested_by) : null,
@@ -539,15 +540,15 @@ async function recordSentLink(userId, url) {
 export async function getOpenGoals(userId) {
 	const db = getDb();
 	if (!db) return [];
-	// Newest first — the most recently voiced intent ranks highest; the
-	// Gemma page shows the top few with a "see all" expander.
+	// Priority order: user-pinned first, then Gemma's auto-rank, then newest.
 	const rows = await db.execute({
-		sql: 'SELECT id, label, source_conv_id, source_msg_id, source_kind, requested_by, source_text, source_quote, created_at FROM gemma_goals WHERE user_id = ? AND done = 0 ORDER BY created_at DESC LIMIT 30',
+		sql: 'SELECT id, label, source_conv_id, source_msg_id, source_kind, requested_by, source_text, source_quote, created_at, priority, priority_locked FROM gemma_goals WHERE user_id = ? AND done = 0 ORDER BY priority_locked DESC, priority DESC, created_at DESC LIMIT 30',
 		args: [userId]
 	});
 	return rows.rows.map((r) => ({
 		goalId: String(r.id),
 		label: String(r.label),
+		priorityLocked: Number(r.priority_locked) === 1,
 		requestedBy: r.requested_by ? String(r.requested_by) : null,
 		sourceText: r.source_text ? String(r.source_text) : null,
 		sourceQuote: r.source_quote ? String(r.source_quote) : null,
@@ -557,6 +558,70 @@ export async function getOpenGoals(userId) {
 			? `/app/chat/${String(r.source_kind) === 'dm' ? 'dm' : 'channel'}/${r.source_conv_id}?msg=${encodeURIComponent(String(r.source_msg_id))}`
 			: null
 	}));
+}
+
+// The single highest-priority open task (pinned > Gemma-ranked > newest).
+async function getTopGoal(userId) {
+	const db = getDb();
+	if (!db) return null;
+	const r = (await db.execute({
+		sql: 'SELECT label, requested_by FROM gemma_goals WHERE user_id = ? AND done = 0 ORDER BY priority_locked DESC, priority DESC, created_at DESC LIMIT 1',
+		args: [userId]
+	})).rows[0];
+	return r ? { label: String(r.label), requestedBy: r.requested_by ? String(r.requested_by) : null } : null;
+}
+
+// Gemma auto-ranks the user's OPEN, non-pinned tasks so the digest can pick a
+// sensible top one. Terse prompt + temp 0.35 (this reasoning model spirals on
+// verbose prompts). Writes `priority` (higher = more important); pinned tasks
+// are left untouched and always sort above these.
+async function rankOpenGoals(userId, creds) {
+	if (!creds) return;
+	const db = getDb();
+	if (!db) return;
+	const rows = (await db.execute({
+		sql: 'SELECT id, label FROM gemma_goals WHERE user_id = ? AND done = 0 AND priority_locked = 0 ORDER BY created_at DESC LIMIT 20',
+		args: [userId]
+	})).rows;
+	if (rows.length < 2) return; // nothing to rank
+	const list = rows.map((r, i) => `${i}. ${String(r.label)}`).join('\n');
+	const out = await llmChat(creds, [
+		{ role: 'system', content: 'Rank these tasks by importance to work on next, most important first. Reply ONLY JSON: {"order":[indices]}.' },
+		{ role: 'user', content: list }
+	], 400, 0.35);
+	const order = parseJsonLoose(out)?.order;
+	if (!Array.isArray(order)) return;
+	const n = rows.length;
+	const seen = new Set();
+	let rank = 0;
+	for (const idx of order) {
+		const i = Number(idx);
+		if (!Number.isInteger(i) || i < 0 || i >= n || seen.has(i)) continue;
+		seen.add(i);
+		await db.execute({
+			sql: 'UPDATE gemma_goals SET priority = ? WHERE id = ? AND user_id = ? AND priority_locked = 0',
+			args: [n - rank, rows[i].id, userId]
+		}).catch(() => {});
+		rank++;
+	}
+}
+
+// The single most urgent incomplete assignment item (earliest due, then
+// instructor-flagged important, then earliest week).
+async function getTopHomework(classId, studentId, role) {
+	if (String(role) === 'instructor') return null;
+	const items = await getOpenActionItems(classId, studentId);
+	if (!items.length) return null;
+	const rank = (it) => [
+		it.dueDate ? Date.parse(it.dueDate) || Infinity : Infinity,
+		it.important ? 0 : 1,
+		it.week ?? Infinity
+	];
+	items.sort((a, b) => {
+		const ra = rank(a), rb = rank(b);
+		return ra[0] - rb[0] || ra[1] - rb[1] || ra[2] - rb[2];
+	});
+	return items[0];
 }
 
 // ── 2. Incomplete assignment items for one student ────────────────────────
@@ -579,6 +644,7 @@ export async function getOpenActionItems(classId, studentId) {
 				label: it.label,
 				week: p.week,
 				dueDate: p.dueDate,
+				important: !!p.important,
 				requiresSubmission: !!it.requiresSubmission
 			});
 		}
@@ -787,22 +853,37 @@ async function sendGemmaDigestInner({ userId, classId = DEFAULT_CLASS, recapLine
 		.digest('hex');
 	const stateRef = adminDb.ref(`gemmaDigestState/${userId}`);
 	const prev = (await stateRef.get()).val();
+
+	// After the FIRST digest, stop dumping the whole list every day: nudge just
+	// the single top priority — the user's pinned / Gemma-ranked top task and
+	// their most-urgent assignment. The first digest keeps the fuller welcome.
+	const isFirst = !prev;
+	let topGoal = null, topHw = null;
+	if (!isFirst) {
+		await rankOpenGoals(userId, creds);
+		topGoal = await getTopGoal(userId);
+		topHw = await getTopHomework(classId, userId, userRow.role);
+	}
+	const promptGoals = isFirst ? goals : (topGoal ? [topGoal] : []);
+	const promptIncomplete = isFirst ? incomplete
+		: (topHw ? [{ week: topHw.week, dueDate: topHw.dueDate, missing: [topHw.label] }] : []);
+
 	if (prev?.hash === fingerprint) {
 		if (!incomplete.length && !goals.length) {
 			return { userId, delivered: false, reason: 'unchanged-nothing-open' };
 		}
 		const first = String(userRow.name ?? 'there').split(' ')[0];
 		const lines = [`Hi ${first} — nothing new in class since last time, just a quick reminder.`];
-		if (incomplete.length) {
-			lines.push('Still open:');
-			for (const w of incomplete) {
+		if (promptIncomplete.length) {
+			lines.push(isFirst ? 'Still open:' : 'Top priority:');
+			for (const w of promptIncomplete) {
 				const due = w.dueDate ? ` (due ${w.dueDate})` : '';
 				for (const label of w.missing) lines.push(`- ${label} — Week ${w.week}${due}`);
 			}
 		}
-		if (goals.length) {
-			lines.push(incomplete.length ? 'And your own goals:' : 'Your goals:');
-			for (const g of goals) lines.push(`- ${g.label}${g.requestedBy ? ` (asked by ${g.requestedBy})` : ''}`);
+		if (promptGoals.length) {
+			lines.push(promptIncomplete.length ? 'And your own goal:' : 'Your goal:');
+			for (const g of promptGoals) lines.push(`- ${g.label}${g.requestedBy ? ` (asked by ${g.requestedBy})` : ''}`);
 		}
 		lines.push('You can check these off right here. 💪');
 		const reminder = lines.join('\n');
@@ -840,13 +921,15 @@ async function sendGemmaDigestInner({ userId, classId = DEFAULT_CLASS, recapLine
 			'CLASS CHAT (last 24h):',
 			recap.length ? recap.map(fmtRecapLine).join('\n') : '(no messages today)',
 			'',
-			'INCOMPLETE ASSIGNMENT ITEMS:',
-			incomplete.length
-				? incomplete.map((w) => `Week ${w.week}${w.dueDate ? ` (due ${w.dueDate})` : ''}: ${w.missing.join('; ')}`).join('\n')
+			isFirst ? 'INCOMPLETE ASSIGNMENT ITEMS:' : 'MOST URGENT ASSIGNMENT (nudge just this one):',
+			promptIncomplete.length
+				? promptIncomplete.map((w) => `Week ${w.week}${w.dueDate ? ` (due ${w.dueDate})` : ''}: ${w.missing.join('; ')}`).join('\n')
 				: '(none — all caught up)',
 			'',
-			'PERSONAL GOALS they have voiced in chat (tracked as their own checklist):',
-			goals.length ? goals.map((g) => `- ${g.label}${g.requestedBy ? ` (asked by ${g.requestedBy})` : ''}`).join('\n') : '(none tracked)',
+			isFirst
+				? 'PERSONAL GOALS they have voiced in chat (tracked as their own checklist):'
+				: 'THEIR TOP PRIORITY TASK (nudge just this one — do NOT list others):',
+			promptGoals.length ? promptGoals.map((g) => `- ${g.label}${g.requestedBy ? ` (asked by ${g.requestedBy})` : ''}`).join('\n') : '(none tracked)',
 			'',
 			`NEW TASKS ADDED THIS RUN: ${newGoalsCount} — if more than zero, add one line telling them their Tasks list was updated ("N new tasks added — see your Tasks list").`,
 			'',
@@ -856,7 +939,7 @@ async function sendGemmaDigestInner({ userId, classId = DEFAULT_CLASS, recapLine
 		text = await llmWrite(creds, prompt);
 		usedLlm = !!text;
 	}
-	if (!text) text = templateDigest({ name, recapLines: recap, incomplete, interests, doneGoals, goals, newGoalsCount, webFinds: freshFind ? [freshFind] : null });
+	if (!text) text = templateDigest({ name, recapLines: recap, incomplete: promptIncomplete, interests, doneGoals, goals: promptGoals, newGoalsCount, webFinds: freshFind ? [freshFind] : null });
 
 	await deliverDM(userId, text);
 	await stateRef.set({ hash: fingerprint, at: Date.now(), reminded: false });

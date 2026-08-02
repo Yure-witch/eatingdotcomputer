@@ -72,6 +72,29 @@
 		}
 	}
 
+	// Pin a task as top priority (overrides Gemma's auto-rank). Re-sorts the
+	// open list so the pinned one leads.
+	async function togglePin(g) {
+		const next = !g.priorityLocked;
+		const prev = goals;
+		goals = goals.map((x) => (x.goalId === g.goalId ? { ...x, priorityLocked: next } : x));
+		sortGoals();
+		try {
+			const r = await fetch('/api/gemma/goal', {
+				method: 'POST', headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ goalId: g.goalId, pin: next })
+			});
+			if (!r.ok) throw new Error();
+		} catch { goals = prev; }
+	}
+	// Keep open tasks ordered: pinned first, then their existing order.
+	function sortGoals() {
+		const open = goals.filter((g) => !g.done);
+		const done = goals.filter((g) => g.done);
+		open.sort((a, b) => (b.priorityLocked ? 1 : 0) - (a.priorityLocked ? 1 : 0));
+		goals = [...open, ...done];
+	}
+
 	// Two-step removal: ✕ arms "Remove?" for 3s; second click deletes.
 	let removeArmed = $state(null);
 	let _disarmTimer = null;
@@ -132,8 +155,13 @@
 		<div class="goal-row">
 			<label class="goal-check">
 				<input type="checkbox" checked={g.done} onchange={() => toggleGoal(g)} />
-				<span>{g.label}{#if g.requestedBy}<span class="goal-by">asked by {g.requestedBy}</span>{/if}{#if g.done && g.doneAt}<span class="goal-done-date">✓ {doneDate(g.doneAt)}</span>{/if}</span>
+				<span>{g.label}{#if g.priorityLocked && !g.done}<span class="goal-top">top priority</span>{/if}{#if g.requestedBy}<span class="goal-by">asked by {g.requestedBy}</span>{/if}{#if g.done && g.doneAt}<span class="goal-done-date">✓ {doneDate(g.doneAt)}</span>{/if}</span>
 			</label>
+			{#if !g.done}
+				<button class="goal-pin" class:pinned={g.priorityLocked} title={g.priorityLocked ? 'Unpin — let Gemma prioritize' : 'Pin as top priority'} onclick={() => togglePin(g)}>
+					{g.priorityLocked ? '★' : '☆'}
+				</button>
+			{/if}
 			<button class="goal-remove" class:armed={removeArmed === g.goalId} title={removeArmed === g.goalId ? 'Click again to remove' : 'Remove this goal'} onclick={() => removeGoal(g)}>
 				{removeArmed === g.goalId ? 'Remove?' : '✕'}
 			</button>
@@ -267,6 +295,19 @@
 		border-radius: 99px; vertical-align: 1px;
 	}
 	.goal-done-date { margin-left: 0.4rem; font-size: 0.7rem; color: var(--muted-fg); text-decoration: none; }
+	.goal-top {
+		display: inline-block; margin-left: 0.4rem; padding: 0.05rem 0.4rem;
+		font-size: 0.62rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+		color: var(--accent);
+		background: color-mix(in srgb, var(--accent) 16%, transparent);
+		border-radius: 99px; vertical-align: 1px;
+	}
+	.goal-pin {
+		background: none; border: none; cursor: pointer; padding: 0 0.15rem;
+		color: var(--muted-fg); font-size: 1rem; line-height: 1.2; flex-shrink: 0;
+	}
+	.goal-pin:hover { color: var(--accent); }
+	.goal-pin.pinned { color: var(--accent); }
 	.goal-remove {
 		background: none; border: none; cursor: pointer; padding: 0 0.15rem;
 		color: var(--muted-fg); font-size: 0.75rem; line-height: 1.4; flex-shrink: 0;
