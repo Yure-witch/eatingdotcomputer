@@ -184,17 +184,30 @@ export function setEngineManual(engine) {
 	engineMode.set(engine);
 }
 
+// Device tier for the emote LOD: HIGH-END devices (desktop, or a phone that's
+// WebGPU-capable / has plenty of RAM+cores) upgrade a dwelling emote to crisp
+// 2× res AND a higher framerate; LOW-END devices stay at the cheap low-res,
+// low-fps bake. Resolved once by initEmoteEngine() alongside the WebGPU probe.
+export const emoteHiTier = writable(false);
+
 // Refine the rasterized engine once the WebGPU probe resolves: WebGPU-capable
 // devices (incl. iOS 18+) get the GPU rasterizer; otherwise iOS falls back to
-// the WebGL-free CPU atlas. No-op when the user picked an engine manually.
-// Call once from the root layout onMount.
+// the WebGL-free CPU atlas. Also sets the LOD device tier. No-op on the engine
+// when the user picked one manually. Call once from the root layout onMount.
 export async function initEmoteEngine() {
 	if (typeof window === 'undefined') return;
-	try { if (localStorage.getItem(MANUAL_KEY) === '1') return; } catch { return; }
 	const { hasWebGPU } = await import('$lib/native.js');
 	const webgpu = await hasWebGPU().catch(() => false);
-	const best = webgpu ? 'webgpu-rasterized' : (isIOS() ? 'cpu-rasterized' : 'webgpu-rasterized');
-	engineMode.set(best);
+	const coarse = !!window.matchMedia?.('(pointer: coarse)')?.matches;
+	const mem = navigator.deviceMemory || 8;
+	const cores = navigator.hardwareConcurrency || 4;
+	// High-end = desktop, OR WebGPU-capable, OR a beefy phone (RAM + cores).
+	emoteHiTier.set(!coarse || webgpu || (mem >= 6 && cores >= 6));
+
+	let manual = false;
+	try { manual = localStorage.getItem(MANUAL_KEY) === '1'; } catch { /* private mode */ }
+	if (manual) return;
+	engineMode.set(webgpu ? 'webgpu-rasterized' : (isIOS() ? 'cpu-rasterized' : 'webgpu-rasterized'));
 }
 export { RASTER_ENGINES };
 

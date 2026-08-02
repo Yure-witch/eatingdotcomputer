@@ -200,10 +200,10 @@ function atlasAllocSlots(a, n) {
 const _rasterPending = new Map(); // key -> { url, px }
 let _rasterBusy = false;
 
-function scheduleRasterize(url, px) {
+function scheduleRasterize(url, px, fpsScale = 1) {
 	const key = url + '@' + px;
 	if (_frameCache.has(key) || _frameJobs.has(key) || _rasterPending.has(key)) return;
-	_rasterPending.set(key, { url, px });
+	_rasterPending.set(key, { url, px, fpsScale });
 	pumpRaster();
 }
 
@@ -231,7 +231,7 @@ async function pumpRaster() {
 			const [key, job] = _rasterPending.entries().next().value;
 			_rasterPending.delete(key);
 			_frameJobs.add(key);
-			try { await doRasterize(job.url, job.px, key); }
+			try { await doRasterize(job.url, job.px, key, job.fpsScale || 1); }
 			catch (e) {
 				_frameJobs.delete(key);
 				diag('warn', '[skottie-worker] rasterize failed', key, String(e?.message || e));
@@ -242,14 +242,19 @@ async function pumpRaster() {
 	}
 }
 
-async function doRasterize(url, px, key) {
+async function doRasterize(url, px, key, fpsScale = 1) {
 	const entry = _anims.get(url);
 	if (!entry || entry.duration <= 0) { _frameJobs.delete(key); return; }
 	const sheet = ensureRasterSheetForPx(px);
 	const atlas = getAtlas(px);
 	if (!sheet || !atlas) { _frameJobs.delete(key); return; }
 	const sl = atlas.slot; // supersampled pixel size (px * SUPERSAMPLE)
-	const N = Math.min(entry.totalFrames, MAX_RASTER_FRAMES);
+	// fpsScale (1.5 on the high-end LOD upgrade) bakes more frames = smoother
+	// loop. Capped to the raster sheet's grid (RASTER_COLS² slots) so it can
+	// never overflow — on desktop MAX_RASTER_FRAMES is already near the cap, so
+	// the bump mainly benefits fast phones (e.g. 40 → 60 frames).
+	const _frameCap = Math.min(Math.round(MAX_RASTER_FRAMES * fpsScale), RASTER_COLS * RASTER_COLS);
+	const N = Math.min(entry.totalFrames, _frameCap);
 	const slots = atlasAllocSlots(atlas, N);
 	if (!slots) { _frameJobs.delete(key); return; } // atlas full — thumb stays up
 
@@ -333,7 +338,7 @@ function renderCanvasCells(now) {
 		if (cell.rasterized) {
 			const ckey = cell.url + '@' + cell.w;
 			const cache = _frameCache.get(ckey);
-			if (!cache) { scheduleRasterize(cell.url, cell.w); continue; } // thumb covers until ready
+			if (!cache) { scheduleRasterize(cell.url, cell.w, cell.fpsScale); continue; } // thumb covers until ready
 			// Touch LRU so an on-screen emoji is never the eviction victim.
 			cache.atlas.lru.delete(ckey);
 			cache.atlas.lru.set(ckey, cache);
@@ -975,6 +980,7 @@ self.onmessage = async (e) => {
 				paintIndex: msg.paintIndex ?? null,
 				w: msg.w,
 				h: msg.h,
+				fpsScale: msg.fpsScale || 1,
 				visible: !!msg.visible,
 				prebuilt: _built,
 				startTime: 0,

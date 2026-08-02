@@ -13,6 +13,7 @@
 		spriteKeyForCustom,
 		engineMode,
 		RASTER_ENGINES,
+		emoteHiTier,
 		isAdaptivePack
 	} from '$lib/telegram-emoji-store.js';
 	import { acquire, release } from '$lib/lottie-spritesheet.js';
@@ -310,6 +311,9 @@
 				// a cached atlas and play them back by blitting (no per-frame
 				// render). Other worker engines render live each frame.
 				rasterized: eng === 'webgpu-rasterized',
+				// On the high-res upgrade (dwelled cell, high-end device) also
+				// bake at 1.5× the frame count → a smoother, higher-fps loop.
+				fpsScale: lodLevel >= 2 ? 1.5 : 1,
 				// Fires after the confirmed paints of this cell — the canvas now
 				// holds the animation, so the CSS thumb backdrop can drop out.
 				onFirstPaint: () => { if (mounted) painted = true; }
@@ -479,9 +483,11 @@
 			}
 			// LOD upgrade: after the cell has been visible ~0.3s (jittered so a
 			// screenful doesn't re-bake in one synchronised blink), bump to the
-			// crisp target resolution. Cancelled the moment it scrolls away.
+			// crisp target resolution + higher framerate — but ONLY on high-end
+			// devices. Low-end devices/GPUs stay at the cheap low-res, low-fps
+			// bake. Cancelled the moment it scrolls away.
 			if (visible && !wasVisible) {
-				if (lodLevel === 1 && _targetOS > 1) {
+				if (lodLevel === 1 && _targetOS > 1 && $emoteHiTier) {
 					clearTimeout(_lodTimer);
 					_lodTimer = setTimeout(() => { if (visible && mounted) lodLevel = 2; }, 300 + Math.random() * 160);
 				}

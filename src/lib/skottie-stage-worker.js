@@ -529,7 +529,7 @@ export function unregisterCell(id) {
 // overlay path's _cells ids when first-paint acks come back.
 export function registerCanvasCell({
 	url, canvas, w, h, paused = false, paintIndex = null,
-	loop = true, visible = false, rasterized = false, onFirstPaint = null
+	loop = true, visible = false, rasterized = false, fpsScale = 1, onFirstPaint = null
 }) {
 	const id = 1_000_000_000 + (_nextCanvasCellId++);
 	// Route to the shard that owns this URL — same shard builds AND renders
@@ -539,7 +539,7 @@ export function registerCanvasCell({
 	_canvasCells.set(id, { onFirstPaint, url, shardIdx });
 	postToShard(shardIdx, {
 		type: 'register-canvas-cell',
-		id, url, w, h, paused, paintIndex, loop, visible, rasterized, canvas
+		id, url, w, h, paused, paintIndex, loop, visible, rasterized, fpsScale, canvas
 	}, [canvas]);
 	return id;
 }
