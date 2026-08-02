@@ -872,38 +872,78 @@ async function sendGemmaDigestInner({ userId, classId = DEFAULT_CLASS, recapLine
 	return { userId, delivered: true, usedLlm };
 }
 
+// ── Adaptive cadence ──────────────────────────────────────────────────────
+// Don't overwhelm: pace each user's digest by how they engage. Reading Gemma
+// (unread stays low) → daily. Visiting the app but not opening Gemma (unread
+// creeping up) → every few days. Unreads piling up, or gone from the app →
+// back off further. The daily cron calls this per user; a not-due user is
+// simply skipped that day.
+const DAY_MS = 24 * 60 * 60 * 1000;
+export function digestDue({ stateAt, gemmaUnread = 0, lastActiveMs = 0, now = Date.now() }) {
+	if (!stateAt) return true; // never sent — always send the first
+	const daysSince = (now - stateAt) / DAY_MS;
+	let minDays;
+	if (gemmaUnread >= 4) minDays = 5;        // piling up → back off hard
+	else if (gemmaUnread >= 2) minDays = 3;   // in the app but not reading Gemma
+	else minDays = 1;                          // reading Gemma → daily
+	// Gone from the app entirely → slow down regardless of unread.
+	if (lastActiveMs && now - lastActiveMs >= 5 * DAY_MS) minDays = Math.max(minDays, 4);
+	return daysSince >= minDays - 0.5; // epsilon for daily-cron time drift
+}
+
 // ── Batch entry — the daily cron / instructor "run now" ───────────────────
 // Master switch: the cron only sends when at least one instructor has opted
-// in (users.gemma_digest = 1). `onlyUserId` (the test path) bypasses that.
+// in (users.gemma_digest = 1). `onlyUserId` (the test path) bypasses that AND
+// the cadence gate — a manual "run now" always sends.
 export async function runDailyDigests({ classId = DEFAULT_CLASS, onlyUserId = null } = {}) {
 	const db = getDb();
 	if (!db) return { sent: [], reason: 'no-db' };
 
-	let recipients;
+	let recipients; // [{ id, lastActiveMs }]
 	if (onlyUserId) {
-		recipients = [onlyUserId];
+		recipients = [{ id: onlyUserId, lastActiveMs: 0 }];
 	} else {
 		const master = await db.execute({
 			sql: "SELECT 1 FROM users WHERE role = 'instructor' AND gemma_digest = 1 LIMIT 1"
 		});
 		if (!master.rows.length) return { sent: [], reason: 'master-off' };
 		const rows = await db.execute({
-			sql: `SELECT u.id FROM users u
+			sql: `SELECT u.id, u.last_active FROM users u
 			      WHERE u.gemma_digest = 1 AND u.id != ?
 			        AND (u.role = 'instructor' OR EXISTS (
 			              SELECT 1 FROM class_memberships cm
 			              WHERE cm.user_id = u.id AND cm.status = 'approved' AND cm.class_id = ?))`,
 			args: [GEMMA_ID, classId]
 		});
-		recipients = rows.rows.map((r) => String(r.id));
+		recipients = rows.rows.map((r) => ({
+			id: String(r.id),
+			lastActiveMs: r.last_active ? Date.parse(String(r.last_active)) || 0 : 0
+		}));
 	}
 	if (!recipients.length) return { sent: [], reason: 'no-recipients' };
 
 	// Recap is class-wide — gather once, share across recipients.
 	const recapLines = await gatherRecapLines(classId);
+	const adminDb = getAdminDb();
+	const now = Date.now();
 	const sent = [];
-	for (const uid of recipients) {
+	for (const r of recipients) {
+		const uid = r.id;
 		try {
+			// Cadence gate (skipped for the manual "run now" path).
+			if (!onlyUserId) {
+				const convId = getConvId(GEMMA_ID, uid);
+				const [stateSnap, unreadSnap] = await Promise.all([
+					adminDb.ref(`gemmaDigestState/${uid}`).get(),
+					adminDb.ref(`unreadCounts/${uid}/${convId}`).get()
+				]);
+				const stateAt = Number(stateSnap.val()?.at ?? 0);
+				const gemmaUnread = Number(unreadSnap.val() ?? 0);
+				if (!digestDue({ stateAt, gemmaUnread, lastActiveMs: r.lastActiveMs, now })) {
+					sent.push({ userId: uid, delivered: false, reason: 'cadence-skip' });
+					continue;
+				}
+			}
 			sent.push(await sendGemmaDigest({ userId: uid, classId, recapLines }));
 		} catch (e) {
 			sent.push({ userId: uid, delivered: false, reason: String(e?.message ?? e) });
