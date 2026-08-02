@@ -18,6 +18,9 @@
 
 	let { data, form } = $props();
 
+	// Cooper year — instructor-set per student (onboarding no longer asks it).
+	const YEARS = ['1st year', '2nd year', '3rd year', '4th year', '5th year', 'Other'];
+
 	let activeTab = $state('assignments');
 	let syllabusPreviewOpen = $state(false);
 
@@ -916,6 +919,16 @@
 		{#if activeTab === 'members'}
 	<section class="members-section">
 		<h2>All members <span class="member-count">({data.members.length})</span></h2>
+
+		<div class="onboarding-tools">
+			<span class="ot-label">Onboarding</span>
+			<a class="btn-reset" href="/onboarding/profile?preview=1">👀 Preview student flow</a>
+			<form method="POST" action="?/resetSelf" use:enhance style="display:inline">
+				<button type="submit" class="btn-reset" onclick={(e) => { if (!confirm('Send yourself through onboarding now?')) e.preventDefault(); }}>Restart my onboarding</button>
+			</form>
+			<span class="ot-hint">Reset a student below to send them through it again.</span>
+		</div>
+
 		<div class="members-table-wrap">
 		<table class="members-table">
 			<thead>
@@ -923,6 +936,7 @@
 					<th>Name</th>
 					<th>Email</th>
 					<th>Role</th>
+					<th>Year</th>
 					<th>Joined</th>
 					<th>Status</th>
 					<th>Device</th>
@@ -938,6 +952,19 @@
 						<td><a class="member-link" href="/app/profile/{m.id}">{m.name || '—'}</a></td>
 						<td class="email">{m.email}</td>
 						<td><span class="role-pill" class:instructor={m.role === 'instructor'}>{m.role}</span></td>
+						<td>
+							{#if m.role !== 'instructor'}
+								<form method="POST" action="?/setYear" use:enhance>
+									<input type="hidden" name="user_id" value={m.id} />
+									<select name="year" class="year-select" onchange={(e) => e.currentTarget.form.requestSubmit()}>
+										<option value="" selected={!m.year}>—</option>
+										{#each YEARS as y}<option value={y} selected={m.year === y}>{y}</option>{/each}
+									</select>
+								</form>
+							{:else}
+								<span class="muted">—</span>
+							{/if}
+						</td>
 						<td class="muted">{m.joinedAt ? new Date(m.joinedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}</td>
 						<td>
 							{#if p?.online}
@@ -1664,6 +1691,22 @@
 		border-radius: 5px; padding: 0.15rem 0.5rem; cursor: pointer; transition: all 0.12s;
 	}
 	.btn-reset:hover { border-color: var(--danger); color: var(--danger); }
+	.btn-reset[href] { text-decoration: none; display: inline-block; }
+	.btn-reset[href]:hover { border-color: var(--accent); color: var(--accent); }
+
+	.onboarding-tools {
+		display: flex; align-items: center; flex-wrap: wrap; gap: 0.6rem;
+		margin: 0 0 1rem; padding: 0.6rem 0.85rem;
+		background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px;
+	}
+	.ot-label { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted-fg); }
+	.ot-hint { font-size: 0.72rem; color: var(--muted-fg); }
+	.year-select {
+		font-family: inherit; font-size: 0.78rem; color: var(--ink);
+		background: var(--paper); border: 1px solid var(--border); border-radius: 6px;
+		padding: 0.15rem 0.35rem; cursor: pointer;
+	}
+	.year-select:hover { border-color: var(--accent); }
 
 	/* ── Pending requests ── */
 	.pending-section { border: 1.5px solid #f5c6cb; border-radius: 12px; padding: 1.25rem 1.5rem; background: #fff8f8; margin-top: 2.5rem; }

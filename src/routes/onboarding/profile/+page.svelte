@@ -8,11 +8,17 @@
 	// One form, one final submit — the steps are client-side, so the existing
 	// server action stays a single POST.
 	import { enhance } from '$app/forms';
+	import { page } from '$app/stores';
 	import AvatarPicker from '$lib/components/AvatarPicker.svelte';
 	import FormattedInput from '$lib/components/FormattedInput.svelte';
 	let { data, form } = $props();
 
-	const isInstructor = data.user?.role === 'instructor';
+	// Preview mode (?preview=1): an instructor can walk the STUDENT version of
+	// this step to see exactly what students get — renders the student layout
+	// and swaps the final submit for a harmless "Exit preview" so nothing is
+	// written to the instructor's own profile.
+	const preview = $derived($page.url.searchParams.has('preview'));
+	const isInstructor = $derived(!preview && data.user?.role === 'instructor');
 
 	const SCHOOLS = [
 		{ id: 'Architecture', icon: '🏛️', label: 'Architecture', full: 'Irwin S. Chanin School of Architecture' },
@@ -52,6 +58,12 @@
 <svelte:head><title>Welcome — eating.computer</title></svelte:head>
 
 <div class="card">
+	{#if preview}
+		<div class="preview-banner">
+			<span>👀 Preview — this is the student view. Nothing you enter here is saved.</span>
+			<a href="/app">Exit</a>
+		</div>
+	{/if}
 	<div class="progress">
 		{#each steps as s, i}
 			<button type="button" class="prog-step" class:active={i === stepIdx} class:done={i < stepIdx}
@@ -159,6 +171,8 @@
 			{/if}
 			{#if stepIdx < steps.length - 1}
 				<button type="button" class="btn-primary" onclick={next}>Continue →</button>
+			{:else if preview}
+				<a class="btn-primary" href="/app" style="text-decoration:none">Done previewing</a>
 			{:else}
 				<button type="submit" class="btn-primary">Finish →</button>
 			{/if}
@@ -311,4 +325,13 @@
 		padding: 0.25rem 0;
 		position: relative;
 	}
+
+	.preview-banner {
+		display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;
+		padding: 0.5rem 0.75rem; margin: -0.4rem 0 0.2rem;
+		background: color-mix(in srgb, var(--accent) 14%, var(--paper));
+		border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+		border-radius: 9px; font-size: 0.78rem; color: var(--ink);
+	}
+	.preview-banner a { color: var(--ink); font-weight: 700; text-decoration: none; flex-shrink: 0; }
 </style>

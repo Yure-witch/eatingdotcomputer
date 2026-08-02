@@ -58,7 +58,7 @@ export async function load({ locals, parent }) {
 	// All members + online status — scoped to current class (instructors always included)
 	const db = getDb();
 	const usersResult = db ? await db.execute({
-		sql: `SELECT u.id, u.name, u.email, u.role, u.created_at, u.avatar_kind, u.avatar_value, u.gemma_digest, u.interests FROM users u
+		sql: `SELECT u.id, u.name, u.email, u.role, u.created_at, u.avatar_kind, u.avatar_value, u.gemma_digest, u.interests, u.year FROM users u
 		      WHERE u.role = 'instructor'
 		         OR EXISTS (
 		              SELECT 1 FROM class_memberships cm
@@ -118,6 +118,7 @@ export async function load({ locals, parent }) {
 			email: String(r.email ?? ''),
 			role: String(r.role ?? 'student'),
 			joinedAt: String(r.created_at ?? ''),
+			year: r.year ? String(r.year) : '',
 			avatarKind: r.avatar_kind ? String(r.avatar_kind) : 'gen',
 			avatarValue: r.avatar_value ? String(r.avatar_value) : null,
 			gemmaDigest: Number(r.gemma_digest) === 1,
@@ -507,6 +508,30 @@ export const actions = {
 
 		await db.execute({ sql: 'DELETE FROM class_memberships WHERE user_id = ?', args: [userId] });
 		await db.execute({ sql: "UPDATE users SET onboarding_step = 'profile' WHERE id = ?", args: [userId] });
+	},
+
+	// Send the instructor themselves back through onboarding (to test it). Only
+	// resets onboarding_step — an instructor has no class membership to clear.
+	resetSelf: async ({ locals }) => {
+		const session = await locals.auth();
+		if (!session || session.user.role !== 'instructor') return fail(403, { error: 'Forbidden' });
+		const db = getDb();
+		if (!db) return fail(503, { error: 'Database unavailable' });
+		await db.execute({ sql: "UPDATE users SET onboarding_step = 'profile' WHERE id = ?", args: [session.user.id] });
+		redirect(303, '/onboarding/profile');
+	},
+
+	// Instructor sets a student's Cooper year (year isn't collected in onboarding).
+	setYear: async ({ request, locals }) => {
+		const session = await locals.auth();
+		if (!session || session.user.role !== 'instructor') return fail(403, { error: 'Forbidden' });
+		const data = await request.formData();
+		const userId = String(data.get('user_id') ?? '');
+		const year = String(data.get('year') ?? '').trim().slice(0, 40);
+		if (!userId) return fail(400, { error: 'Missing user_id' });
+		const db = getDb();
+		if (!db) return fail(503, { error: 'Database unavailable' });
+		await db.execute({ sql: 'UPDATE users SET year = ? WHERE id = ?', args: [year || null, userId] });
 	},
 
 	approve: async ({ request, locals }) => {
