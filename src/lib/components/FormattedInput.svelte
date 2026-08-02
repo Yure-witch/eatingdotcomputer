@@ -980,11 +980,13 @@
 	   the reset slot is always reserved so a slider doesn't jump sideways
 	   when its ↺ appears; Default hangs off the end of the last row. */
 	.fi-typo-bar {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-		column-gap: 1.1rem; row-gap: 0.3rem;
-		align-items: center;
-		padding: 0.45rem 0.85rem;
+		/* One slider per line — Size / Weight / Width stacked vertically so each
+		   gets the full width for finer control (was auto-fit columns that put
+		   them side by side on a wide composer). */
+		display: flex;
+		flex-direction: column;
+		gap: 0.32rem;
+		padding: 0.5rem 0.85rem;
 		border-top: 1px solid var(--border); background: var(--surface-2);
 	}
 	.fi-typo-row {
@@ -1004,7 +1006,7 @@
 	.fi-typo-reset:hover { color: var(--ink, var(--ink)); }
 	.fi-reset-off { visibility: hidden; }
 	.fi-default-btn {
-		grid-column: 1 / -1; justify-self: end;
+		align-self: flex-end; margin-top: 0.05rem;
 		padding: 0.15rem 0.5rem; border: 1px solid var(--border); border-radius: 5px;
 		background: none; font-family: inherit; font-size: 0.62rem; font-weight: 600;
 		color: var(--muted-fg); cursor: pointer; white-space: nowrap;
