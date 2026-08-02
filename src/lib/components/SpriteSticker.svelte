@@ -140,7 +140,11 @@
 	// (no flash / gap). Cells that scroll past never pay for the high-res bake.
 	const _dpr = typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 2;
 	const _targetOS = $derived(Math.max(1, oversample || 1));
-	const px = $derived(Math.round(size * _dpr * Math.min(1, _targetOS)));    // primary (low)
+	// High-mem tier bakes every emote at the FULL oversample density from frame
+	// one ("2x for all") — no progressive low→high dwell. Low-mem starts at 1×
+	// density and only reaches full via the 3s crossfade overlay (if it ever
+	// qualifies, which on low-mem it does not — emoteHiTier is false there).
+	const px = $derived(Math.round(size * _dpr * ($emoteHiTier ? _targetOS : Math.min(1, _targetOS))));
 	const _hiPx = $derived(Math.round(size * _dpr * _targetOS));              // overlay (crisp)
 	let _lodTimer = null;
 	let hiActive = $state(false);   // the high-res overlay canvas is mounted
@@ -316,9 +320,9 @@
 				// a cached atlas and play them back by blitting (no per-frame
 				// render). Other worker engines render live each frame.
 				rasterized: eng === 'webgpu-rasterized',
-				// Primary is always the cheap base-fps bake; the high-res overlay
-				// (mountHiRes) is what carries the 1.5× fps on capable devices.
-				fpsScale: 1,
+				// High-mem tier bakes the primary at full quality AND 1.5× fps up
+				// front (no overlay stage); low-mem stays at base fps.
+				fpsScale: $emoteHiTier ? 1.5 : 1,
 				// Fires after the confirmed paints of this cell — the canvas now
 				// holds the animation, so the CSS thumb backdrop can drop out.
 				onFirstPaint: () => { if (mounted) painted = true; }
@@ -563,9 +567,12 @@
 	// (painted), on a high-end device, for the worker atlas engine, and only if
 	// there IS a crisper target. After the cell has dwelled ~3s still visible +
 	// painted, mount the high-res overlay. Cancelled if it scrolls away first.
+	// `px < _hiPx` is the "is there a crisper target?" gate. On high-mem the
+	// primary already bakes at full density (px === _hiPx) so this is false and
+	// the overlay never mounts — everything is max quality from the start.
 	const _canUpgrade = $derived(
 		visible && painted && !hiActive && _targetOS > 1 && $emoteHiTier
-		&& engine === 'webgpu-rasterized' && skottieCanvasPath
+		&& px < _hiPx && engine === 'webgpu-rasterized' && skottieCanvasPath
 	);
 	$effect(() => {
 		if (_canUpgrade) {

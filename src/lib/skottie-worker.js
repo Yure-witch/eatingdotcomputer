@@ -122,20 +122,22 @@ const _lowMem = _isMobileUA || _deviceMem <= 4;
 
 // SUPERSAMPLE: render each frame at this multiple of the cell's device px,
 // then downscale on blit → crisper edges than native 1:1. Most expensive
-// knob — cost scales with SUPERSAMPLE² (1.5× = 2.25× atlas memory). Desktop
-// uses 1.5 (sharper than native, but leaves memory budget for a high frame
-// count); mobile renders 1:1 (native) to keep atlases tiny.
-const SUPERSAMPLE = _lowMem ? 1 : 1.5;
+// knob — cost scales with SUPERSAMPLE² (2× = 4× atlas memory). Desktop/high-mem
+// uses 2 (maximally sharp); mobile/low-mem renders 1:1 (native) to keep atlases
+// tiny.
+const SUPERSAMPLE = _lowMem ? 1 : 2;
 // Frame cap. Frames are sampled across the whole loop, so true 60fps needs
 // duration*60 frames; 120 gives a full 60fps for loops up to 2s. Mobile
 // targets ~40fps to keep its atlas small.
 const MAX_RASTER_FRAMES = _lowMem ? 40 : 120;
 const RASTER_COLS = 11;               // 11×11 grid holds up to 121 frames
 // Atlas page size + count. Mobile: 1024² × 6 pages ≈ 24 MB (≥ the picker's
-// ~24 visible cap at any dpr). Desktop: 2048² × 14 ≈ 224 MB — enough for
-// ~90 emojis at 120 frames and 1.5× slots, covering the visible set.
+// ~24 visible cap at any dpr). Desktop/high-mem: 2048² × 20 ≈ 320 MB — the 2×
+// supersample + 2× oversample slots are 4× the old area, so we widen the budget
+// to keep the whole visible set resident (duplicate emotes share one url@px
+// entry, so this covers far more than 20 on-screen instances).
 const ATLAS_DIM = _lowMem ? 1024 : 2048;
-const MAX_ATLAS_PAGES = _lowMem ? 6 : 14;
+const MAX_ATLAS_PAGES = _lowMem ? 6 : 20;
 
 // `slot` = rendered/stored pixel size = px * SUPERSAMPLE (the cell displays
 // at px, so this is supersampled and downscaled on blit).
