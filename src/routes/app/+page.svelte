@@ -934,13 +934,14 @@
 					</div>
 				{/if}
 
-				<!-- Up next preview. Clickable — drops into /app/weeks, the
-				     dedicated past+future-weeks page (not /app/atlas which
-				     is the broader roadmap/files surface). -->
-				{#if data.nextPlan}
+				<!-- Up next preview. The instructor writes this teaser as the
+				     "Next class preview" ON THE CURRENT week's plan, so prefer
+				     currentPlan.topicPreview; fall back to the next plan's own
+				     preview / headline. Clickable — drops into /app/weeks. -->
+				{#if data.currentPlan.topicPreview || data.nextPlan}
 					<a class="next-preview" href="/app/weeks">
 						<span class="next-label">Up next</span>
-						<span class="next-text">{@html contentHtml(data.nextPlan.topicPreview || data.nextPlan.headline, false)}</span>
+						<span class="next-text">{@html contentHtml(data.currentPlan.topicPreview || data.nextPlan?.topicPreview || data.nextPlan?.headline || '', false)}</span>
 					</a>
 				{/if}
 
