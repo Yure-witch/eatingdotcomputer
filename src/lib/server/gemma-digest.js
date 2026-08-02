@@ -520,6 +520,22 @@ export async function getAllGoals(userId) {
 	}));
 }
 
+// URLs Gemma has already sent this user in a digest (so we never repeat one).
+async function getSentLinkUrls(userId) {
+	const db = getDb();
+	if (!db) return new Set();
+	const rows = await db.execute({ sql: 'SELECT url FROM gemma_sent_links WHERE user_id = ?', args: [userId] }).catch(() => ({ rows: [] }));
+	return new Set(rows.rows.map((r) => String(r.url)));
+}
+async function recordSentLink(userId, url) {
+	const db = getDb();
+	if (!db || !url) return;
+	await db.execute({
+		sql: 'INSERT OR IGNORE INTO gemma_sent_links (user_id, url) VALUES (?, ?)',
+		args: [userId, String(url)]
+	}).catch(() => {});
+}
+
 export async function getOpenGoals(userId) {
 	const db = getDb();
 	if (!db) return [];
@@ -798,9 +814,16 @@ async function sendGemmaDigestInner({ userId, classId = DEFAULT_CLASS, recapLine
 	// Real inspiration links from the Scout worker on kahan. Non-blocking in
 	// spirit: waits briefly only when the worker is online, else uses the
 	// cached result or silently returns null (digest degrades to no links).
-	let webFinds = null;
+	// Pick exactly ONE find the user hasn't been sent before, so the daily
+	// link is always something new (never the same one days running). When
+	// everything on file has already been sent, we send no link that day.
+	let freshFind = null;
 	if (interests) {
-		webFinds = await searchWithWait(interests, { waitMs: 15000, requestedBy: userId }).catch(() => null);
+		const finds = await searchWithWait(interests, { waitMs: 15000, requestedBy: userId }).catch(() => null);
+		if (finds?.length) {
+			const sent = await getSentLinkUrls(userId);
+			freshFind = finds.find((f) => f?.url && !sent.has(String(f.url))) ?? null;
+		}
 	}
 
 	let text = null, usedLlm = false;
@@ -808,10 +831,10 @@ async function sendGemmaDigestInner({ userId, classId = DEFAULT_CLASS, recapLine
 		const prompt = [
 			`Recipient: ${name}${String(userRow.role) === 'instructor' ? ' (the instructor)' : ''}`,
 			interests ? `Their interests (entered by the instructor): ${interests}` : 'No interests on file.',
-			...(webFinds?.length ? [
+			...(freshFind ? [
 				'',
-				'WEB FINDS related to their interests (real links — pick ONE for the inspiration line, keep the URL exact):',
-				webFinds.slice(0, 6).map((f) => `- ${f.title} — ${f.url}${f.snippet ? ` (${f.snippet})` : ''}`).join('\n')
+				'WEB FIND for the inspiration line (real link — use it, keep the URL exact):',
+				`- ${freshFind.title} — ${freshFind.url}${freshFind.snippet ? ` (${freshFind.snippet})` : ''}`
 			] : []),
 			'',
 			'CLASS CHAT (last 24h):',
@@ -833,10 +856,12 @@ async function sendGemmaDigestInner({ userId, classId = DEFAULT_CLASS, recapLine
 		text = await llmWrite(creds, prompt);
 		usedLlm = !!text;
 	}
-	if (!text) text = templateDigest({ name, recapLines: recap, incomplete, interests, doneGoals, goals, newGoalsCount, webFinds });
+	if (!text) text = templateDigest({ name, recapLines: recap, incomplete, interests, doneGoals, goals, newGoalsCount, webFinds: freshFind ? [freshFind] : null });
 
 	await deliverDM(userId, text);
 	await stateRef.set({ hash: fingerprint, at: Date.now(), reminded: false });
+	// Remember the link we sent so it's never repeated in a future digest.
+	if (freshFind?.url) await recordSentLink(userId, freshFind.url);
 	// each completed goal gets celebrated exactly once
 	if (doneGoals.length) {
 		await db.execute({
