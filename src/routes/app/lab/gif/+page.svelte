@@ -422,7 +422,8 @@
 		const W = outDims.w, H = outDims.h;
 		const frames = Math.max(2, Math.round(duration * fps));
 		// Fresh scene at export resolution, reset — encodeGif steps it per frame.
-		const exportScene = makeScene(mode, { W, H, getOpts: liveOpts, seed: 1337 });
+		// `hi` lets sim scenes (BZ) render the grid at native resolution offline.
+		const exportScene = makeScene(mode, { W, H, getOpts: liveOpts, seed: 1337, hi: true });
 		// scenes with async init (three.js + font loads) expose ready() —
 		// wait it out or the first frames bake as bare background (black
 		// flash at the loop seam)

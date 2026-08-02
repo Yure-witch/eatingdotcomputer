@@ -254,6 +254,7 @@ function sceneType(env) {
 // text is a periodic pacemaker, so waves keep radiating from the letters.
 function sceneBZ(env) {
 	const { W, H, getOpts } = env;
+	const HI = !!env.hi; // offline export → render the grid at native resolution
 	const MAXN = 96;
 	// SCALE INVARIANCE (what makes preview == export at any resolution): the grid
 	// is ~0.5× the output, and of the pattern parameters ONLY the neighbourhood
@@ -273,7 +274,7 @@ function sceneBZ(env) {
 		const L = clamp(Math.round(getOpts().bzRound ?? 6), 0, 15);
 		if (L === level) return;
 		level = L;
-		const r = Math.min(Math.max(1, lerp(1.0, 5.0, L / 15) * gridF), 24), r2 = r * r, R = Math.ceil(r);
+		const r = Math.min(Math.max(1, lerp(1.0, 5.0, L / 15) * gridF), 28), r2 = r * r, R = Math.ceil(r);
 		// disk → per-row half-widths: row dy spans dx ∈ [-w, w]
 		spans = [];
 		let area = 0;
@@ -295,16 +296,15 @@ function sceneBZ(env) {
 	function reset() {
 		const o = getOpts();
 		const long = Math.max(W, H);
-		// Grid ≈ 0.85× the output long edge at EVERY resolution, so the wave
-		// layer is nearly as sharp as the crisp type overlaid on it (it used to
-		// be 0.5× → a ~2× blurry upscale that looked low-res next to the text).
-		// Only the neighbourhood radius scales with gridF, so the pattern stays
-		// scale-invariant (spacing/speed as constant fractions of the canvas);
-		// the 1280 cap keeps that radius under its 24-cell ceiling and the
-		// prefix-sum neighbour count keeps the bigger grids affordable. The
-		// PREVIEW renders at a capped canvas (see the page) so its grid stays
-		// small and smooth to interact with.
-		const gridLong = clamp(Math.round(long * 0.85), 220, 1280);
+		// EXPORT (hi) renders the wave grid at NATIVE resolution — grid == output
+		// (up to a 1600 cap) → upscale 1× → the waves are exactly as crisp as the
+		// type overlaid on them. The interactive PREVIEW stays at 0.85× (and its
+		// own small canvas) so it's light to scrub. Only the neighbourhood radius
+		// scales with gridF, so the pattern is scale-invariant (spacing/speed as
+		// constant fractions of the canvas); the 1600 cap keeps that radius under
+		// its 28-cell ceiling and the prefix-sum neighbour count keeps the big
+		// grids affordable.
+		const gridLong = clamp(Math.round(long * (HI ? 1.0 : 0.85)), 220, 1600);
 		gw = Math.max(8, Math.round(gridLong * W / long)); gh = Math.max(8, Math.round(gridLong * H / long));
 		gridF = gridLong / 300; // reference grid = 300 (where the slider ranges are tuned)
 		state = new Uint8Array(gw * gh); next = new Uint8Array(gw * gh);
@@ -519,12 +519,13 @@ function sceneBZ(env) {
 			px[j] = r_; px[j + 1] = g_; px[j + 2] = b_; px[j + 3] = 255;
 		}
 		sctx.putImageData(sdata, 0, 0);
-		// Tiny blur just anti-aliases the (now ~1.2× only) upscale into smooth
-		// curves; skipped at low bands so hard "stepped" gradients stay crisp.
-		// With the grid at 0.85× the output the upscale ratio is small, so this
-		// stays sub-pixel and no longer smears the waves soft next to the type.
+		// Tiny blur only anti-aliases an actual upscale into smooth curves. At
+		// native export resolution (grid == output, ratio ≈ 1) there's nothing
+		// to smooth, so skip it entirely — the waves stay as crisp as the type.
+		// Low bands also skip it so hard "stepped" gradients stay crisp.
 		ctx.imageSmoothingEnabled = true;
-		const b = bands >= 6 ? Math.min(0.6, Math.max(0.25, (ctx.canvas.width / gw) * 0.28)) : 0;
+		const up = ctx.canvas.width / gw;
+		const b = (bands >= 6 && up > 1.05) ? Math.min(0.6, Math.max(0.25, up * 0.28)) : 0;
 		ctx.filter = b ? `blur(${b}px)` : 'none';
 		ctx.drawImage(small, 0, 0, gw, gh, 0, 0, ctx.canvas.width, ctx.canvas.height);
 		ctx.filter = 'none';
