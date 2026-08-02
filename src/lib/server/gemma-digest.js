@@ -216,7 +216,10 @@ function extractGoals(lines, userId, keepVague = false) {
 			for (const m of String(l.text).matchAll(CAN_RE)) add(m[1], l, l.name, m[0]);
 		}
 	}
-	return [...out].map(([label, { l, by, quote }]) => ({ label, convId: l.chId, msgId: l.id, kind: l.kind, by, text: l.text, quote })).slice(0, 8);
+	// Capture generously — when a member has voiced a lot of intents, track
+	// them all (the digest still nudges only the top one; dedup + JUNK_RE keep
+	// the list clean).
+	return [...out].map(([label, { l, by, quote }]) => ({ label, convId: l.chId, msgId: l.id, kind: l.kind, by, text: l.text, quote })).slice(0, 30);
 }
 // The curator call — candidates go in NUMBERED so the model can cite which
 // message each goal came from ("src"), and the WHOLE conversation window
@@ -244,7 +247,7 @@ async function llmCountGoals(creds, lines, context, userId, existing = []) {
 	if (!raw) { console.warn('[gemma-digest] step1 count: LLM call failed'); return null; }
 	const parsed = parseJsonLoose(raw);
 	if (!Array.isArray(parsed?.hints)) { console.warn('[gemma-digest] step1 count: unparseable'); return null; }
-	return parsed.hints.filter((h) => h && typeof h.hint === 'string' && h.hint.trim()).slice(0, 15);
+	return parsed.hints.filter((h) => h && typeof h.hint === 'string' && h.hint.trim()).slice(0, 30);
 }
 
 async function llmWriteGoals(creds, lines, context, hints, userId) {
@@ -352,7 +355,9 @@ async function harvestGoals(userId, recap, creds) {
 	}
 	const seen = new Set();
 	let added = 0;
-	for (const g of goals.slice(0, 15)) {
+	// Add every distinct new task voiced this window (not a subset). Dedup vs
+	// already-tracked/checked-off labels below keeps it from re-adding.
+	for (const g of goals.slice(0, 40)) {
 		if (JUNK_RE.test(g.label)) continue;
 		// a goal naming the member THEMSELVES ("Remind Ricky Yurewitch to…")
 		// is model confusion — their goals never need their own full name
@@ -521,18 +526,20 @@ export async function getAllGoals(userId) {
 	}));
 }
 
-// URLs Gemma has already sent this user in a digest (so we never repeat one).
-async function getSentLinkUrls(userId) {
+// How many times each URL has been DM'd this user (so a link is normally sent
+// once, and the best-fit one at most twice).
+async function getSentLinkCounts(userId) {
 	const db = getDb();
-	if (!db) return new Set();
-	const rows = await db.execute({ sql: 'SELECT url FROM gemma_sent_links WHERE user_id = ?', args: [userId] }).catch(() => ({ rows: [] }));
-	return new Set(rows.rows.map((r) => String(r.url)));
+	if (!db) return new Map();
+	const rows = await db.execute({ sql: 'SELECT url, sent_count FROM gemma_sent_links WHERE user_id = ?', args: [userId] }).catch(() => ({ rows: [] }));
+	return new Map(rows.rows.map((r) => [String(r.url), Number(r.sent_count) || 1]));
 }
 async function recordSentLink(userId, url) {
 	const db = getDb();
 	if (!db || !url) return;
 	await db.execute({
-		sql: 'INSERT OR IGNORE INTO gemma_sent_links (user_id, url) VALUES (?, ?)',
+		sql: `INSERT INTO gemma_sent_links (user_id, url, sent_count) VALUES (?, ?, 1)
+		      ON CONFLICT(user_id, url) DO UPDATE SET sent_count = sent_count + 1, sent_at = datetime('now')`,
 		args: [userId, String(url)]
 	}).catch(() => {});
 }
@@ -895,15 +902,20 @@ async function sendGemmaDigestInner({ userId, classId = DEFAULT_CLASS, recapLine
 	// Real inspiration links from the Scout worker on kahan. Non-blocking in
 	// spirit: waits briefly only when the worker is online, else uses the
 	// cached result or silently returns null (digest degrades to no links).
-	// Pick exactly ONE find the user hasn't been sent before, so the daily
-	// link is always something new (never the same one days running). When
-	// everything on file has already been sent, we send no link that day.
+	// Pick ONE find to link. Prefer something brand-new (never sent), so it's
+	// not the same link days on end. If nothing new is available, the single
+	// best-fit find — Scout's top-ranked result — may repeat ONCE (a standout
+	// can carry a second day), capped at 2 sends so it never runs for five.
 	let freshFind = null;
 	if (interests) {
 		const finds = await searchWithWait(interests, { waitMs: 15000, requestedBy: userId }).catch(() => null);
 		if (finds?.length) {
-			const sent = await getSentLinkUrls(userId);
-			freshFind = finds.find((f) => f?.url && !sent.has(String(f.url))) ?? null;
+			const counts = await getSentLinkCounts(userId);
+			freshFind = finds.find((f) => f?.url && !counts.get(String(f.url))) ?? null;
+			if (!freshFind) {
+				const top = finds[0];
+				if (top?.url && (counts.get(String(top.url)) ?? 0) === 1) freshFind = top;
+			}
 		}
 	}
 
