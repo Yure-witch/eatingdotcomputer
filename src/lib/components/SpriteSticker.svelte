@@ -131,7 +131,17 @@
 	let skottieMod = null;
 	const isSkottieEngine = (eng) => eng === 'skottie' || eng === 'skottie-worker' || eng === 'skottie-webgpu' || eng === 'webgpu-rasterized' || eng === 'cpu-rasterized';
 
-	const px = $derived(Math.round(size * (typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 2) * (oversample || 1)));
+	// Progressive resolution (LOD). Rasterise FAST at native res first (cheap to
+	// bake, instant), then — only if the cell actually dwells on screen ~0.3s —
+	// re-bake at the crisp `oversample` target (e.g. 2×). Cells that just scroll
+	// past never pay for the expensive high-res bake. `lodLevel` 1 = fast, 2 =
+	// upgraded; it only ever goes up (the high-res atlas entry stays cached).
+	const _dpr = typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 2;
+	const _targetOS = Math.max(1, oversample || 1);
+	let lodLevel = $state(1);
+	let _lodTimer = null;
+	const _curOS = $derived(lodLevel >= 2 ? _targetOS : Math.min(1, _targetOS));
+	const px = $derived(Math.round(size * _dpr * _curOS));
 
 	// ──────────────────────────────────────────────────────────────────
 	//  Rlottie path
@@ -467,6 +477,17 @@
 					if (!visible && mounted && activeEngine === 'rlottie') teardown_rlottie();
 				}, OFFSCREEN_RELEASE_MS);
 			}
+			// LOD upgrade: after the cell has been visible ~0.3s (jittered so a
+			// screenful doesn't re-bake in one synchronised blink), bump to the
+			// crisp target resolution. Cancelled the moment it scrolls away.
+			if (visible && !wasVisible) {
+				if (lodLevel === 1 && _targetOS > 1) {
+					clearTimeout(_lodTimer);
+					_lodTimer = setTimeout(() => { if (visible && mounted) lodLevel = 2; }, 300 + Math.random() * 160);
+				}
+			} else if (!visible && wasVisible) {
+				clearTimeout(_lodTimer); _lodTimer = null;
+			}
 			if (visible && !wasVisible) {
 				if (activeEngine === 'rlottie' && !eager) ensureLoaded();
 				if (isSkottieEngine(activeEngine)) {
@@ -509,6 +530,7 @@
 	onDestroy(() => {
 		mounted = false;
 		clearTimeout(_offscreenT);
+		clearTimeout(_lodTimer);
 		observer?.disconnect();
 		teardownCurrent(activeEngine);
 	});
@@ -526,6 +548,19 @@
 		painted = false;
 		// Skottie variants load eagerly; rlottie waits for IO visibility.
 		if (isSkottieEngine(next) || visible) ensureLoaded();
+	});
+
+	// Resolution upgrade: when `px` grows (LOD 1→2), the {#key} recreates the
+	// canvas element; tear down the old-res cell and re-register at the new
+	// higher px so the worker bakes the crisp atlas entry into the fresh canvas.
+	let _lastPx = px;
+	$effect(() => {
+		const p = px;
+		if (activeEngine === null || p === _lastPx) { _lastPx = p; return; }
+		_lastPx = p;
+		teardownCurrent(activeEngine);
+		painted = false;
+		if (isSkottieEngine(activeEngine) || visible) ensureLoaded();
 	});
 
 	$effect(() => { hovering; visible; updatePlay(); });
@@ -580,7 +615,7 @@
 		     so a canvas that was transferred (and can't get a 2D context,
 		     or be transferred twice) is replaced by a fresh one for the
 		     new engine. -->
-		{#key engine}
+		{#key `${engine}|${px}`}
 			<canvas bind:this={canvas} class="tg-canvas" width={px} height={px}></canvas>
 		{/key}
 	</span>
