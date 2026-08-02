@@ -96,7 +96,7 @@
 					<span class="hero-week-label">Week</span>
 					<span class="hero-week-num">{currentWeek}</span>
 				</div>
-				<span class="hero-of">of {totalCount}</span>
+				<span class="hero-of">of {data.totalWeeks ?? totalCount}</span>
 			</div>
 
 			<!-- Progress rail. Each posted week renders as a dot along
@@ -122,6 +122,7 @@
 						class:past={w.isPast}
 						class:current={w.isCurrent}
 						class:future={!w.isPast && !w.isCurrent}
+						class:unpublished={w.published === false}
 						class:important={w.important}
 						class:hovered={hoveredIdx === i}
 						style:--dot-pct="{dotPct(i)}%"
@@ -150,10 +151,12 @@
 							{#if hoveredWeek.isCurrent}<span class="rail-tip-badge current">now</span>{/if}
 						</span>
 						<span class="rail-tip-headline">{@html contentHtml(hoveredWeek.headline, false)}</span>
-						{#if hoveredWeek.sylTitle}
+						{#if hoveredWeek.published !== false && hoveredWeek.sylTitle}
 							<span class="rail-tip-syl">From {hoveredWeek.sylWeekOf ? new Date(...hoveredWeek.sylWeekOf.split('-').map((v, i) => i === 1 ? v - 1 : +v)).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' · ' : ''}{hoveredWeek.sylTitle}</span>
 						{/if}
-						{#if hoveredWeek.dueDate}
+						{#if hoveredWeek.published === false}
+							<span class="rail-tip-due">Not posted yet{hoveredWeek.sylWeekOf ? ` · ${new Date(...hoveredWeek.sylWeekOf.split('-').map((v, i) => i === 1 ? v - 1 : +v)).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : ''}</span>
+						{:else if hoveredWeek.dueDate}
 							<span class="rail-tip-due">
 								{hoveredWeek.isPast ? 'Was due ' : 'Due '}{fmtDate(hoveredWeek.dueDate)}
 							</span>
@@ -411,6 +414,12 @@
 		background: var(--paper);
 		box-shadow: 0 0 0 2px color-mix(in srgb, var(--ink) 22%, transparent);
 	}
+	/* Weeks the syllabus lists but the instructor hasn't posted yet — fainter
+	   so the rail reads as "posted so far" vs "still to come". */
+	.rail-dot.unpublished .rail-dot-inner {
+		box-shadow: 0 0 0 2px color-mix(in srgb, var(--ink) 11%, transparent);
+	}
+	.rail-dot.unpublished { opacity: 0.7; }
 	.rail-dot.current {
 		width: 22px;
 		height: 22px;

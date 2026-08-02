@@ -72,19 +72,48 @@ export async function load({ locals, parent }) {
 	// Compact summary of every plan in order — feeds the progress rail
 	// on the redesigned hero so each week renders as a dot, with hover
 	// tooltips and the `important` flag driving dot size/prominence.
-	const allWeeks = [...plans]
-		.sort((a, b) => a.week - b.week)
-		.map((p) => ({
-			id: p.id,
-			week: p.week,
-			headline: p.headline,
-			sylTitle: p.sylTitle ?? null,
-			sylWeekOf: p.sylWeekOf ?? null,
-			dueDate: p.dueDate,
-			important: !!p.important,
-			isCurrent: currentPlan ? p.id === currentPlan.id : false,
-			isPast: p.dueDate ? new Date(p.dueDate) < today : false
-		}));
+	//
+	// The rail spans the WHOLE course, not just what's been posted: the total
+	// is the syllabus's week count (so "Week 1 of 12", not "of 1" when only one
+	// plan is up yet). Weeks with a posted plan carry its rich data; weeks the
+	// syllabus lists but the instructor hasn't posted yet render as faint
+	// upcoming dots labelled from the syllabus.
+	const sylCount = Object.keys(sylWeeks).length;
+	const maxPublished = plans.length ? Math.max(...plans.map((p) => p.week)) : 0;
+	const totalWeeks = Math.max(sylCount, maxPublished, currentPlan ? currentPlan.week : 0);
+	const planByWeek = new Map(plans.map((p) => [p.week, p]));
+	const allWeeks = [];
+	for (let n = 1; n <= totalWeeks; n++) {
+		const p = planByWeek.get(n);
+		if (p) {
+			allWeeks.push({
+				id: p.id,
+				week: n,
+				headline: p.headline,
+				sylTitle: p.sylTitle ?? sylWeeks[n]?.title ?? null,
+				sylWeekOf: p.sylWeekOf ?? sylWeeks[n]?.weekOf ?? null,
+				dueDate: p.dueDate,
+				important: !!p.important,
+				isCurrent: currentPlan ? p.id === currentPlan.id : false,
+				isPast: p.dueDate ? new Date(p.dueDate) < today : false,
+				published: true
+			});
+		} else {
+			const syl = sylWeeks[n];
+			allWeeks.push({
+				id: `syl-${n}`,
+				week: n,
+				headline: syl?.title || `Week ${n}`,
+				sylTitle: syl?.title ?? null,
+				sylWeekOf: syl?.weekOf ?? null,
+				dueDate: null,
+				important: false,
+				isCurrent: false,
+				isPast: false,
+				published: false
+			});
+		}
+	}
 
 	return {
 		session,
@@ -92,6 +121,7 @@ export async function load({ locals, parent }) {
 		pastPlans,
 		futurePlans,
 		allWeeks,
+		totalWeeks,
 		completionsByPlan,
 		classId
 	};
