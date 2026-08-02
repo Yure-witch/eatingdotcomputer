@@ -295,13 +295,16 @@ function sceneBZ(env) {
 	function reset() {
 		const o = getOpts();
 		const long = Math.max(W, H);
-		// Grid ≈ 0.5× the output long edge at EVERY resolution, so the upscale
-		// ratio stays ~2× and a 1920 export is as crisp as the preview. (The old
-		// 760 cap made high-res exports upscale 2.5×+ → crunchy pixels; the
-		// prefix-sum neighbour count is what makes the bigger grids affordable.)
-		// The PREVIEW is rendered at a capped canvas (see the page) so its grid
-		// stays small and smooth to interact with.
-		const gridLong = clamp(Math.round(long * 0.5), 220, 960);
+		// Grid ≈ 0.85× the output long edge at EVERY resolution, so the wave
+		// layer is nearly as sharp as the crisp type overlaid on it (it used to
+		// be 0.5× → a ~2× blurry upscale that looked low-res next to the text).
+		// Only the neighbourhood radius scales with gridF, so the pattern stays
+		// scale-invariant (spacing/speed as constant fractions of the canvas);
+		// the 1280 cap keeps that radius under its 24-cell ceiling and the
+		// prefix-sum neighbour count keeps the bigger grids affordable. The
+		// PREVIEW renders at a capped canvas (see the page) so its grid stays
+		// small and smooth to interact with.
+		const gridLong = clamp(Math.round(long * 0.85), 220, 1280);
 		gw = Math.max(8, Math.round(gridLong * W / long)); gh = Math.max(8, Math.round(gridLong * H / long));
 		gridF = gridLong / 300; // reference grid = 300 (where the slider ranges are tuned)
 		state = new Uint8Array(gw * gh); next = new Uint8Array(gw * gh);
@@ -516,12 +519,12 @@ function sceneBZ(env) {
 			px[j] = r_; px[j + 1] = g_; px[j + 2] = b_; px[j + 3] = 255;
 		}
 		sctx.putImageData(sdata, 0, 0);
-		// Tiny fixed blur just anti-aliases the (now small) upscale into pretty
-		// curves; skipped at low bands so hard "stepped" gradients stay crisp. The
-		// grid tracks the output resolution, so the upscale ratio stays ~1.8× and
-		// this doesn't smear as resolution grows (which used to make it look low-res).
+		// Tiny blur just anti-aliases the (now ~1.2× only) upscale into smooth
+		// curves; skipped at low bands so hard "stepped" gradients stay crisp.
+		// With the grid at 0.85× the output the upscale ratio is small, so this
+		// stays sub-pixel and no longer smears the waves soft next to the type.
 		ctx.imageSmoothingEnabled = true;
-		const b = bands >= 6 ? Math.min(1.0, Math.max(0.4, (ctx.canvas.width / gw) * 0.35)) : 0;
+		const b = bands >= 6 ? Math.min(0.6, Math.max(0.25, (ctx.canvas.width / gw) * 0.28)) : 0;
 		ctx.filter = b ? `blur(${b}px)` : 'none';
 		ctx.drawImage(small, 0, 0, gw, gh, 0, 0, ctx.canvas.width, ctx.canvas.height);
 		ctx.filter = 'none';
