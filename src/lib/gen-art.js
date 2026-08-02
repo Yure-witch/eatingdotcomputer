@@ -255,7 +255,6 @@ function sceneType(env) {
 function sceneBZ(env) {
 	const { W, H, getOpts } = env;
 	const HI = !!env.hi; // offline export → render the grid at native resolution
-	const MAXN = 96;
 	// SCALE INVARIANCE (what makes preview == export at any resolution): the grid
 	// is ~0.5× the output, and of the pattern parameters ONLY the neighbourhood
 	// radius scales with gridF. Wave speed ≈ radius cells/iteration, so screen-
@@ -303,6 +302,7 @@ function sceneBZ(env) {
 	let gw, gh, state, next, source, blocked, nearD, moat, stateA, rowP, small, sctx, sdata, phase;
 	// Crisp-line mode (fade = 0) buffers — see renderCrisp().
 	let outImg = null, outW = 0, outH = 0, fieldS = null, fieldT = null, fieldM = null;
+	let ageLut = null; // continuous age→colour LUT for the banded (fade>0) render
 	function reset() {
 		const o = getOpts();
 		const long = Math.max(W, H);
@@ -491,33 +491,57 @@ function sceneBZ(env) {
 		// FADE = trailing tail length behind each wavefront (independent of spacing):
 		//   0   → only the wavefront shows → a single line emanating from the type
 		//   1   → the trail fades across the whole gap to the next wave
-		// GRADIENT STEPS posterise that tail so you can see the banding. LUT covers
-		// 0..MAXN so a just-lowered N (stale states) never indexes past the end.
+		// GRADIENT STEPS posterise that tail so you can see the banding.
 		const fade = clamp(o.bzFade ?? 0.5, 0, 1);
 		if (fade <= 0.02) {
 			// Single-line mode → full-res anti-aliased iso-line (see renderCrisp).
 			renderCrisp(ctx, bg, fg);
 		} else {
 		const bands = clamp(Math.round(o.bzBands || 20), 2, N);
-		const lut = new Array(MAXN);
-		lut[0] = bg;
-		for (let s = 1; s < MAXN; s++) {
-			const a = clamp((s - 1) / (N - 1), 0, 1);         // 0 fresh front → 1 old
-			const u = a / fade;                               // position within the tail
-			let bright;
-			if (u >= 1) bright = 0;                           // beyond the tail → background
-			else { const uu = Math.round(u * (bands - 1)) / (bands - 1); bright = Math.pow(1 - uu, 1.3); }
-			const hue = a < 0.25 ? mix3(fg, ac, a / 0.25) : ac;
-			lut[s] = mix3(bg, hue, bright);
+		// CONTINUOUS-AGE render. Colour cross-fading two discrete CA states (the
+		// old way) drew the wavefront as TWO ghost rings a whole iteration (r
+		// cells) apart — framey at slow reaction speed, and blatant now the
+		// upscale no longer blurs it away. Instead, interpolate a CONTINUOUS
+		// `age` between stateA→state by `phase` and colour from that, so the
+		// band contours GLIDE by sub-cell amounts (one ring that moves, not two
+		// that dissolve). A fine age→colour LUT keeps it a lookup, not a pow()
+		// per pixel; rebuilt only when the palette/params change.
+		const K = 1024;
+		if (!ageLut || ageLut.N !== N || ageLut.fade !== fade || ageLut.bands !== bands
+			|| ageLut.bg !== o.bg || ageLut.fg !== o.fg || ageLut.ac !== o.accent) {
+			const R = new Float32Array(K + 1), G = new Float32Array(K + 1), B = new Float32Array(K + 1);
+			for (let k = 0; k <= K; k++) {
+				const age = (k / K) * N;
+				let col;
+				if (age <= 0) col = bg;
+				else if (age < 1) col = mix3(bg, fg, age);        // wavefront sweeping in
+				else {
+					const a = clamp((age - 1) / (N - 1), 0, 1);   // 0 fresh front → 1 old
+					const u = a / fade;                           // position within the tail
+					let bright;
+					if (u >= 1) bright = 0;                       // beyond the tail → background
+					else { const uu = Math.round(u * (bands - 1)) / (bands - 1); bright = Math.pow(1 - uu, 1.3); }
+					const hue = a < 0.25 ? mix3(fg, ac, a / 0.25) : ac;
+					col = mix3(bg, hue, bright);
+				}
+				R[k] = col[0]; G[k] = col[1]; B[k] = col[2];
+			}
+			ageLut = { R, G, B, N, fade, bands, bg: o.bg, fg: o.fg, ac: o.accent };
 		}
-		// Cross-fade the previous CA state (stateA) → current (state) by `phase` so
-		// slow reaction speeds glide instead of stepping. Letters (steady state) are
-		// identical in both, so they don't flicker.
-		const ph = clamp(phase, 0, 1);
+		const cR = ageLut.R, cG = ageLut.G, cB = ageLut.B;
+		const ph = clamp(phase, 0, 1), kScale = K / N;
 		const px = sdata.data;
 		for (let i = 0; i < gw * gh; i++) {
-			const a = lut[stateA[i]] || bg, b = lut[state[i]] || bg, j = i * 4;
-			let r_ = a[0] + (b[0] - a[0]) * ph, g_ = a[1] + (b[1] - a[1]) * ph, b_ = a[2] + (b[2] - a[2]) * ph;
+			const a0 = stateA[i];
+			let a1 = state[i];
+			// state cycles 0→1→…→N-1→0; the only DECREASE is the wrap back to
+			// resting — unwrap it to N so the age lerps forward (dim tail → bg),
+			// not backwards through the whole tail.
+			if (a1 === 0 && a0 !== 0) a1 = N;
+			let age = a0 + (a1 - a0) * ph;
+			if (age < 0) age = 0; else if (age > N) age = N;
+			const k = (age * kScale) | 0, j = i * 4;
+			let r_ = cR[k], g_ = cG[k], b_ = cB[k];
 			// clearance zone: fade wave colour in from bg over the first `moat`
 			// cells from the letters (source cells themselves → pure bg; the
 			// crisp type overlay is the only letter paint)
