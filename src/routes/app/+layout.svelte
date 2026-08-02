@@ -944,11 +944,17 @@
 	let dragUid = $state(null);
 	const orderedUsers = $derived.by(() => {
 		const users = data.users ?? [];
-		if (!memberOrder.length) return users;
+		// Recency-first: whoever you last exchanged a DM with floats to the top
+		// (so a new message bumps that person up), ordered by most-recent. People
+		// you have no DM history with keep the user-defined member order below.
+		const lastAtByUid = new Map();
+		for (const d of dmList) if (d.otherUserId) lastAtByUid.set(d.otherUserId, d.lastAt ?? 0);
 		const rank = new Map(memberOrder.map((id, i) => [id, i]));
-		return [...users].sort((a, b) =>
-			(rank.has(a.id) ? rank.get(a.id) : Infinity) - (rank.has(b.id) ? rank.get(b.id) : Infinity)
-		);
+		return [...users].sort((a, b) => {
+			const la = lastAtByUid.get(a.id) ?? 0, lb = lastAtByUid.get(b.id) ?? 0;
+			if (la !== lb) return lb - la; // more recent DM first
+			return (rank.has(a.id) ? rank.get(a.id) : Infinity) - (rank.has(b.id) ? rank.get(b.id) : Infinity);
+		});
 	});
 	function persistMemberOrder() {
 		// localStorage = instant local cache; the POST makes it identical on
@@ -960,6 +966,31 @@
 			body: JSON.stringify({ order: memberOrder })
 		}).catch(() => {});
 	}
+	// ── Per-conversation menu (mark as unread / read) ────────────────────────
+	// convMenu holds the convId whose kebab menu is open (null = none).
+	let convMenu = $state(null);
+	// Mark a DM unread: roll our personal read pointer back just before the
+	// conversation's last message so the sidebar shows the unread dot again.
+	// (Only our own lastRead/unread — the sender's read receipt is untouched.)
+	function markDmUnread(convId, lastAt) {
+		const uid = data.currentUser.id;
+		const t = Math.max(0, (lastAt ?? Date.now()) - 1);
+		lastRead = { ...lastRead, [convId]: t };
+		unreadCounts = { ...unreadCounts, [convId]: 0 };
+		set(ref(rtdb, `lastRead/${uid}/${convId}`), t).catch(() => {});
+		set(ref(rtdb, `unreadCounts/${uid}/${convId}`), 0).catch(() => {});
+		convMenu = null;
+	}
+	function markDmRead(convId) {
+		const uid = data.currentUser.id;
+		const now = Date.now();
+		lastRead = { ...lastRead, [convId]: now };
+		unreadCounts = { ...unreadCounts, [convId]: 0 };
+		set(ref(rtdb, `lastRead/${uid}/${convId}`), now).catch(() => {});
+		set(ref(rtdb, `unreadCounts/${uid}/${convId}`), 0).catch(() => {});
+		convMenu = null;
+	}
+
 	function onMemberDragStart(e, uid) {
 		dragUid = uid;
 		try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', uid); } catch {}
@@ -2040,7 +2071,9 @@
 				{@const convId = getConvId(data.currentUser.id, u.id)}
 				{@const dmPath = `/app/chat/dm/${convId}`}
 				{@const dmUnreadCount = unreadCounts[convId] ?? 0}
-				{@const dmUnreadDot = dmUnreadCount === 0 && isUnread(convId, dmList.find((d) => d.convId === convId)?.lastAt)}
+				{@const dmLastAt = dmList.find((d) => d.convId === convId)?.lastAt ?? 0}
+				{@const dmUnreadDot = dmUnreadCount === 0 && isUnread(convId, dmLastAt)}
+				{@const isDmUnread = dmUnreadCount > 0 || dmUnreadDot}
 				{@const lastMsg = dmList.find((d) => d.convId === convId)?.lastMessage ?? null}
 				<div class="member-row"
 					class:drag-target={dragUid && dragUid !== u.id}
@@ -2073,6 +2106,20 @@
 							<span class="unread-dot"></span>
 						{/if}
 					</a>
+					<!-- Kebab: mark this conversation as read / unread. -->
+					<button class="conv-kebab" title="Conversation options" aria-label="Conversation options"
+						onclick={(e) => { e.preventDefault(); e.stopPropagation(); convMenu = convMenu === convId ? null : convId; }}>
+						<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>
+					</button>
+					{#if convMenu === convId}
+						<div class="conv-menu" role="menu">
+							{#if isDmUnread}
+								<button role="menuitem" onclick={() => markDmRead(convId)}>Mark as read</button>
+							{:else}
+								<button role="menuitem" onclick={() => markDmUnread(convId, dmLastAt)} disabled={!dmLastAt}>Mark as unread</button>
+							{/if}
+						</div>
+					{/if}
 				</div>
 			{/each}
 		</div>
@@ -2081,6 +2128,11 @@
 
 {#if sidebarOpen}
 	<div class="sidebar-backdrop" onclick={() => sidebarOpen = false}></div>
+{/if}
+
+{#if convMenu}
+	<!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
+	<div class="conv-menu-backdrop" onclick={() => convMenu = null}></div>
 {/if}
 
 <!-- Global sidebar -->
@@ -2474,7 +2526,34 @@
 	.conv-item.active .channel-avatar { color: var(--sidebar-active-fg); }
 
 	/* ── Members ── */
-	.member-row { border-radius: 9px; }
+	.member-row { border-radius: 9px; position: relative; }
+
+	/* Kebab (⋯) → per-conversation menu. Hidden until the row is hovered on
+	   desktop; always visible on touch. Sits over the right edge of the row. */
+	.conv-kebab {
+		position: absolute; top: 50%; right: 0.35rem; transform: translateY(-50%);
+		display: flex; align-items: center; justify-content: center;
+		width: 26px; height: 26px; border-radius: 7px;
+		border: none; background: var(--sidebar-hover); color: var(--sidebar-fg-muted);
+		cursor: pointer; opacity: 0; transition: opacity 0.1s, background 0.1s; z-index: 2;
+	}
+	.member-row:hover .conv-kebab { opacity: 1; }
+	.conv-kebab:hover { background: var(--sidebar-active); color: var(--sidebar-fg); }
+	@media (max-width: 640px) { .conv-kebab { opacity: 1; background: transparent; } }
+	.conv-menu {
+		position: absolute; top: calc(50% + 14px); right: 0.35rem; z-index: 40;
+		min-width: 9.5rem; padding: 0.25rem;
+		background: var(--paper); border: 1px solid var(--border); border-radius: 10px;
+		box-shadow: 0 10px 30px rgba(0,0,0,0.22);
+		display: flex; flex-direction: column;
+	}
+	.conv-menu button {
+		text-align: left; padding: 0.5rem 0.65rem; border: none; border-radius: 7px;
+		background: none; color: var(--ink); font-family: inherit; font-size: 0.82rem; cursor: pointer;
+	}
+	.conv-menu button:hover:not(:disabled) { background: var(--surface-2); }
+	.conv-menu button:disabled { opacity: 0.4; cursor: default; }
+	.conv-menu-backdrop { position: fixed; inset: 0; z-index: 39; }
 	/* On desktop, ALL chat-list rows (channels AND DMs) sit at the compact ~66%
 	   size: 26px avatar (DMs via the size prop, channels via .conv-avatar) with
 	   matching padding / text / presence-dot. Mobile is unchanged. */
