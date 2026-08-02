@@ -274,13 +274,23 @@ function sceneBZ(env) {
 		const L = clamp(Math.round(getOpts().bzRound ?? 6), 0, 15);
 		if (L === level) return;
 		level = L;
-		const r = Math.min(Math.max(1, lerp(1.0, 5.0, L / 15) * gridF), 28), r2 = r * r, R = Math.ceil(r);
-		// disk → per-row half-widths: row dy spans dx ∈ [-w, w]
+		// SHAPE vs SIZE are separated so roundedness is resolution-independent.
+		// The neighbourhood is a p-norm ball: p = 1 → diamond (angular waves),
+		// p = 2 → circle (round waves). Roundedness sets p; only the RADIUS
+		// scales with gridF (for constant wave speed / scale-invariance). The
+		// old code fixed the shape to a disk and only grew the radius, so at
+		// high res even L0 was a radius-5 disk → round. Now L0 is a diamond at
+		// every resolution.
+		const r = Math.min(Math.max(1, lerp(1.0, 5.0, L / 15) * gridF), 28), R = Math.ceil(r);
+		const p = lerp(1.0, 2.0, L / 15);
+		const rp = Math.pow(r, p);
+		// per-row half-widths: row dy spans dx ∈ [-w, w] where |dx|^p+|dy|^p ≤ r^p
 		spans = [];
 		let area = 0;
 		for (let dy = -R; dy <= R; dy++) {
-			if (dy * dy > r2) continue;
-			const w = Math.floor(Math.sqrt(r2 - dy * dy));
+			const dyp = Math.pow(Math.abs(dy), p);
+			if (dyp > rp) continue;
+			const w = Math.floor(Math.pow(rp - dyp, 1 / p));
 			spans.push(dy, w);
 			area += 2 * w + 1;
 		}
