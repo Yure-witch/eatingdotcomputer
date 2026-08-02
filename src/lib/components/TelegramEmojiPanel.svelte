@@ -5,6 +5,7 @@
 		loadCustomPacks,
 		loadSpriteSheet,
 		engineMode,
+		setEngineManual,
 		isStaticPack,
 		TG_CAT_ICONS
 	} from '$lib/telegram-emoji-store.js';
@@ -673,14 +674,14 @@
 	<div class="tg-foot">
 		<button class="tg-engine-toggle"
 			title="Toggle render engine. CPU = rlottie WASM (pixel-perfect). GPU = Skia/Skottie main thread. WorkerGPU = Skia/Skottie in a worker (default on desktop). WebGPU = experimental, requires WebGPU-capable browser."
-			onclick={() => engineMode.update(e =>
+			onclick={() => setEngineManual((e =>
 				e === 'rlottie' ? 'skottie'
 				: e === 'skottie' ? 'skottie-worker'
 				: e === 'skottie-worker' ? 'skottie-webgpu'
 				: e === 'skottie-webgpu' ? 'webgpu-rasterized'
 				: e === 'webgpu-rasterized' ? 'cpu-rasterized'
 				: 'rlottie'
-			)}>
+			)($engineMode))}>
 			Engine: <strong>{
 				$engineMode === 'cpu-rasterized' ? 'Rasterized (CPU)'
 				: $engineMode === 'webgpu-rasterized' ? 'Rasterized'

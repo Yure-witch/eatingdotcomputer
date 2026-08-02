@@ -12,6 +12,7 @@
 		spriteKeyForCp,
 		spriteKeyForCustom,
 		engineMode,
+		RASTER_ENGINES,
 		isAdaptivePack
 	} from '$lib/telegram-emoji-store.js';
 	import { acquire, release } from '$lib/lottie-spritesheet.js';
@@ -67,14 +68,19 @@
 	const url = $derived(isCustom ? tgcUrl(short, id) : tgAnimatedUrl(cp));
 	const thumbUrl = $derived(isCustom ? tgcThumbUrl(short, id) : tgThumbUrl(cp));
 	const itemKey = $derived(isCustom ? spriteKeyForCustom(short, id) : spriteKeyForCp(cp));
-	// On touch/phone devices force the lightweight rlottie engine regardless of the
-	// saved preference. The Skottie/CanvasKit engines hold GPU surfaces per loaded
-	// animation and intentionally DON'T free built animations off-screen (to avoid
-	// scroll-back flicker), so on a phone's tiny WebView budget they accumulate and
-	// the OS jetsams the app. rlottie is CPU-canvas, 48px frames, and releases its
-	// frames off-screen (see _RELEASE_OFFSCREEN). An explicit forceEngine still wins.
+	// Respect the store engine — which now defaults to a RASTERIZED (baked-atlas,
+	// moving) engine on every platform. Those don't hold a live per-emote render
+	// context, so they don't accumulate GPU surfaces and jetsam a phone's tiny
+	// WebView budget the way the old live engines did. Only if a LIVE engine has
+	// been explicitly selected AND we're on a touch device do we coerce to a safe
+	// rasterized fallback (WebGL-free CPU atlas). An explicit forceEngine wins.
 	const _coarse = typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)')?.matches;
-	const engine = $derived(forceEngine || (_coarse ? 'rlottie' : $engineMode));
+	const engine = $derived.by(() => {
+		if (forceEngine) return forceEngine;
+		const e = $engineMode;
+		if (RASTER_ENGINES.has(e)) return e;
+		return _coarse ? 'cpu-rasterized' : e;
+	});
 
 	const sprite = $derived($spriteSheet);
 	const spritePos = $derived(sprite?.items?.[itemKey] || null);

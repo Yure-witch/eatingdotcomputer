@@ -31,6 +31,27 @@ export function isTouchWeb() {
 	return !!window.matchMedia?.('(pointer: coarse)')?.matches;
 }
 
+/**
+ * Programmatic WebGPU-availability probe. Resolves true only if the browser
+ * exposes navigator.gpu AND a GPU adapter can actually be acquired (some
+ * browsers expose the API but fail requestAdapter on the real hardware).
+ * Cached — the adapter request runs at most once per session.
+ */
+let _webgpuProbe = null;
+export function hasWebGPU() {
+	if (_webgpuProbe) return _webgpuProbe;
+	_webgpuProbe = (async () => {
+		try {
+			if (typeof navigator === 'undefined' || !navigator.gpu) return false;
+			const adapter = await navigator.gpu.requestAdapter();
+			return !!adapter;
+		} catch {
+			return false;
+		}
+	})();
+	return _webgpuProbe;
+}
+
 /** iOS user agent (incl. iPadOS-as-Mac), used for App Store wording. */
 export function isIOSWeb() {
 	if (typeof navigator === 'undefined') return false;

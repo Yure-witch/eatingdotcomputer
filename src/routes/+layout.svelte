@@ -20,6 +20,7 @@
 	import { dropAdaptiveFrames as dropCpuAtlasAdaptive } from '$lib/cpu-atlas.js';
 	import { initTheme, onThemeChanged } from '$lib/theme-store.js';
 	import { initEmoteIdle } from '$lib/emote-idle.js';
+	import { initEmoteEngine } from '$lib/telegram-emoji-store.js';
 	import { dev } from '$app/environment';
 	import { initNativeShell, isNativeApp, updateStatusBarTheme } from '$lib/native.js';
 	import GetAppBanner from '$lib/components/GetAppBanner.svelte';
@@ -80,6 +81,11 @@
 		// emotes freeze after ~45s of no interaction (and wake on any) — that
 		// sustained 60fps emote churn was jetsamming the native WebView.
 		if (window.matchMedia?.('(pointer: coarse)')?.matches) initEmoteIdle();
+
+		// Pick the best RASTERIZED emote engine for this device — WebGPU-capable
+		// devices get the GPU rasterizer, others the WebGL-free CPU atlas. Runs
+		// before chat mounts so there's no engine-swap re-render mid-scroll.
+		initEmoteEngine();
 
 		// Apply the saved Material 3 theme as early as possible. Runs
 		// in onMount so it happens client-side only — the hex fallbacks

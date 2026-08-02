@@ -151,34 +151,24 @@ function isIOS() {
 	return navigator.platform === 'MacIntel' && (navigator.maxTouchPoints ?? 0) > 1;
 }
 
+// A RASTERIZED (baked-frame, still MOVING) engine is the default on EVERY
+// platform — it bakes each animation's frames to a small atlas once and plays
+// back by blitting, instead of holding a live per-emote render context. That's
+// the memory-friendly path everywhere. `webgpu-rasterized` uses the GPU
+// (worker atlas); `cpu-rasterized` is the WebGL-free fallback (rlottie → 2D
+// atlas) for devices where worker-WebGL is unreliable (older iOS).
+const RASTER_ENGINES = new Set(['webgpu-rasterized', 'cpu-rasterized']);
+const MANUAL_KEY = 'tgEngineManual';
+
+// Synchronous best-guess default (refined by initEmoteEngine() once the async
+// WebGPU probe resolves). iOS gets the WebGL-free CPU atlas until the probe
+// confirms a capable GPU; everything else gets the GPU rasterizer.
 const _initialEngine = (() => {
-	if (typeof localStorage === 'undefined') return 'rlottie';
-	const isCoarsePointer = typeof window !== 'undefined'
-		&& window.matchMedia?.('(pointer: coarse)').matches;
+	if (typeof localStorage === 'undefined') return 'cpu-rasterized';
 	const v = localStorage.getItem(ENGINE_KEY);
-	if (isCoarsePointer) {
-		// iOS Safari / iOS PWAs reliably crash on ANY Skia/WebGL engine in
-		// the picker once a couple dozen animations are alive — WebGL in a
-		// worker is the unstable bit. `cpu-rasterized` avoids WebGL entirely:
-		// rlottie WASM (off-thread) bakes frames into a 2D atlas that's
-		// blitted on a single rAF — the cheap atlas playback without WebGL.
-		if (isIOS()) return (v === 'rlottie') ? 'rlottie' : 'cpu-rasterized';
-		// Other touch devices (Android, etc.): prefer the RASTERIZED engine.
-		// Unlike the old live engine it keeps no live WebGL animations alive
-		// — it bakes frames through one transient WebGL surface, then plays
-		// back from small 2D atlases (the worker auto-shrinks the atlas on
-		// low-RAM devices). Respect an explicit rlottie choice, but migrate
-		// any saved LIVE-Skottie variant (which can still overwhelm a mobile
-		// GPU) onto the lighter rasterized path.
-		if (v === 'rlottie') return 'rlottie';
-		return 'webgpu-rasterized';
-	}
-	if (v && VALID_ENGINES.has(v)) return v;
-	// Desktop / mouse → webgpu-rasterized: the worker pre-rasterises each
-	// animation's frames to a cached atlas ONCE, then plays back by blitting
-	// (no per-frame Skottie render/flush). Scales to many animated cells far
-	// better than live per-frame rendering.
-	return 'webgpu-rasterized';
+	// Honour an explicit, user-chosen engine (any valid one, incl. live modes).
+	if (v && VALID_ENGINES.has(v) && localStorage.getItem(MANUAL_KEY) === '1') return v;
+	return isIOS() ? 'cpu-rasterized' : 'webgpu-rasterized';
 })();
 export const engineMode = writable(_initialEngine);
 if (typeof window !== 'undefined') {
@@ -186,6 +176,27 @@ if (typeof window !== 'undefined') {
 		try { localStorage.setItem(ENGINE_KEY, v); } catch {}
 	});
 }
+
+// Mark the engine as an explicit user choice (set from the picker's engine
+// toggle) so the auto-refiner leaves it alone.
+export function setEngineManual(engine) {
+	try { localStorage.setItem(MANUAL_KEY, '1'); } catch {}
+	engineMode.set(engine);
+}
+
+// Refine the rasterized engine once the WebGPU probe resolves: WebGPU-capable
+// devices (incl. iOS 18+) get the GPU rasterizer; otherwise iOS falls back to
+// the WebGL-free CPU atlas. No-op when the user picked an engine manually.
+// Call once from the root layout onMount.
+export async function initEmoteEngine() {
+	if (typeof window === 'undefined') return;
+	try { if (localStorage.getItem(MANUAL_KEY) === '1') return; } catch { return; }
+	const { hasWebGPU } = await import('$lib/native.js');
+	const webgpu = await hasWebGPU().catch(() => false);
+	const best = webgpu ? 'webgpu-rasterized' : (isIOS() ? 'cpu-rasterized' : 'webgpu-rasterized');
+	engineMode.set(best);
+}
+export { RASTER_ENGINES };
 
 export function tgAnimationUrl(cp, i) {
 	return _manifest ? `${_manifest.base}/animations/${cp}_${i}.json` : '';
