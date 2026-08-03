@@ -106,6 +106,12 @@
 	// via SpriteSticker's teardown → worker refcount drop → free).
 	const BUFFER_ROWS = _IS_COARSE ? 0 : 20;
 	let scrollTop = $state(0);
+	// First-open mount stagger: the live-cell band starts at a fraction of the
+	// viewport and ramps to full over a few animation frames, so the initial
+	// burst of ~140 SpriteSticker instantiations (+ their canvas transfers) is
+	// spread across frames instead of freezing the main thread on tab open. Any
+	// scroll jumps straight to the full band so nothing is ever missing in view.
+	let _fillFrac = $state(_IS_COARSE ? 1 : 0.34);
 	let gridH = $state(420);
 	let gridW = $state(340);
 	// "Animated" inserts the Lottie token; "Emoji" inserts the underlying Unicode char
@@ -439,9 +445,23 @@
 	}
 	function onGridScroll(e) {
 		scrollTop = e.target.scrollTop;
+		if (_fillFrac < 1) _fillFrac = 1; // scrolling needs the whole band now
 		syncActiveFromScroll();
 	}
-	onMount(() => { measureGrid(); });
+	onMount(() => {
+		measureGrid();
+		// Grow the live band to full over successive frames (see _fillFrac). Each
+		// frame mounts ~a row or two more, keeping every frame under budget.
+		if (_fillFrac < 1) {
+			let raf = 0;
+			const grow = () => {
+				_fillFrac = Math.min(1, _fillFrac + 0.16);
+				if (_fillFrac < 1) raf = requestAnimationFrame(grow);
+			};
+			raf = requestAnimationFrame(grow);
+			return () => cancelAnimationFrame(raf);
+		}
+	});
 	$effect(() => { active; queueMicrotask(measureGrid); });
 
 	// Keep the active tab on-screen in the horizontal strip. When vertical
@@ -472,7 +492,7 @@
 		Math.max(0, (Math.floor(scrollTop / CELL_PX) - BUFFER_ROWS) * cellsPerRow)
 	);
 	const visibleEnd = $derived(
-		visibleStart + (Math.ceil(gridH / CELL_PX) + BUFFER_ROWS * 2) * cellsPerRow
+		visibleStart + Math.ceil((Math.ceil(gridH / CELL_PX) + BUFFER_ROWS * 2) * cellsPerRow * _fillFrac)
 	);
 
 	// Filter custom items — CLDR name + keywords only count for packs where the
@@ -620,7 +640,7 @@
 			{@const totalHeight = flowingGeometry.length ? flowingGeometry[flowingGeometry.length - 1].pxEnd : 0}
 			{@const _cpr = Math.max(1, cellsPerRow)}
 			{@const _cellVisTop = scrollTop - CELL_PX * 2}
-			{@const _cellVisBot = scrollTop + gridH + CELL_PX * 2}
+			{@const _cellVisBot = scrollTop + (gridH + CELL_PX * 2) * _fillFrac}
 			<div class="tg-grid tg-grid-flow" bind:this={gridEl} style:height="{totalHeight}px">
 				{#each flowingSections as section, sIdx (section.key)}
 					{@const geo = flowingGeometry[sIdx]}
