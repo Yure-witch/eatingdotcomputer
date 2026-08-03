@@ -30,6 +30,7 @@
 
 import CanvasKitInit from 'canvaskit-wasm/full';
 import { tintLottieAdaptive } from './lottie-adaptive.js';
+import { loadFrames as fcLoad, storeFrames as fcStore, frameCacheAvailable } from './frame-cache.js';
 
 let _kit = null;
 let _canvas = null; // OffscreenCanvas
@@ -266,10 +267,42 @@ async function pumpRaster() {
 async function doRasterize(url, px, key, fpsScale = 1) {
 	const entry = _anims.get(url);
 	if (!entry || entry.duration <= 0) { _frameJobs.delete(key); return; }
-	const sheet = ensureRasterSheetForPx(px);
 	const atlas = getAtlas(px);
-	if (!sheet || !atlas) { _frameJobs.delete(key); return; }
+	if (!atlas) { _frameJobs.delete(key); return; }
 	const sl = atlas.slot; // supersampled pixel size (px * SUPERSAMPLE)
+
+	// ── Fast path: rehydrate from the persistent disk cache ──────────────
+	// If this emote@px was baked in a previous session (or earlier this one),
+	// its frames are on disk XOR-delta+gzip'd. Decode them and fill the atlas
+	// directly — skipping the entire Skia render loop, which is the dominant
+	// per-emote cost. Telegram Desktop's whole snappiness trick.
+	if (frameCacheAvailable()) {
+		let disk = null;
+		try { disk = await fcLoad(url + '@' + px, sl); } catch { disk = null; }
+		// The await above yields — re-validate nothing was torn down meanwhile.
+		if (disk && _anims.get(url) === entry && !_frameCache.has(key)) {
+			const slots = atlasAllocSlots(atlas, disk.N);
+			if (slots) {
+				for (let i = 0; i < disk.N; i++) {
+					const slot = slots[i];
+					const pctx = atlas.pages[slot.page].ctx;
+					// putImageData writes the exact RGBA at the slot origin (no
+					// blend) — same pixels the render→drawImage path would leave.
+					try { pctx.putImageData(new ImageData(disk.frames[i], sl, sl), slot.x, slot.y); }
+					catch { /* detached page — skip */ }
+				}
+				const cacheEntry = { atlas, slots, N: disk.N };
+				_frameCache.set(key, cacheEntry);
+				atlas.lru.set(key, cacheEntry);
+				_frameJobs.delete(key);
+				return;
+			}
+		}
+	}
+
+	// ── Slow path: render the vector frames with Skia ────────────────────
+	const sheet = ensureRasterSheetForPx(px);
+	if (!sheet) { _frameJobs.delete(key); return; }
 	// fpsScale (1.5 on the high-end LOD upgrade) bakes more frames = smoother
 	// loop. Capped to the raster sheet's grid (RASTER_COLS² slots) so it can
 	// never overflow — on desktop MAX_RASTER_FRAMES is already near the cap, so
@@ -314,6 +347,21 @@ async function doRasterize(url, px, key, fpsScale = 1) {
 	_frameCache.set(key, cacheEntry);
 	atlas.lru.set(key, cacheEntry);
 	_frameJobs.delete(key);
+
+	// Persist to disk for next time — capture each freshly-filled slot's RGBA
+	// straight from the atlas pages, then hand off to the XOR-delta+gzip encoder
+	// (async; playback is already running off the atlas so this blocks nothing).
+	if (frameCacheAvailable() && N >= 2) {
+		try {
+			const frames = new Array(N);
+			for (let i = 0; i < N; i++) {
+				const slot = slots[i];
+				const img = atlas.pages[slot.page].ctx.getImageData(slot.x, slot.y, sl, sl);
+				frames[i] = new Uint8ClampedArray(img.data); // own copy (data is transferable-backed)
+			}
+			fcStore(url + '@' + px, { sl, N, duration: entry.duration, totalFrames: entry.totalFrames }, frames);
+		} catch { /* readback failed — just skip persisting */ }
+	}
 }
 
 function freeFrameCache(url) {
