@@ -107,6 +107,12 @@ function ensureScratchForPx(px) {
 const _frameCache = new Map();
 const _frameJobs = new Set();         // url@px currently rasterising
 const _rasterSheetByPx = new Map();   // px -> { canvas, surface } — WebGL scratch to render frames before packing
+// SEPARATE sheet pool for the background pre-warm. The pre-warm bake loop yields
+// mid-render and is NOT gated by _rasterBusy, so it must never touch the live
+// sheet — otherwise a live bake interleaving on the same surface corrupts both
+// (frames from one emote bleed into another's cache). Pre-warm is sequential
+// per worker, so one sheet per px here is safe on its own.
+const _prewarmSheetByPx = new Map();
 const _atlasByPx = new Map();         // px -> { px, cols, pages:[{canvas,ctx}], free:[{page,x,y}], lru:Map<key,entry> }
 // Device-adaptive raster config. Low-RAM devices (phones report
 // navigator.deviceMemory ≤ 4 GB; absent ⇒ assume a roomy desktop) get a
@@ -143,8 +149,11 @@ const MAX_ATLAS_PAGES = _lowMem ? 6 : 16;
 
 // `slot` = rendered/stored pixel size = px * SUPERSAMPLE (the cell displays
 // at px, so this is supersampled and downscaled on blit).
-function ensureRasterSheetForPx(px) {
-	let s = _rasterSheetByPx.get(px);
+function ensureRasterSheetForPx(px) { return _ensureSheet(px, _rasterSheetByPx); }
+// Dedicated pre-warm sheet — never the live one (see _prewarmSheetByPx comment).
+function ensurePrewarmSheetForPx(px) { return _ensureSheet(px, _prewarmSheetByPx); }
+function _ensureSheet(px, pool) {
+	let s = pool.get(px);
 	if (s) return s;
 	if (!_kit) return null;
 	const slot = Math.round(px * SUPERSAMPLE);
@@ -152,7 +161,7 @@ function ensureRasterSheetForPx(px) {
 	const surface = _kit.MakeWebGLCanvasSurface(canvas, undefined, _surfaceOpts);
 	if (!surface) return null;
 	s = { canvas, surface, slot };
-	_rasterSheetByPx.set(px, s);
+	pool.set(px, s);
 	return s;
 }
 
@@ -355,7 +364,9 @@ async function prewarmBake(url, px, fpsScale = 1) {
 		const _frameCap = Math.min(Math.round(MAX_RASTER_FRAMES * fpsScale), RASTER_COLS * RASTER_COLS);
 		const N = Math.min(totalFrames, _frameCap);
 		if (N < 2) return 'static'; // nothing worth caching
-		const sheet = ensureRasterSheetForPx(px);
+		// Dedicated pre-warm sheet — never the live one, so a live bake yielding
+		// mid-render can't interleave and corrupt this emote's frames.
+		const sheet = ensurePrewarmSheetForPx(px);
 		if (!sheet) return 'skip';
 		const sk = sheet.surface.getCanvas();
 		sk.clear(_kit.TRANSPARENT);

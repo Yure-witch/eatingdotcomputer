@@ -23,7 +23,9 @@ const STORE = 'frames';
 const DB_VERSION = 1;
 // Bump when the on-disk record shape or the encoding changes — old entries are
 // then keyed under a different version prefix and never read (and pruned out).
-const CACHE_VERSION = 1;
+// v2: invalidates entries written by the pre-warm before it got its own render
+// sheet (a live bake could interleave and cross-contaminate frames).
+const CACHE_VERSION = 2;
 const MAX_ENTRIES = 500;          // LRU cap on the number of stored emotes
 const PRUNE_SLACK = 60;           // prune down to MAX-SLACK so it's not every write
 
