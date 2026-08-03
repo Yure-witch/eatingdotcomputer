@@ -30,7 +30,7 @@
 
 import CanvasKitInit from 'canvaskit-wasm/full';
 import { tintLottieAdaptive } from './lottie-adaptive.js';
-import { loadFrames as fcLoad, storeFrames as fcStore, frameCacheAvailable } from './frame-cache.js';
+import { loadFrames as fcLoad, storeFrames as fcStore, hasFrames as fcHas, frameCacheAvailable } from './frame-cache.js';
 
 let _kit = null;
 let _canvas = null; // OffscreenCanvas
@@ -325,6 +325,62 @@ function requestAnimUpgrade(url, entry) {
 	entry._upgrading = true;
 	_pending.set(url, { dataPromise: fetchLottieWorker(url), refcount: Math.max(1, entry.refcount || 1) });
 	schedulePump();
+}
+
+// Bake an emote's frames straight to the disk cache WITHOUT touching the live
+// atlas or the shared _anims map — for the background pre-warm. Builds a
+// throwaway animation, renders to the raster sheet, encodes to disk, then frees
+// everything. Returns a short status for progress reporting.
+async function prewarmBake(url, px, fpsScale = 1) {
+	if (!frameCacheAvailable()) return 'unavailable';
+	if (await fcHas(url + '@' + px)) return 'cached';
+	if (!_kit) return 'skip';
+	// Compute the slot size directly — a disk-only bake never allocates atlas
+	// slots, so don't spin up an atlas page (16 MB) just to read `.slot`.
+	const sl = Math.round(px * SUPERSAMPLE);
+	let data = null;
+	try { data = await fetchLottieWorker(url); } catch { return 'err'; }
+	if (!data) return 'err';
+	const short = shortFromUrl(url);
+	if (short && _adaptive.has(short) && _adaptiveInk) { try { tintLottieAdaptive(data, _adaptiveInk); } catch {} }
+	let animation = null;
+	try {
+		animation = _kit.MakeManagedAnimation ? _kit.MakeManagedAnimation(JSON.stringify(data)) : _kit.MakeAnimation(JSON.stringify(data));
+	} catch { return 'err'; }
+	if (!animation) return 'err';
+	try {
+		const duration = animation.duration() || 1;
+		const fps = animation.fps() || 60;
+		const totalFrames = Math.max(1, Math.round(duration * fps));
+		const _frameCap = Math.min(Math.round(MAX_RASTER_FRAMES * fpsScale), RASTER_COLS * RASTER_COLS);
+		const N = Math.min(totalFrames, _frameCap);
+		if (N < 2) return 'static'; // nothing worth caching
+		const sheet = ensureRasterSheetForPx(px);
+		if (!sheet) return 'skip';
+		const sk = sheet.surface.getCanvas();
+		sk.clear(_kit.TRANSPARENT);
+		for (let i = 0; i < N; i++) {
+			const cx = (i % RASTER_COLS) * sl;
+			const cy = ((i / RASTER_COLS) | 0) * sl;
+			animation.seek(i / N);
+			animation.render(sk, _kit.LTRBRect(cx, cy, cx + sl, cy + sl));
+			if ((i & 7) === 7) { sheet.surface.flush(); await _yieldIdle(); }
+		}
+		sheet.surface.flush();
+		const usedRows = Math.ceil(N / RASTER_COLS);
+		const rw = RASTER_COLS * sl, rh = usedRows * sl;
+		const bmp = await createImageBitmap(sheet.canvas, 0, 0, rw, rh);
+		const scr = _encodeScratchFor(rw, rh);
+		scr.ctx.clearRect(0, 0, rw, rh);
+		scr.ctx.drawImage(bmp, 0, 0);
+		const sheetData = scr.ctx.getImageData(0, 0, rw, rh).data;
+		try { bmp.close(); } catch {}
+		// Await the encode so pre-warm bakes one emote at a time — bounds memory
+		// (one sheet held) and keeps it gentle in the background.
+		await fcStore(url + '@' + px, { sl, N, cols: RASTER_COLS, sheetW: rw, sheetData, duration, totalFrames });
+		return 'warmed';
+	} catch { return 'err'; }
+	finally { try { animation.delete(); } catch {} }
 }
 
 async function doRasterize(url, px, key, fpsScale = 1) {
@@ -1116,6 +1172,23 @@ self.onmessage = async (e) => {
 		}
 		case 'render': {
 			renderFrame(msg);
+			break;
+		}
+		case 'prewarm-bake': {
+			// Background disk warm: bake each URL to the cache one at a time,
+			// yielding between so live rendering always wins. Reports totals so
+			// the driver can pace the next row.
+			const { urls, px, fpsScale, batchId } = msg;
+			(async () => {
+				let warmed = 0, cached = 0;
+				for (const url of urls) {
+					const r = await prewarmBake(url, px, fpsScale || 1).catch(() => 'err');
+					if (r === 'warmed') warmed++;
+					else if (r === 'cached') cached++;
+					await _yieldIdle();
+				}
+				self.postMessage({ type: 'prewarm-batch-done', batchId, warmed, cached, count: urls.length });
+			})();
 			break;
 		}
 		// ── Inline-canvas path ──────────────────────────────────────────

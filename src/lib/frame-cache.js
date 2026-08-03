@@ -217,4 +217,16 @@ async function _maybePrune() {
 	finally { _pruning = false; }
 }
 
+// Cheap "is this already cached?" — reads the key only, no decode. Used by the
+// background pre-warm so it can skip emotes that are already on disk.
+export async function hasFrames(key) {
+	if (!_hasCompression) return false;
+	try {
+		const db = await _db(); if (!db) return false;
+		const { store } = _tx(db, 'readonly');
+		const k = await _reqP(store.getKey(_fullKey(key)));
+		return k !== undefined;
+	} catch { return false; }
+}
+
 export function frameCacheAvailable() { return _hasCompression; }

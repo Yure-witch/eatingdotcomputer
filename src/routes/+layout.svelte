@@ -87,6 +87,16 @@
 		// before chat mounts so there's no engine-swap re-render mid-scroll.
 		initEmoteEngine();
 
+		// Background-warm the whole emote library into the persistent frame cache
+		// during idle time, so the first picker open is instant. Desktop + in-app
+		// only (skip the landing/login pages and touch devices, where it's not
+		// worth the battery/storage); it self-gates on engine + storage budget.
+		if (location.pathname.startsWith('/app') && window.matchMedia?.('(pointer: fine)').matches) {
+			const warm = () => import('$lib/emote-prewarm.js').then((m) => m.startEmotePrewarm()).catch(() => {});
+			if (typeof requestIdleCallback === 'function') requestIdleCallback(warm, { timeout: 8000 });
+			else setTimeout(warm, 4000);
+		}
+
 		// Apply the saved Material 3 theme as early as possible. Runs
 		// in onMount so it happens client-side only — the hex fallbacks
 		// in app.css cover SSR + the brief pre-hydration paint.

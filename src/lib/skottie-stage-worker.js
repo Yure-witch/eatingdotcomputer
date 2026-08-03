@@ -428,6 +428,16 @@ function onShardMessage(shardIdx, e) {
 				sh.canvas.style.opacity = '';
 			}
 		}
+	} else if (msg.type === 'prewarm-batch-done') {
+		const w = _prewarmWaiters.get(msg.batchId);
+		if (w) {
+			w.warmed += msg.warmed || 0;
+			w.cached += msg.cached || 0;
+			if (--w.remaining <= 0) {
+				_prewarmWaiters.delete(msg.batchId);
+				w.resolve({ warmed: w.warmed, cached: w.cached });
+			}
+		}
 	} else if (msg.type === 'anim-loaded') {
 		_loadedUrls.add(msg.url);
 	} else if (msg.type === 'anim-released') {
@@ -443,6 +453,32 @@ function onShardMessage(shardIdx, e) {
 		const fn = console[msg.level] || console.log;
 		fn.call(console, `[shard ${shardIdx}]`, ...msg.args);
 	}
+}
+
+// ── Background disk pre-warm ─────────────────────────────────────────────
+const _prewarmWaiters = new Map(); // batchId -> { remaining, warmed, cached, resolve }
+let _prewarmBatchSeq = 0;
+
+// Bake a batch of URLs to the persistent frame cache at `px`, grouped by the
+// shard that owns each URL so the pool warms in parallel. Resolves once every
+// shard that received work reports done. The driver calls this one row at a
+// time during idle. Booting the pool first (prewarm) is the caller's job.
+export async function prewarmBakeToDisk(urls, px, fpsScale = 1) {
+	await ensureStage();
+	const byShard = new Map();
+	for (const url of urls) {
+		const s = shardOf(url);
+		if (!byShard.has(s)) byShard.set(s, []);
+		byShard.get(s).push(url);
+	}
+	if (byShard.size === 0) return { warmed: 0, cached: 0 };
+	const batchId = ++_prewarmBatchSeq;
+	return new Promise((resolve) => {
+		_prewarmWaiters.set(batchId, { remaining: byShard.size, warmed: 0, cached: 0, resolve });
+		for (const [shardIdx, shardUrls] of byShard) {
+			postToShard(shardIdx, { type: 'prewarm-bake', urls: shardUrls, px, fpsScale, batchId });
+		}
+	});
 }
 
 // `data` accepted for API parity with skottie-stage.js — worker fetches
