@@ -4208,6 +4208,7 @@
 		     reactions in addition to plain emoji. -->
 		<ExpressionPicker
 			inline
+			isInstructor={data.currentUser.role === 'instructor'}
 			onClose={() => { pickerMsgId = null; }}
 			onSelectEmoji={(emoji) => { toggleReaction(pickerMsgId, emoji); pickerMsgId = null; }}
 			onInsertKitchen={(token) => { toggleReaction(pickerMsgId, token); pickerMsgId = null; }}

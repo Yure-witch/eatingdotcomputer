@@ -9,6 +9,8 @@
 	import { signInWithCustomToken } from 'firebase/auth';
 	import { ref, onValue, off } from 'firebase/database';
 	import { mountStaticEmotes } from '$lib/emote-mount.js';
+	import SpriteSticker from '$lib/components/SpriteSticker.svelte';
+	import { hiddenEmoteList, unhideEmote, initHiddenEmotes } from '$lib/hidden-emotes.js';
 
 	// Use the layout's rawPresence directly — same signal that drives the sidebar
 	// green dots. No separate Firebase subscription needed for presence here.
@@ -32,6 +34,7 @@
 	// Sync from the server at mount — page-load data can be stale if the
 	// setting changed elsewhere (Gemma page opt-out, profile edit).
 	onMount(async () => {
+		initHiddenEmotes(); // idempotent — seeds the hidden-emote list for this tab
 		try {
 			const r = await fetch('/api/gemma/settings');
 			if (r.ok) gemmaMasterOn = (await r.json()).optIn;
@@ -1091,6 +1094,31 @@
 
 		{#if activeTab === 'moderation'}
 	<section class="members-section">
+		<h2>Hidden emotes <span class="member-count">({$hiddenEmoteList.length})</span></h2>
+		<p class="chart-empty" style="margin-bottom:0.75rem">
+			Emotes you've hidden from the animated library. Students can't see or send these.
+			To hide more, open the emote picker's Animated tab and tap <strong>Hide emotes</strong>.
+		</p>
+		{#if $hiddenEmoteList.length === 0}
+			<p class="chart-empty">Nothing hidden.</p>
+		{:else}
+			<div class="hidden-emote-grid">
+				{#each $hiddenEmoteList as h (h.key)}
+					<div class="hidden-emote-card">
+						<div class="hidden-emote-art">
+							<SpriteSticker
+								cp={h.type === 'custom' ? null : h.cp}
+								short={h.type === 'custom' ? h.short : null}
+								id={h.type === 'custom' ? h.id : null}
+								size={40} loop={true} eager={true} ignoreHidden={true} title={h.alt || ''} />
+						</div>
+						<button class="btn-unhide" onclick={() => unhideEmote(h.key)}>Unhide</button>
+					</div>
+				{/each}
+			</div>
+		{/if}
+	</section>
+	<section class="members-section">
 		<h2>DM Conversations <span class="member-count">({data.dmConversations.length})</span></h2>
 		{#if data.dmConversations.length === 0}
 			<p class="chart-empty">No DM conversations found.</p>
@@ -1864,6 +1892,12 @@
 	}
 
 	/* ── Moderation: DM list ── */
+	.hidden-emote-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 0.6rem; margin-top: 0.5rem; }
+	.hidden-emote-card { display: flex; flex-direction: column; align-items: center; gap: 0.4rem; padding: 0.6rem 0.4rem; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); }
+	.hidden-emote-art { width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; }
+	.btn-unhide { width: 100%; padding: 0.25rem 0; border: 1.5px solid var(--border); border-radius: 6px; background: var(--paper); color: var(--ink); font-family: inherit; font-size: 0.72rem; font-weight: 600; cursor: pointer; transition: all 0.13s; }
+	.btn-unhide:hover { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+
 	.dm-list { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.75rem; }
 
 	.dm-card {

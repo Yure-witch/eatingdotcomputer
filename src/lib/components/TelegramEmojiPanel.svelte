@@ -17,6 +17,7 @@
 	import LottieSticker from './SpriteSticker.svelte';
 	import PickerStickyBtn from './PickerStickyBtn.svelte';
 	import { prewarm as prewarmSprites } from '$lib/lottie-spritesheet.js';
+	import { hiddenEmoteKeys, emoteKey, hideEmote, unhideEmote } from '$lib/hidden-emotes.js';
 	import {
 		setHost as setSkottieHostMain,
 		clearCanvas as clearSkottieMain
@@ -41,7 +42,24 @@
 		clearSkottieWorker();
 	}
 
-	let { onInsert, packFilter = 'all', onClose = null } = $props();
+	let { onInsert, packFilter = 'all', onClose = null, canModerate = false } = $props();
+	// Instructor moderation: when `moderating` is on (instructor only), the
+	// library shows hidden emotes (dimmed) and clicking one toggles its hidden
+	// state instead of inserting it. When off, hidden emotes are filtered out
+	// entirely — the same view a student gets.
+	let moderating = $state(false);
+	const _hiddenSet = $derived($hiddenEmoteKeys);
+	const _showHidden = $derived(canModerate && moderating);
+	const _cellKey = (it) => emoteKey({ cp: it.cp, short: it.short, id: it.id, custom: it.custom });
+	const _keep = (it) => _showHidden || !_hiddenSet.has(_cellKey(it));
+	const _isCellHidden = (it) => _hiddenSet.has(_cellKey(it));
+	function cellAction(it) {
+		if (_showHidden) {
+			if (_isCellHidden(it)) unhideEmote(it); else hideEmote(it);
+			return;
+		}
+		onInsert(it.custom ? { ...it, mode: customMode } : it);
+	}
 	// `packFilter` decides which custom packs the panel will surface and
 	// whether the standard Telegram categories (Effects, Custom aggregate,
 	// Smileys, …) are shown at all. Used by ExpressionPicker so the
@@ -252,7 +270,7 @@
 		loading = false;
 	});
 
-	const items = $derived(byCat[active] ?? []);
+	const items = $derived((byCat[active] ?? []).filter(_keep));
 
 	// Categories that render as a SINGLE grid even in flow mode.
 	// `Custom` is an aggregate of every per-pack section underneath it, so
@@ -275,7 +293,7 @@
 		flowingCats.map((c) => ({
 			key: c.key,
 			label: c.label ?? c.key,
-			items: byCat[c.key] ?? []
+			items: (byCat[c.key] ?? []).filter(_keep)
 		}))
 	);
 
@@ -588,6 +606,19 @@
 				bind:value={search} />
 			{#if search}<button class="tg-search-clear" onclick={() => (search = '')} title="Clear">×</button>{/if}
 		</div>
+		{#if canModerate}
+			<div class="tg-mod-row">
+				<button class="tg-mod-btn" class:active={moderating}
+					onclick={() => (moderating = !moderating)}
+					title={moderating ? 'Done hiding — tap emotes to insert again' : 'Hide emotes: tap any to hide it from students'}>
+					<span class="msi msi-18">{moderating ? 'check' : 'visibility_off'}</span>
+					{moderating ? 'Done hiding' : 'Hide emotes'}
+				</button>
+				{#if _showHidden}
+					<span class="tg-mod-hint-inline">Tap to hide · tap a dimmed one to unhide</span>
+				{/if}
+			</div>
+		{/if}
 	{/if}
 	<!-- Non-scrolling host for the Skottie canvas (see setSkottieHosts
 	     $effect). The canvas mounts here as position:absolute and stays
@@ -602,18 +633,18 @@
 			<div class="tg-grid" bind:this={gridEl}>
 				{#each filteredItems as it, i (it.custom ? `c:${it.id}` : it.cp + ':' + i)}
 					<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-					<div class="tg-cell"
+					<div class="tg-cell" class:tg-cell-hidden={_showHidden && _isCellHidden(it)}
 						title={it.custom
 							? `${it.name || it.alt}  ${it.alt}  ·  ${it.packTitle}${it.kw?.length ? '\n' + it.kw.slice(0, 6).join(', ') : ''}`
 							: it.e}
-						onclick={() => onInsert(it.custom ? { ...it, mode: customMode } : it)}>
+						onclick={() => cellAction(it)}>
 						{#if i >= visibleStart && i < visibleEnd}
 							{#if it.custom}
 								<LottieSticker short={it.short} id={it.id} size={24} mode="visible"
-									root={gridWrapEl} title={it.alt} />
+									ignoreHidden={_showHidden} root={gridWrapEl} title={it.alt} />
 							{:else}
 								<LottieSticker cp={it.cp} flag={it.flag} size={24} mode="visible"
-									root={gridWrapEl} title={it.e} />
+									ignoreHidden={_showHidden} root={gridWrapEl} title={it.e} />
 							{/if}
 						{/if}
 					</div>
@@ -667,18 +698,18 @@
 									{@const _cellAbsY = geo.pxStart + HEADER_PX + Math.floor(i / _cpr) * CELL_PX}
 									{@const _cellLive = _cellAbsY + CELL_PX > _cellVisTop && _cellAbsY < _cellVisBot}
 									<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-									<div class="tg-cell"
+									<div class="tg-cell" class:tg-cell-hidden={_showHidden && _isCellHidden(it)}
 										title={it.custom
 											? `${it.name || it.alt}  ${it.alt}  ·  ${it.packTitle}${it.kw?.length ? '\n' + it.kw.slice(0, 6).join(', ') : ''}`
 											: it.e}
-										onclick={() => onInsert(it.custom ? { ...it, mode: customMode } : it)}>
+										onclick={() => cellAction(it)}>
 										{#if _cellLive}
 											{#if it.custom}
 												<LottieSticker short={it.short} id={it.id} size={24} mode="visible"
-													root={gridWrapEl} title={it.alt} />
+													ignoreHidden={_showHidden} root={gridWrapEl} title={it.alt} />
 											{:else}
 												<LottieSticker cp={it.cp} flag={it.flag} size={24} mode="visible"
-													root={gridWrapEl} title={it.e} />
+													ignoreHidden={_showHidden} root={gridWrapEl} title={it.e} />
 											{/if}
 										{/if}
 									</div>
@@ -852,6 +883,20 @@
 	}
 	.tg-cell { width: 36px; height: 36px; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.12s; }
 	.tg-cell:hover { background: var(--surface-2); }
+	/* Moderation: a hidden emote shown to the instructor is dimmed + struck. */
+	.tg-cell-hidden { position: relative; opacity: 0.4; }
+	.tg-cell-hidden::after {
+		content: ''; position: absolute; inset: 6px;
+		background: repeating-linear-gradient(-45deg, transparent 0 3px, color-mix(in srgb, var(--ink) 30%, transparent) 3px 4px);
+		border-radius: 4px; pointer-events: none;
+	}
+	.tg-cell-hidden:hover { opacity: 0.7; }
+
+	.tg-mod-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.15rem 0.6rem 0.35rem; background: var(--surface-2); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+	.tg-mod-btn { display: inline-flex; align-items: center; gap: 0.25rem; padding: 0.2rem 0.55rem; border: 1.5px solid var(--border); border-radius: 6px; background: var(--paper); color: var(--muted-fg); font-family: inherit; font-size: 0.74rem; cursor: pointer; transition: all 0.13s; }
+	.tg-mod-btn .msi-18 { font-size: 16px; }
+	.tg-mod-btn.active { background: #b42318; border-color: #b42318; color: #fff; }
+	.tg-mod-hint-inline { font-size: 0.7rem; color: var(--muted-fg); }
 
 	.tg-loading { display: flex; align-items: center; gap: 0.5rem; color: var(--muted-fg); font-size: 0.82rem; justify-content: center; padding: 1.5rem 0; }
 	.tg-spinner { width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--ink, var(--ink)); border-radius: 50%; animation: tgspin 0.8s linear infinite; }

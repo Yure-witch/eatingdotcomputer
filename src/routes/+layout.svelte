@@ -87,6 +87,11 @@
 		// before chat mounts so there's no engine-swap re-render mid-scroll.
 		initEmoteEngine();
 
+		// Load the instructor-hidden emote set so the picker + chat filter them.
+		if (location.pathname.startsWith('/app')) {
+			import('$lib/hidden-emotes.js').then((m) => m.initHiddenEmotes()).catch(() => {});
+		}
+
 		// Background-warm the whole emote library into the persistent frame cache
 		// during idle time, so the first picker open is instant. Desktop + in-app
 		// only (skip the landing/login pages and touch devices, where it's not

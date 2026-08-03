@@ -230,7 +230,7 @@
 		{:else if tab === 'animated'}
 			<!-- Animated stickers only — static packs live in the
 			     Emotes tab's Library sub-tab. -->
-			<TelegramEmojiPanel onInsert={fireTg} packFilter="animated" {onClose} />
+			<TelegramEmojiPanel onInsert={fireTg} packFilter="animated" canModerate={isInstructor} {onClose} />
 		{/if}
 	</div>
 	{/if}

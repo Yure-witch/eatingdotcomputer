@@ -17,6 +17,7 @@
 		isAdaptivePack
 	} from '$lib/telegram-emoji-store.js';
 	import { acquire, release } from '$lib/lottie-spritesheet.js';
+	import { hiddenEmoteKeys, emoteKey } from '$lib/hidden-emotes.js';
 	import { emotesAwake } from '$lib/emote-idle.js';
 	import * as SkMain from '$lib/skottie-stage.js';
 	import * as SkWorker from '$lib/skottie-stage-worker.js';
@@ -56,10 +57,19 @@
 		// `size`. Chat bubbles pass 2 so sent emotes rasterise at a
 		// higher resolution than picker cells and stay crisp through
 		// zooms / focus previews / inline size effects.
-		oversample = 1
+		oversample = 1,
+		// When true, render even if an instructor has hidden this emote (the
+		// picker's moderation view + the Manage list pass this so the instructor
+		// can see what they're hiding). Everywhere else a hidden emote renders as
+		// a neutral placeholder and never loads its animation.
+		ignoreHidden = false
 	} = $props();
 
 	const isCustom = $derived(!!(short && id));
+	// Instructor-hidden? Then don't render or load anything (unless ignoreHidden).
+	const _hidden = $derived(
+		!ignoreHidden && $hiddenEmoteKeys.has(emoteKey({ cp, short, id, custom: isCustom }))
+	);
 	const paused = $derived(isCustom && isStaticPack(short));
 	// Adaptive (Telegram text_color) packs ship monochrome silhouettes meant
 	// to render in the current text colour. The sprite/thumb placeholder is
@@ -456,6 +466,7 @@
 	//  Dispatch
 	// ──────────────────────────────────────────────────────────────────
 	function ensureLoaded() {
+		if (_hidden) return; // instructor-hidden — never load its animation
 		if (engine === 'rlottie') return ensureLoaded_rlottie();
 		return ensureLoaded_skottie();
 	}
@@ -623,7 +634,11 @@
 	$effect(() => { hovering; visible; updatePlay(); });
 </script>
 
-{#if flag}
+{#if _hidden}
+	<!-- Instructor-hidden: a neutral placeholder, no canvas, no animation load. -->
+	<span class="tg-hidden-ph" title="Hidden by instructor"
+		style="width:{size}px;height:{size}px"></span>
+{:else if flag}
 	<img class="tg-sticker tg-flag" src={tgFlagUrl(cp)} alt={title} {title}
 		style="width:{size}px;height:{size}px" loading="lazy" />
 {:else}
@@ -692,6 +707,13 @@
 		position: relative;
 		flex-shrink: 0;
 		line-height: 0;
+	}
+	.tg-hidden-ph {
+		display: inline-block;
+		flex-shrink: 0;
+		border-radius: 5px;
+		background: color-mix(in srgb, currentColor 12%, transparent);
+		vertical-align: middle;
 	}
 	.tg-thumb,
 	.tg-canvas {
