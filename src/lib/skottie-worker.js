@@ -123,22 +123,23 @@ const _lowMem = _isMobileUA || _deviceMem <= 4;
 
 // SUPERSAMPLE: render each frame at this multiple of the cell's device px,
 // then downscale on blit → crisper edges than native 1:1. Most expensive
-// knob — cost scales with SUPERSAMPLE² (2× = 4× atlas memory). Desktop/high-mem
-// uses 2 (maximally sharp); mobile/low-mem renders 1:1 (native) to keep atlases
-// tiny.
-const SUPERSAMPLE = _lowMem ? 1 : 2;
+// knob — cost scales with SUPERSAMPLE² (and so does first-bake render time).
+// Desktop/high-mem uses 1.5: past that the anti-aliasing gain is invisible at
+// emote sizes, but the render cost keeps climbing. The crisp look comes from
+// the 2× DISPLAY density (oversample) on sent emotes, not from supersampling.
+// Mobile/low-mem renders 1:1 (native) to keep atlases tiny.
+const SUPERSAMPLE = _lowMem ? 1 : 1.5;
 // Frame cap. Frames are sampled across the whole loop, so true 60fps needs
 // duration*60 frames; 120 gives a full 60fps for loops up to 2s. Mobile
 // targets ~40fps to keep its atlas small.
 const MAX_RASTER_FRAMES = _lowMem ? 40 : 120;
 const RASTER_COLS = 11;               // 11×11 grid holds up to 121 frames
 // Atlas page size + count. Mobile: 1024² × 6 pages ≈ 24 MB (≥ the picker's
-// ~24 visible cap at any dpr). Desktop/high-mem: 2048² × 20 ≈ 320 MB — the 2×
-// supersample + 2× oversample slots are 4× the old area, so we widen the budget
-// to keep the whole visible set resident (duplicate emotes share one url@px
-// entry, so this covers far more than 20 on-screen instances).
+// ~24 visible cap at any dpr). Desktop/high-mem: 2048² × 16 ≈ 256 MB — enough
+// for the visible set at 1.5× supersample + 2× oversample slots (duplicate
+// emotes share one url@px entry, so this covers far more than 16 instances).
 const ATLAS_DIM = _lowMem ? 1024 : 2048;
-const MAX_ATLAS_PAGES = _lowMem ? 6 : 20;
+const MAX_ATLAS_PAGES = _lowMem ? 6 : 16;
 
 // `slot` = rendered/stored pixel size = px * SUPERSAMPLE (the cell displays
 // at px, so this is supersampled and downscaled on blit).
@@ -341,27 +342,56 @@ async function doRasterize(url, px, key, fpsScale = 1) {
 		pctx.clearRect(slot.x, slot.y, sl, sl);
 		pctx.drawImage(bmp, scx, scy, sl, sl, slot.x, slot.y, sl, sl);
 	}
-	try { bmp.close(); } catch {}
+	// Keep `bmp` alive for the disk-cache readback below (bmp2 = same bitmap);
+	// it's closed there once captured (or immediately if we're not caching).
+	const bmp2 = bmp;
 
 	const cacheEntry = { atlas, slots, N };
 	_frameCache.set(key, cacheEntry);
 	atlas.lru.set(key, cacheEntry);
 	_frameJobs.delete(key);
 
-	// Persist to disk for next time — capture each freshly-filled slot's RGBA
-	// straight from the atlas pages, then hand off to the XOR-delta+gzip encoder
-	// (async; playback is already running off the atlas so this blocks nothing).
-	if (frameCacheAvailable() && N >= 2) {
+	// Persist to disk for next time. ONE cheap readback of the whole packed
+	// sheet (not N per-slot getImageData — that stalled the render loop); the
+	// XOR-delta + gzip + slicing then all happen asynchronously in frame-cache,
+	// off the critical path. Playback is already running off the atlas, so this
+	// blocks nothing visible.
+	//
+	// At most ONE encode is in flight per worker: during a first-open storm the
+	// render loop is the priority, so emotes that bake while an encode is busy
+	// simply skip persistence (they get cached on a calmer later bake). This
+	// bounds held memory to a single captured sheet and keeps the storm's
+	// readbacks sparse.
+	if (frameCacheAvailable() && N >= 2 && !_encodeBusy) {
 		try {
-			const frames = new Array(N);
-			for (let i = 0; i < N; i++) {
-				const slot = slots[i];
-				const img = atlas.pages[slot.page].ctx.getImageData(slot.x, slot.y, sl, sl);
-				frames[i] = new Uint8ClampedArray(img.data); // own copy (data is transferable-backed)
-			}
-			fcStore(url + '@' + px, { sl, N, duration: entry.duration, totalFrames: entry.totalFrames }, frames);
-		} catch { /* readback failed — just skip persisting */ }
+			const rw = RASTER_COLS * sl, rh = usedRows * sl;
+			const scr = _encodeScratchFor(rw, rh);
+			scr.ctx.clearRect(0, 0, rw, rh);
+			scr.ctx.drawImage(bmp2, 0, 0);
+			const sheetData = scr.ctx.getImageData(0, 0, rw, rh).data; // single readback
+			_encodeBusy = true;
+			fcStore(url + '@' + px, {
+				sl, N, cols: RASTER_COLS, sheetW: rw, sheetData,
+				duration: entry.duration, totalFrames: entry.totalFrames
+			}).finally(() => { _encodeBusy = false; });
+		} catch { _encodeBusy = false; /* readback failed — just skip persisting */ }
 	}
+	try { bmp2.close(); } catch {}
+}
+let _encodeBusy = false;
+
+// Reusable 2D scratch canvas for the single-readback disk-cache capture. Grown
+// to the largest sheet seen; avoids allocating a canvas per bake.
+let _encodeScratch = null;
+function _encodeScratchFor(w, h) {
+	if (!_encodeScratch || _encodeScratch.w < w || _encodeScratch.h < h) {
+		const canvas = new OffscreenCanvas(w, h);
+		// willReadFrequently keeps this on a CPU backing so the getImageData
+		// readback is cheap and doesn't ping-pong the GPU.
+		const ctx = canvas.getContext('2d', { willReadFrequently: true });
+		_encodeScratch = { canvas, ctx, w, h };
+	}
+	return _encodeScratch;
 }
 
 function freeFrameCache(url) {

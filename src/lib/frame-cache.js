@@ -36,6 +36,10 @@ const _hasCompression =
 // time, and it sidesteps needing a clock. Higher = more recently touched.
 let _seq = 0;
 
+// Cooperative yield so the encode never blocks the worker's render loop. A
+// macrotask (setTimeout) lets any queued 'tick'/'raster' run before we resume.
+const _yield = () => new Promise((r) => setTimeout(r, 0));
+
 let _dbPromise = null;
 function _db() {
 	if (_dbPromise) return _dbPromise;
@@ -82,30 +86,45 @@ async function _gunzip(u8) {
 
 function _fullKey(key) { return CACHE_VERSION + '|' + key; }
 
-// Store N frames for `key` (= "url@px"). `frames` is an array of
-// Uint8ClampedArray, each exactly sl*sl*4 bytes (RGBA at the supersampled slot
-// size). Fire-and-forget from the caller's perspective; awaited only so a burst
-// of stores doesn't overlap-encode.
-export async function storeFrames(key, meta, frames) {
+// Slice one sl×sl frame out of the packed render sheet (width `sheetW`), at
+// grid cell (col,row), into a fresh contiguous RGBA buffer.
+function _sliceFrame(sheet, sheetW, sl, col, row) {
+	const out = new Uint8ClampedArray(sl * sl * 4);
+	const rowBytes = sl * 4;
+	const x0 = col * sl, y0 = row * sl;
+	for (let y = 0; y < sl; y++) {
+		const src = ((y0 + y) * sheetW + x0) * 4;
+		out.set(sheet.subarray(src, src + rowBytes), y * rowBytes);
+	}
+	return out;
+}
+
+// Store an emote's frames for `key` (= "url@px"). Takes the whole packed render
+// SHEET (one Uint8ClampedArray captured with a single getImageData) plus its
+// grid geometry, and does ALL the heavy work — per-frame slicing, XOR-delta,
+// gzip — asynchronously, yielding between chunks so it never blocks the render
+// loop. The caller does one cheap readback and hands off; encoding happens in
+// the background.
+export async function storeFrames(key, meta) {
 	if (!_hasCompression) return;
-	const { sl, N, duration, totalFrames } = meta;
-	if (!N || N < 2 || !sl) return;                 // static/degenerate — not worth caching
+	const { sl, N, duration, totalFrames, cols, sheetData, sheetW } = meta;
+	if (!N || N < 2 || !sl || !sheetData) return;   // static/degenerate — not worth caching
+	await _yield();                                  // get off the caller's stack immediately
 	const frameBytes = sl * sl * 4;
-	// XOR-delta encode into one contiguous buffer.
 	let delta;
 	try {
 		delta = new Uint8Array(N * frameBytes);
 		let prev = null;
 		for (let i = 0; i < N; i++) {
-			const f = frames[i];
-			if (!f || f.length !== frameBytes) return; // shape mismatch — bail, don't poison the cache
+			const cur = _sliceFrame(sheetData, sheetW, sl, i % cols, (i / cols) | 0);
 			const off = i * frameBytes;
 			if (!prev) {
-				delta.set(f, off);
+				delta.set(cur, off);
 			} else {
-				for (let j = 0; j < frameBytes; j++) delta[off + j] = f[j] ^ prev[j];
+				for (let j = 0; j < frameBytes; j++) delta[off + j] = cur[j] ^ prev[j];
 			}
-			prev = f;
+			prev = cur;
+			if ((i & 7) === 7) await _yield();       // keep the render loop responsive
 		}
 	} catch { return; }
 
