@@ -6,7 +6,7 @@
 	import { saveChatScroll, loadChatScroll } from '$lib/chat-scroll-store.js';
 	import { afterNavigate } from '$app/navigation';
 	import { db } from '$lib/firebase.js';
-	import { ref, onChildAdded, onValue, off, query, limitToLast, set, remove, get } from 'firebase/database';
+	import { ref, onChildAdded, onChildRemoved, onValue, off, query, limitToLast, set, remove, get } from 'firebase/database';
 	import { normaliseMessage, buildUserMap, formatTime } from '$lib/chat.js';
 	import { resolveMentionsFromText, segmentMentions } from '$lib/mentions.js';
 	import { scallopedClip, starburstClip } from '$lib/scalloped.js';
@@ -2624,6 +2624,12 @@
 				scrollToBottom();
 				markRead();
 			}
+		});
+
+		// Mirror server-side deletes live so both participants drop the message,
+		// not just the one who deleted it (they saw it vanish optimistically).
+		onChildRemoved(firebaseRef, (snap) => {
+			messages = messages.filter((m) => m.id !== snap.key);
 		});
 
 		typingRef = ref(db, `typing/${data.convId}`);

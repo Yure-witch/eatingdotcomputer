@@ -5,7 +5,7 @@
 	import { afterNavigate } from '$app/navigation';
 	import { pageTitle, pageTitleHref } from '$lib/page-title-store.js';
 	import { db } from '$lib/firebase.js';
-	import { ref, onChildAdded, onValue, off, query, limitToLast, set, remove, get } from 'firebase/database';
+	import { ref, onChildAdded, onChildRemoved, onValue, off, query, limitToLast, set, remove, get } from 'firebase/database';
 	import { normaliseMessage, buildUserMap, formatTime } from '$lib/chat.js';
 	import { resolveMentionsFromText, segmentMentions } from '$lib/mentions.js';
 	import { scallopedClip, starburstClip } from '$lib/scalloped.js';
@@ -2749,6 +2749,13 @@
 			}
 			const _dur = performance.now() - _t0;
 			if (_dur > 4) console.warn('[perf:msg]', _dur.toFixed(1) + 'ms');
+		});
+
+		// A delete removes the node in Firebase (server-side, via /api/chat/delete)
+		// — mirror that here so every connected client drops the message live,
+		// not just the person who deleted it (who saw it vanish optimistically).
+		onChildRemoved(firebaseRef, (snap) => {
+			messages = messages.filter((m) => m.id !== snap.key);
 		});
 
 		typingRef = ref(db, `typing/${convId}`);

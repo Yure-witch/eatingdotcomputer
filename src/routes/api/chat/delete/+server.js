@@ -63,7 +63,7 @@ export async function POST({ request, locals }) {
 	if (turso) {
 		try {
 			const archived = await turso.execute({
-				sql: 'SELECT attachment_url FROM messages WHERE id = ?',
+				sql: 'SELECT attachment_url FROM chat_messages WHERE id = ?',
 				args: [messageId]
 			});
 			const archivedUrl = archived.rows[0]?.attachment_url;
@@ -103,9 +103,16 @@ export async function POST({ request, locals }) {
 	await adminDb.ref(msgPath).remove();
 	await adminDb.ref(reactionPath).remove().catch(() => {});
 
-	// Delete from Turso if archived
+	// Delete from Turso if archived. The archive of record is `chat_messages`
+	// (written by /api/chat/sync and read back by both chat page loads) — the
+	// legacy `messages` table (migration 005) is NOT what the UI reloads, so
+	// deleting only from it left archived messages to reappear on refresh.
+	// We clear chat_messages (+ its reactions and any stars), and also sweep
+	// the legacy table so an old row can't linger.
 	if (turso) {
 		await turso.execute({ sql: 'DELETE FROM message_reactions WHERE message_id = ?', args: [messageId] }).catch(() => {});
+		await turso.execute({ sql: 'DELETE FROM starred_messages WHERE message_id = ?', args: [messageId] }).catch(() => {});
+		await turso.execute({ sql: 'DELETE FROM chat_messages WHERE id = ?', args: [messageId] }).catch(() => {});
 		await turso.execute({ sql: 'DELETE FROM messages WHERE id = ?', args: [messageId] }).catch(() => {});
 	}
 
