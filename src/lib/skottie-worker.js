@@ -421,16 +421,39 @@ async function doRasterize(url, px, key, fpsScale = 1) {
 	const slots = atlasAllocSlots(atlas, N);
 	if (!slots) { _frameJobs.delete(key); return; } // atlas full — thumb stays up
 
-	// Render all frames into the WebGL sheet grid (at supersampled size),
-	// then read back once.
 	const sk = sheet.surface.getCanvas();
 	sk.clear(_kit.TRANSPARENT);
-	for (let i = 0; i < N; i++) {
-		if (_anims.get(url) !== entry) { // released mid-job
-			for (const s of slots) atlas.free.push(s);
-			_frameJobs.delete(key);
-			return;
-		}
+	const _releasedCleanup = () => {
+		for (const s of slots) atlas.free.push(s);
+		if (_frameCache.get(key)?.slots === slots) { _frameCache.delete(key); atlas.lru.delete(key); }
+		_frameJobs.delete(key);
+	};
+
+	// ── Frame 0 FIRST — render + blit + publish so the cell paints instantly ──
+	// This is the Telegram trick: first appearance costs ONE frame render, not
+	// the whole loop. `ready` tracks how many frames are live in the atlas;
+	// playback clamps to it, so the emote shows frame 0 immediately and the loop
+	// fills in over the next few milliseconds as the rest bake in the background.
+	entry.animation.seek(0);
+	entry.animation.render(sk, _kit.LTRBRect(0, 0, sl, sl));
+	sheet.surface.flush();
+	{
+		const bmp0 = await createImageBitmap(sheet.canvas, 0, 0, sl, sl);
+		const s0 = slots[0], p0 = atlas.pages[s0.page].ctx;
+		p0.clearRect(s0.x, s0.y, sl, sl);
+		p0.drawImage(bmp0, 0, 0, sl, sl, s0.x, s0.y, sl, sl);
+		try { bmp0.close(); } catch {}
+	}
+	const cacheEntry = { atlas, slots, N, ready: 1 };
+	_frameCache.set(key, cacheEntry);
+	atlas.lru.set(key, cacheEntry);
+	if (N === 1) { _frameJobs.delete(key); return; } // static — nothing more to bake
+	await _yieldIdle(); // hand the thread back so the cell paints frame 0 now
+	if (_anims.get(url) !== entry) { _releasedCleanup(); return; }
+
+	// ── Remaining frames — bake in the background, growing `ready` ──
+	for (let i = 1; i < N; i++) {
+		if (_anims.get(url) !== entry) { _releasedCleanup(); return; }
 		const cx = (i % RASTER_COLS) * sl;
 		const cy = ((i / RASTER_COLS) | 0) * sl;
 		entry.animation.seek(i / N);
@@ -440,9 +463,8 @@ async function doRasterize(url, px, key, fpsScale = 1) {
 	sheet.surface.flush();
 	const usedRows = Math.ceil(N / RASTER_COLS);
 	const bmp = await createImageBitmap(sheet.canvas, 0, 0, RASTER_COLS * sl, usedRows * sl);
-	// Blit each rendered frame from the sheet into its atlas slot (1:1 at
-	// supersampled size; the downscale happens later, on the cell blit).
-	for (let i = 0; i < N; i++) {
+	// Frame 0 is already in the atlas; blit frames 1..N-1.
+	for (let i = 1; i < N; i++) {
 		const scx = (i % RASTER_COLS) * sl;
 		const scy = ((i / RASTER_COLS) | 0) * sl;
 		const slot = slots[i];
@@ -450,13 +472,10 @@ async function doRasterize(url, px, key, fpsScale = 1) {
 		pctx.clearRect(slot.x, slot.y, sl, sl);
 		pctx.drawImage(bmp, scx, scy, sl, sl, slot.x, slot.y, sl, sl);
 	}
+	cacheEntry.ready = N; // full loop now live
 	// Keep `bmp` alive for the disk-cache readback below (bmp2 = same bitmap);
 	// it's closed there once captured (or immediately if we're not caching).
 	const bmp2 = bmp;
-
-	const cacheEntry = { atlas, slots, N };
-	_frameCache.set(key, cacheEntry);
-	atlas.lru.set(key, cacheEntry);
 	_frameJobs.delete(key);
 
 	// Persist to disk for next time. ONE cheap readback of the whole packed
@@ -553,7 +572,12 @@ function renderCanvasCells(now) {
 			// Touch LRU so an on-screen emoji is never the eviction victim.
 			cache.atlas.lru.delete(ckey);
 			cache.atlas.lru.set(ckey, cache);
-			const fi = Math.min(cache.N - 1, Math.floor(t * cache.N));
+			// Progressive bake: only frames [0, ready) are live in the atlas.
+			// Clamp to the newest baked frame so we never blit an empty slot — the
+			// emote shows frame 0 instantly and catches up to the full loop as the
+			// rest bake in. (Disk-hydrated entries have no `ready` → fully baked.)
+			const _ready = cache.ready ?? cache.N;
+			const fi = Math.min(_ready - 1, Math.floor(t * cache.N));
 			if (cell.firstPainted && fi === cell.lastFrame) continue; // frame unchanged
 			const slot = cache.slots[fi];
 			const ss = cache.atlas.slot; // supersampled source size
