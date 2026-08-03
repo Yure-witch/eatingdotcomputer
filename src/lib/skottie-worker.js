@@ -265,43 +265,84 @@ async function pumpRaster() {
 	}
 }
 
+// Fill the atlas for url@px straight from the persistent disk cache — NO Lottie
+// fetch, NO parse, NO Skia render. On a hit we also drop in a minimal,
+// animation-less `_anims` entry so renderCanvasCells can time the loop and blit
+// atlas frames with nothing behind it. This is the whole Telegram trick: after
+// the first bake, an emote is pure cached frames on every subsequent open.
+// Returns true on a hit (atlas now filled), false on a miss.
+async function diskHydrate(url, px) {
+	if (!frameCacheAvailable()) return false;
+	const key = url + '@' + px;
+	if (_frameCache.has(key)) return true;
+	const atlas = getAtlas(px);
+	if (!atlas) return false;
+	const sl = atlas.slot;
+	let disk = null;
+	try { disk = await fcLoad(key, sl); } catch { disk = null; }
+	if (!disk) return false;
+	if (_frameCache.has(key)) return true; // another path won the race
+	const slots = atlasAllocSlots(atlas, disk.N);
+	if (!slots) return false;
+	for (let i = 0; i < disk.N; i++) {
+		const slot = slots[i];
+		// putImageData writes the exact RGBA at the slot origin (no blend) —
+		// same pixels the render→drawImage path would leave.
+		try { atlas.pages[slot.page].ctx.putImageData(new ImageData(disk.frames[i], sl, sl), slot.x, slot.y); }
+		catch { /* detached page — skip */ }
+	}
+	_frameCache.set(key, { atlas, slots, N: disk.N });
+	atlas.lru.set(key, _frameCache.get(key));
+	if (!_anims.has(url)) {
+		const dur = disk.duration || 1;
+		_anims.set(url, {
+			animation: null, refcount: 0, duration: dur,
+			fps: disk.totalFrames / Math.max(dur, 0.0001),
+			totalFrames: disk.totalFrames, diskOnly: true, startTime: null
+		});
+		self.postMessage({ type: 'anim-loaded', url });
+	}
+	return true;
+}
+
+// De-dupe concurrent probes for the same URL so register-canvas-cell and
+// load-anim (which arrive back-to-back) share one disk lookup.
+const _diskProbes = new Map(); // url -> Promise<boolean>
+function probeDisk(url, px) {
+	let p = _diskProbes.get(url);
+	if (p) return p;
+	p = diskHydrate(url, px).catch(() => false);
+	_diskProbes.set(url, p);
+	p.finally(() => { if (_diskProbes.get(url) === p) _diskProbes.delete(url); });
+	return p;
+}
+
+// A diskOnly entry can render its CACHED px but not a fresh one (no parsed
+// Lottie). If some cell needs a px we never baked, pull the real Lottie in the
+// background; a later tick re-rasterises once it's built.
+function requestAnimUpgrade(url, entry) {
+	if (!entry || entry._upgrading || _pending.get(url) || _anims.get(url)?.animation) return;
+	entry._upgrading = true;
+	_pending.set(url, { dataPromise: fetchLottieWorker(url), refcount: Math.max(1, entry.refcount || 1) });
+	schedulePump();
+}
+
 async function doRasterize(url, px, key, fpsScale = 1) {
+	// ── Fast path: rehydrate from the persistent disk cache (no Lottie) ──
+	if (await diskHydrate(url, px)) { _frameJobs.delete(key); return; }
+
+	// ── Slow path: render the vector frames with Skia ───────────────────
 	const entry = _anims.get(url);
 	if (!entry || entry.duration <= 0) { _frameJobs.delete(key); return; }
+	if (!entry.animation) {
+		// diskOnly entry, but THIS px isn't on disk → we need the real Lottie.
+		requestAnimUpgrade(url, entry);
+		_frameJobs.delete(key);
+		return;
+	}
 	const atlas = getAtlas(px);
 	if (!atlas) { _frameJobs.delete(key); return; }
 	const sl = atlas.slot; // supersampled pixel size (px * SUPERSAMPLE)
-
-	// ── Fast path: rehydrate from the persistent disk cache ──────────────
-	// If this emote@px was baked in a previous session (or earlier this one),
-	// its frames are on disk XOR-delta+gzip'd. Decode them and fill the atlas
-	// directly — skipping the entire Skia render loop, which is the dominant
-	// per-emote cost. Telegram Desktop's whole snappiness trick.
-	if (frameCacheAvailable()) {
-		let disk = null;
-		try { disk = await fcLoad(url + '@' + px, sl); } catch { disk = null; }
-		// The await above yields — re-validate nothing was torn down meanwhile.
-		if (disk && _anims.get(url) === entry && !_frameCache.has(key)) {
-			const slots = atlasAllocSlots(atlas, disk.N);
-			if (slots) {
-				for (let i = 0; i < disk.N; i++) {
-					const slot = slots[i];
-					const pctx = atlas.pages[slot.page].ctx;
-					// putImageData writes the exact RGBA at the slot origin (no
-					// blend) — same pixels the render→drawImage path would leave.
-					try { pctx.putImageData(new ImageData(disk.frames[i], sl, sl), slot.x, slot.y); }
-					catch { /* detached page — skip */ }
-				}
-				const cacheEntry = { atlas, slots, N: disk.N };
-				_frameCache.set(key, cacheEntry);
-				atlas.lru.set(key, cacheEntry);
-				_frameJobs.delete(key);
-				return;
-			}
-		}
-	}
-
-	// ── Slow path: render the vector frames with Skia ────────────────────
 	const sheet = ensureRasterSheetForPx(px);
 	if (!sheet) { _frameJobs.delete(key); return; }
 	// fpsScale (1.5 on the high-end LOD upgrade) bakes more frames = smoother
@@ -413,6 +454,10 @@ function renderCanvasCells(now) {
 		if (!cell.visible || !cell.ctx) continue;
 		const entry = _anims.get(cell.url);
 		if (!entry || entry.duration <= 0) continue; // not built yet → thumb still covers it
+		// A LIVE cell needs a parsed animation; a diskOnly entry has none. That
+		// only happens if a live cell shares a URL with a rasterized one — rare,
+		// but pull the real Lottie in and let the thumb hold until it's built.
+		if (!cell.rasterized && !entry.animation) { requestAnimUpgrade(cell.url, entry); continue; }
 
 		// Compute the target frame FIRST so we can bail before doing any GPU
 		// work if it hasn't advanced since last tick. Paused/static cells
@@ -774,7 +819,11 @@ function renderFrame(msg) {
 		if (!inPaintZone) continue;
 		if (cell.firstPainted && !inViewport) continue;
 
-		const hasAnim = !!(entry && entry.duration > 0);
+		// A diskOnly entry (no parsed animation, cached frames only) can't drive
+		// the overlay's live seek/render — pull the real Lottie and hold the
+		// thumb until it builds.
+		if (entry && entry.duration > 0 && !entry.animation) requestAnimUpgrade(cell.url, entry);
+		const hasAnim = !!(entry && entry.duration > 0 && entry.animation);
 		const shouldAnimate = hasAnim && inViewport;
 		if (justEntered && shouldAnimate && !cell.animationStarted) {
 			// Keep the animation cycle continuous across cell
@@ -1011,9 +1060,26 @@ self.onmessage = async (e) => {
 			const url = msg.url;
 			const existing = _anims.get(url);
 			if (existing) {
+				// Covers both a real parsed anim AND a diskOnly entry — either
+				// way playback has what it needs, no fetch required.
 				existing.refcount++;
 				self.postMessage({ type: 'anim-loaded', url });
 				return;
+			}
+			// A disk probe kicked at cell-registration may still be resolving —
+			// wait for it. On a hit it will have created the entry (no fetch);
+			// only on a miss do we fall back to fetching + parsing the Lottie.
+			const probe = _diskProbes.get(url);
+			if (probe) {
+				probe.then(() => {
+					const e2 = _anims.get(url);
+					if (e2) { e2.refcount++; self.postMessage({ type: 'anim-loaded', url }); return; }
+					if (!_pending.get(url) && !_anims.get(url)) {
+						_pending.set(url, { dataPromise: fetchLottieWorker(url), refcount: 1 });
+						schedulePump();
+					}
+				});
+				break;
 			}
 			const pending = _pending.get(url);
 			if (pending) {
@@ -1088,6 +1154,15 @@ self.onmessage = async (e) => {
 				firstPainted: false,
 				lastFrame: -1
 			});
+			// Probe the disk cache the instant a rasterized cell mounts — BEFORE
+			// the load-anim that SpriteSticker fires right after. On a hit the
+			// atlas fills from cached frames and load-anim becomes a no-op, so
+			// the Lottie is never fetched or parsed (Telegram's fast path).
+			if (rasterized && frameCacheAvailable()
+				&& !_anims.get(msg.url)?.animation
+				&& !_frameCache.has(msg.url + '@' + msg.w)) {
+				probeDisk(msg.url, msg.w);
+			}
 			break;
 		}
 		case 'unregister-canvas-cell': {
