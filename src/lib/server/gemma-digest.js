@@ -978,11 +978,15 @@ export function digestDue({ stateAt, gemmaUnread = 0, lastActiveMs = 0, now = Da
 	if (!stateAt) return true; // never sent — always send the first
 	const daysSince = (now - stateAt) / DAY_MS;
 	let minDays;
-	if (gemmaUnread >= 4) minDays = 5;        // piling up → back off hard
-	else if (gemmaUnread >= 2) minDays = 3;   // in the app but not reading Gemma
-	else minDays = 1;                          // reading Gemma → daily
-	// Gone from the app entirely → slow down regardless of unread.
-	if (lastActiveMs && now - lastActiveMs >= 5 * DAY_MS) minDays = Math.max(minDays, 4);
+	// Stay DAILY for anyone who's even loosely keeping up — only ease off once
+	// a real backlog builds. (The old thresholds treated just 2 unread as
+	// "ignoring Gemma" and tripled the interval, so an engaged user who hadn't
+	// happened to open the Gemma DM twice went quiet for days.)
+	if (gemmaUnread >= 8) minDays = 3;         // genuinely piling up → back off
+	else if (gemmaUnread >= 4) minDays = 2;    // a handful unread → ease off a touch
+	else minDays = 1;                           // keeping up → daily
+	// Gone from the app for a week+ → slow down regardless of unread.
+	if (lastActiveMs && now - lastActiveMs >= 7 * DAY_MS) minDays = Math.max(minDays, 3);
 	return daysSince >= minDays - 0.5; // epsilon for daily-cron time drift
 }
 
