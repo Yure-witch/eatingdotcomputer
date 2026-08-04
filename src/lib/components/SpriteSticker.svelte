@@ -92,6 +92,12 @@
 		if (RASTER_ENGINES.has(e)) return e;
 		return _coarse ? 'cpu-rasterized' : e;
 	});
+	// Rasterized frames are pre-baked (no settling), so the canvas can sit ABOVE
+	// the placeholder and simply appear on top the instant it paints — no
+	// thumb→canvas "reveal" moment for a sprite-vs-Skia rendering mismatch to
+	// flash through. (The live engine keeps the thumb on top to mask its
+	// settling frames.)
+	const rasterizedEngine = $derived(RASTER_ENGINES.has(engine));
 
 	const sprite = $derived($spriteSheet);
 	const spritePos = $derived(sprite?.items?.[itemKey] || null);
@@ -688,7 +694,8 @@
 		     or be transferred twice) is replaced by a fresh one for the
 		     new engine. -->
 		{#key engine}
-			<canvas bind:this={canvas} class="tg-canvas" width={px} height={px}></canvas>
+			<canvas bind:this={canvas} class="tg-canvas" class:tg-canvas-top={rasterizedEngine}
+				width={px} height={px}></canvas>
 		{/key}
 		<!-- High-res cross-fade overlay: mounts once the primary has rendered and
 		     the cell dwells; baked crisp + higher-fps, then faded in over the
@@ -748,6 +755,11 @@
 	   stage canvas draws at z-index 9999, above both of these, so this
 	   ordering doesn't affect it.) */
 	.tg-canvas { z-index: 1; background: transparent; }
+	/* Rasterized cells put the canvas ABOVE the thumb: a blank canvas is
+	   transparent so the thumb still shows through until the first frame paints,
+	   and then the canvas simply becomes the topmost layer — no reveal gap, no
+	   sprite-vs-canvas pop. */
+	.tg-canvas-top { z-index: 3; }
 	.tg-thumb { z-index: 2; }
 	/* No cross-fade: play now starts from frame 0 exactly as the thumb is
 	   removed (the clock holds frame 0 until handoff), so the placeholder and
