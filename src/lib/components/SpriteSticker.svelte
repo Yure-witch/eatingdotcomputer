@@ -748,9 +748,10 @@
 	   stage canvas draws at z-index 9999, above both of these, so this
 	   ordering doesn't affect it.) */
 	.tg-canvas { z-index: 1; background: transparent; }
-	.tg-thumb { z-index: 2; transition: opacity 0.14s ease; }
-	/* Fade out instead of display:none so the reveal is a smooth cross-
-	   fade rather than a hard pop. pointer-events:none lets clicks reach
-	   the cell once it's transparent. */
-	.tg-thumb.hidden { opacity: 0; pointer-events: none; }
+	.tg-thumb { z-index: 2; }
+	/* No cross-fade: play now starts from frame 0 exactly as the thumb is
+	   removed (the clock holds frame 0 until handoff), so the placeholder and
+	   the canvas's first frame are identical — a hard swap is seamless, and
+	   the fade only added a needless dissolve. */
+	.tg-thumb.hidden { display: none; }
 </style>
