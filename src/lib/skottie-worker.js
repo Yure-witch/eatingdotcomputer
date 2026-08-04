@@ -554,9 +554,17 @@ function renderCanvasCells(now) {
 		let t;
 		if (cell.paused) {
 			t = cell.paintIndex != null ? Math.min(cell.paintIndex / entry.totalFrames, 1) : 1;
+		} else if (!cell.firstPainted) {
+			// HOLD frame 0 until this cell hands off (the placeholder still covers
+			// it). Starting the clock only at handoff means play begins from frame
+			// 0 exactly as the thumb reveals the canvas — otherwise the timeline
+			// runs while the thumb is still up, and the thumb (≈frame 0)
+			// cross-dissolves over a canvas already several frames in: that
+			// mismatch is the start-of-play flash.
+			t = 0;
 		} else {
-			// Share one timeline per URL so re-mounted cells rejoin the
-			// cycle in progress instead of snapping back to frame 0.
+			// Share one timeline per URL so re-mounted cells rejoin the cycle in
+			// progress. It starts at the FIRST cell's handoff, set lazily here.
 			if (entry.startTime == null) entry.startTime = now;
 			if (!cell.startTime) cell.startTime = entry.startTime;
 			const elapsed = (now - cell.startTime) / 1000;
