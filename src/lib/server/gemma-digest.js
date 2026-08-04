@@ -317,14 +317,15 @@ async function llmVerifyGoals(creds, goals, lines, userId) {
 	return out;
 }
 
+// Returns the array of task labels newly added this run (empty if none).
 async function harvestGoals(userId, recap, creds) {
 	const db = getDb();
-	if (!db) return;
+	if (!db) return [];
 	const dmLines = await gatherDMLines(userId).catch(() => []);
 	const mine = recap.filter((l) => l.uid === userId);
 	const others = [...dmLines.filter((l) => l.uid !== userId), ...recap.filter((l) => l.uid !== userId)];
 	const mineAll = [...mine, ...dmLines.filter((l) => l.uid === userId)];
-	if (!mineAll.length && !others.length) return;
+	if (!mineAll.length && !others.length) return [];
 	const existingRows = await db.execute({ sql: 'SELECT label FROM gemma_goals WHERE user_id = ?', args: [userId] }).catch(() => ({ rows: [] }));
 	const existing = existingRows.rows.map((r) => String(r.label));
 	const selfRow = (await db.execute({ sql: 'SELECT name FROM users WHERE id = ?', args: [userId] }).catch(() => ({ rows: [] }))).rows[0];
@@ -354,7 +355,7 @@ async function harvestGoals(userId, recap, creds) {
 		}
 	}
 	const seen = new Set();
-	let added = 0;
+	const addedLabels = [];
 	// Add every distinct new task voiced this window (not a subset). Dedup vs
 	// already-tracked/checked-off labels below keeps it from re-adding.
 	for (const g of goals.slice(0, 40)) {
@@ -370,9 +371,9 @@ async function harvestGoals(userId, recap, creds) {
 			sql: 'INSERT OR IGNORE INTO gemma_goals (id, user_id, label, source, source_conv_id, source_msg_id, source_kind, requested_by, source_text, source_quote) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
 			args: [crypto.randomUUID(), userId, g.label, 'chat', g.convId ?? null, g.msgId ?? null, g.kind ?? 'channel', g.by ?? null, g.text ?? null, g.quote ?? null]
 		}).catch(() => null);
-		if (res?.rowsAffected) added += 1;
+		if (res?.rowsAffected) addedLabels.push(g.label);
 	}
-	return added;
+	return addedLabels;
 }
 // Refine pass — repair stored goals whose labels still carry bare deixis
 // (harvested before context-framing, or an LLM slip). One batched call:
@@ -747,12 +748,12 @@ async function llmWrite(creds, prompt) {
 }
 
 // Keyless / LLM-failure fallback — plain templated digest.
-function templateDigest({ name, recapLines, incomplete, interests, doneGoals = [], goals = [], newGoalsCount = 0, webFinds = null }) {
+function templateDigest({ name, recapLines, incomplete, interests, doneGoals = [], goals = [], newGoalLabels = [], webFinds = null }) {
 	const parts = [`Hi ${name.split(' ')[0]}! Here's your digest. ✨`];
 	if (doneGoals.length) {
 		parts.push(`🎉 You checked off: ${doneGoals.map((g) => g.label).join('; ')} — nicely done!`);
 	}
-	if (newGoalsCount > 0) parts.push(`\u{1F3AF} ${newGoalsCount} new task${newGoalsCount === 1 ? '' : 's'} added \u2014 see your Tasks list.`);
+	if (newGoalLabels.length) parts.push(`\u{1F3AF} Added to your Tasks list: ${newGoalLabels.join('; ')}.`);
 	if (recapLines.length) {
 		parts.push(`Today in class: ${recapLines.length} messages across the channels. A few highlights:`);
 		for (const l of recapLines.slice(-3)) parts.push(`- ${fmtRecapLine(l)}`);
@@ -845,7 +846,8 @@ async function sendGemmaDigestInner({ userId, classId = DEFAULT_CLASS, recapLine
 	// when a key is reachable — resolves pronouns; regex net underneath),
 	// then load the open set (harvested now + still-unchecked from before).
 	const creds = await pickCreds(userId);
-	const newGoalsCount = (await harvestGoals(userId, recap, creds)) ?? 0;
+	const addedGoalLabels = (await harvestGoals(userId, recap, creds)) ?? [];
+	const newGoalsCount = addedGoalLabels.length;
 	await refineGoals(userId, recap, creds);
 	const goals = await getOpenGoals(userId);
 	const doneGoals = await getUncongratulatedGoals(userId);
@@ -943,7 +945,10 @@ async function sendGemmaDigestInner({ userId, classId = DEFAULT_CLASS, recapLine
 				: 'THEIR TOP PRIORITY TASK (nudge just this one — do NOT list others):',
 			promptGoals.length ? promptGoals.map((g) => `- ${g.label}${g.requestedBy ? ` (asked by ${g.requestedBy})` : ''}`).join('\n') : '(none tracked)',
 			'',
-			`NEW TASKS ADDED THIS RUN: ${newGoalsCount} — if more than zero, add one line telling them their Tasks list was updated ("N new tasks added — see your Tasks list").`,
+			newGoalsCount > 0
+				? 'NEW TASKS JUST CAPTURED from their own words this run — NAME THEM BACK so they know you actually heard them (quote the gist of each, do not just say a count), then note they\'re on the Tasks list:\n'
+					+ addedGoalLabels.map((l) => `- ${l}`).join('\n')
+				: 'NEW TASKS ADDED THIS RUN: 0 — do not mention the Tasks list.',
 			'',
 			'GOALS THEY JUST COMPLETED (congratulate them warmly for these, one short line):',
 			doneGoals.length ? doneGoals.map((g) => `- ${g.label}`).join('\n') : '(none)'
@@ -951,7 +956,7 @@ async function sendGemmaDigestInner({ userId, classId = DEFAULT_CLASS, recapLine
 		text = await llmWrite(creds, prompt);
 		usedLlm = !!text;
 	}
-	if (!text) text = templateDigest({ name, recapLines: recap, incomplete: promptIncomplete, interests, doneGoals, goals: promptGoals, newGoalsCount, webFinds: freshFind ? [freshFind] : null });
+	if (!text) text = templateDigest({ name, recapLines: recap, incomplete: promptIncomplete, interests, doneGoals, goals: promptGoals, newGoalLabels: addedGoalLabels, webFinds: freshFind ? [freshFind] : null });
 
 	await deliverDM(userId, text);
 	await stateRef.set({ hash: fingerprint, at: Date.now(), reminded: false });
