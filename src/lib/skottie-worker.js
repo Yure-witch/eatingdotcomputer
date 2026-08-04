@@ -554,17 +554,9 @@ function renderCanvasCells(now) {
 		let t;
 		if (cell.paused) {
 			t = cell.paintIndex != null ? Math.min(cell.paintIndex / entry.totalFrames, 1) : 1;
-		} else if (!cell.firstPainted) {
-			// HOLD frame 0 until this cell hands off (the placeholder still covers
-			// it). Starting the clock only at handoff means play begins from frame
-			// 0 exactly as the thumb reveals the canvas — otherwise the timeline
-			// runs while the thumb is still up, and the thumb (≈frame 0)
-			// cross-dissolves over a canvas already several frames in: that
-			// mismatch is the start-of-play flash.
-			t = 0;
 		} else {
-			// Share one timeline per URL so re-mounted cells rejoin the cycle in
-			// progress. It starts at the FIRST cell's handoff, set lazily here.
+			// Share one timeline per URL so re-mounted cells rejoin the
+			// cycle in progress instead of snapping back to frame 0.
 			if (entry.startTime == null) entry.startTime = now;
 			if (!cell.startTime) cell.startTime = entry.startTime;
 			const elapsed = (now - cell.startTime) / 1000;
@@ -580,12 +572,28 @@ function renderCanvasCells(now) {
 			// Touch LRU so an on-screen emoji is never the eviction victim.
 			cache.atlas.lru.delete(ckey);
 			cache.atlas.lru.set(ckey, cache);
-			// Progressive bake: only frames [0, ready) are live in the atlas.
-			// Clamp to the newest baked frame so we never blit an empty slot — the
-			// emote shows frame 0 instantly and catches up to the full loop as the
-			// rest bake in. (Disk-hydrated entries have no `ready` → fully baked.)
-			const _ready = cache.ready ?? cache.N;
-			const fi = Math.min(_ready - 1, Math.floor(t * cache.N));
+			const N = cache.N;
+			const _ready = cache.ready ?? N;        // progressive bake: frames [0, ready) live
+			const fullyBaked = _ready >= N;
+			let fi;
+			if (!cell.firstPainted) {
+				// The sprite thumb is the emote's LAST frame (render_thumbs bakes
+				// op-1), so DON'T reveal until the whole loop is baked, then hand off
+				// ON the last frame — pixel-identical to the thumb, so the swap is
+				// seamless: no fade, no pop, no empty-frame-0 blank. Until then keep
+				// blitting the newest baked frame UNDER the (still-covering) thumb.
+				fi = fullyBaked ? N - 1 : _ready - 1;
+			} else if (cell.paused) {
+				fi = cell.paintIndex != null ? Math.min(cell.paintIndex, N - 1) : N - 1;
+			} else {
+				// Play forward on this cell's own clock, phased to start at the last
+				// frame (where we handed off) and loop N-1 → 0 → 1 …
+				const elapsed = (now - cell.startTime) / 1000;
+				const tt = cell.loop
+					? (elapsed % entry.duration) / entry.duration
+					: Math.min(1, elapsed / entry.duration);
+				fi = Math.min(N - 1, Math.floor(tt * N));
+			}
 			if (cell.firstPainted && fi === cell.lastFrame) continue; // frame unchanged
 			const slot = cache.slots[fi];
 			const ss = cache.atlas.slot; // supersampled source size
@@ -601,8 +609,14 @@ function renderCanvasCells(now) {
 			if (!okR) continue;
 			cell.lastFrame = fi;
 			cell.paintCount = (cell.paintCount || 0) + 1;
-			// Frames are pre-rendered (no settling), so hand off immediately.
-			if (!cell.firstPainted) { cell.firstPainted = true; firstPaints.push(id); }
+			// Hand off ONLY once the full loop is baked, so the revealed frame is
+			// the last frame = the thumb. Then start this cell's own clock phased
+			// so playback continues forward from that last frame into the loop.
+			if (!cell.firstPainted && fullyBaked) {
+				cell.firstPainted = true;
+				firstPaints.push(id);
+				cell.startTime = now - ((N - 1) / N) * entry.duration * 1000;
+			}
 			continue;
 		}
 
