@@ -92,7 +92,20 @@ export const actions = {
 			}
 		}
 
-		const nextStep = session.user.role === 'instructor' ? 'complete' : 'class';
+		// Instructors finish here. A student normally goes on to request a class
+		// next — UNLESS they're already an approved member (e.g. the instructor
+		// added them straight in), in which case completing the profile IS the
+		// end of onboarding and they drop into the app.
+		let nextStep = 'class';
+		if (session.user.role === 'instructor') {
+			nextStep = 'complete';
+		} else {
+			const appr = await db.execute({
+				sql: "SELECT 1 FROM class_memberships WHERE user_id = ? AND status = 'approved' LIMIT 1",
+				args: [session.user.id]
+			}).catch(() => ({ rows: [] }));
+			if (appr.rows.length) nextStep = 'complete';
+		}
 
 		// Note: `year` is intentionally NOT written here — it's instructor-managed
 		// in Manage, so re-running onboarding never clobbers an instructor's entry.

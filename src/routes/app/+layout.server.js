@@ -39,7 +39,19 @@ export async function load({ locals, cookies }) {
 			});
 			const row = membershipResult.rows[0];
 			const status = String(row?.status ?? 'none');
+			// Profile-onboarding gate, checked INDEPENDENTLY of membership: an
+			// instructor-added user can be approved straight into a class without
+			// ever completing the profile step, so we must still route them
+			// through it. `onboarding_step` only advances past 'profile' once the
+			// profile form is submitted (defaults to 'profile' for a fresh user).
+			const userResult = await db.execute({
+				sql: 'SELECT onboarding_step FROM users WHERE id = ?',
+				args: [session.user.id]
+			});
+			const step = String(userResult.rows[0]?.onboarding_step ?? 'profile');
+			const profileDone = step !== 'profile';
 			if (status === 'approved') {
+				if (!profileDone) redirect(303, '/onboarding/profile');
 				currentClass = {
 					id: String(row.class_id),
 					name: String(row.name),
@@ -48,11 +60,6 @@ export async function load({ locals, cookies }) {
 			} else if (status === 'pending' || status === 'denied') {
 				redirect(303, '/onboarding/pending');
 			} else {
-				const userResult = await db.execute({
-					sql: 'SELECT onboarding_step FROM users WHERE id = ?',
-					args: [session.user.id]
-				});
-				const step = String(userResult.rows[0]?.onboarding_step ?? 'profile');
 				redirect(303, step === 'class' ? '/onboarding/class' : '/onboarding/profile');
 			}
 		} catch (e) {
