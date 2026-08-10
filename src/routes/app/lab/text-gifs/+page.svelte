@@ -1,37 +1,25 @@
 <script>
 	import { onMount } from 'svelte';
 	import { encodeGif, encodeWebP } from '$lib/gif-studio.js';
-	import { TEXT_EFFECTS, makeTextScene } from '$lib/text-gifs.js';
+	import { makeText3DScene, TEXT_MATERIALS, TEXT_MOTIONS } from '$lib/text-3d.js';
 
 	// ── Content ──────────────────────────────────────────────────────────────
 	let text = $state('eating');
-	let effect = $state('rainbow');
-
-	// ── Type ─────────────────────────────────────────────────────────────────
-	const FONTS = [
-		{ label: 'Sans', stack: "'Poppins', system-ui, sans-serif" },
-		{ label: 'Serif', stack: "Georgia, 'Times New Roman', serif" },
-		{ label: 'Mono', stack: "'Courier New', ui-monospace, monospace" },
-		{ label: 'Impact', stack: "Impact, 'Arial Black', sans-serif" },
-		{ label: 'Display', stack: "'Avara', Georgia, serif" }
-	];
-	let fontStack = $state(FONTS[0].stack);
-	let weight = $state(700);
-	let italic = $state(false);
-	let sizeFrac = $state(0.34);
-	let tracking = $state(0);
+	let material = $state('chrome');
+	let motion = $state('spin');
+	let uppercase = $state(true);
+	let depth = $state(1);
 
 	// ── Colour ───────────────────────────────────────────────────────────────
-	let color = $state('#ffffff');
-	let color2 = $state('#ffc371');
-	let bgType = $state('solid'); // solid | gradient | transparent
-	let bg = $state('#111318');
-	let bg2 = $state('#2b2f3a');
+	let color = $state('#ff3b6b');   // tint for candy / glass
+	let bgType = $state('gradient'); // solid | gradient | transparent
+	let bg = $state('#0b0d12');
+	let bg2 = $state('#232838');
 
 	// ── Timing / output ───────────────────────────────────────────────────────
-	let duration = $state(2);
+	let duration = $state(3);
 	let fps = $state(24);
-	let aspect = $state('1:1');
+	let aspect = $state('16:9');
 	let resolution = $state(480);
 	let exportFmt = $state('gif');
 
@@ -41,33 +29,41 @@
 		if (aw >= ah) return { w: resolution, h: Math.round((resolution * ah) / aw) };
 		return { w: Math.round((resolution * aw) / ah), h: resolution };
 	});
-	// Preview is capped for a snappy canvas; export uses full outDims.
 	const previewDims = $derived.by(() => {
 		const { w, h } = outDims;
-		const cap = 420;
+		const cap = 440;
 		const s = Math.min(1, cap / Math.max(w, h));
 		return { w: Math.round(w * s), h: Math.round(h * s) };
 	});
 
-	const liveOpts = () => ({
-		text, font: fontStack, weight, italic, sizeFrac, tracking,
-		color, color2, bgType, bg, bg2, duration
+	// Live options read by the 3D scene each frame — never triggers a renderer
+	// rebuild, so sliders stay smooth and GL contexts don't leak.
+	const getOpts = () => ({
+		text, material, motion, uppercase, depth,
+		color, bgType, bg, bg2, duration
 	});
 
-	// ── Preview loop ───────────────────────────────────────────────────────────
+	// ── Preview ────────────────────────────────────────────────────────────────
 	let canvasEl = $state(null);
-	let fontsReady = $state(false);
 	let previewScene = null;
+	let sceneW = 0, sceneH = 0;
+
+	function ensurePreviewScene() {
+		if (!canvasEl) return;
+		if (previewScene && sceneW === canvasEl.width && sceneH === canvasEl.height) return;
+		previewScene?.dispose?.();
+		sceneW = canvasEl.width; sceneH = canvasEl.height;
+		previewScene = makeText3DScene(getOpts, sceneW, sceneH);
+		previewScene.ready?.();
+	}
 
 	onMount(() => {
 		let raf = 0, last = 0;
-		if (document.fonts?.ready) document.fonts.ready.then(() => (fontsReady = true));
-		else fontsReady = true;
 		const tick = (now) => {
 			raf = requestAnimationFrame(tick);
 			if (!canvasEl) return;
+			ensurePreviewScene();
 			const ctx = canvasEl.getContext('2d');
-			if (!previewScene) previewScene = makeTextScene(effect, liveOpts(), canvasEl.width, canvasEl.height);
 			const dt = last ? Math.min(0.05, (now - last) / 1000) : 0;
 			last = now;
 			previewScene.step(dt);
@@ -76,16 +72,16 @@
 		raf = requestAnimationFrame(tick);
 		const onUnload = () => { if (renderedKey) deleteRender(renderedKey, true); };
 		window.addEventListener('pagehide', onUnload);
-		return () => { cancelAnimationFrame(raf); window.removeEventListener('pagehide', onUnload); };
+		return () => {
+			cancelAnimationFrame(raf);
+			previewScene?.dispose?.();
+			window.removeEventListener('pagehide', onUnload);
+		};
 	});
+	// Recreate the preview scene when the canvas resizes (aspect / resolution).
+	$effect(() => { void previewDims; ensurePreviewScene(); });
 
-	// Rebuild the preview scene whenever a structural input changes.
-	$effect(() => {
-		void [effect, text, fontStack, weight, italic, sizeFrac, tracking, color, color2, bgType, bg, bg2, duration, previewDims, fontsReady];
-		if (canvasEl) previewScene = makeTextScene(effect, liveOpts(), canvasEl.width, canvasEl.height);
-	});
-
-	// ── Render / export (mirrors Kinetic Type) ─────────────────────────────────
+	// ── Render / export ─────────────────────────────────────────────────────────
 	let exporting = $state(false);
 	let rendering = $state(false);
 	let progress = $state(0);
@@ -93,19 +89,24 @@
 	async function produceRender() {
 		const { w: W, h: H } = outDims;
 		const frames = Math.max(2, Math.round(duration * fps));
-		const scene = makeTextScene(effect, liveOpts(), W, H);
-		if (document.fonts?.ready) await document.fonts.ready;
-		const encode = exportFmt === 'webp' ? encodeWebP : encodeGif;
-		const bytes = await encode({
-			W, H, fps, frames, scene,
-			delayMs: 1000 / fps,
-			stepDt: duration / frames, // tile the loop exactly
-			onProgress: (p) => (progress = p)
-		});
-		const fmt = exportFmt;
-		const name = (text.trim() || 'text').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() || 'text';
-		const blob = new Blob([bytes], { type: fmt === 'webp' ? 'image/webp' : 'image/gif' });
-		return { blob, name, fmt };
+		const scene = makeText3DScene(getOpts, W, H, { supersample: 2 });
+		try {
+			await scene.ready();
+			await new Promise((r) => setTimeout(r, 60)); // let the env map settle
+			const encode = exportFmt === 'webp' ? encodeWebP : encodeGif;
+			const bytes = await encode({
+				W, H, fps, frames, scene,
+				delayMs: 1000 / fps,
+				stepDt: duration / frames,
+				onProgress: (p) => (progress = p)
+			});
+			const fmt = exportFmt;
+			const name = (text.trim() || 'text').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() || 'text';
+			const blob = new Blob([bytes], { type: fmt === 'webp' ? 'image/webp' : 'image/gif' });
+			return { blob, name, fmt };
+		} finally {
+			scene.dispose?.();
+		}
 	}
 
 	async function exportFile() {
@@ -215,38 +216,34 @@
 		<div class="panel">
 			<label class="field">
 				<span class="lbl">Text</span>
-				<input class="text-in" type="text" bind:value={text} maxlength="40" placeholder="Type a word…" />
+				<input class="text-in" type="text" bind:value={text} maxlength="24" placeholder="Type a word…" />
 			</label>
 
 			<div class="group">
-				<span class="group-label">Effect</span>
+				<span class="group-label">Material</span>
 				<div class="chips">
-					{#each TEXT_EFFECTS as e}
-						<button class="chip" class:on={effect === e.id} onclick={() => (effect = e.id)}>{e.name}</button>
+					{#each TEXT_MATERIALS as m}
+						<button class="chip" class:on={material === m.id} onclick={() => (material = m.id)}>{m.name}</button>
 					{/each}
 				</div>
 			</div>
 
 			<div class="group">
-				<span class="group-label">Font</span>
+				<span class="group-label">Motion</span>
 				<div class="chips">
-					{#each FONTS as f}
-						<button class="chip" class:on={fontStack === f.stack} onclick={() => (fontStack = f.stack)} style="font-family:{f.stack}">{f.label}</button>
+					{#each TEXT_MOTIONS as m}
+						<button class="chip sm" class:on={motion === m.id} onclick={() => (motion = m.id)}>{m.name}</button>
 					{/each}
 				</div>
-				<div class="row">
-					<button class="chip sm" class:on={italic} onclick={() => (italic = !italic)}>Italic</button>
-					<label class="slider"><span>Weight {weight}</span><input type="range" min="300" max="900" step="100" bind:value={weight} /></label>
-				</div>
-				<label class="slider"><span>Size</span><input type="range" min="0.15" max="0.6" step="0.01" bind:value={sizeFrac} /></label>
-				<label class="slider"><span>Tracking</span><input type="range" min="-0.05" max="0.35" step="0.01" bind:value={tracking} /></label>
+				<label class="slider"><span>Depth</span><input type="range" min="0.4" max="2" step="0.1" bind:value={depth} /></label>
+				<button class="chip sm" class:on={uppercase} onclick={() => (uppercase = !uppercase)}>UPPERCASE</button>
 			</div>
 
 			<div class="group">
 				<span class="group-label">Colour</span>
 				<div class="row">
-					<label class="swatch"><span>Text</span><input type="color" bind:value={color} /></label>
-					<label class="swatch"><span>Accent</span><input type="color" bind:value={color2} /></label>
+					<label class="swatch"><span>Tint</span><input type="color" bind:value={color} /></label>
+					<span class="hint">used by Candy / Glass</span>
 				</div>
 				<div class="chips">
 					<button class="chip sm" class:on={bgType === 'solid'} onclick={() => (bgType = 'solid')}>Solid bg</button>
@@ -273,8 +270,8 @@
 						<button class="chip sm" class:on={resolution === r.v} onclick={() => (resolution = r.v)}>{r.l}</button>
 					{/each}
 				</div>
-				<label class="slider"><span>Loop {duration}s</span><input type="range" min="0.5" max="5" step="0.5" bind:value={duration} /></label>
-				<label class="slider"><span>FPS {fps}</span><input type="range" min="8" max="30" step="1" bind:value={fps} /></label>
+				<label class="slider"><span>Loop {duration}s</span><input type="range" min="1" max="6" step="0.5" bind:value={duration} /></label>
+				<label class="slider"><span>FPS {fps}</span><input type="range" min="12" max="30" step="1" bind:value={fps} /></label>
 				<div class="chips">
 					<button class="chip sm" class:on={exportFmt === 'gif'} onclick={() => (exportFmt = 'gif')}>GIF</button>
 					<button class="chip sm" class:on={exportFmt === 'webp'} onclick={() => (exportFmt = 'webp')}>WebP</button>
@@ -311,7 +308,7 @@
 	}
 	.result { display: flex; flex-direction: column; align-items: center; gap: 0.5rem; padding: 0.75rem; border: 1px dashed var(--border); border-radius: 12px; }
 	.result-hint { font-size: 0.75rem; color: var(--muted-fg); margin: 0; }
-	.result img { max-width: 260px; cursor: grab; border-radius: 8px; }
+	.result img { max-width: 300px; cursor: grab; border-radius: 8px; }
 	.result-actions { display: flex; gap: 0.5rem; }
 	.mini { font-size: 0.72rem; padding: 0.25rem 0.6rem; border: 1px solid var(--border); border-radius: 6px; background: var(--paper); color: var(--ink); text-decoration: none; cursor: pointer; }
 
@@ -325,6 +322,7 @@
 	.chip.sm { font-size: 0.72rem; padding: 0.25rem 0.55rem; }
 	.chip.on { background: var(--ink); color: var(--paper); border-color: var(--ink); }
 	.row { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; }
+	.hint { font-size: 0.68rem; color: var(--muted-fg); }
 	.slider { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.72rem; color: var(--muted-fg); flex: 1; }
 	.slider input { width: 100%; }
 	.swatch { display: flex; align-items: center; gap: 0.4rem; font-size: 0.75rem; color: var(--muted-fg); }
