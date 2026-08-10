@@ -554,14 +554,14 @@
 	}
 </script>
 
-<svelte:head><title>GIF Studio — eating.computer</title></svelte:head>
+<svelte:head><title>Kinetic Type — eating.computer</title></svelte:head>
 
 <div class="shell">
 	<div class="topbar">
 		<a class="back" href="/app/lab" aria-label="Back to Lab">
 			<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
 		</a>
-		<h1>GIF Studio</h1>
+		<h1>Kinetic Type</h1>
 		<button class="render-btn" onclick={renderToPage} disabled={exporting || rendering || !text.trim()} title="Render and drag it straight into your doc — no download">
 			{#if rendering}Rendering {Math.round(progress * 100)}%{:else}Render GIF{/if}
 		</button>

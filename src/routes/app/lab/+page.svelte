@@ -5,9 +5,16 @@
 	const tools = [
 		{
 			href: '/app/lab/gif',
-			title: 'GIF Studio',
+			title: 'Kinetic Type',
 			blurb: 'Mesmerizing variable-font title animations for slide decks — export as GIF.',
 			icon: 'gif_box',
+			ready: true
+		},
+		{
+			href: '/app/lab/text-gifs',
+			title: 'Text GIFs',
+			blurb: 'Type a word, pick an animated text effect — rainbow, neon, wave, glitch — and export a looping GIF.',
+			icon: 'title',
 			ready: true
 		}
 	];
