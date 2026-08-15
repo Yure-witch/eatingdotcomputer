@@ -96,15 +96,37 @@ Then `npm run cap:sync` and re-run. Revert before shipping.
       6.7" (1290×2796) and 6.5" (1242×2688) iPhone are the two Apple requires;
       iPad only if you list iPad support.
 
-### ⚠️ Notifications don't work in the shell yet
+### Native push (APNs) — built; needs Apple key + env + capability
 
-The web app's push (web-push/VAPID) works in **Safari and installed PWAs**, but
-**NOT inside a WKWebView** — so a user running the App Store build gets **zero
-push notifications**. For a chat app that's a real gap, and it also weakens the
-4.2 "minimum functionality" defense. The fix is native push:
-`@capacitor/push-notifications` (APNs) + an APNs key in App Store Connect + the
-server routing chat notifications to APNs for native device tokens. Decide
-before launch whether to ship with this or note it as a fast-follow.
+Web push doesn't work in the WKWebView, so the app registers with **APNs**
+instead. The code is wired end-to-end:
+
+- Client: `registerNativePush()` in `native.js` (called from `initNativeShell`)
+  asks permission, registers, and POSTs the device token to `/api/push/apns`.
+  Tapping a notification opens its `url`.
+- Storage: `apns_tokens` table (migration `058_apns_tokens.sql`).
+- Send: `src/lib/server/apns.js` (HTTP/2 + ES256 .p8 JWT). `notifyUsers()` now
+  fans out to BOTH web-push and APNs, so every existing notification (chat, DM,
+  mentions, Gemma) reaches native installs automatically.
+
+To turn it on:
+
+1. **Run the migration** so the token table exists: `npm run migrate`.
+2. **Apple → Keys**: create an **APNs Auth Key** (.p8) in the Apple Developer
+   portal. Note the **Key ID**; your **Team ID** is on the membership page.
+3. **Vercel env** (Production):
+   - `APNS_KEY` — the .p8 file CONTENTS (paste the PEM; `\n` newlines are fine)
+   - `APNS_KEY_ID`, `APNS_TEAM_ID`
+   - `APNS_BUNDLE_ID = computer.eating.app`
+   - `APNS_HOST` — omit for production; set to
+     `https://api.sandbox.push.apple.com` while testing a **development**-signed
+     build (Xcode Run / dev TestFlight), else you'll get `BadDeviceToken`.
+4. **Xcode capability**: App target → Signing & Capabilities → **+ Capability →
+   Push Notifications**. (This adds the `aps-environment` entitlement; the
+   provisioning profile must include Push.) Then `npm run cap:sync`.
+
+If `APNS_*` env is unset the sender is inert — web push still works, native just
+stays silent, so nothing breaks before you finish setup.
 
 ### Upload + submit
 

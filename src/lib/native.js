@@ -179,4 +179,59 @@ export async function initNativeShell() {
 			window.dispatchEvent(new CustomEvent('native-network', { detail: status }));
 		});
 	} catch {}
+
+	// Native push (APNs). Web-push doesn't work inside the WKWebView, so this is
+	// the ONLY notification channel for App Store installs.
+	registerNativePush();
+}
+
+// The last APNs device token we saw, so we can re-associate it with the user
+// after a sign-in (the token POST needs a session; on the login screen it 401s,
+// but a fresh sign-in reloads the app and this re-runs authed) and on resume.
+let _apnsToken = null;
+async function _postApnsToken(token) {
+	if (!token) return false;
+	try {
+		const res = await fetch('/api/push/apns', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ token, platform: 'ios' })
+		});
+		return res.ok;
+	} catch { return false; }
+}
+
+/**
+ * Ask for notification permission, register with APNs, and hand the device
+ * token to the server. Tapping a delivered notification routes to its url.
+ * No-op on web. Safe to call more than once (register() is idempotent).
+ */
+export async function registerNativePush() {
+	if (!isNativeApp()) return;
+	try {
+		const { PushNotifications } = await import('@capacitor/push-notifications');
+		let perm = await PushNotifications.checkPermissions();
+		if (perm.receive === 'prompt' || perm.receive === 'prompt-with-rationale') {
+			perm = await PushNotifications.requestPermissions();
+		}
+		if (perm.receive !== 'granted') return;
+
+		PushNotifications.addListener('registration', (t) => {
+			_apnsToken = t?.value || null;
+			_postApnsToken(_apnsToken);
+		});
+		PushNotifications.addListener('registrationError', (e) => console.warn('[push] APNs registration error', e));
+		// Tap on a notification → open its target (chat / thread / mention).
+		PushNotifications.addListener('pushNotificationActionPerformed', (action) => {
+			const url = action?.notification?.data?.url;
+			if (url) { try { window.location.assign(url); } catch {} }
+		});
+		await PushNotifications.register();
+
+		// Re-associate the token with the current user when the app foregrounds
+		// (covers a token that first registered before the user signed in).
+		window.addEventListener('native-resume', () => { if (_apnsToken) _postApnsToken(_apnsToken); });
+	} catch (e) {
+		console.warn('[push] native push setup failed', e);
+	}
 }
