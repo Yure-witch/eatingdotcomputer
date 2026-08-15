@@ -73,11 +73,50 @@ Then `npm run cap:sync` and re-run. Revert before shipping.
 
 ## Ship to the App Store
 
+### Pre-submission checklist (do these once)
+
+- [ ] **Apple Developer Program** membership active ($99/yr) — apple.com/developer.
+- [ ] **Register the bundle id** `computer.eating.app` (Certificates, IDs &
+      Profiles → Identifiers) — or let Xcode auto-register it on first signed build.
+- [ ] **Signing**: Xcode → App target → Signing & Capabilities → select your Team,
+      "Automatically manage signing" on.
+- [ ] **Add `PrivacyInfo.xcprivacy` to the App target.** The file lives at
+      `ios/App/App/PrivacyInfo.xcprivacy` but creating it isn't enough — in Xcode,
+      drag it into the **App** group and tick the **App** target so it ships in the
+      bundle. (Declares tracking = false + Capacitor's UserDefaults required-reason.)
+- [ ] **Info.plist is ready** — already includes `ITSAppUsesNonExemptEncryption`
+      (skips the export-compliance prompt) and camera/photo/mic usage strings (so
+      the web view's pickers don't crash). No action needed.
+- [ ] **Version/build**: bump `MARKETING_VERSION` (e.g. 1.0.0) and
+      `CURRENT_PROJECT_VERSION` (build number) in the App target's build settings
+      for each upload.
+- [ ] **App icon** present (`npx @capacitor/assets generate --ios` from a
+      1024×1024 `resources/icon.png`).
+- [ ] **Screenshots**: capture in the iOS Simulator at the required sizes —
+      6.7" (1290×2796) and 6.5" (1242×2688) iPhone are the two Apple requires;
+      iPad only if you list iPad support.
+
+### ⚠️ Notifications don't work in the shell yet
+
+The web app's push (web-push/VAPID) works in **Safari and installed PWAs**, but
+**NOT inside a WKWebView** — so a user running the App Store build gets **zero
+push notifications**. For a chat app that's a real gap, and it also weakens the
+4.2 "minimum functionality" defense. The fix is native push:
+`@capacitor/push-notifications` (APNs) + an APNs key in App Store Connect + the
+server routing chat notifications to APNs for native device tokens. Decide
+before launch whether to ship with this or note it as a fast-follow.
+
+### Upload + submit
+
 1. In Xcode: **Product → Archive**.
 2. **Distribute App → App Store Connect → Upload**.
 3. In [App Store Connect](https://appstoreconnect.apple.com): create the app
-   listing (name, screenshots, description, privacy), attach the build,
-   **Submit for Review**.
+   listing (name, subtitle, screenshots, description, keywords, support URL,
+   **App Privacy questionnaire** — mirror `PrivacyInfo.xcprivacy`: email, name,
+   photos, user content; all "app functionality," no tracking — and an age
+   rating), attach the build, **Submit for Review**.
+4. Optional but recommended: push the build to **TestFlight** first and install
+   it on your own device to smoke-test before review.
 
 > **Heads-up on App Store Review Guideline 4.2 ("minimum functionality").**
 > Apple can reject thin "just a website" wrappers. Our case is helped by real
