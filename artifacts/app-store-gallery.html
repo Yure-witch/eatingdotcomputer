@@ -1,0 +1,268 @@
+<title>eating.computer — App Store gallery</title>
+<style>
+	:root {
+		--ink: #1a1512;
+		--paper: #f7f2ea;
+		--red: #ef3b2d;
+		--blue: #2b3cff;
+		--lime: #d8ff45;
+		--pink: #ff5b9a;
+		--night: #17130f;
+		/* page chrome tokens (themed) */
+		--bg: #efe7d6;
+		--surface: #f7f2ea;
+		--fg: #1a1512;
+		--muted: #6b6155;
+		--line: #ddd2bf;
+		--mono: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, monospace;
+		--disp: -apple-system, "Helvetica Neue", "Segoe UI", system-ui, sans-serif;
+	}
+	@media (prefers-color-scheme: dark) {
+		:root { --bg:#100d0a; --surface:#1b1611; --fg:#f3ece0; --muted:#a2988a; --line:#312a22; }
+	}
+	:root[data-theme="light"] { --bg:#efe7d6; --surface:#f7f2ea; --fg:#1a1512; --muted:#6b6155; --line:#ddd2bf; }
+	:root[data-theme="dark"] { --bg:#100d0a; --surface:#1b1611; --fg:#f3ece0; --muted:#a2988a; --line:#312a22; }
+
+	* { box-sizing: border-box; }
+	body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--disp);
+		-webkit-font-smoothing: antialiased; line-height: 1.5; }
+	.wrap { max-width: 1180px; margin: 0 auto; padding: clamp(1.5rem, 4vw, 3.5rem) clamp(1rem, 3vw, 2rem) 4rem; }
+
+	/* ── Masthead ─────────────────────────────────────────────── */
+	.mast { display: flex; flex-direction: column; gap: 0.9rem; margin-bottom: 2.5rem; }
+	.kicker { font-family: var(--mono); font-size: 0.75rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); display: flex; align-items: center; gap: 0.6rem; }
+	.kicker b { color: var(--red); font-weight: 700; }
+	.mast h1 { font-size: clamp(2.1rem, 6vw, 3.9rem); line-height: 0.98; letter-spacing: -0.03em; font-weight: 900; margin: 0; text-wrap: balance; max-width: 16ch; }
+	.mast h1 em { font-style: normal; color: var(--red); }
+	.mast p { margin: 0; max-width: 60ch; color: var(--muted); font-size: 1.02rem; }
+	.emark { display: inline-grid; place-items: center; width: 1.15em; height: 1.15em; background: var(--red); color: #fff; border-radius: 0.26em; font-weight: 900; transform: translateY(0.06em); }
+
+	/* ── Filmstrip ────────────────────────────────────────────── */
+	.strip { display: grid; grid-template-columns: repeat(auto-fill, minmax(268px, 1fr)); gap: 1.25rem; }
+	.shot { position: relative; border-radius: 22px; overflow: hidden; aspect-ratio: 1290 / 2796; display: flex; flex-direction: column; padding: 26px 20px 0; color: #fff; isolation: isolate; box-shadow: 0 18px 46px -22px rgba(0,0,0,0.55); }
+	.shot .cap { font-weight: 900; letter-spacing: -0.02em; line-height: 1.02; font-size: clamp(1.15rem, 2vw, 1.42rem); text-wrap: balance; }
+	.shot .cap small { display: block; font-weight: 600; font-size: 0.72em; opacity: 0.86; margin-top: 0.35em; letter-spacing: 0; }
+	.shot .tag { font-family: var(--mono); font-size: 0.62rem; letter-spacing: 0.14em; text-transform: uppercase; opacity: 0.8; margin-bottom: 0.6rem; }
+
+	/* device */
+	.phone { margin-top: auto; width: 78%; align-self: center; aspect-ratio: 300 / 620; background: var(--night); border-radius: 30px 30px 0 0; padding: 8px 8px 0; box-shadow: 0 -8px 40px rgba(0,0,0,0.3), inset 0 0 0 1.5px rgba(255,255,255,0.08); }
+	.screen { position: relative; height: 100%; border-radius: 24px 24px 0 0; overflow: hidden; background: var(--paper); color: var(--ink); }
+	.notch { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); width: 34%; height: 12px; background: var(--night); border-radius: 0 0 10px 10px; z-index: 4; }
+	.statusbar { display: flex; justify-content: space-between; align-items: center; padding: 7px 14px 4px; font-family: var(--mono); font-size: 8px; color: var(--ink); }
+
+	/* grounds */
+	.g-red { background: radial-gradient(120% 90% at 20% 0%, #ff6a4d 0%, var(--red) 55%, #c81f14 100%); }
+	.g-ink { background: radial-gradient(120% 80% at 80% 0%, #2a2320 0%, var(--night) 70%); }
+	.g-blue { background: radial-gradient(120% 90% at 80% 10%, #5a68ff 0%, var(--blue) 60%, #1b26b8 100%); }
+	.g-lime { background: radial-gradient(120% 90% at 30% 0%, #eafd7a 0%, var(--lime) 55%, #a9d514 100%); color: var(--ink); }
+	.g-lime .tag { opacity: 0.65; }
+	.g-pink { background: radial-gradient(120% 90% at 70% 0%, #ff86ba 0%, var(--pink) 60%, #d63b7c 100%); }
+	.g-cream { background: linear-gradient(180deg, #fbf7ee, #efe3cd); color: var(--ink); }
+	.g-cream .tag { opacity: 0.6; }
+
+	/* ── app-screen mocks ─────────────────────────────────────── */
+	.bubbles { display: flex; flex-direction: column; gap: 7px; padding: 10px 12px; }
+	.b { max-width: 78%; padding: 7px 10px; border-radius: 13px; font-size: 10px; line-height: 1.3; }
+	.b.in { background: #eee4d2; border-bottom-left-radius: 4px; align-self: flex-start; }
+	.b.out { background: var(--red); color: #fff; border-bottom-right-radius: 4px; align-self: flex-end; }
+	.b .who { font-size: 8px; font-weight: 800; color: var(--blue); margin-bottom: 2px; }
+	.stickers { align-self: flex-start; display: flex; gap: 4px; font-size: 30px; line-height: 1; filter: saturate(1.1); }
+	.reacts { display: flex; gap: 3px; align-self: flex-end; }
+	.reacts span { font-size: 9px; background: #fff; border: 1px solid #e7ddca; border-radius: 20px; padding: 1px 5px; }
+	.picker { position: absolute; left: 8px; right: 8px; bottom: 8px; background: #fff; border-radius: 16px; box-shadow: 0 8px 24px rgba(0,0,0,0.18); padding: 8px; display: grid; grid-template-columns: repeat(6, 1fr); gap: 5px; }
+	.picker div { aspect-ratio: 1; border-radius: 8px; display: grid; place-items: center; font-size: 15px; background: #f4ecdb; }
+	.picker div:nth-child(3n) { background: #fbe3d8; }
+
+	/* text-gif 3D */
+	.studio { height: 100%; background: radial-gradient(90% 60% at 50% 30%, #33323a, #121116 80%); display: grid; place-items: center; }
+	.chrome { font-weight: 900; font-size: 40px; letter-spacing: -0.03em; line-height: 0.9; text-align: center;
+		background: linear-gradient(180deg, #fff 0%, #cfd6e2 34%, #7d8798 50%, #eef3fb 62%, #9aa3b3 100%);
+		-webkit-background-clip: text; background-clip: text; color: transparent;
+		filter: drop-shadow(0 2px 0 #2a2f3a) drop-shadow(0 6px 10px rgba(0,0,0,0.5)); }
+	.chrome.gold { background: linear-gradient(180deg, #fff2c4, #f4c552 40%, #a9781f 55%, #ffe9a8 70%, #c9962e); -webkit-background-clip: text; background-clip: text; }
+	.chiprow { position: absolute; left: 10px; right: 10px; bottom: 10px; display: flex; gap: 5px; justify-content: center; }
+	.chiprow span { font-family: var(--mono); font-size: 8px; padding: 4px 8px; border-radius: 20px; background: rgba(255,255,255,0.1); color: #dfe4ee; }
+	.chiprow span.on { background: #fff; color: #17161c; font-weight: 700; }
+
+	/* assignments */
+	.weeks { padding: 10px; display: flex; flex-direction: column; gap: 7px; }
+	.wk { border: 1.5px solid #e7ddca; border-radius: 12px; padding: 8px 9px; background: #fff; }
+	.wk.due { border-color: var(--red); box-shadow: 0 0 0 3px rgba(239,59,45,0.08); }
+	.wk .r { display: flex; justify-content: space-between; align-items: baseline; }
+	.wk .w { font-family: var(--mono); font-size: 8px; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; }
+	.wk .t { font-weight: 800; font-size: 11px; margin-top: 2px; }
+	.pill { font-size: 8px; font-weight: 800; padding: 2px 7px; border-radius: 20px; }
+	.pill.red { background: var(--red); color: #fff; }
+	.pill.ok { background: #e7f6e2; color: #2f7d32; }
+	.subbar { margin-top: 6px; height: 5px; border-radius: 4px; background: #eee4d2; overflow: hidden; }
+	.subbar i { display: block; height: 100%; background: var(--blue); }
+
+	/* gemma */
+	.gemma { padding: 12px 11px; display: flex; flex-direction: column; gap: 8px; }
+	.gemma .head { display: flex; align-items: center; gap: 7px; }
+	.gemma .av { width: 26px; height: 26px; border-radius: 50%; background: linear-gradient(135deg, var(--blue), var(--pink)); display: grid; place-items: center; color: #fff; font-weight: 900; font-size: 12px; }
+	.gemma .nm { font-weight: 800; font-size: 11px; } .gemma .nm small { color: var(--muted); font-weight: 600; }
+	.gcard { background: #fff; border: 1.5px solid #e7ddca; border-radius: 12px; padding: 9px; font-size: 9.5px; line-height: 1.45; }
+	.gcard b { color: var(--ink); } .gcard .line { color: #4b4237; }
+	.gcard .todo { display: flex; align-items: center; gap: 5px; margin-top: 6px; }
+	.gcard .box { width: 11px; height: 11px; border-radius: 3px; border: 1.5px solid var(--red); }
+
+	/* profile */
+	.prof { height: 100%; background: linear-gradient(180deg, #201a3a, #0e0b1e); color: #fff; padding: 12px; }
+	.prof .banner { height: 46px; border-radius: 12px; background: conic-gradient(from 30deg, var(--pink), var(--blue), var(--lime), var(--pink)); }
+	.prof .who { display: flex; align-items: center; gap: 8px; margin-top: -18px; padding-left: 6px; }
+	.prof .pic { width: 40px; height: 40px; border-radius: 12px; background: #fff; border: 2px solid #0e0b1e; display: grid; place-items: center; font-size: 22px; }
+	.prof .nm { font-weight: 900; font-size: 12px; } .prof .nm small { display: block; color: #b9a7ff; font-weight: 600; font-family: var(--mono); font-size: 8px; }
+	.prof .bio { font-size: 9px; color: #cfc6ee; margin-top: 8px; line-height: 1.5; }
+	.prof .tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+	.prof .tags span { font-size: 8px; padding: 2px 7px; border-radius: 20px; background: rgba(255,255,255,0.12); }
+
+	/* hero screen */
+	.hero-s { height: 100%; display: grid; place-content: center; text-align: center; gap: 6px; background: var(--paper); }
+	.hero-s .big { font-weight: 900; font-size: 26px; letter-spacing: -0.03em; line-height: 0.95; }
+	.hero-s .big em { font-style: normal; color: var(--red); }
+	.hero-s .sub { font-family: var(--mono); font-size: 8px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+
+	/* ── footer copy ──────────────────────────────────────────── */
+	.meta { margin-top: 3.5rem; border-top: 1.5px solid var(--line); padding-top: 2rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1.5rem 2.5rem; }
+	.meta section h3 { font-family: var(--mono); font-size: 0.7rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--red); margin: 0 0 0.5rem; }
+	.meta p, .meta li { color: var(--muted); font-size: 0.9rem; margin: 0.2rem 0; }
+	.meta ul { margin: 0; padding-left: 1.1rem; }
+	.meta .q { color: var(--fg); font-weight: 700; }
+	.note { margin-top: 2.5rem; font-size: 0.8rem; color: var(--muted); border: 1px dashed var(--line); border-radius: 12px; padding: 0.9rem 1.1rem; background: var(--surface); }
+	.note b { color: var(--fg); }
+	@media (max-width: 520px) { .strip { grid-template-columns: 1fr 1fr; } .shot .cap { font-size: 1.05rem; } }
+</style>
+
+<div class="wrap">
+	<header class="mast">
+		<div class="kicker"><span class="emark">e</span> eating.computer &nbsp;·&nbsp; <b>App Store gallery</b></div>
+		<h1>Your class, but it's&nbsp;<em>alive.</em></h1>
+		<p>Six screens to sell it to the people who'll actually use it — studio students who'd close a boring class app in two seconds. Screenshot each frame, or use them as the design for the real App Store shots (1290 × 2796).</p>
+	</header>
+
+	<div class="strip">
+		<!-- 1 · Hero -->
+		<figure class="shot g-red" style="margin:0">
+			<div class="tag">The class hub</div>
+			<div class="cap">Everything for the class — in the one place you'll actually open<small>Chat, assignments, files, tools.</small></div>
+			<div class="phone"><div class="screen"><div class="notch"></div>
+				<div class="hero-s">
+					<div class="sub">eating.computer</div>
+					<div class="big">your class,<br>but it's <em>alive</em></div>
+					<div class="sub">tap in →</div>
+				</div>
+			</div></div>
+		</figure>
+
+		<!-- 2 · Chat / expression -->
+		<figure class="shot g-blue" style="margin:0">
+			<div class="tag">Chat</div>
+			<div class="cap">Say it with your whole chest<small>Stickers, reactions, effects, mixes.</small></div>
+			<div class="phone"><div class="screen"><div class="notch"></div>
+				<div class="statusbar"><span>9:41</span><span># studio</span><span>▲ ▮▮</span></div>
+				<div class="bubbles">
+					<div class="b in"><div class="who">maya</div>crit tmrw who's pinning up 👀</div>
+					<div class="stickers">🫠🔥✨</div>
+					<div class="b out">me: first, obviously</div>
+					<div class="reacts"><span>😭 3</span><span>💯 5</span></div>
+					<div class="b in"><div class="who">dev</div>same. bringing the risograph stuff</div>
+				</div>
+				<div class="picker"><div>😀</div><div>🥹</div><div>🔥</div><div>🫠</div><div>✨</div><div>💀</div><div>🎨</div><div>👾</div><div>🧃</div><div>🪩</div><div>🫶</div><div>😵‍💫</div></div>
+			</div></div>
+		</figure>
+
+		<!-- 3 · Text GIFs / Lab -->
+		<figure class="shot g-ink" style="margin:0">
+			<div class="tag">The Lab</div>
+			<div class="cap">Make 3D type in seconds<small>Chrome, gold, glass — drop it in your deck.</small></div>
+			<div class="phone"><div class="screen"><div class="notch"></div>
+				<div class="studio">
+					<div>
+						<div class="chrome">STUDIO</div>
+						<div class="chrome gold" style="font-size:26px;margin-top:6px">crit&nbsp;day</div>
+					</div>
+				</div>
+				<div class="chiprow"><span class="on">Chrome</span><span>Gold</span><span>Glass</span><span>Holo</span></div>
+			</div></div>
+		</figure>
+
+		<!-- 4 · Assignments / roadmap -->
+		<figure class="shot g-lime" style="margin:0">
+			<div class="tag">Roadmap</div>
+			<div class="cap">Every deadline, one place<small>Submit a link, image, or video — done.</small></div>
+			<div class="phone"><div class="screen"><div class="notch"></div>
+				<div class="statusbar"><span>9:41</span><span>Roadmap</span><span>▲ ▮▮</span></div>
+				<div class="weeks">
+					<div class="wk due"><div class="r"><span class="w">Week 6 · due Fri</span><span class="pill red">Due</span></div><div class="t">Type specimen poster</div><div class="subbar"><i style="width:20%"></i></div></div>
+					<div class="wk"><div class="r"><span class="w">Week 5</span><span class="pill ok">Submitted</span></div><div class="t">Motion study — 5s loop</div><div class="subbar"><i style="width:100%"></i></div></div>
+					<div class="wk"><div class="r"><span class="w">Week 4</span><span class="pill ok">Submitted</span></div><div class="t">Riso two-color print</div><div class="subbar"><i style="width:100%"></i></div></div>
+				</div>
+			</div></div>
+		</figure>
+
+		<!-- 5 · Gemma -->
+		<figure class="shot g-pink" style="margin:0">
+			<div class="tag">Gemma</div>
+			<div class="cap">Your class, quietly on track<small>A friendly recap. Never a nag.</small></div>
+			<div class="phone"><div class="screen"><div class="notch"></div>
+				<div class="gemma">
+					<div class="head"><div class="av">g</div><div class="nm">Gemma <small>· just now</small></div></div>
+					<div class="gcard">
+						<div class="line"><b>Today in class:</b> the group locked in on poster crits — good energy on the two-color prints.</div>
+						<div class="todo"><span class="box"></span><span><b>Due Friday:</b> type specimen poster</span></div>
+						<div class="todo"><span class="box"></span><span>Added: “finish the risograph zine”</span></div>
+						<div class="line" style="margin-top:6px">Since you're into generative art — you might like <b>Sol LeWitt's wall drawings</b>.</div>
+					</div>
+				</div>
+			</div></div>
+		</figure>
+
+		<!-- 6 · Profile -->
+		<figure class="shot g-cream" style="margin:0">
+			<div class="tag">Your profile</div>
+			<div class="cap">A corner of the internet that's yours<small>Decorate it however you want.</small></div>
+			<div class="phone"><div class="screen"><div class="notch"></div>
+				<div class="prof">
+					<div class="banner"></div>
+					<div class="who"><div class="pic">🍒</div><div class="nm">ricky<small>@ricky.exe</small></div></div>
+					<div class="bio">printmaker &amp; code-poet. i make type move. currently very normal about gradients.</div>
+					<div class="tags"><span>#riso</span><span>#kinetic-type</span><span>#p5js</span><span>#collage</span></div>
+				</div>
+			</div></div>
+		</figure>
+	</div>
+
+	<div class="meta">
+		<section>
+			<h3>Name &amp; subtitle</h3>
+			<p class="q">eating.computer</p>
+			<p>Your class, but it's alive</p>
+		</section>
+		<section>
+			<h3>The one-liner</h3>
+			<p>The class hub that doesn't feel like homework — real-time chat, wild stickers, assignments, and creative tools in one place.</p>
+		</section>
+		<section>
+			<h3>Screenshot order</h3>
+			<ul>
+				<li>Chat &amp; expression</li>
+				<li>3D Text GIFs (the Lab)</li>
+				<li>Roadmap &amp; assignments</li>
+				<li>Gemma</li>
+				<li>Your profile</li>
+			</ul>
+		</section>
+		<section>
+			<h3>Why students stay</h3>
+			<ul>
+				<li>It's expressive, not sterile</li>
+				<li>Deadlines never sneak up</li>
+				<li>Tools they'd open anyway</li>
+				<li>Notifications that matter</li>
+			</ul>
+		</section>
+	</div>
+
+	<p class="note"><b>How to use these:</b> these are the <b>design</b> for your App Store shots. Fastest path to real 1290 × 2796 PNGs — run the app in the iOS Simulator, open each screen (chat, Lab, Roadmap, Gemma, profile), and grab a screenshot (⌘S). Drop the caption from each frame above over it in any tool. Upload 3–6, strongest first. Full copy for App Store Connect is in <b>APP_STORE_LISTING.md</b>.</p>
+</div>
