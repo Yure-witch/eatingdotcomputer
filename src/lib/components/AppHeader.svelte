@@ -49,7 +49,20 @@
 	// gap, indenting the title ~2rem past where other pages' header content
 	// starts. Hide the whole block on desktop in that case.
 	const _titleHasSwitcher = $derived(!!($pageTitle && currentClass?.name && !_convSwipedAway));
+	// A page title is showing (Tasks, Gemma, a channel …). On mobile that means
+	// the "eating.computer" wordmark is redundant — the title IS the heading —
+	// so we hide the wordmark and let the section name stand alone.
+	const _titlePresent = $derived(!!$pageTitle && !_convSwipedAway);
 	const _isGemma = $derived($page.url.pathname === '/app/chat/gemma');
+	// A small identifying glyph next to the title. Gemma keeps its own mark;
+	// other chat surfaces get a chat bubble; Tasks gets a target.
+	const _titleIcon = $derived.by(() => {
+		const p = $page.url.pathname;
+		if (p === '/app/chat/gemma') return 'gemma';
+		if (p.startsWith('/app/chat')) return 'chat';
+		if (p === '/app/goals') return 'tasks';
+		return null;
+	});
 
 	// Publish the header's real rendered height as --header-h so the pager
 	// panels / chat menu / overlay can sit EXACTLY below it (the hardcoded 52px
@@ -68,7 +81,7 @@
 
 <header class="app-header" class:conv-mobile={_convMobile} bind:this={headerEl}>
 	{#if !_convMobile}
-		<div class="wordmark-wrap" class:desktop-hidden={_titleHasSwitcher}>
+		<div class="wordmark-wrap" class:desktop-hidden={_titleHasSwitcher} class:title-present={_titlePresent}>
 			<a class="wordmark" href="/">eating.computer</a>
 			<!-- When a page title is showing, ITS lockup carries the class
 			     switcher (title + dropdown) — don't render a second, lone
@@ -89,7 +102,7 @@
 		     which class context the conversation belongs to. */ -->
 		<div class="page-title-block">
 			<div class="page-title-row">
-				{#if _isGemma}<GemmaIcon size={22} />{/if}
+				{#if _titleIcon === 'gemma'}<GemmaIcon size={22} />{:else if _titleIcon === 'chat'}<svg class="title-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>{:else if _titleIcon === 'tasks'}<svg class="title-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="0.6" fill="currentColor"/></svg>{/if}
 				{#if $pageTitleHref}
 					<a class="page-title page-title-link" href={$pageTitleHref}>{$pageTitle}</a>
 				{:else}
@@ -144,6 +157,7 @@
 	   space the lone <h1> used to take, so the right-side controls
 	   keep their alignment. */
 	.page-title-row { display: flex; align-items: center; gap: 0.45rem; min-width: 0; }
+	.title-icon { color: var(--accent); flex-shrink: 0; }
 	.page-title-desc { font-size: 0.72rem; color: var(--muted-fg); white-space: nowrap; }
 	.page-title-block {
 		display: flex;
@@ -198,6 +212,11 @@
 
 	@media (max-width: 640px) {
 		.app-header { left: 0; padding: 0.6rem 1rem; gap: 0.5rem; }
+		/* When a page publishes its own title (Tasks, Gemma, a channel), the
+		   "eating.computer" wordmark is redundant on mobile — drop it so the
+		   section name stands alone as the heading instead of sitting beside it. */
+		.wordmark-wrap.title-present { display: none; }
+		.page-title { font-size: 1.2rem; }
 		/* Focused chat bar: match the standard header's wordmark-wrap dimensions
 		   exactly (chat name == the 1.25rem wordmark, class subtitle == the
 		   0.72rem class label, same 0.1rem gap) so the chat header is the same

@@ -401,8 +401,10 @@
 
 	.page-header {
 		display: flex;
-		align-items: baseline;
+		align-items: center;
 		justify-content: space-between;
+		flex-wrap: wrap;
+		gap: 0.6rem 1rem;
 		margin-bottom: 1.5rem;
 	}
 
@@ -514,18 +516,22 @@
 	.btn-primary.small { padding: 0.4rem 0.9rem; font-size: 0.85rem; }
 
 	.btn-secondary {
-		padding: 0.4rem 0.9rem;
-		background: none;
-		border: 1.5px solid var(--border);
-		border-radius: 8px;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0.45rem 0.95rem;
+		background: color-mix(in srgb, var(--md-sys-color-primary, var(--accent)) 12%, transparent);
+		border: 1.5px solid color-mix(in srgb, var(--md-sys-color-primary, var(--accent)) 40%, transparent);
+		border-radius: 9px;
 		font-family: inherit;
 		font-size: 0.85rem;
-		font-weight: 500;
-		color: var(--ink);
+		font-weight: 600;
+		color: var(--md-sys-color-primary, var(--accent));
+		text-decoration: none;
 		cursor: pointer;
-		transition: border-color 0.15s;
+		transition: background 0.15s, border-color 0.15s;
 	}
-	.btn-secondary:hover { border-color: var(--ink); }
+	.btn-secondary:hover { background: color-mix(in srgb, var(--md-sys-color-primary, var(--accent)) 20%, transparent); border-color: var(--md-sys-color-primary, var(--accent)); }
 
 	.btn-ghost {
 		padding: 0.4rem 0.75rem;
@@ -692,11 +698,13 @@
 		border-color: color-mix(in srgb, var(--md-sys-color-primary, var(--accent)) 50%, var(--border));
 	}
 	.roadmap-row.current .roadmap-link {
-		/* Same gentle tint as the Syllabus upcoming card — the full
-		   primary-container + glow was too dark/intense on light theme. */
-		background: color-mix(in srgb, var(--md-sys-color-primary, var(--accent)) 8%, var(--md-sys-color-surface-container, var(--surface-2)));
-		border-color: color-mix(in srgb, var(--md-sys-color-primary, var(--accent)) 45%, var(--md-sys-color-outline-variant, var(--border)));
+		/* Cleaner current-week treatment: a crisp accent rail + light tint,
+		   instead of the muddy full-card wash. */
+		background: color-mix(in srgb, var(--md-sys-color-primary, var(--accent)) 6%, var(--md-sys-color-surface, var(--paper)));
+		border-color: color-mix(in srgb, var(--md-sys-color-primary, var(--accent)) 35%, var(--md-sys-color-outline-variant, var(--border)));
+		box-shadow: inset 4px 0 0 0 var(--md-sys-color-primary, var(--accent));
 	}
+	.roadmap-row.current .roadmap-week-num { color: var(--md-sys-color-primary, var(--accent)); }
 	.roadmap-row.current .roadmap-link:hover { transform: translateY(-1px); }
 
 	.roadmap-week-num {
@@ -758,6 +766,10 @@
 	}
 
 	@media (max-width: 600px) {
+		/* Stack the header so the button gets its own full-width line instead of
+		   crowding the "Roadmap" title. */
+		.page-header { flex-direction: column; align-items: stretch; gap: 0.7rem; }
+		.page-header .btn-secondary { width: 100%; }
 		.roadmap-link {
 			grid-template-columns: 56px 1fr;
 			gap: 0.65rem;
