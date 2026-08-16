@@ -1,0 +1,181 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>eating.computer — App Store screenshot</title>
+<style>
+	:root {
+		--ink:#1a1512; --paper:#f7f2ea; --red:#ef3b2d; --blue:#2b3cff; --lime:#d8ff45; --pink:#ff5b9a; --night:#17130f;
+		--muted:#6b6155;
+		--mono: ui-monospace,"SF Mono","SFMono-Regular",Menlo,monospace;
+		--disp: -apple-system,"Helvetica Neue","Segoe UI",system-ui,sans-serif;
+	}
+	* { box-sizing:border-box; }
+	html,body { margin:0; width:1290px; height:2796px; overflow:hidden; font-family:var(--disp); }
+
+	.shot { display:none; width:1290px; height:2796px; flex-direction:column; align-items:center; padding:130px 90px 0; color:#fff; }
+	.shot.active { display:flex; }
+
+	.tag { font-family:var(--mono); font-size:26px; letter-spacing:0.18em; text-transform:uppercase; opacity:0.82; }
+	.cap { font-weight:900; letter-spacing:-0.02em; line-height:1.0; font-size:82px; text-align:center; text-wrap:balance; margin-top:22px; max-width:15ch; }
+	.cap small { display:block; font-weight:600; font-size:0.46em; opacity:0.86; margin-top:0.5em; letter-spacing:0; }
+
+	/* device */
+	.device { margin-top:auto; width:940px; background:var(--night); border-radius:74px 74px 0 0; padding:22px 22px 0; box-shadow:0 -20px 90px rgba(0,0,0,0.32), inset 0 0 0 3px rgba(255,255,255,0.08); }
+	.screen { position:relative; width:896px; height:1846px; border-radius:56px 56px 0 0; overflow:hidden; background:var(--paper); color:var(--ink); }
+	.notch { position:absolute; top:20px; left:50%; transform:translateX(-50%); width:300px; height:34px; background:var(--night); border-radius:0 0 24px 24px; z-index:5; }
+	/* the mocks are authored at a 300px base and scaled up crisply (vector text) */
+	.scaler { width:300px; height:618px; transform:scale(2.9867); transform-origin:top left; }
+
+	/* grounds */
+	.g-blue { background:radial-gradient(120% 80% at 80% 8%, #5a68ff 0%, var(--blue) 60%, #1b26b8 100%); }
+	.g-ink { background:radial-gradient(120% 70% at 78% 4%, #2a2320 0%, var(--night) 70%); }
+	.g-lime { background:radial-gradient(120% 80% at 30% 0%, #eafd7a 0%, var(--lime) 55%, #a9d514 100%); color:var(--ink); }
+	.g-lime .tag { opacity:0.6; }
+	.g-pink { background:radial-gradient(120% 80% at 70% 4%, #ff86ba 0%, var(--pink) 60%, #d63b7c 100%); }
+	.g-cream { background:linear-gradient(180deg,#fbf7ee,#efe3cd); color:var(--ink); }
+	.g-cream .tag { opacity:0.55; }
+
+	/* ── mock components (300px base) ── */
+	.statusbar { display:flex; justify-content:space-between; align-items:center; padding:16px 16px 6px; font-family:var(--mono); font-size:9px; color:var(--ink); }
+	.bubbles { display:flex; flex-direction:column; gap:8px; padding:8px 13px; }
+	.b { max-width:78%; padding:8px 11px; border-radius:14px; font-size:11px; line-height:1.3; }
+	.b.in { background:#eee4d2; border-bottom-left-radius:4px; align-self:flex-start; }
+	.b.out { background:var(--red); color:#fff; border-bottom-right-radius:4px; align-self:flex-end; }
+	.b .who { font-size:8.5px; font-weight:800; color:var(--blue); margin-bottom:2px; }
+	.stickers { align-self:flex-start; display:flex; gap:5px; font-size:34px; line-height:1; }
+	.reacts { display:flex; gap:4px; align-self:flex-end; }
+	.reacts span { font-size:9.5px; background:#fff; border:1px solid #e7ddca; border-radius:20px; padding:1px 6px; }
+	.picker { position:absolute; left:10px; right:10px; bottom:10px; background:#fff; border-radius:18px; box-shadow:0 10px 30px rgba(0,0,0,0.18); padding:9px; display:grid; grid-template-columns:repeat(6,1fr); gap:6px; }
+	.picker div { aspect-ratio:1; border-radius:9px; display:grid; place-items:center; font-size:17px; background:#f4ecdb; }
+	.picker div:nth-child(3n) { background:#fbe3d8; }
+
+	.studio { height:100%; background:radial-gradient(90% 60% at 50% 32%, #33323a, #121116 80%); display:grid; place-items:center; }
+	.chrome { font-weight:900; font-size:46px; letter-spacing:-0.03em; line-height:0.9; text-align:center;
+		background:linear-gradient(180deg,#fff 0%,#cfd6e2 34%,#7d8798 50%,#eef3fb 62%,#9aa3b3 100%);
+		-webkit-background-clip:text; background-clip:text; color:transparent;
+		filter:drop-shadow(0 2px 0 #2a2f3a) drop-shadow(0 7px 12px rgba(0,0,0,0.5)); }
+	.chrome.gold { background:linear-gradient(180deg,#fff2c4,#f4c552 40%,#a9781f 55%,#ffe9a8 70%,#c9962e); -webkit-background-clip:text; background-clip:text; }
+	.chiprow { position:absolute; left:12px; right:12px; bottom:12px; display:flex; gap:6px; justify-content:center; }
+	.chiprow span { font-family:var(--mono); font-size:9px; padding:5px 10px; border-radius:20px; background:rgba(255,255,255,0.1); color:#dfe4ee; }
+	.chiprow span.on { background:#fff; color:#17161c; font-weight:700; }
+
+	.weeks { padding:12px; display:flex; flex-direction:column; gap:9px; }
+	.wk { border:1.5px solid #e7ddca; border-radius:14px; padding:10px 11px; background:#fff; }
+	.wk.due { border-color:var(--red); box-shadow:0 0 0 4px rgba(239,59,45,0.08); }
+	.wk .r { display:flex; justify-content:space-between; align-items:baseline; }
+	.wk .w { font-family:var(--mono); font-size:8.5px; color:var(--muted); letter-spacing:0.08em; text-transform:uppercase; }
+	.wk .t { font-weight:800; font-size:12.5px; margin-top:3px; }
+	.pill { font-size:8.5px; font-weight:800; padding:2px 8px; border-radius:20px; }
+	.pill.red { background:var(--red); color:#fff; }
+	.pill.ok { background:#e7f6e2; color:#2f7d32; }
+	.subbar { margin-top:7px; height:6px; border-radius:4px; background:#eee4d2; overflow:hidden; }
+	.subbar i { display:block; height:100%; background:var(--blue); }
+
+	.gemma { padding:14px 13px; display:flex; flex-direction:column; gap:9px; }
+	.gemma .head { display:flex; align-items:center; gap:8px; }
+	.gemma .av { width:30px; height:30px; border-radius:50%; background:linear-gradient(135deg,var(--blue),var(--pink)); display:grid; place-items:center; color:#fff; font-weight:900; font-size:14px; }
+	.gemma .nm { font-weight:800; font-size:12px; } .gemma .nm small { color:var(--muted); font-weight:600; }
+	.gcard { background:#fff; border:1.5px solid #e7ddca; border-radius:14px; padding:11px; font-size:10.5px; line-height:1.5; }
+	.gcard b { color:var(--ink); } .gcard .line { color:#4b4237; }
+	.gcard .todo { display:flex; align-items:center; gap:6px; margin-top:7px; }
+	.gcard .box { width:13px; height:13px; border-radius:3px; border:1.5px solid var(--red); flex:0 0 auto; }
+
+	.prof { height:100%; background:linear-gradient(180deg,#201a3a,#0e0b1e); color:#fff; padding:14px; }
+	.prof .banner { height:56px; border-radius:14px; background:conic-gradient(from 30deg,var(--pink),var(--blue),var(--lime),var(--pink)); }
+	.prof .who { display:flex; align-items:center; gap:9px; margin-top:-22px; padding-left:7px; }
+	.prof .pic { width:48px; height:48px; border-radius:14px; background:#fff; border:3px solid #0e0b1e; display:grid; place-items:center; font-size:26px; }
+	.prof .nm { font-weight:900; font-size:14px; } .prof .nm small { display:block; color:#b9a7ff; font-weight:600; font-family:var(--mono); font-size:8.5px; }
+	.prof .bio { font-size:10px; color:#cfc6ee; margin-top:10px; line-height:1.55; }
+	.prof .tags { display:flex; flex-wrap:wrap; gap:5px; margin-top:10px; }
+	.prof .tags span { font-size:9px; padding:3px 8px; border-radius:20px; background:rgba(255,255,255,0.12); }
+
+	.hero-s { height:100%; display:grid; place-content:center; text-align:center; gap:8px; background:var(--paper); }
+	.hero-s .big { font-weight:900; font-size:30px; letter-spacing:-0.03em; line-height:0.95; }
+	.hero-s .big em { font-style:normal; color:var(--red); }
+	.hero-s .sub { font-family:var(--mono); font-size:9px; letter-spacing:0.12em; text-transform:uppercase; color:var(--muted); }
+</style>
+</head>
+<body>
+	<!-- 1 · Chat / expression -->
+	<section class="shot g-blue" data-i="1">
+		<div class="tag">Chat</div>
+		<div class="cap">Say it with your whole chest<small>Stickers, reactions, effects, mixes.</small></div>
+		<div class="device"><div class="screen"><div class="notch"></div><div class="scaler">
+			<div class="statusbar"><span>9:41</span><span># studio</span><span>▲ ▮▮</span></div>
+			<div class="bubbles">
+				<div class="b in"><div class="who">maya</div>crit tmrw who's pinning up 👀</div>
+				<div class="stickers">🫠🔥✨</div>
+				<div class="b out">me: first, obviously</div>
+				<div class="reacts"><span>😭 3</span><span>💯 5</span></div>
+				<div class="b in"><div class="who">dev</div>same. bringing the risograph stuff</div>
+			</div>
+			<div class="picker"><div>😀</div><div>🥹</div><div>🔥</div><div>🫠</div><div>✨</div><div>💀</div><div>🎨</div><div>👾</div><div>🧃</div><div>🪩</div><div>🫶</div><div>😵‍💫</div></div>
+		</div></div></div>
+	</section>
+
+	<!-- 2 · Text GIFs / Lab -->
+	<section class="shot g-ink" data-i="2">
+		<div class="tag">The Lab</div>
+		<div class="cap">Make 3D type in seconds<small>Chrome, gold, glass — drop it in your deck.</small></div>
+		<div class="device"><div class="screen"><div class="notch"></div><div class="scaler">
+			<div class="studio"><div>
+				<div class="chrome">STUDIO</div>
+				<div class="chrome gold" style="font-size:30px;margin-top:7px">crit&nbsp;day</div>
+			</div></div>
+			<div class="chiprow"><span class="on">Chrome</span><span>Gold</span><span>Glass</span><span>Holo</span></div>
+		</div></div></div>
+	</section>
+
+	<!-- 3 · Roadmap / assignments -->
+	<section class="shot g-lime" data-i="3">
+		<div class="tag">Roadmap</div>
+		<div class="cap">Every deadline, one place<small>Submit a link, image, or video — done.</small></div>
+		<div class="device"><div class="screen"><div class="notch"></div><div class="scaler">
+			<div class="statusbar"><span>9:41</span><span>Roadmap</span><span>▲ ▮▮</span></div>
+			<div class="weeks">
+				<div class="wk due"><div class="r"><span class="w">Week 6 · due Fri</span><span class="pill red">Due</span></div><div class="t">Type specimen poster</div><div class="subbar"><i style="width:20%"></i></div></div>
+				<div class="wk"><div class="r"><span class="w">Week 5</span><span class="pill ok">Submitted</span></div><div class="t">Motion study — 5s loop</div><div class="subbar"><i style="width:100%"></i></div></div>
+				<div class="wk"><div class="r"><span class="w">Week 4</span><span class="pill ok">Submitted</span></div><div class="t">Riso two-color print</div><div class="subbar"><i style="width:100%"></i></div></div>
+			</div>
+		</div></div></div>
+	</section>
+
+	<!-- 4 · Gemma -->
+	<section class="shot g-pink" data-i="4">
+		<div class="tag">Gemma</div>
+		<div class="cap">Your class, quietly on track<small>A friendly recap. Never a nag.</small></div>
+		<div class="device"><div class="screen"><div class="notch"></div><div class="scaler">
+			<div class="gemma">
+				<div class="head"><div class="av">g</div><div class="nm">Gemma <small>· just now</small></div></div>
+				<div class="gcard">
+					<div class="line"><b>Today in class:</b> the group locked in on poster crits — good energy on the two-color prints.</div>
+					<div class="todo"><span class="box"></span><span><b>Due Friday:</b> type specimen poster</span></div>
+					<div class="todo"><span class="box"></span><span>Added: “finish the risograph zine”</span></div>
+					<div class="line" style="margin-top:7px">Since you're into generative art — you might like <b>Sol LeWitt's wall drawings</b>.</div>
+				</div>
+			</div>
+		</div></div></div>
+	</section>
+
+	<!-- 5 · Profile -->
+	<section class="shot g-cream" data-i="5">
+		<div class="tag">Your profile</div>
+		<div class="cap">A corner of the internet that's yours<small>Decorate it however you want.</small></div>
+		<div class="device"><div class="screen"><div class="notch"></div><div class="scaler">
+			<div class="prof">
+				<div class="banner"></div>
+				<div class="who"><div class="pic">🍒</div><div class="nm">ricky<small>@ricky.exe</small></div></div>
+				<div class="bio">printmaker &amp; code-poet. i make type move. currently very normal about gradients.</div>
+				<div class="tags"><span>#riso</span><span>#kinetic-type</span><span>#p5js</span><span>#collage</span></div>
+			</div>
+		</div></div></div>
+	</section>
+
+	<script>
+		var i = new URLSearchParams(location.search).get('i') || '1';
+		var el = document.querySelector('.shot[data-i="' + i + '"]') || document.querySelector('.shot');
+		el.classList.add('active');
+	</script>
+</body>
+</html>
