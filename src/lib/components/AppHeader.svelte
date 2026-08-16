@@ -217,6 +217,9 @@
 		   section name stands alone as the heading instead of sitting beside it. */
 		.wordmark-wrap.title-present { display: none; }
 		.page-title { font-size: 1.2rem; }
+		/* The inline "AI assistant · …" note crowds the title on a phone and
+		   truncated it to "Gem…"; the class subtitle already grounds the page. */
+		.page-title-desc { display: none; }
 		/* Focused chat bar: match the standard header's wordmark-wrap dimensions
 		   exactly (chat name == the 1.25rem wordmark, class subtitle == the
 		   0.72rem class label, same 0.1rem gap) so the chat header is the same
