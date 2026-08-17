@@ -22,9 +22,20 @@
 	// header is shown immediately on tap and doesn't flicker standard→chat as
 	// the route commits.
 	const _convRe = /^\/app\/chat\/(channel|dm)\//;
-	const _isConv = $derived(
+	// Real conversations = pager panel 0 (they can be swiped away in the pager).
+	const _isPagerConv = $derived(
 		_convRe.test($page.url.pathname) ||
 		(!!$navigating && _convRe.test($navigating.to?.url?.pathname ?? ''))
+	);
+	// Gemma and Tasks aren't message threads, but they're chat-adjacent surfaces
+	// reached from the chat menu — give them the same focused chat bar (name +
+	// class + ✕ close) on mobile. They are NOT pager panels, so they never enter
+	// the swipe-away state below.
+	const _chatLikeRe = /^\/app\/chat\/gemma$|^\/app\/goals$/;
+	const _isConv = $derived(
+		_isPagerConv ||
+		_chatLikeRe.test($page.url.pathname) ||
+		(!!$navigating && _chatLikeRe.test($navigating.to?.url?.pathname ?? ''))
 	);
 	let _isMobile = $state(false);
 	onMount(() => {
@@ -38,8 +49,11 @@
 	// the menu (covering = false) the route is briefly still the conversation, so
 	// drop chat-mode live with the scroll. Other routes (desktop, profile, …)
 	// ignore convCovering — they aren't pager conversations.
+	// Only REAL pager conversations can be swiped away (Gemma/Tasks aren't pager
+	// panels — their convCovering is always false, which would otherwise wrongly
+	// read as "swiped away" and suppress their chat bar).
 	const _convSwipedAway = $derived(
-		_isConv && _isMobile && !!pagerNav && pagerNav.convCovering === false
+		_isPagerConv && _isMobile && !!pagerNav && pagerNav.convCovering === false
 	);
 	const _convMobile = $derived(_isConv && _isMobile && !_convSwipedAway);
 

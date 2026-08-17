@@ -86,6 +86,11 @@
 	// non-pager routes (e.g. chat) render normally via {@render children()}.
 	let _isMobile = $state(false);
 	const _isConvRoute = (p) => /^\/app\/chat\/(channel|dm)\//.test(p);
+	// Gemma and Tasks aren't message threads (they're not pager panel 0), but the
+	// user reaches them from the chat menu and treats them as chats — so they get
+	// the same left-swipe-back-to-menu gesture via the legacy menu-slide overlay
+	// (which is only live on non-pager routes, exactly these two).
+	const _isChatLikeRoute = (p) => p === '/app/chat/gemma' || p === '/app/goals';
 
 	// On mobile, the CURRENT conversation joins the pager as a full-screen panel
 	// at index 0 (left of the chat menu), so conversation → menu → home → orbit
@@ -650,9 +655,10 @@
 		if (!t) { _swArmed = false; return; }
 		// Don't hijack the compose / sliders / horizontal scrollers / pickers.
 		if (e.target?.closest?.('.input-area, .send-wrap, .sz-capture, input[type="range"], .text-typo-bar, .expr-panel, .picker-popover, .compose-picker-pop')) { _swArmed = false; return; }
-		if ((_isConvRoute($page.url.pathname) || _showConvSkeleton) && !_menuNavPending) {
-			// In a conversation OR its loading skeleton → a left-swipe opens the
-			// chat menu (so you can bail back out of a still-loading chat too).
+		if ((_isConvRoute($page.url.pathname) || _isChatLikeRoute($page.url.pathname) || _showConvSkeleton) && !_menuNavPending) {
+			// In a conversation (or Gemma / Tasks, which behave like chats) OR a
+			// chat's loading skeleton → a left-swipe opens the chat menu (so you
+			// can bail back out of a still-loading chat too).
 			_swMode = 'menu';
 		} else if (_menuNavPending || _menuJustLanded) {
 			// Just opened the menu and the pager isn't reliably catching a FAST
