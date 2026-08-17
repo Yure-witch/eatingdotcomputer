@@ -214,7 +214,8 @@
 <div class="goals-shell">
 	<main>
 		<div class="page-head">
-			<h1>🎯 Tasks</h1>
+			<!-- The header already shows the "Tasks" title, so the body heading is
+			     redundant — lead with the description instead. -->
 			<p class="page-sub">Gemma keeps this list from what you say (and what people ask of you) in chat. Check things off, remove what doesn't belong — completed goals stay below as history.</p>
 		</div>
 
