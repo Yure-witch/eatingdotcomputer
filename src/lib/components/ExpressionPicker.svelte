@@ -68,7 +68,9 @@
 	// GIFs + reaction images now live in their own MediaPicker, so this picker
 	// only has emoji / kitchen / emotes / animated. A stale saved 'gifs' or
 	// 'reactions' falls back to emoji.
-	const VALID_TABS = new Set(['recent', 'emoji', 'kitchen', 'emotes', ...(tgHidden ? [] : ['animated'])]);
+	// The App Store review account (users.hide_tg_emoji) drops the third-party
+	// surfaces — Telegram animated emotes AND Emoji Kitchen (Google mashups).
+	const VALID_TABS = new Set(['recent', 'emoji', 'emotes', ...(tgHidden ? [] : ['animated', 'kitchen'])]);
 	const _saved = typeof localStorage !== 'undefined' ? localStorage.getItem(TAB_KEY) : null;
 	let tab = $state(VALID_TABS.has(_saved) ? _saved : 'emoji');
 	$effect(() => {
@@ -153,9 +155,11 @@
 				<span class="msi msi-20" class:msi-fill={tab === 'animated'}>animated_images</span>
 			</button>
 		{/if}
-		<button class="expr-tab" class:active={tab === 'kitchen'} onclick={() => (tab = 'kitchen')} title="Emoji Kitchen">
-			<span class="msi msi-20" class:msi-fill={tab === 'kitchen'}>blender</span>
-		</button>
+		{#if !tgHidden}
+			<button class="expr-tab" class:active={tab === 'kitchen'} onclick={() => (tab = 'kitchen')} title="Emoji Kitchen">
+				<span class="msi msi-20" class:msi-fill={tab === 'kitchen'}>blender</span>
+			</button>
+		{/if}
 		<button class="expr-tab" class:active={tab === 'emotes'} onclick={() => (tab = 'emotes')} title="Custom emotes">
 			<span class="msi msi-20" class:msi-fill={tab === 'emotes'}>sentiment_very_satisfied</span>
 		</button>

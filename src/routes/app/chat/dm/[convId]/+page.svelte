@@ -4389,8 +4389,8 @@
 					<div class="sz-pill" bind:this={_szPillEl}>Normal</div>
 				</div>
 			{/if}
-			<button class="btn-send" class:btn-send-off={sending || uploading || (!input.trim() && !pendingAttachment)} class:sz-active={sizeSliderActive}>
-				{#if !sizeSliderActive}Send{/if}
+			<button class="btn-send" class:btn-send-off={sending || uploading || (!input.trim() && !pendingAttachment)} class:sz-active={sizeSliderActive} aria-label="Send" title="Send">
+				{#if !sizeSliderActive}<svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2 15 22 11 13 2 9z"/></svg>{/if}
 			</button>
 		</div>
 	</div>
@@ -5286,11 +5286,13 @@
 		position: relative; flex-shrink: 0; touch-action: none; user-select: none; z-index: 299;
 	}
 	.btn-send {
-		padding: 0.6rem 1.1rem; background: var(--ink); color: var(--paper); border: none;
+		display: inline-flex; align-items: center; justify-content: center;
+		padding: 0.6rem; background: var(--ink); color: var(--paper); border: none;
 		border-radius: 10px; font-family: inherit; font-size: 0.875rem; font-weight: 600;
 		cursor: pointer; transition: opacity 0.15s; pointer-events: none;
-		position: relative; z-index: 1; min-width: 4rem;
+		position: relative; z-index: 1; width: 2.5rem; height: 2.5rem;
 	}
+	.btn-send svg { display: block; margin-right: 1px; }
 	.btn-send:hover { opacity: 0.8; }
 	.btn-send.btn-send-off { opacity: 0.4; cursor: default; }
 	.btn-send.sz-active { opacity: 0; }

@@ -325,7 +325,7 @@
 						onkeydown={onKeydown}
 						disabled={streaming}
 					></textarea>
-					<button class="gm-send" onclick={send} disabled={streaming || (!draft.trim() && !pendingImg)}>Send</button>
+					<button class="gm-send" onclick={send} disabled={streaming || (!draft.trim() && !pendingImg)} aria-label="Send" title="Send"><svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2 15 22 11 13 2 9z"/></svg></button>
 				</div>
 			</div>
 		</div>
@@ -590,10 +590,12 @@
 	}
 	textarea:focus { border-color: var(--ink); }
 	.gm-send {
-		font-family: inherit; font-size: 0.9rem; font-weight: 600;
+		display: inline-flex; align-items: center; justify-content: center;
+		width: 2.5rem; height: 2.5rem; flex-shrink: 0;
 		background: var(--ink); color: var(--paper);
-		border: none; border-radius: 10px; padding: 0.6rem 1.1rem; cursor: pointer;
+		border: none; border-radius: 10px; padding: 0.6rem; cursor: pointer;
 	}
+	.gm-send svg { display: block; margin-right: 1px; }
 	.gm-send:disabled { opacity: 0.45; cursor: default; }
 
 	/* mobile bottom-nav clearance comes from .chat-wrap, like other chats */

@@ -216,7 +216,11 @@
 		   "eating.computer" wordmark is redundant on mobile — drop it so the
 		   section name stands alone as the heading instead of sitting beside it. */
 		.wordmark-wrap.title-present { display: none; }
-		.page-title { font-size: 1.2rem; }
+		/* Match the wordmark-wrap's exact metrics (1.25rem heading + 0.1rem gap)
+		   so a titled page (Tasks / Weeks / Gemma) is the SAME header height as
+		   Home / Orbit — otherwise the tighter title block read a few px shorter. */
+		.page-title { font-size: 1.25rem; }
+		.page-title-block { gap: 0.1rem; line-height: normal; }
 		/* The inline "AI assistant · …" note crowds the title on a phone and
 		   truncated it to "Gem…"; the class subtitle already grounds the page. */
 		.page-title-desc { display: none; }

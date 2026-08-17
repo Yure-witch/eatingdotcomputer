@@ -713,79 +713,17 @@
 			padding: calc(1.25rem + var(--header-h, 52px)) 1rem;
 			padding-bottom: calc(56px + env(safe-area-inset-bottom, 0px) + 1.25rem);
 		}
+		/* Keep the clean STACKED card on mobile — eyebrow → big Week N →
+		   horizontal rail → CTA. (The old design flipped to a row with the
+		   rail pinned to the far-right edge and the button floated absolutely
+		   at the bottom, which left an awkward gap and read wonky.) */
 		.hero {
 			padding: 1.5rem 1.4rem;
 			border-radius: 18px;
-			/* Two-column layout on mobile so the giant "Week N" sits
-			   beside the vertical rail instead of stacking above it —
-			   feels less wasteful of the tall axis a phone gives us. */
-			flex-direction: row;
-			gap: 1.25rem;
-			align-items: stretch;
+			gap: 1.35rem;
 		}
-		.hero-now {
-			flex-shrink: 0;
-		}
-		.hero-week-num { font-size: 3rem; }
-
-		/* Rail flips to vertical. Same dot logic, but `--dot-pct`
-		   drives `top` instead of `left`. The track + fill swap their
-		   axes too so the fill grows downward as the student advances
-		   through the term. */
-		.rail {
-			width: 28px;
-			height: auto;
-			min-height: 220px;
-			flex-shrink: 0;
-			align-self: stretch;
-			margin-left: auto;
-		}
-		.rail-track {
-			top: 0;
-			bottom: 0;
-			left: 50%;
-			right: auto;
-			width: 6px;
-			height: auto;
-			transform: translateX(-50%);
-		}
-		.rail-fill {
-			top: 0;
-			left: 50%;
-			width: 6px;
-			height: var(--rail-pct);
-			transform: translateX(-50%);
-			transition: height 360ms cubic-bezier(0.2, 0.8, 0.2, 1);
-		}
-		.rail-dot {
-			top: var(--dot-pct);
-			left: 50%;
-		}
-		/* Tooltip flips to the LEFT of the dot on mobile (rail sits
-		   pinned to the right edge of the hero, so the only space the
-		   tip can grow into is leftward). Arrow flips with it. */
-		.rail-tip {
-			bottom: auto;
-			top: var(--dot-pct);
-			left: auto;
-			right: calc(100% + 14px);
-			transform: translateY(-50%);
-		}
-		.rail-tip::after {
-			top: 50%;
-			left: 100%;
-			transform: translateY(-50%);
-			border: 6px solid transparent;
-			border-left-color: var(--md-sys-color-inverse-surface, var(--ink));
-			border-top-color: transparent;
-		}
-
-		/* The "Jump to current week" CTA should sit below the row, not
-		   alongside the rail. Promote it out of the flex flow visually
-		   by anchoring it absolutely. */
-		.hero { position: relative; padding-bottom: 4rem; }
-		.hero-now-link { position: absolute; left: 1.4rem; bottom: 1.4rem; margin-top: 0; }
-
+		.hero-week-num { font-size: 3.4rem; }
+		.hero-now-link { margin-top: 0.25rem; align-self: flex-start; }
 		.cols { grid-template-columns: 1fr; gap: 1rem; }
 		h1 { font-size: 1.5rem; }
 	}

@@ -157,11 +157,11 @@
 				<input type="checkbox" checked={g.done} onchange={() => toggleGoal(g)} />
 				<span>{g.label}{#if g.priorityLocked && !g.done}<span class="goal-top">top priority</span>{/if}{#if g.requestedBy}<span class="goal-by">asked by {g.requestedBy}</span>{/if}{#if g.done && g.doneAt}<span class="goal-done-date">✓ {doneDate(g.doneAt)}</span>{/if}</span>
 			</label>
-			{#if !g.done}
-				<button class="goal-pin" class:pinned={g.priorityLocked} title={g.priorityLocked ? 'Unpin — let Gemma prioritize' : 'Pin as top priority'} onclick={() => togglePin(g)}>
-					{g.priorityLocked ? '★' : '☆'}
-				</button>
-			{/if}
+			<!-- Always rendered (visually hidden once done) so checking a task off
+			     doesn't reflow the row width — the pin column keeps its space. -->
+			<button class="goal-pin" class:pinned={g.priorityLocked} class:goal-pin-hidden={g.done} title={g.priorityLocked ? 'Unpin — let Gemma prioritize' : 'Pin as top priority'} disabled={g.done} onclick={() => togglePin(g)}>
+				{g.priorityLocked ? '★' : '☆'}
+			</button>
 			<button class="goal-remove" class:armed={removeArmed === g.goalId} title={removeArmed === g.goalId ? 'Click again to remove' : 'Remove this goal'} onclick={() => removeGoal(g)}>
 				{removeArmed === g.goalId ? 'Remove?' : '✕'}
 			</button>
@@ -306,6 +306,7 @@
 		background: none; border: none; cursor: pointer; padding: 0 0.15rem;
 		color: var(--muted-fg); font-size: 1rem; line-height: 1.2; flex-shrink: 0;
 	}
+	.goal-pin-hidden { visibility: hidden; pointer-events: none; }
 	.goal-pin:hover { color: var(--accent); }
 	.goal-pin.pinned { color: var(--accent); }
 	.goal-remove {
