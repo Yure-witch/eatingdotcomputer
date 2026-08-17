@@ -716,7 +716,8 @@
 	/* ── Responsive ───────────────────────────── */
 	@media (max-width: 800px) {
 		.weeks-page {
-			padding: calc(0.75rem + var(--header-h, 52px)) 1rem;
+			/* ~0.7rem side padding → the content spans roughly 95vw on a phone. */
+			padding: calc(0.75rem + var(--header-h, 52px)) 0.7rem;
 			padding-bottom: calc(56px + env(safe-area-inset-bottom, 0px) + 1.25rem);
 		}
 		/* Redundant on a phone — the header already says "Weeks" and the bottom
@@ -727,11 +728,16 @@
 		   rail pinned to the far-right edge and the button floated absolutely
 		   at the bottom, which left an awkward gap and read wonky.) */
 		.hero {
+			/* Fill the page width (~95vw) instead of shrink-wrapping to the CTA
+			   button — it was rendering as a narrow ~64vw centered card. */
+			width: 100%;
+			box-sizing: border-box;
 			padding: 1.4rem 1.4rem;
 			border-radius: 18px;
 			gap: 1.2rem;
 			margin-bottom: 1.25rem;
 		}
+		.cols { width: 100%; box-sizing: border-box; }
 		.cols { margin-top: 0; }
 		.hero-week-num { font-size: 3.4rem; }
 		.hero-now-link { margin-top: 0.25rem; align-self: flex-start; }

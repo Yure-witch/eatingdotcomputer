@@ -5387,10 +5387,12 @@
 	:global(.code-lang .code-lang-icon) { width: 15px; height: 15px; display: block; margin-top: -2.5px; }
 
 	/* Effects button */
-	.compose-effect-wrap { position: relative; flex-shrink: 0; }
+	/* Stretch to the full compose-bar height (input-bar is align-items:flex-end)
+	   so it matches the message box and the send button. */
+	.compose-effect-wrap { position: relative; flex-shrink: 0; align-self: stretch; }
 	.btn-effect {
 		display: flex; align-items: center; justify-content: center;
-		width: 36px; height: 36px; font-size: 1rem; line-height: 1;
+		width: 36px; height: 100%; font-size: 1rem; line-height: 1;
 		border: 1.5px solid var(--border); border-radius: 10px;
 		background: var(--paper); color: var(--ink); cursor: pointer;
 		transition: border-color 0.15s, background 0.15s;
