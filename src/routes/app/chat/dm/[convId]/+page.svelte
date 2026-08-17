@@ -5138,7 +5138,10 @@
 	.compose-fmt-row {
 		/* No separator between the editor and the toolbar row — same
 		   change as the channel page. */
-		display: flex; align-items: center; gap: 0.1rem;
+		/* Wrap the toolbar when it doesn't fit the compose width (phone) so the
+		   trailing buttons stay inside the box instead of overflowing onto the
+		   effect + send buttons. Same fix as the channel page. */
+		display: flex; align-items: center; flex-wrap: wrap; gap: 0.1rem;
 		padding: 0.2rem 0.5rem 0.3rem;
 	}
 	/* Attach + emoji moved INTO .compose-fmt-row as .btn-fmt variants

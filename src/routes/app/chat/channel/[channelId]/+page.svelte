@@ -5404,7 +5404,12 @@
 		   compose-wrap's own focus ring already groups the two parts,
 		   and the toolbar icons reading right below the message text
 		   make their relationship obvious without an HR. */
-		display: flex; align-items: center; gap: 0.1rem;
+		/* Wrap when the full toolbar (attach, expr, gif, B/I/U/S, color, code…)
+		   doesn't fit the compose width on a phone — otherwise the trailing
+		   buttons overflowed the message box and collided on top of the
+		   effect + send buttons. Wrapping keeps them inside the box; the box
+		   grows and the stretched effect/send buttons follow its height. */
+		display: flex; align-items: center; flex-wrap: wrap; gap: 0.1rem;
 		padding: 0.2rem 0.5rem 0.3rem;
 	}
 	/* Attach + emoji moved INTO .compose-fmt-row as .btn-fmt variants
