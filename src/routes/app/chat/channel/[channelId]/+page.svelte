@@ -5578,13 +5578,17 @@
 
 	.send-wrap {
 		position: relative; flex-shrink: 0; touch-action: none; user-select: none; z-index: 299;
+		/* Stretch to the full height of the compose bar (the .input-bar is
+		   align-items:flex-end, so opt this child into stretching) so the send
+		   button stands as tall as the message box beside it. */
+		align-self: stretch;
 	}
 	.btn-send {
 		display: inline-flex; align-items: center; justify-content: center;
 		padding: 0.6rem; background: var(--ink); color: var(--paper); border: none;
 		border-radius: 10px; font-family: inherit; font-size: 0.875rem; font-weight: 600;
 		cursor: pointer; transition: opacity 0.15s; pointer-events: none;
-		position: relative; z-index: 1; width: 2.5rem; height: 2.5rem;
+		position: relative; z-index: 1; width: 2.5rem; height: 100%;
 	}
 	.btn-send svg { display: block; margin-right: 1px; }
 	.btn-send:hover { opacity: 0.8; }

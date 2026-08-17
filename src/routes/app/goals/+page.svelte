@@ -277,7 +277,6 @@
 	     native shell via the same --kb-height transform the chat compose uses. -->
 	<div class="goal-add">
 		<div class="goal-add-inner">
-			<span class="goal-add-plus" aria-hidden="true">+</span>
 			<input
 				class="goal-add-input"
 				type="text"
@@ -286,8 +285,9 @@
 				bind:value={newTask}
 				onkeydown={onAddKey}
 			/>
-			<button class="goal-add-btn" disabled={!newTask.trim() || adding} onclick={addTask} aria-label="Add task">
-				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2 15 22 11 13 2 9z"/></svg>
+			<button class="goal-add-btn" disabled={!newTask.trim() || adding} onclick={addTask}>
+				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+				<span>Add</span>
 			</button>
 		</div>
 	</div>
@@ -319,22 +319,23 @@
 		display: flex; align-items: center; gap: 0.5rem;
 		background: var(--paper);
 		border: 1.5px solid var(--border); border-radius: 999px;
-		padding: 0.3rem 0.4rem 0.3rem 0.85rem;
+		padding: 0.3rem 0.4rem 0.3rem 0.95rem;
 	}
 	.goal-add-inner:focus-within { border-color: var(--accent); }
-	.goal-add-plus { color: var(--muted-fg); font-size: 1.2rem; line-height: 1; flex-shrink: 0; }
 	.goal-add-input {
 		flex: 1; min-width: 0; border: none; background: none; outline: none;
 		font-size: 0.95rem; color: var(--ink); font-family: inherit;
 	}
 	.goal-add-input::placeholder { color: var(--muted-fg); }
 	.goal-add-btn {
-		flex-shrink: 0; width: 2.1rem; height: 2.1rem; border: none; border-radius: 999px;
+		flex-shrink: 0; border: none; border-radius: 999px;
 		background: var(--accent); color: var(--paper);
-		display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
+		display: inline-flex; align-items: center; gap: 0.3rem;
+		padding: 0.45rem 0.9rem 0.45rem 0.75rem;
+		font-family: inherit; font-size: 0.85rem; font-weight: 700; cursor: pointer;
 		transition: opacity 0.15s ease;
 	}
-	.goal-add-btn svg { display: block; margin-right: 1px; }
+	.goal-add-btn svg { display: block; }
 	.goal-add-btn:disabled { opacity: 0.35; cursor: default; }
 	@media (max-width: 640px) {
 		/* Sit directly above the fixed bottom nav (56px tall + its safe-area pad),
