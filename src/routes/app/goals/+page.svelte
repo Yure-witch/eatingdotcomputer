@@ -27,6 +27,32 @@
 	const openGoals = $derived(goals.filter((g) => !g.done));
 	const doneGoals = $derived(goals.filter((g) => g.done));
 
+	// ── Manual add ───────────────────────────────────────────────────────
+	// A task you type yourself (source='manual'), sitting alongside the ones
+	// Gemma harvests from chat. Optimistic prepend; roll back on failure.
+	let newTask = $state('');
+	let adding = $state(false);
+	async function addTask() {
+		const label = newTask.trim();
+		if (!label || adding) return;
+		adding = true;
+		try {
+			const r = await fetch('/api/gemma/goal', {
+				method: 'POST', headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ add: label })
+			});
+			if (r.ok) {
+				const j = await r.json().catch(() => ({}));
+				if (j.goal) goals = [j.goal, ...goals];
+				newTask = '';
+			}
+		} catch { /* leave the text in place so the user can retry */ }
+		adding = false;
+	}
+	function onAddKey(e) {
+		if (e.key === 'Enter') { e.preventDefault(); addTask(); }
+	}
+
 	// ── Group by date ────────────────────────────────────────────────────
 	// Open goals group by the day they were harvested; completed goals by
 	// the day they were checked off. Lists arrive newest-first, so groups
@@ -245,11 +271,82 @@
 			{/if}
 		{/if}
 	</main>
+
+	<!-- Quick-add bar, pinned to the bottom. Lifts above the keyboard on the
+	     native shell via the same --kb-height transform the chat compose uses. -->
+	<div class="goal-add">
+		<div class="goal-add-inner">
+			<span class="goal-add-plus" aria-hidden="true">+</span>
+			<input
+				class="goal-add-input"
+				type="text"
+				placeholder="Add a task…"
+				enterkeyhint="done"
+				bind:value={newTask}
+				onkeydown={onAddKey}
+			/>
+			<button class="goal-add-btn" disabled={!newTask.trim() || adding} onclick={addTask} aria-label="Add task">
+				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2 15 22 11 13 2 9z"/></svg>
+			</button>
+		</div>
+	</div>
 </div>
 
 <style>
 	.goals-shell { min-height: 100%; background: var(--paper); }
-	main { max-width: 640px; margin: 0 auto; padding: calc(1rem + var(--header-h, 52px)) 1.25rem 4rem; }
+	/* Bottom padding clears the fixed quick-add bar so the last task isn't
+	   hidden behind it. */
+	main { max-width: 640px; margin: 0 auto; padding: calc(1rem + var(--header-h, 52px)) 1.25rem 6rem; }
+
+	/* Quick-add composer, pinned to the bottom of the viewport (offset past the
+	   sidebar on desktop, full width on a phone). */
+	.goal-add {
+		position: fixed; bottom: 0; right: 0; left: var(--sidebar-width, 220px);
+		z-index: 20;
+		background: color-mix(in srgb, var(--paper) 90%, transparent);
+		-webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+		border-top: 1px solid var(--border);
+		padding: 0.6rem 1.25rem calc(0.6rem + env(safe-area-inset-bottom, 0px));
+		transition: transform 0.2s ease;
+	}
+	/* Match the chat compose: lift above the keyboard on the native shell. */
+	:global(body.native-app.kb-native-open) .goal-add {
+		transform: translateY(calc(-1 * var(--kb-height, 0px)));
+	}
+	.goal-add-inner {
+		max-width: 640px; margin: 0 auto;
+		display: flex; align-items: center; gap: 0.5rem;
+		background: var(--paper);
+		border: 1.5px solid var(--border); border-radius: 999px;
+		padding: 0.3rem 0.4rem 0.3rem 0.85rem;
+	}
+	.goal-add-inner:focus-within { border-color: var(--accent); }
+	.goal-add-plus { color: var(--muted-fg); font-size: 1.2rem; line-height: 1; flex-shrink: 0; }
+	.goal-add-input {
+		flex: 1; min-width: 0; border: none; background: none; outline: none;
+		font-size: 0.95rem; color: var(--ink); font-family: inherit;
+	}
+	.goal-add-input::placeholder { color: var(--muted-fg); }
+	.goal-add-btn {
+		flex-shrink: 0; width: 2.1rem; height: 2.1rem; border: none; border-radius: 999px;
+		background: var(--accent); color: var(--paper);
+		display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
+		transition: opacity 0.15s ease;
+	}
+	.goal-add-btn svg { display: block; margin-right: 1px; }
+	.goal-add-btn:disabled { opacity: 0.35; cursor: default; }
+	@media (max-width: 640px) {
+		/* Sit directly above the fixed bottom nav (56px tall + its safe-area pad),
+		   not underneath it. The nav already carries the home-indicator inset, so
+		   drop this bar's own bottom safe-area padding here. */
+		.goal-add {
+			left: 0; padding-left: 1rem; padding-right: 1rem;
+			bottom: calc(56px + env(safe-area-inset-bottom, 0px));
+			padding-bottom: 0.6rem;
+		}
+		/* Clear the add bar (~3.4rem) sitting above the bottom nav. */
+		main { padding-bottom: 4rem; }
+	}
 	.page-head h1 { font-family: 'Avara', serif; font-size: 1.5rem; margin: 0 0 0.35rem; }
 	.page-sub { font-size: 0.85rem; color: var(--muted-fg); margin: 0 0 1.5rem; line-height: 1.5; }
 	.goals-section { margin-bottom: 1.75rem; }

@@ -651,7 +651,8 @@
 		align-self: flex-start; flex-shrink: 0;
 	}
 	.sylo-week-of {
-		margin-left: auto;
+		/* Sits inline after the title (wraps to its own line on a phone),
+		   left-aligned — not pushed to the far right. */
 		font-size: 0.78rem;
 		color: var(--md-sys-color-secondary, var(--muted-fg));
 		flex-shrink: 0;

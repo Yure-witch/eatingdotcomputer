@@ -1398,10 +1398,10 @@
 	}
 	.grid {
 		display: grid;
-		/* Fill the full width — 8 flexible columns instead of 9 fixed 36px ones,
-		   with a little gap — so emoji are slightly larger and evenly spaced
-		   across the page rather than clustered in a centred block. */
-		grid-template-columns: repeat(8, 1fr);
+		/* Fill the full width — 9 flexible columns (was 9 FIXED 36px ones that
+		   clustered in a centred block) with a little gap, so the emoji spread
+		   evenly edge to edge. */
+		grid-template-columns: repeat(9, 1fr);
 		justify-content: stretch;
 		gap: 3px;
 		padding: 0 2px;
