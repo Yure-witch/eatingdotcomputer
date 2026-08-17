@@ -390,6 +390,13 @@
 	}
 
 	main {
+		/* Override the global landing-page rule (app.css: main { display:grid;
+		   place-items:center }) — that centred grid shrank the content column
+		   (roadmap window collapsed to its button, syllabus card overflowed the
+		   right edge). A normal block flow keeps everything full-width + top. */
+		display: block;
+		overflow: visible;
+		min-height: 0;
 		flex: 1;
 		padding: 2rem 1.5rem;
 		padding-top: calc(2rem + var(--header-h, 52px));

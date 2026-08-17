@@ -258,7 +258,13 @@
 
 <style>
 	.weeks-page {
-		min-height: 100dvh;
+		/* Override the global landing-page rule (app.css: main { display:grid;
+		   place-items:center }) which was vertically CENTERING the content —
+		   that's what floated the hero card in the middle with big gaps above
+		   and below. Top-aligned block flow removes the dead whitespace. */
+		display: block;
+		overflow: visible;
+		min-height: 0;
 		background: var(--paper);
 		padding: calc(2rem + var(--header-h, 52px)) 2rem 4rem;
 		max-width: 1120px;

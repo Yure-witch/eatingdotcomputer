@@ -1398,9 +1398,13 @@
 	}
 	.grid {
 		display: grid;
-		grid-template-columns: repeat(9, 36px);
-		justify-content: center;
-		gap: 0;
+		/* Fill the full width — 8 flexible columns instead of 9 fixed 36px ones,
+		   with a little gap — so emoji are slightly larger and evenly spaced
+		   across the page rather than clustered in a centred block. */
+		grid-template-columns: repeat(8, 1fr);
+		justify-content: stretch;
+		gap: 3px;
+		padding: 0 2px;
 	}
 	.grid.noto .cell {
 		font-family: 'Noto Color Emoji', sans-serif;
@@ -1408,16 +1412,17 @@
 	.cell {
 		background: none;
 		border: none;
-		font-size: 1.3rem;
-		width: 36px;
-		height: 36px;
+		font-size: 1.55rem;
+		width: 100%;
+		aspect-ratio: 1 / 1;
+		height: auto;
 		/* The grid renders all ~1800 emoji at once. content-visibility lets the
 		   browser skip style/layout/paint for the off-screen cells, which is
 		   what was making opening/switching to this category cost ~600ms of
 		   style-recalc + layout (per the Safari timeline). Cells are a fixed
 		   36px, so contain-intrinsic-size matches exactly — no scroll jump. */
 		content-visibility: auto;
-		contain-intrinsic-size: 36px 36px;
+		contain-intrinsic-size: auto 44px;
 		display: flex;
 		align-items: center;
 		justify-content: center;

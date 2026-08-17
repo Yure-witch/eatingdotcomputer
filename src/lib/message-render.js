@@ -449,10 +449,14 @@ export function createContentRenderer({ hljs = null, codeIcons = {}, getCeMap = 
 
 	function contentHtml(text, split = true) {
 		if (!text) return '';
-		// Per-user hide-Telegram-emoji switch: drop sticker tokens before any
-		// parsing so they never reach the DOM for this user.
-		if (isTgHidden() && (text.includes('[tg:') || text.includes('[tgc:'))) {
-			text = text.replace(/\[tg:[0-9a-f-]+\]/gi, '').replace(/\[tgc:[A-Za-z0-9_]+:\d+\]/g, '');
+		// Per-user hide-Telegram-emoji switch (the App Store review account):
+		// drop third-party sticker/mashup tokens — Telegram emotes AND inline
+		// Emoji Kitchen — before any parsing so they never reach the DOM.
+		if (isTgHidden() && (text.includes('[tg:') || text.includes('[tgc:') || text.includes('[ek:'))) {
+			text = text
+				.replace(/\[tg:[0-9a-f-]+\]/gi, '')
+				.replace(/\[tgc:[A-Za-z0-9_]+:\d+\]/g, '')
+				.replace(/\[ek:[a-z0-9]+:[0-9a-f-]+:[0-9a-f-]+\]/gi, '');
 			if (!text.trim()) return '';
 		}
 		const codeParts = processCodeBlocks(text);
