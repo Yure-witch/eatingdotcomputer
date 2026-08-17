@@ -5172,6 +5172,16 @@
 		   the picker top and grows UPWARD as it gets taller. The bar's own
 		   safe-area bottom padding is dropped — the picker now owns the safe
 		   area, so that pad would re-open the gap. */
+		/* Fit the compose toolbar in ONE row (see channel page for the full
+		   rationale): app.css's 40px .btn-fmt tap target overflowed the row onto
+		   the effect + send buttons. Trim these toolbar buttons so it fits. */
+		.compose-fmt-row { gap: 0; }
+		.compose-fmt-row .btn-fmt {
+			min-width: 30px !important; width: 30px;
+			min-height: 34px !important; height: 34px;
+		}
+		.compose-fmt-row .btn-fmt-code-arrow { min-width: 18px !important; width: 18px; }
+
 		.input-area { --picker-h: min(58vh, 22rem); }
 		.input-area.picker-open { margin-bottom: calc(var(--picker-h) + env(safe-area-inset-bottom, 0px)); }
 		.input-area.picker-open .input-bar { padding-bottom: 0.5rem; }

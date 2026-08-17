@@ -5404,12 +5404,7 @@
 		   compose-wrap's own focus ring already groups the two parts,
 		   and the toolbar icons reading right below the message text
 		   make their relationship obvious without an HR. */
-		/* Wrap when the full toolbar (attach, expr, gif, B/I/U/S, color, code…)
-		   doesn't fit the compose width on a phone — otherwise the trailing
-		   buttons overflowed the message box and collided on top of the
-		   effect + send buttons. Wrapping keeps them inside the box; the box
-		   grows and the stretched effect/send buttons follow its height. */
-		display: flex; align-items: center; flex-wrap: wrap; gap: 0.1rem;
+		display: flex; align-items: center; gap: 0.1rem;
 		padding: 0.2rem 0.5rem 0.3rem;
 	}
 	/* Attach + emoji moved INTO .compose-fmt-row as .btn-fmt variants
@@ -5462,6 +5457,19 @@
 		   at the viewport bottom and inflate its measured height. The bar's
 		   own safe-area bottom padding is also dropped here — the picker now
 		   occupies the safe area, so that pad would re-open the gap. */
+		/* The compose toolbar (attach, expr, gif, B/I/U/S, color, code) must fit
+		   ONE row inside the message box. app.css bumps every .btn-fmt to a 40px
+		   tap target on mobile, so 10 buttons (~400px) overflowed the ~300px row
+		   and spilled onto the effect + send buttons — making the bar look
+		   different depending on whether the picker was open. Trim just these
+		   toolbar buttons so the whole row fits and looks identical either way. */
+		.compose-fmt-row { gap: 0; }
+		.compose-fmt-row .btn-fmt {
+			min-width: 30px !important; width: 30px;
+			min-height: 34px !important; height: 34px;
+		}
+		.compose-fmt-row .btn-fmt-code-arrow { min-width: 18px !important; width: 18px; }
+
 		.input-area { --picker-h: min(58vh, 22rem); }
 		.input-area.picker-open { margin-bottom: calc(var(--picker-h) + env(safe-area-inset-bottom, 0px)); }
 		.input-area.picker-open .input-bar { padding-bottom: 0.5rem; }
