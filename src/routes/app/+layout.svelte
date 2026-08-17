@@ -626,7 +626,7 @@
 	let _swStartX = 0, _swStartY = 0, _swArmed = false, _swDecided = false;
 	let _swDragX = $state(0);
 	let _swDragging = $state(false);
-	// Menu overlay drag: 0 = off-screen right (conversation), 1 = fully covering.
+	// Menu overlay drag: 0 = off-screen left (conversation), 1 = fully covering.
 	let _menuSliding = $state(false);   // overlay present (dragging or settling)
 	let _menuDragging = $state(false);  // finger is actively dragging (no transition)
 	// Plain (non-reactive) — the visual transform is driven imperatively via the
@@ -685,13 +685,13 @@
 		if (!_swDecided) {
 			if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
 			if (Math.abs(dy) >= Math.abs(dx)) { _swArmed = false; return; } // vertical → scroll
-			if (dx > 0) { _swArmed = false; return; }                       // leftward only
+			if (dx < 0) { _swArmed = false; return; }                       // rightward only (left→right)
 			_swDecided = true;
 			if (_swMode === 'menu') { _menuSliding = true; _menuDragging = true; }
 		}
 		// 'home' mode just waits for release (no overlay) — the pager will snap.
 		if (_swMode === 'menu') {
-			_setMenuDrag(Math.max(0, Math.min(1, -dx / W)));
+			_setMenuDrag(Math.max(0, Math.min(1, dx / W)));
 		}
 	}
 	function onSwipeEnd() {
@@ -709,7 +709,7 @@
 		_menuDragging = false; // re-enable the transition so it animates to the snap
 		// Commit on a clear drag (past 30%) OR a quick leftward flick (velocity),
 		// like the native pager's momentum snap.
-		if (_menuDrag > 0.3 || _swVelX < -0.4) {
+		if (_menuDrag > 0.3 || _swVelX > 0.4) {
 			const gen = ++_menuGen;
 			_setMenuDrag(1); // settle fully in (fast transition)
 			// Commit the navigation IMMEDIATELY (no settle delay) so the real
@@ -2766,11 +2766,12 @@
 		pointer-events: none;
 		/* Promote to its own GPU layer so dragging it (a heavy full-screen list)
 		   is a composited transform, not a per-frame repaint. The drag position is
-		   the `--md` custom property (0 = off-screen right … 1 = fully covering),
+		   the `--md` custom property (0 = off-screen LEFT … 1 = fully covering),
 		   set imperatively during the drag so there's NO Svelte reactivity per
 		   frame — the transform recalc + composite is all that runs, like the
-		   native pager. */
-		transform: translateX(calc((1 - var(--md, 0)) * 100%));
+		   native pager. The menu enters from the LEFT to match the left→right
+		   (rightward) swipe-out gesture. */
+		transform: translateX(calc((var(--md, 0) - 1) * 100%));
 		will-change: transform;
 		/* Transition only kicks in on release to animate to the snapped position.
 		   Snappy so the hand-off to the pager is quick. */

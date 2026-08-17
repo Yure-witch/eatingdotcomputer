@@ -94,6 +94,13 @@
 </script>
 
 <header class="app-header" class:conv-mobile={_convMobile} bind:this={headerEl}>
+	{#if _convMobile}
+		<!-- ✕ close in the TOP-LEFT corner (iOS-style). Slide back to the chat
+		     menu like a swipe would; hard-navigate if the pager isn't active. -->
+		<button class="header-close header-close-left" onclick={() => { if (!pagerNav?.slideToChatMenu?.()) goto('/app/chat'); }} title="Close chat" aria-label="Close chat">
+			<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+		</button>
+	{/if}
 	{#if !_convMobile}
 		<div class="wordmark-wrap" class:desktop-hidden={_titleHasSwitcher} class:title-present={_titlePresent}>
 			<a class="wordmark" href="/">eating.computer</a>
@@ -133,13 +140,7 @@
 		</div>
 	{/if}
 	<div class="header-right">
-		{#if _convMobile}
-			<!-- Slide back to the chat menu like a swipe would; hard-navigate
-			     only if the pager isn't active to animate it. -->
-			<button class="header-close" onclick={() => { if (!pagerNav?.slideToChatMenu?.()) goto('/app/chat'); }} title="Close chat" aria-label="Close chat">
-				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-			</button>
-		{:else}
+		{#if !_convMobile}
 			<!-- Bell sits top-right, just left of the profile photo -->
 			<NotificationBell {user} />
 			<UserMenu {user} />
