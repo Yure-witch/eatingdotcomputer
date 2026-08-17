@@ -273,7 +273,7 @@
 		gap: 0.4rem;
 		font-size: 0.78rem;
 		color: var(--muted-fg);
-		margin-bottom: 1rem;
+		margin-bottom: 0.6rem;
 	}
 	.crumb {
 		color: var(--muted-fg);
@@ -293,10 +293,10 @@
 		border: 1px solid var(--md-sys-color-outline-variant, var(--border));
 		border-radius: 24px;
 		padding: 2.2rem 2.4rem;
-		margin-bottom: 2.5rem;
+		margin-bottom: 1.75rem;
 		display: flex;
 		flex-direction: column;
-		gap: 1.75rem;
+		gap: 1.5rem;
 	}
 
 	/* "Where you are" block */
@@ -710,18 +710,23 @@
 	/* ── Responsive ───────────────────────────── */
 	@media (max-width: 800px) {
 		.weeks-page {
-			padding: calc(1.25rem + var(--header-h, 52px)) 1rem;
+			padding: calc(0.75rem + var(--header-h, 52px)) 1rem;
 			padding-bottom: calc(56px + env(safe-area-inset-bottom, 0px) + 1.25rem);
 		}
+		/* Redundant on a phone — the header already says "Weeks" and the bottom
+		   nav has Home. Dropping it pulls the card up and kills the top gap. */
+		.crumbs { display: none; }
 		/* Keep the clean STACKED card on mobile — eyebrow → big Week N →
 		   horizontal rail → CTA. (The old design flipped to a row with the
 		   rail pinned to the far-right edge and the button floated absolutely
 		   at the bottom, which left an awkward gap and read wonky.) */
 		.hero {
-			padding: 1.5rem 1.4rem;
+			padding: 1.4rem 1.4rem;
 			border-radius: 18px;
-			gap: 1.35rem;
+			gap: 1.2rem;
+			margin-bottom: 1.25rem;
 		}
+		.cols { margin-top: 0; }
 		.hero-week-num { font-size: 3.4rem; }
 		.hero-now-link { margin-top: 0.25rem; align-self: flex-start; }
 		.cols { grid-template-columns: 1fr; gap: 1rem; }

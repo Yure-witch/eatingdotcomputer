@@ -424,8 +424,8 @@
 
 	/* ── Divider between Roadmap and Files ── */
 	.files-divider {
-		border-top: 2px solid var(--border);
-		margin: 2.5rem 0;
+		border-top: 1.5px solid var(--border);
+		margin: 1.75rem 0;
 	}
 
 	/* ── Create form ── */
@@ -767,8 +767,9 @@
 
 	@media (max-width: 600px) {
 		/* Stack the header so the button gets its own full-width line instead of
-		   crowding the "Roadmap" title. */
-		.page-header { flex-direction: column; align-items: stretch; gap: 0.7rem; }
+		   crowding the "Roadmap" title, and centre the section headings so
+		   Roadmap / Syllabus / Files all line up down the middle. */
+		.page-header { flex-direction: column; align-items: center; gap: 0.7rem; text-align: center; }
 		.page-header .btn-secondary { width: 100%; }
 		.roadmap-link {
 			grid-template-columns: 56px 1fr;
