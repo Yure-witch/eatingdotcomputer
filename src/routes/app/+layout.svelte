@@ -99,27 +99,23 @@
 	// is a conversation (it renders the live page via {@render children()}; we
 	// don't preload conversations as section Comps).
 	const _onConvMobile = $derived(_isMobile && _isConvRoute($page.url.pathname));
-	// The conversation is ALWAYS panel 0 (just inactive/empty when you're not in a
-	// chat). Keeping the slot permanent means leaving a chat never removes a panel
-	// or shifts every other panel's index — which is what forced the late "settle"
-	// hard-snap that fought your swipe (snap-back to Orbit, lagging nav highlight,
-	// nav bar re-staggering). Now conv → menu → home → orbit is one fixed index set.
+	// Pager tabs, left → right: Home, Chat (menu), Orbit, Lab, [Manage]. A
+	// conversation is NOT a pager panel — it's a full page that slides OVER the
+	// chat menu, dismissed with a left→right swipe (the legacy menu-slide overlay,
+	// shared with Gemma/Tasks). Keeping conversations out of the scroll-snap track
+	// means every panel is uniform full width (so `idx * w` math stays valid) and
+	// a rightward swipe naturally reads as "back to the chat list".
 	const PANELS = $derived([
-		{ conv: true },
-		{ route: '/app/chat', chatMenu: true },
 		{ route: '/app', Comp: HomePanel },
+		{ route: '/app/chat', chatMenu: true },
 		{ route: '/app/orbit', Comp: OrbitPanel },
 		{ route: '/app/lab', Comp: LabPanel },
 		...(data.currentUser?.role === 'instructor' ? [{ route: '/app/manage', Comp: ManagePanel }] : [])
 	]);
-	// The conv panel is only reachable/active while you're in a conversation OR
-	// navigating into one (so the entry slide to panel 0 isn't clamped back).
-	const _convActiveOrEntering = $derived(
-		_onConvMobile || (_isMobile && !!$navigating && _isConvRoute($navigating.to?.url?.pathname ?? ''))
-	);
 	function _panelIndexFor(path) {
-		if (_isConvRoute(path)) return 0; // conversation is always panel 0
-		for (let i = 1; i < PANELS.length; i++) {
+		// Conversations aren't pager panels → -1 (rendered as a full page).
+		if (_isConvRoute(path)) return -1;
+		for (let i = 0; i < PANELS.length; i++) {
 			const r = PANELS[i].route;
 			if (!r) continue;
 			// '/app', the chat MENU, and Lab are EXACT matches — so Home doesn't
@@ -179,7 +175,10 @@
 	let _navRiseT;
 	$effect(() => {
 		if (typeof document === 'undefined') return;
-		const covering = _onConvMobile && _pagerFraction < 0.5;
+		// A conversation is a full-page overlay now (not a pager panel), so hide
+		// the bottom nav whenever we're in one — route-based, since _pagerFraction
+		// no longer tracks conversations.
+		const covering = _onConvMobile;
 		const root = document.documentElement;
 		untrack(() => {
 			if (covering === _navHidden) return;
@@ -316,7 +315,7 @@
 			if (_pgVelX < -0.3) idx = Math.ceil(idx);
 			else if (_pgVelX > 0.3) idx = Math.floor(idx);
 			else idx = Math.round(idx);
-			const minIdx = _convActiveOrEntering ? 0 : 1;
+			const minIdx = 0; // Home is the leftmost panel now — always reachable.
 			idx = Math.max(minIdx, Math.min(PANELS.length - 1, idx));
 			pagerEl.scrollTo({ left: idx * cw, behavior: 'smooth' });
 		}
@@ -341,7 +340,7 @@
 		clearTimeout(_pgWheelT);
 		_pgWheelT = setTimeout(() => {
 			if (!pagerEl) return;
-			const minIdx = _convActiveOrEntering ? 0 : 1;
+			const minIdx = 0; // Home is the leftmost panel now — always reachable.
 			const idx = Math.max(minIdx, Math.min(PANELS.length - 1, Math.round(pagerEl.scrollLeft / cw)));
 			if (Math.abs(pagerEl.scrollLeft - idx * cw) < 1) {
 				// already parked — restore snap and commit directly (no scroll,
@@ -408,7 +407,7 @@
 		// touch landed mid-momentum, its anchor rounded to the wrong panel and the
 		// clamp yanked the settled position back to a neighbour. Just floor at the
 		// menu when no chat is active (the conv slot is off-limits then).
-		const minIdx = _convActiveOrEntering ? 0 : 1;
+		const minIdx = 0; // Home is the leftmost panel now — always reachable.
 		const i = Math.max(minIdx, Math.min(PANELS.length - 1, raw));
 		// Use the panel's ACTUAL offset (its exact scroll-snap position) rather than
 		// i*width, so a pin can never fight the native snap point.
@@ -551,23 +550,9 @@
 		if (!pagerEl) return;
 		_lastScrollAt = performance.now();
 		const w = pagerEl.clientWidth || 1;
-		// Reachability edges (edge-only, never fight a forward swipe; skipped during
-		// programmatic scrolls):
-		//  • Exiting a conversation (gesture STARTED on the conv panel) → cap the
-		//    RIGHT edge at the menu so a hard exit flick can't overshoot toward Home.
-		//    Gating on the gesture START is critical: after a quick conv→menu the
-		//    route is still committing, so a follow-on menu→Home swipe is still
-		//    "_onConvMobile" — without the gate the cap would clamp it back to the
-		//    menu (the "can't reach Home, glitches back" bug).
-		//  • Not in a chat → the menu (index 1) is the leftmost panel; floor the LEFT
-		//    edge there so you can't scroll into the empty conv slot.
-		if (!_pagerProg) {
-			if (_onConvMobile && _gestureStartIdx === 0) {
-				if (pagerEl.scrollLeft > w) pagerEl.scrollLeft = w;
-			} else if (!_convActiveOrEntering && pagerEl.scrollLeft < w) {
-				pagerEl.scrollLeft = w;
-			}
-		}
+		// No conv-slot reachability clamp any more: Home is the leftmost panel
+		// (index 0) and every panel is a real, reachable tab. (Conversations live
+		// outside the pager, so there's no empty slot to fence off.)
 		// (No live scrollLeft clamp — it fought deliberate multi-panel drags and
 		// yanked you back on release. Panel skipping is prevented instead by native
 		// scroll-snap-stop + deferring nav commits until the gesture ends, so panel
@@ -594,19 +579,18 @@
 	const _scrollEndSupported = typeof window !== 'undefined' && 'onscrollend' in window;
 
 	// ── Bottom-nav pill position (driven via a CSS var, not Svelte, for 60fps) ──
-	// Expressed as a fractional nav slot: 0 = Chat, 1 = Home, 2 = Orbit, … The
-	// conversation + menu panels both collapse onto the Chat slot (0).
+	// Nav slots now line up 1:1 with the pager panels: 0 = Home, 1 = Chat, 2 =
+	// Orbit, 3 = Lab, 4 = Manage. So the pager fraction IS the nav fraction.
 	function _writeNavFrac(frac) {
 		if (typeof document === 'undefined') return;
-		const homeIdx = PANELS.findIndex((p) => p.route === '/app');
-		if (homeIdx < 0) return;
-		document.documentElement.style.setProperty('--nav-frac', String(Math.max(0, frac - homeIdx + 1)));
+		document.documentElement.style.setProperty('--nav-frac', String(Math.max(0, frac)));
 	}
 	// Discrete slot for a committed route — for settle, nav-icon taps, and off-pager
-	// routes (where the live scroll handler isn't running).
+	// routes (conversations, where the live scroll handler isn't running: they park
+	// the pill on Chat).
 	function _navSlotForPath(path) {
-		if (path.startsWith('/app/chat')) return 0;
-		if (path === '/app' || path.startsWith('/app/weeks')) return 1;
+		if (path === '/app' || path.startsWith('/app/weeks')) return 0;
+		if (path.startsWith('/app/chat') || path === '/app/goals') return 1;
 		if (path.startsWith('/app/orbit') || path.startsWith('/app/atlas') || path.startsWith('/app/collection') || path.startsWith('/app/assignments') || path.startsWith('/app/files')) return 2;
 		if (path.startsWith('/app/lab') || path.startsWith('/app/playground')) return 3;
 		if (path.startsWith('/app/manage')) return 4;
@@ -2195,14 +2179,9 @@
 		     under your finger. Panels lazy-mount (current ± 1, then cached);
 		     far panels show a skeleton until reached. -->
 		<div class="pager-track" bind:this={pagerEl} onscroll={onPagerScroll} onscrollend={onPagerScrollEnd} ontouchstart={onPagerTouchStart} ontouchmove={onPagerTouchMove} ontouchend={onPagerTouchEnd} ontouchcancel={onPagerTouchEnd}>
-			{#each PANELS as panel, i (panel.route ?? 'conv')}
-				<section class="pager-panel" class:current={i === pagerIndex} class:conv={panel.conv}>
-					{#if panel.conv}
-						<!-- Permanent panel 0. Renders the live conversation only while in
-						     one; otherwise empty (you can't reach it — see the left-edge
-						     clamp in onPagerScroll). -->
-						{#if _onConvMobile}{@render children()}{/if}
-					{:else if panel.chatMenu}
+			{#each PANELS as panel, i (panel.route)}
+				<section class="pager-panel" class:current={i === pagerIndex}>
+					{#if panel.chatMenu}
 						<div class="chat-menu-panel" ontouchstart={onMenuTouchStart} ontouchend={onMenuTouchEnd}>
 							{@render chatListContent()}
 						</div>
@@ -2729,14 +2708,9 @@
 		box-sizing: border-box;
 	}
 	.pager-panel::-webkit-scrollbar { display: none; }
-	/* The conversation panel uses the FULL height (nav hidden) and doesn't
-	   scroll itself — the conversation's own .message-list scrolls internally. */
-	.pager-panel.conv { padding-bottom: 0; overflow: hidden; }
-	:global(.pager-panel.conv .chat-wrap) {
-		height: 100% !important;
-		margin-top: 0 !important;
-	}
-	/* Chat-menu panel (pager index 0) — wraps the shared conversation list. */
+	/* Chat-menu panel — wraps the shared conversation list. (Conversations are
+	   no longer pager panels; they render as full pages via the chat +layout's
+	   own .chat-wrap sizing, driven by html.in-conversation.) */
 	.chat-menu-panel { padding: 0 0.25rem 1.5rem; }
 	.chat-menu-title {
 		font-family: 'Avara', serif;

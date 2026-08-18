@@ -144,10 +144,9 @@
 	// Chat is selected on the chat menu panel OR any chat route (conversation).
 	const chatActive = $derived(activePath.startsWith('/app/chat'));
 
-	// Sliding highlight: the pager now includes the chat menu as panel 0, so the
-	// nav slots (Chat, Home, Orbit, …) map 1:1 to the pager fraction. The pill
-	// rides the live scroll position across all of them. Off the pager (in a
-	// conversation) it parks on Chat (slot 0).
+	// Sliding highlight: nav slots (Home, Chat, Orbit, Lab, …) map 1:1 to the pager
+	// panels, so the pill rides the live pager fraction. Off the pager (in a
+	// conversation) it parks on Chat (slot 1).
 	const slotCount = $derived(items.length + 1);
 	// The pill's fractional position rides the CSS var `--nav-frac`, written
 	// straight to <html> by the pager (imperatively, per scroll frame) for 60fps —
@@ -157,19 +156,9 @@
 <!-- Mobile bottom nav only — desktop nav is in the global sidebar (app/+layout.svelte) -->
 <nav class="bottom-nav" class:hidden={keyboardOpen}>
 	<span class="nav-indicator" style:--slot-count={slotCount}></span>
-	<!-- Chat is a real tab now: scrolls the pager to the chat-menu panel (or
-	     navigates to it from a non-pager route like a conversation). -->
-	<a href="/app/chat" class="nav-item" class:active={chatActive}
-		onclick={(e) => { if (pagerNav?.goToSection?.('/app/chat')) e.preventDefault(); }}>
-		<span class="icon-wrap">
-			<span class="msi msi-20" class:msi-fill={chatActive}>{chatIconName}</span>
-			{#if totalUnread > 0}
-				<span class="nav-badge">{totalUnread > 99 ? '99+' : totalUnread}</span>
-			{/if}
-		</span>
-		<span class="label">Chat</span>
-	</a>
-	{#each items as item}
+	<!-- Order: Home, Chat, Orbit, Lab, [Manage] — Chat sits immediately right of
+	     Home so a rightward swipe out of a conversation reads as going "back". -->
+	{#each items as item, idx}
 		{@const isActive = !chatActive && item.active(activePath)}
 		<a href={item.href} class="nav-item" class:active={isActive}
 			onclick={(e) => { if (pagerNav?.goToSection?.(item.href)) e.preventDefault(); }}>
@@ -178,6 +167,20 @@
 			</span>
 			<span class="label">{item.label}</span>
 		</a>
+		{#if idx === 0}
+			<!-- Chat is a real tab: scrolls the pager to the chat-menu panel (or
+			     navigates to it from a conversation). -->
+			<a href="/app/chat" class="nav-item" class:active={chatActive}
+				onclick={(e) => { if (pagerNav?.goToSection?.('/app/chat')) e.preventDefault(); }}>
+				<span class="icon-wrap">
+					<span class="msi msi-20" class:msi-fill={chatActive}>{chatIconName}</span>
+					{#if totalUnread > 0}
+						<span class="nav-badge">{totalUnread > 99 ? '99+' : totalUnread}</span>
+					{/if}
+				</span>
+				<span class="label">Chat</span>
+			</a>
+		{/if}
 	{/each}
 </nav>
 
