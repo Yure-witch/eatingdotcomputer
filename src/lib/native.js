@@ -259,13 +259,26 @@ export async function nativeGoogleIdToken() {
 	const { SocialLogin } = await import('@capgo/capacitor-social-login');
 	// initialize() is idempotent, so it's safe to call before every sign-in.
 	await SocialLogin.initialize({ google: { iOSClientId: iosClientId } });
-	const res = await SocialLogin.login({ provider: 'google', options: { scopes: ['email', 'profile'] } });
-	const idToken = res?.result?.idToken ?? null;
+
+	const signIn = (forcePrompt) =>
+		SocialLogin.login({ provider: 'google', options: { scopes: ['email', 'profile'], forcePrompt } });
+
+	let res = await signIn(false);
+	let idToken = res?.result?.idToken ?? null;
+
+	// When the device has signed in with Google before, the plugin silently
+	// restores that session (GIDSignIn.restorePreviousSignIn) instead of showing
+	// the account sheet — and a restored user's idToken is frequently nil,
+	// because restoring does not refresh tokens. That comes back as a *success*
+	// with no token, which is indistinguishable from a cancellation unless you
+	// look. Retry once forcing the real prompt, which skips the restore path.
 	if (!idToken) {
-		// A resolved call with no ID token is NOT the same as a cancellation —
-		// it usually means the SDK came back in offline mode or the client ID
-		// doesn't match the bundle. Return the raw shape so the caller can show
-		// it; on a phone there is often no console to read.
+		console.warn('[auth] Google restore returned no idToken; forcing the account prompt');
+		res = await signIn(true);
+		idToken = res?.result?.idToken ?? null;
+	}
+
+	if (!idToken) {
 		console.warn('[auth] Google login resolved without an idToken:', JSON.stringify(res ?? null));
 		return { idToken: null, raw: JSON.stringify(res ?? null) };
 	}
