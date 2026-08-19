@@ -619,6 +619,16 @@
 	let _swDragX = $state(0);
 	let _swDragging = $state(false);
 	// Menu overlay drag: 0 = off-screen left (conversation), 1 = fully covering.
+	// Forward (right→left) exit. There is no overlay to bring in from the right —
+	// the destination panel needs panelData that isn't loaded while you're in a
+	// conversation — so instead the screen you're LEAVING tracks the finger and
+	// slides out to the left. Same imperative --fd custom property trick as the
+	// menu overlay: no Svelte reactivity per frame, just a composited transform.
+	let _fwdSliding = $state(false);
+	let _fwdDragging = $state(false);
+	let _fwdEl = $state(null);
+	function _setFwdDrag(v) { _fwdEl?.style.setProperty('--fd', String(v)); }
+
 	let _menuSliding = $state(false);   // overlay present (dragging or settling)
 	let _menuDragging = $state(false);  // finger is actively dragging (no transition)
 	// Plain (non-reactive) — the visual transform is driven imperatively via the
@@ -690,11 +700,15 @@
 			// drag in from the right, so it just commits on release.
 			_swDecided = true;
 			if (_swMode === 'menu' && _swDir === 1) { _menuSliding = true; _menuDragging = true; }
+			if (_swMode === 'menu' && _swDir === -1) { _fwdSliding = true; _fwdDragging = true; _setFwdDrag(0); }
 		}
-		// 'home' mode, and the forward (right→left) exit, just wait for release —
-		// neither drags the menu overlay.
+		// 'home' mode just waits for release. The two exit directions each drive
+		// their own transform: back drags the menu overlay in from the left,
+		// forward drags the current screen out to the left.
 		if (_swMode === 'menu' && _swDir === 1) {
 			_setMenuDrag(Math.max(0, Math.min(1, dx / W)));
+		} else if (_swMode === 'menu' && _swDir === -1) {
+			_setFwdDrag(Math.max(0, Math.min(1, -dx / W)));
 		}
 	}
 	function onSwipeEnd() {
@@ -716,9 +730,17 @@
 		// on the gallery first and requiring a second swipe made the surface feel
 		// like it sat on top of chat rather than beside it.
 		if (_swDir === -1) {
-			if (_swDecided && (_swLastDx <= -30 || _swVelX < -0.4)) {
+			_fwdDragging = false; // re-enable the transition so it animates to the snap
+			if (!(_swDecided && (_swLastDx <= -30 || _swVelX < -0.4))) {
+				// Cancelled — slide back into place.
+				_setFwdDrag(0);
+				setTimeout(() => { _fwdSliding = false; }, 130);
+				return;
+			}
+			{
 				const route = _sectionAfterChat();
 				const idx = _panelIndexFor(route);
+				_setFwdDrag(1); // finish the slide off-screen
 				// Cancel any pending scroll-driven commit, and PIN the track onto
 				// the destination panel as soon as the route lands. Without the pin
 				// the pager mounts wherever it was, paints one frame there, then
@@ -728,6 +750,10 @@
 				pageTitle.set(null); pageTitleHref.set(null);
 				goto(route, { noScroll: true, keepFocus: true }).then(() => {
 					if (idx >= 0) _repinPager(idx, 3);
+					// The wrapper unmounts with the route change (the pager branch
+					// renders instead), but reset so a cancelled-then-committed
+					// sequence can never leave it parked off-screen.
+					_fwdSliding = false; _setFwdDrag(0);
 				});
 			}
 			return;
@@ -2244,7 +2270,9 @@
 			{/each}
 		</div>
 	{:else}
-		{@render children()}
+		<div class="fwd-host" class:sliding={_fwdSliding} class:dragging={_fwdDragging} bind:this={_fwdEl}>
+			{@render children()}
+		</div>
 	{/if}
 </div>
 
@@ -2765,6 +2793,20 @@
 	   content area (below header, above bottom nav) and slides in from the
 	   right; the live pager menu is identical underneath, so the swap is
 	   invisible once it lands. */
+	/* Forward (right→left) exit: the screen you're leaving tracks the finger out
+	   to the left. The transform is applied ONLY while sliding — a permanent
+	   transform (even translateX(0)) makes this a containing block for
+	   position:fixed descendants, which would reposition the compose bar and the
+	   pickers on every non-pager page. */
+	.fwd-host.sliding {
+		transform: translateX(calc(var(--fd, 0) * -100%));
+		will-change: transform;
+		/* Same 110ms ease-out as the menu overlay and the pager's snap, so both
+		   directions settle identically. */
+		transition: transform 0.11s cubic-bezier(0.33, 1, 0.68, 1);
+	}
+	.fwd-host.sliding.dragging { transition: none; }
+
 	.menu-slide {
 		position: fixed;
 		/* Covers the whole screen (incl. the header) so the standard header rides
