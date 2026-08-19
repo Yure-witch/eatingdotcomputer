@@ -630,12 +630,12 @@
 	let _menuJustLanded = false;        // ~400ms window right after landing on the menu (pager may not yet handle a fast flick)
 	let _menuLandedT;
 	let _swMode = 'menu';               // 'menu' (conversation → chat menu) | 'home' (fast follow-on → Home)
-	let _swDir = 1;                     // +1 = left→right (slide the menu in), -1 = right→left (exit forward)
-	// After a right→left exit the user is on the chat menu having travelled
-	// "forwards", so a second right→left swipe should continue in that direction
-	// to the panel AFTER chat rather than snapping back to Home.
-	let _swForward = false;
-	let _swForwardT;
+	let _swDir = 1;                     // +1 = left→right (back to the gallery), -1 = right→left (on to the next section)
+	// A conversation / Gemma / Tasks / Recommendations behaves as though it sits
+	// in the pager right where the chat gallery is: swiping back (left→right)
+	// returns to the gallery, swiping forward (right→left) continues to whatever
+	// section follows chat — one gesture each, never a two-step hop via chat.
+	const _sectionAfterChat = () => PANELS[_panelIndexFor('/app/chat') + 1]?.route ?? '/app/chat';
 	function onSwipeStart(e) {
 		if (window.innerWidth > 640) { _swArmed = false; return; }
 		// The conversation is now a real pager panel, so conv→menu is handled by
@@ -701,25 +701,17 @@
 			if (_swDecided && (_swLastDx <= -30 || _swVelX < -0.4)) {
 				clearTimeout(_pagerSnapT);
 				pageTitle.set(null); pageTitleHref.set(null);
-				// Continue the direction the user was already travelling: a forward
-				// (right→left) exit carries on to the panel AFTER chat; the classic
-				// back-swipe still falls through to Home.
-				const _next = _swForward ? (PANELS[_panelIndexFor('/app/chat') + 1]?.route ?? '/app') : '/app';
-				goto(_next, { noScroll: true });
+				goto('/app', { noScroll: true });
 			}
 			return;
 		}
-		// Forward exit: no overlay was dragged, so commit straight to the chat
-		// menu on a clear right→left swipe and remember the direction so the next
-		// swipe continues forwards instead of doubling back.
+		// Forward exit: straight to the section after chat, in ONE gesture. Landing
+		// on the gallery first and requiring a second swipe made the surface feel
+		// like it sat on top of chat rather than beside it.
 		if (_swDir === -1) {
 			if (_swDecided && (_swLastDx <= -30 || _swVelX < -0.4)) {
 				pageTitle.set(null); pageTitleHref.set(null);
-				_swForward = true;
-				clearTimeout(_swForwardT);
-				_swForwardT = setTimeout(() => (_swForward = false), 1200);
-				_menuNavPending = true;
-				goto('/app/chat', { noScroll: true });
+				goto(_sectionAfterChat(), { noScroll: true });
 			}
 			return;
 		}
