@@ -100,6 +100,12 @@
 	// is a conversation (it renders the live page via {@render children()}; we
 	// don't preload conversations as section Comps).
 	const _onConvMobile = $derived(_isMobile && _isConvRoute($page.url.pathname));
+	// Gemma, Tasks and Recommendations are treated as chats throughout (focused
+	// header, ✕ close, swipe in/out), so they hide the bottom nav like one too —
+	// they're a screen you're inside, not a section you're browsing.
+	const _onChatSurfaceMobile = $derived(
+		_onConvMobile || (_isMobile && _isChatLikeRoute($page.url.pathname))
+	);
 	// Pager tabs, left → right: Home, Chat (menu), Orbit, Lab, [Manage]. A
 	// conversation is NOT a pager panel — it's a full page that slides OVER the
 	// chat menu, dismissed with a left→right swipe (the legacy menu-slide overlay,
@@ -178,8 +184,9 @@
 		if (typeof document === 'undefined') return;
 		// A conversation is a full-page overlay now (not a pager panel), so hide
 		// the bottom nav whenever we're in one — route-based, since _pagerFraction
-		// no longer tracks conversations.
-		const covering = _onConvMobile;
+		// no longer tracks conversations. Gemma / Tasks / Recommendations count as
+		// conversations here for the same reason they get the chat header.
+		const covering = _onChatSurfaceMobile;
 		const root = document.documentElement;
 		untrack(() => {
 			if (covering === _navHidden) return;
