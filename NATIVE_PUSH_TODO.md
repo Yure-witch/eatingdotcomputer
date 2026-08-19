@@ -7,7 +7,7 @@ Do them top to bottom. Anything with `!` you can run right in the Claude prompt.
 
 ## 1. Create the database table (30 seconds, safe)
 
-- [ ] Run it:
+- [x] ✅ DONE 2026-08-18 — run against production, `apns_tokens` verified created.
   ```
   ! npm run migrate
   ```
@@ -47,18 +47,29 @@ Vercel → your project → **Settings → Environment Variables** (Production):
 
 ---
 
-## 4. Turn on Push in Xcode (~1 minute)
+## 4. ✅ Turn on Push in Xcode — DONE IN THE REPO (2026-08-18)
 
-- [ ] Open the project:
-  ```
-  ! npm run cap:ios
-  ```
-- [ ] Select the **App** target → **Signing & Capabilities**.
-- [ ] Click **➕ Capability** → double-click **Push Notifications**.
-- [ ] Back in the terminal, sync it:
-  ```
-  ! npm run cap:sync
-  ```
+Done for you, no Xcode clicking needed:
+
+- [x] `ios/App/App/App.entitlements` created with `aps-environment` (Xcode
+      rewrites it to `production` automatically when you archive for the Store).
+- [x] `CODE_SIGN_ENTITLEMENTS` + the Push capability wired into the Xcode
+      project (Debug **and** Release).
+- [x] `PrivacyInfo.xcprivacy` added to the Resources build phase — it was on
+      disk but not in the project, so it wasn't shipping in the binary.
+- [x] `npx cap sync ios` run — `@capacitor/push-notifications` was in
+      package.json but had **no CocoaPod**, so the plugin wasn't in the app.
+- [x] APNs callbacks added to `AppDelegate.swift`
+      (`didRegisterForRemoteNotificationsWithDeviceToken` +
+      `didFailToRegisterForRemoteNotificationsWithError`) — without these the
+      device token never reaches the plugin and push is silently dead.
+
+Verified with a full Release build; `PrivacyInfo.xcprivacy` confirmed present
+inside the built `App.app`.
+
+> Note: automatic signing will add the Push Notifications capability to the
+> `computer.eating.app` App ID the first time you build to a device, as long as
+> you're signed into the `2DA4GWZYAS` team in Xcode.
 
 ---
 

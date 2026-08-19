@@ -23,6 +23,10 @@ const config: CapacitorConfig = {
 	},
 	ios: {
 		contentInset: 'never',
+		// Lets the server tell a shell request apart from a plain browser one, so
+		// an unauthenticated launch can go straight to /login instead of the
+		// marketing landing page (see src/routes/+page.server.js).
+		appendUserAgent: 'eatingcomputer-native',
 		// Shows through behind the (non-overlaying) status bar — set to the
 		// app's declared default --paper (md-sys-color-surface fallback) so
 		// the strip blends with the header on the default light theme.

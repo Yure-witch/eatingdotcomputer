@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-        <string>eating.computer</string>
+	<string>eating.computer</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -18,10 +18,29 @@
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.442315561548-coa0c20jk7vh6e75arof838u9ve4msgp</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>eating.computer uses the camera when you take a photo for your profile or to share in chat.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>eating.computer uses the microphone if you record audio to share in chat.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>eating.computer saves images you export (like GIFs) to your photo library.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>eating.computer accesses your photo library when you attach an image to chat or set a profile picture.</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
@@ -45,21 +64,5 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
-	<!-- Export compliance: the app only uses standard HTTPS/TLS (exempt),
-	     so declare this to skip the per-build encryption prompt in App Store
-	     Connect. -->
-	<key>ITSAppUsesNonExemptEncryption</key>
-	<false/>
-	<!-- Usage strings for the in-page pickers the web view can trigger
-	     (avatar photo, chat image/file attach, GIF Studio). Without these,
-	     iOS crashes the app the moment the site requests camera/photos. -->
-	<key>NSCameraUsageDescription</key>
-	<string>eating.computer uses the camera when you take a photo for your profile or to share in chat.</string>
-	<key>NSPhotoLibraryUsageDescription</key>
-	<string>eating.computer accesses your photo library when you attach an image to chat or set a profile picture.</string>
-	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>eating.computer saves images you export (like GIFs) to your photo library.</string>
-	<key>NSMicrophoneUsageDescription</key>
-	<string>eating.computer uses the microphone if you record audio to share in chat.</string>
 </dict>
 </plist>

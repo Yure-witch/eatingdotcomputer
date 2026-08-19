@@ -40,15 +40,32 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // Make the Capacitor WKWebView inspectable so Safari's Web Inspector
         // (Develop → device → WebView) can attach for memory profiling. On
         // iOS 16.4+ a WKWebView only shows up there when isInspectable == true.
+        // DEBUG only: a shipping build must NOT leave the web view attachable
+        // from Safari's Web Inspector — that would expose a logged-in user's
+        // session to anyone who plugs the device into a Mac.
+        #if DEBUG
         if #available(iOS 16.4, *) {
             DispatchQueue.main.async {
                 (self.window?.rootViewController as? CAPBridgeViewController)?.webView?.isInspectable = true
             }
         }
+        #endif
     }
 
     func applicationWillTerminate(_ application: UIApplication) {
         // Called when the application is about to terminate. Save data if appropriate. See also applicationDidEnterBackground:.
+    }
+
+    // APNs hands the device token to the AppDelegate, not to Capacitor. These
+    // two forward it to the PushNotifications plugin, which is what fires the
+    // JS `registration` / `registrationError` listeners in src/lib/native.js.
+    // Without them, register() resolves but no token ever arrives.
+    func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        NotificationCenter.default.post(name: .capacitorDidRegisterForRemoteNotifications, object: deviceToken)
+    }
+
+    func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        NotificationCenter.default.post(name: .capacitorDidFailToRegisterForRemoteNotifications, object: error)
     }
 
     func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
