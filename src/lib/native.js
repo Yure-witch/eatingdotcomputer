@@ -238,6 +238,22 @@ export async function registerNativePush() {
 }
 
 /**
+ * TEMPORARY: ship native sign-in diagnostics to the server. The failure only
+ * reproduces on a real device, where there is no console and the raw SDK
+ * response is the only thing that separates the failure modes. Remove with the
+ * /api/debug/native-auth endpoint once sign-in is confirmed working.
+ */
+async function _debug(kind, data) {
+	try {
+		await fetch('/api/debug/native-auth', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ kind, payload: JSON.stringify(data) })
+		});
+	} catch { /* diagnostics must never break the sign-in path */ }
+}
+
+/**
  * Native Google sign-in. Google blocks OAuth inside an embedded WKWebView
  * (`disallowed_useragent`), so inside the shell the "Continue with Google"
  * button can't use the normal redirect flow. We sign in with the native Google
@@ -263,8 +279,15 @@ export async function nativeGoogleIdToken() {
 	const signIn = (forcePrompt) =>
 		SocialLogin.login({ provider: 'google', options: { scopes: ['email', 'profile'], forcePrompt } });
 
-	let res = await signIn(false);
-	let idToken = res?.result?.idToken ?? null;
+	let res, idToken = null;
+	try {
+		res = await signIn(false);
+		idToken = res?.result?.idToken ?? null;
+		await _debug('google:restore', { res, idToken: !!idToken });
+	} catch (e) {
+		await _debug('google:restore-threw', { message: String(e?.message ?? e) });
+		throw e;
+	}
 
 	// When the device has signed in with Google before, the plugin silently
 	// restores that session (GIDSignIn.restorePreviousSignIn) instead of showing
@@ -274,8 +297,19 @@ export async function nativeGoogleIdToken() {
 	// look. Retry once forcing the real prompt, which skips the restore path.
 	if (!idToken) {
 		console.warn('[auth] Google restore returned no idToken; forcing the account prompt');
-		res = await signIn(true);
-		idToken = res?.result?.idToken ?? null;
+		try {
+			// Clearing the cached session is stronger than forcePrompt alone: the
+			// plugin only consults forcePrompt before restoring, but GIDSignIn can
+			// still hand back a stale currentUser. After logout() there is nothing
+			// to restore, so the account sheet has to be presented.
+			await SocialLogin.logout({ provider: 'google' }).catch(() => {});
+			res = await signIn(true);
+			idToken = res?.result?.idToken ?? null;
+			await _debug('google:forced', { res, idToken: !!idToken });
+		} catch (e) {
+			await _debug('google:forced-threw', { message: String(e?.message ?? e) });
+			throw e;
+		}
 	}
 
 	if (!idToken) {
