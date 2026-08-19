@@ -8,6 +8,7 @@
  *   - Capacitor native shell  → isNativeApp() === true
  */
 import { Capacitor } from '@capacitor/core';
+import { env as publicEnv } from '$env/dynamic/public';
 
 /**
  * Set this to the App Store listing URL once the app is approved. While it's
@@ -234,4 +235,49 @@ export async function registerNativePush() {
 	} catch (e) {
 		console.warn('[push] native push setup failed', e);
 	}
+}
+
+/**
+ * Native Google sign-in. Google blocks OAuth inside an embedded WKWebView
+ * (`disallowed_useragent`), so inside the shell the "Continue with Google"
+ * button can't use the normal redirect flow. We sign in with the native Google
+ * SDK instead and return the resulting ID token — the login page posts it to
+ * the `google-native` provider (see src/auth.js), which verifies it and issues
+ * the ordinary Auth.js session cookie.
+ *
+ * @returns {Promise<string|null>} the Google ID token, or null if unavailable
+ *   or the user cancelled.
+ */
+export async function nativeGoogleIdToken() {
+	if (!isNativeApp()) return null;
+	const iosClientId = publicEnv.PUBLIC_GOOGLE_IOS_CLIENT_ID;
+	if (!iosClientId) {
+		console.warn('[auth] PUBLIC_GOOGLE_IOS_CLIENT_ID is unset — native Google sign-in disabled');
+		return null;
+	}
+	const { SocialLogin } = await import('@capgo/capacitor-social-login');
+	// initialize() is idempotent, so it's safe to call before every sign-in.
+	await SocialLogin.initialize({ google: { iOSClientId: iosClientId } });
+	const res = await SocialLogin.login({ provider: 'google', options: { scopes: ['email', 'profile'] } });
+	return res?.result?.idToken ?? null;
+}
+
+/**
+ * Native "Sign in with Apple". Offered only inside the shell — App Store
+ * Guideline 4.8 requires a privacy-preserving login option alongside Google.
+ * Apple returns the user's display name ONLY on the first authorisation, so we
+ * pass it back for the server to persist on account creation.
+ *
+ * @returns {Promise<{idToken: string, name: string}|null>}
+ */
+export async function nativeAppleIdToken() {
+	if (!isNativeApp()) return null;
+	const { SocialLogin } = await import('@capgo/capacitor-social-login');
+	await SocialLogin.initialize({ apple: {} });
+	const res = await SocialLogin.login({ provider: 'apple', options: { scopes: ['name', 'email'] } });
+	const idToken = res?.result?.idToken;
+	if (!idToken) return null;
+	const p = res?.result?.profile ?? {};
+	const name = [p.givenName, p.familyName].filter(Boolean).join(' ');
+	return { idToken, name };
 }

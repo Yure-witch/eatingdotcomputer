@@ -1,6 +1,69 @@
 <script>
 	import { enhance } from '$app/forms';
 	import { page } from '$app/stores';
+	import { tick, onMount } from 'svelte';
+	import { isNativeApp, nativeGoogleIdToken, nativeAppleIdToken } from '$lib/native.js';
+
+	// Capacitor only resolves client-side, so this stays false through SSR and
+	// flips on mount — the Apple button is native-only.
+	let isNative = false;
+	onMount(() => { isNative = isNativeApp(); });
+
+	let appleForm;
+	let appleIdToken = '';
+	let appleName = '';
+
+	async function handleApple(e) {
+		e.preventDefault();
+		if (nativeBusy) return;
+		nativeBusy = true;
+		nativeError = '';
+		try {
+			const res = await nativeAppleIdToken();
+			if (!res) { nativeError = 'Apple sign-in was cancelled.'; return; }
+			appleIdToken = res.idToken;
+			appleName = res.name;
+			await tick();
+			appleForm.requestSubmit();
+		} catch (err) {
+			console.warn('[auth] native Apple sign-in failed', err);
+			nativeError = 'Could not sign in with Apple. Please try again.';
+		} finally {
+			nativeBusy = false;
+		}
+	}
+
+	let googleForm;
+	let nativeIdToken = '';
+	let nativeBusy = false;
+	let nativeError = '';
+
+	/**
+	 * Inside the Capacitor shell Google refuses the webview OAuth redirect, so
+	 * we sign in with the native SDK first and post the resulting ID token to
+	 * the `google-native` provider instead. On the plain web this handler does
+	 * nothing and the form submits normally.
+	 */
+	async function handleGoogle(e) {
+		if (!isNativeApp()) return;
+		e.preventDefault();
+		if (nativeBusy) return;
+		nativeBusy = true;
+		nativeError = '';
+		try {
+			const token = await nativeGoogleIdToken();
+			if (!token) { nativeError = 'Google sign-in was cancelled.'; return; }
+			nativeIdToken = token;
+			// Let the bound value land in the DOM before submitting the form.
+			await tick();
+			googleForm.requestSubmit();
+		} catch (err) {
+			console.warn('[auth] native Google sign-in failed', err);
+			nativeError = 'Could not sign in with Google. Please try again.';
+		} finally {
+			nativeBusy = false;
+		}
+	}
 
 	const errorMessages = {
 		CredentialsSignin: 'Incorrect email or password.',
@@ -23,15 +86,16 @@
 			<span class="brand-name">eating.computer</span>
 		</a>
 
-		{#if errorMessage}
-			<p class="error">{errorMessage}</p>
+		{#if errorMessage || nativeError}
+			<p class="error">{nativeError || errorMessage}</p>
 		{/if}
 
 		<!-- Google -->
-		<form method="POST" use:enhance>
-			<input type="hidden" name="providerId" value="google" />
+		<form method="POST" use:enhance bind:this={googleForm} on:submit={handleGoogle}>
+			<input type="hidden" name="providerId" value={nativeIdToken ? 'google-native' : 'google'} />
+			<input type="hidden" name="idToken" value={nativeIdToken} />
 			<input type="hidden" name="redirectTo" value="/app" />
-			<button type="submit" class="btn-google">
+			<button type="submit" class="btn-google" disabled={nativeBusy}>
 				<svg class="google-icon" viewBox="0 0 24 24" aria-hidden="true">
 					<path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
 					<path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
@@ -41,6 +105,23 @@
 				Continue with Google
 			</button>
 		</form>
+
+		{#if isNative}
+			<!-- Apple — native only. Required alongside Google by App Store
+			     Guideline 4.8; on the web there is no Apple flow configured. -->
+			<form method="POST" use:enhance bind:this={appleForm} on:submit={handleApple}>
+				<input type="hidden" name="providerId" value="apple-native" />
+				<input type="hidden" name="idToken" value={appleIdToken} />
+				<input type="hidden" name="name" value={appleName} />
+				<input type="hidden" name="redirectTo" value="/app" />
+				<button type="submit" class="btn-apple" disabled={nativeBusy}>
+					<svg class="apple-icon" viewBox="0 0 24 24" aria-hidden="true">
+						<path fill="currentColor" d="M16.36 12.78c.02-2.2 1.8-3.26 1.88-3.31-1.02-1.5-2.62-1.7-3.19-1.72-1.36-.14-2.65.8-3.34.8-.69 0-1.75-.78-2.87-.76-1.48.02-2.84.86-3.6 2.18-1.53 2.66-.39 6.6 1.1 8.76.73 1.06 1.6 2.25 2.74 2.2 1.1-.04 1.51-.71 2.84-.71 1.32 0 1.7.71 2.86.69 1.18-.02 1.93-1.08 2.65-2.14.84-1.23 1.18-2.42 1.2-2.48-.03-.01-2.3-.88-2.32-3.5zM14.2 6.1c.6-.74 1.01-1.76.9-2.78-.87.04-1.93.58-2.56 1.31-.56.65-1.05 1.69-.92 2.69.97.07 1.97-.49 2.58-1.22z"/>
+					</svg>
+					Continue with Apple
+				</button>
+			</form>
+		{/if}
 
 		<div class="divider"><span>or</span></div>
 
@@ -187,6 +268,24 @@
 	.btn-primary:hover {
 		opacity: 0.8;
 	}
+
+	.btn-apple {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.6rem;
+		width: 100%;
+		padding: 0.8rem 1rem;
+		border: 1px solid #000;
+		border-radius: 8px;
+		background: #000;
+		color: #fff;
+		font: inherit;
+		font-weight: 600;
+		cursor: pointer;
+	}
+	.btn-apple:disabled { opacity: 0.6; cursor: default; }
+	.apple-icon { width: 20px; height: 20px; }
 
 	.divider {
 		display: flex;
