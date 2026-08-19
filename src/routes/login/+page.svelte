@@ -43,12 +43,12 @@
 	 * the `google-native` provider instead. On the plain web this handler does
 	 * nothing and the form submits normally.
 	 */
-	async function handleGoogle() {
+	async function handleGoogle(forceChooser = false) {
 		if (nativeBusy) return;
 		nativeBusy = true;
 		nativeError = '';
 		try {
-			const res = await nativeGoogleIdToken();
+			const res = await nativeGoogleIdToken(forceChooser);
 			if (!res?.idToken) { nativeError = 'Google sign-in did not return a token.'; return; }
 			nativeIdToken = res.idToken;
 			// Let the bound value land in the DOM before submitting the form.
@@ -97,7 +97,7 @@
 		     use:enhance form does NOT stop enhance's own listener, so a
 		     preventDefault() here would still fire the web sign-in underneath. -->
 		{#if isNative}
-			<button type="button" class="btn-google" on:click={handleGoogle} disabled={nativeBusy}>
+			<button type="button" class="btn-google" on:click={() => handleGoogle(false)} disabled={nativeBusy}>
 				<svg class="google-icon" viewBox="0 0 24 24" aria-hidden="true">
 					<path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
 					<path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
@@ -111,6 +111,11 @@
 				<input type="hidden" name="idToken" value={nativeIdToken} />
 				<input type="hidden" name="redirectTo" value="/app" />
 			</form>
+			<!-- Google signs you straight back into the last account used, so
+			     switching needs its own affordance. -->
+			<button type="button" class="link-switch" on:click={() => handleGoogle(true)} disabled={nativeBusy}>
+				Use a different account
+			</button>
 
 			<!-- Apple — native only. Required alongside Google by Guideline 4.8. -->
 			<button type="button" class="btn-apple" on:click={handleApple} disabled={nativeBusy}>
@@ -306,6 +311,21 @@
 		opacity: 0.6;
 		text-align: center;
 	}
+
+	.link-switch {
+		display: block;
+		margin: 0.5rem auto 0;
+		padding: 0.25rem 0.5rem;
+		border: 0;
+		background: none;
+		color: inherit;
+		opacity: 0.7;
+		font: inherit;
+		font-size: 0.85rem;
+		text-decoration: underline;
+		cursor: pointer;
+	}
+	.link-switch:disabled { opacity: 0.4; cursor: default; }
 
 	.btn-apple {
 		display: flex;

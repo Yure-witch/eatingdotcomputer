@@ -245,11 +245,13 @@ export async function registerNativePush() {
  * the `google-native` provider (see src/auth.js), which verifies it and issues
  * the ordinary Auth.js session cookie.
  *
+ * @param {boolean} forceChooser — skip the silent restore and always present
+ *   the Google account sheet (the "use a different account" link).
  * @returns {Promise<{idToken: string|null, raw: string|null}|null>} the ID
  *   token, or — when the SDK resolved without one — the raw response so the
  *   caller can surface it. null only when native sign-in isn't available.
  */
-export async function nativeGoogleIdToken() {
+export async function nativeGoogleIdToken(forceChooser = false) {
 	if (!isNativeApp()) return null;
 	const iosClientId = publicEnv.PUBLIC_GOOGLE_IOS_CLIENT_ID;
 	if (!iosClientId) {
@@ -260,17 +262,27 @@ export async function nativeGoogleIdToken() {
 	// initialize() is idempotent, so it's safe to call before every sign-in.
 	await SocialLogin.initialize({ google: { iOSClientId: iosClientId } });
 
-	// ALWAYS clear the cached session and force the account chooser. The plugin
-	// otherwise calls GIDSignIn.restorePreviousSignIn() and signs you straight
-	// back into whoever you used last — so "Continue with Google" had no way to
-	// switch accounts. This runs from the login screen, where choosing who you
-	// sign in as is the whole point, so the extra tap is the feature.
-	await SocialLogin.logout({ provider: 'google' }).catch(() => {});
-	const res = await SocialLogin.login({
-		provider: 'google',
-		options: { scopes: ['email', 'profile'], forcePrompt: true }
-	});
-	const idToken = res?.result?.idToken ?? null;
+	const signIn = (forcePrompt) =>
+		SocialLogin.login({ provider: 'google', options: { scopes: ['email', 'profile'], forcePrompt } });
+
+	let res, idToken = null;
+	if (!forceChooser) {
+		// Fast path: the plugin restores the previous session without a prompt.
+		res = await signIn(false);
+		idToken = res?.result?.idToken ?? null;
+	}
+
+	// Forced (the "use a different account" link), or the restore came back
+	// without a token — restorePreviousSignIn() does not refresh tokens, so a
+	// stale session resolves successfully with idToken null. Clearing the session
+	// first is what actually guarantees the account sheet appears; forcePrompt
+	// alone only stops the plugin choosing to restore.
+	if (forceChooser || !idToken) {
+		await SocialLogin.logout({ provider: 'google' }).catch(() => {});
+		res = await signIn(true);
+		idToken = res?.result?.idToken ?? null;
+	}
+
 	if (!idToken) {
 		console.warn('[auth] Google login resolved without an idToken:', JSON.stringify(res ?? null));
 		return { idToken: null, raw: JSON.stringify(res ?? null) };

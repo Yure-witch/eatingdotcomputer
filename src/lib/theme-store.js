@@ -116,6 +116,14 @@ export const PRESETS = [
 		secondarySeed: '#545d7e', tertiarySeed: '#4d599d' },
 	{ id: 'raspberry',   name: 'Raspberry',     seed: '#b61d3e', emoji: '🌺', variant: 'expressive',
 		secondarySeed: '#a03961', tertiarySeed: '#6d49b2' },
+	// Raspberry/Peony's palette with the primary left on the seed's own hue.
+	// 'expressive' rotates primary by +240°, which renders the red seed as a blue
+	// primary — correct for that variant, but not what "the red one" implies.
+	// 'vibrant' keeps the hue, so buttons and accents read red like the surfaces.
+	// Also carries the raised neutral chroma, so picking it from the theme picker
+	// gives the same saturated surfaces as the app default.
+	{ id: 'redpeony',    name: 'Red Peony',     seed: '#b61d3e', emoji: '🌹', variant: 'vibrant',
+		secondarySeed: '#a03961', tertiarySeed: '#6d49b2', neutralChroma: 12 },
 	{ id: 'ultra_blue',  name: 'Ultra Blue',    seed: '#0057cc', emoji: '🟦', variant: 'vibrant',
 		secondarySeed: '#4355bb', tertiarySeed: '#8e3e92' },
 	{ id: 'rose',        name: 'Rose',          seed: '#804d7a', emoji: '🌹', variant: 'expressive',
@@ -130,16 +138,12 @@ const DEFAULTS = {
 	// customised a theme hit these values on first paint. Existing
 	// users with a record in `localStorage["mdTheme"]` keep whatever
 	// they had — readSaved won't overwrite their settings.
-	// Raspberry / Peony, chosen over the old orange 'default' so the app
-	// doesn't open on a generic palette.
-	presetId: 'raspberry',
+	// Red Peony — Raspberry/Peony's palette with an unrotated (red) primary.
+	// Chosen over the old orange 'default' so the app doesn't open on a
+	// generic palette. Raspberry itself is left exactly as designed.
+	presetId: 'redpeony',
 	seed: '#b61d3e',
 	dark: false,
-	// NOT 'expressive', which the preset uses: that variant rotates the primary
-	// hue by +240°, turning the red seed into a blue primary (blue buttons on
-	// pink surfaces). 'vibrant' keeps the source hue, so primary reads red like
-	// the rest of the scheme. Everything else about Peony is unchanged — same
-	// seed, same custom secondary/tertiary, same surface chroma below.
 	variant: 'vibrant',
 	contrastLevel: 0,
 	// Raspberry (Peony in the source design) ships explicit secondary/tertiary
@@ -448,7 +452,9 @@ export function setPreset(id) {
 		primaryChroma: null,
 		secondaryChroma: null,
 		tertiaryChroma: null,
-		neutralChroma: null
+		// Presets may raise the surface chroma; without this, picking one would
+		// silently drop back to the variant's auto-derived (near-grey) neutrals.
+		neutralChroma: p.neutralChroma ?? null
 	}));
 }
 
