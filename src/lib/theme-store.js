@@ -126,20 +126,24 @@ export const PRESETS = [
 ];
 
 const DEFAULTS = {
-	// `default` is the global default scheme (promoted from a
-	// user-saved scheme). New visitors and anyone who hasn't
-	// customised a theme hits these values on first paint. Existing
+	// The global default scheme. New visitors and anyone who hasn't
+	// customised a theme hit these values on first paint. Existing
 	// users with a record in `localStorage["mdTheme"]` keep whatever
 	// they had — readSaved won't overwrite their settings.
-	presetId: 'default',
-	seed: '#ffa305',
+	// Raspberry / Peony, chosen over the old orange 'default' so the app
+	// doesn't open on a generic palette.
+	presetId: 'raspberry',
+	seed: '#b61d3e',
 	dark: false,
-	variant: 'vibrant',
+	variant: 'expressive',
 	contrastLevel: 0,
-	secondaryMode: 'auto',     // 'auto' | 'complement' | 'custom'
-	secondarySeed: '#7fb069',  // only used when secondaryMode === 'custom'
-	tertiaryMode: 'auto',
-	tertiarySeed: '#3a72a8',
+	// Raspberry (Peony in the source design) ships explicit secondary/tertiary
+	// hues that are NOT derived from primary, so these must be 'custom' to match
+	// the preset — auto-derived values give a different palette.
+	secondaryMode: 'custom',   // 'auto' | 'complement' | 'custom'
+	secondarySeed: '#a03961',  // only used when secondaryMode === 'custom'
+	tertiaryMode: 'custom',
+	tertiarySeed: '#6d49b2',
 	// Per-family chroma overrides. null = let the variant's
 	// auto-derived chroma stand; a number (0–120-ish in M3 units)
 	// replaces the palette's chroma while preserving the auto-derived

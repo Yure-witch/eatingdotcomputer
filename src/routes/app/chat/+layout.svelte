@@ -277,7 +277,7 @@
 		box-shadow: 0 4px 14px rgba(0,0,0,0.12);
 	}
 	.reconnecting-pill .dot {
-		width: 7px; height: 7px; border-radius: 50%; background: var(--accent, #ffa305);
+		width: 7px; height: 7px; border-radius: 50%; background: var(--accent, #b61d3e);
 		animation: reconnect-pulse 1.2s ease-in-out infinite;
 	}
 	@keyframes reconnect-pulse { 0%,100% { opacity: 0.3; } 50% { opacity: 1; } }

@@ -49,7 +49,7 @@
 	/* Fallback matches the Default preset's seed so the
 	   pre-hydration paint matches what the theme store will produce
 	   the moment JS runs. */
-	--accent:     var(--md-sys-color-primary,               #ffa305);
+	--accent:     var(--md-sys-color-primary,               #b61d3e);
 	/* Semantic helpers — components consume these instead of the raw
 	   M3 names so the mapping stays in one place. Hex fallbacks keep
 	   the page paintable before JS hydrates. */
