@@ -26,7 +26,7 @@
 			appleForm.requestSubmit();
 		} catch (err) {
 			console.warn('[auth] native Apple sign-in failed', err);
-			nativeError = 'Could not sign in with Apple. Please try again.';
+			nativeError = `Apple sign-in failed: ${err?.message ?? err}`;
 		} finally {
 			nativeBusy = false;
 		}
@@ -49,14 +49,16 @@
 		nativeError = '';
 		try {
 			const token = await nativeGoogleIdToken();
-			if (!token) { nativeError = 'Google sign-in was cancelled.'; return; }
+			if (!token) { nativeError = 'Google sign-in did not complete. If you did not cancel, tap and hold the error to report it.'; return; }
 			nativeIdToken = token;
 			// Let the bound value land in the DOM before submitting the form.
 			await tick();
 			googleForm.requestSubmit();
 		} catch (err) {
 			console.warn('[auth] native Google sign-in failed', err);
-			nativeError = 'Could not sign in with Google. Please try again.';
+			// Surface the real reason — a generic message here cost us a whole
+			// debugging round with no way to tell failure modes apart.
+			nativeError = `Google sign-in failed: ${err?.message ?? err}`;
 		} finally {
 			nativeBusy = false;
 		}

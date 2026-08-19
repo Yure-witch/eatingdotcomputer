@@ -259,7 +259,14 @@ export async function nativeGoogleIdToken() {
 	// initialize() is idempotent, so it's safe to call before every sign-in.
 	await SocialLogin.initialize({ google: { iOSClientId: iosClientId } });
 	const res = await SocialLogin.login({ provider: 'google', options: { scopes: ['email', 'profile'] } });
-	return res?.result?.idToken ?? null;
+	const idToken = res?.result?.idToken ?? null;
+	if (!idToken) {
+		// A resolved call with no ID token is NOT the same as a cancellation —
+		// it usually means the SDK came back in offline mode or the client ID
+		// doesn't match the bundle. Log the shape so the difference is visible.
+		console.warn('[auth] Google login resolved without an idToken:', JSON.stringify(res ?? null));
+	}
+	return idToken;
 }
 
 /**

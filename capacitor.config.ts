@@ -51,8 +51,15 @@ const config: CapacitorConfig = {
 			// if the page is slow or the deployed site lacks the hide call.
 			launchAutoHide: true,
 			launchShowDuration: 3000,
-			backgroundColor: '#faf7ef',
-			showSpinner: false
+			// Matches the icon/splash lockup rather than the app's cream paper —
+			// the launch image itself is black with the green mark.
+			backgroundColor: '#000000',
+			// iOS launch screens are static by requirement, so the only motion we
+			// can offer while the web view loads is the system spinner over the
+			// splash. Green on black to stay in the same palette.
+			showSpinner: true,
+			iosSpinnerStyle: 'large',
+			spinnerColor: '#00ff00'
 		}
 	}
 };
