@@ -1,6 +1,7 @@
 <script>
 	import { onMount, getContext } from 'svelte';
 	import { page } from '$app/stores';
+	import { afterNavigate } from '$app/navigation';
 
 	const openSidebar = getContext('openSidebar');
 	// Live pager state (set by /app/+layout.svelte): the section currently in
@@ -24,6 +25,13 @@
 	// the user plugs in or unplugs a pointing device mid-session.
 	let keyboardOpen = $state(false);
 	let isTouchDevice = $state(false);
+
+	// Leaving a chat tears the focused compose input out of the DOM, and iOS does
+	// not reliably fire focusout for an element that was removed rather than
+	// blurred — so keyboardOpen stuck true and the bottom nav stayed hidden for
+	// the rest of the session. Clear it on every navigation; a real keyboard will
+	// re-announce itself via focusin.
+	afterNavigate(() => { keyboardOpen = false; });
 
 	function isTextInput(el) {
 		if (!el || el.nodeType !== 1) return false;
