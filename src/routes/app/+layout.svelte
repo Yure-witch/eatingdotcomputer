@@ -710,8 +710,18 @@
 		// like it sat on top of chat rather than beside it.
 		if (_swDir === -1) {
 			if (_swDecided && (_swLastDx <= -30 || _swVelX < -0.4)) {
+				const route = _sectionAfterChat();
+				const idx = _panelIndexFor(route);
+				// Cancel any pending scroll-driven commit, and PIN the track onto
+				// the destination panel as soon as the route lands. Without the pin
+				// the pager mounts wherever it was, paints one frame there, then
+				// gets corrected — which reads as a half re-render on the way out.
+				// Retries cover the layout shift as the conversation tears down.
+				clearTimeout(_pagerSnapT);
 				pageTitle.set(null); pageTitleHref.set(null);
-				goto(_sectionAfterChat(), { noScroll: true });
+				goto(route, { noScroll: true, keepFocus: true }).then(() => {
+					if (idx >= 0) _repinPager(idx, 3);
+				});
 			}
 			return;
 		}
