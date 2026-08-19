@@ -31,7 +31,7 @@
 	// reached from the chat menu — give them the same focused chat bar (name +
 	// class + ✕ close) on mobile. They are NOT pager panels, so they never enter
 	// the swipe-away state below.
-	const _chatLikeRe = /^\/app\/chat\/gemma$|^\/app\/goals$/;
+	const _chatLikeRe = /^\/app\/chat\/gemma$|^\/app\/goals$|^\/app\/inspiration$/;
 	const _isConv = $derived(
 		_isPagerConv ||
 		_chatLikeRe.test($page.url.pathname) ||
@@ -75,6 +75,7 @@
 		if (p === '/app/chat/gemma') return 'gemma';
 		if (p.startsWith('/app/chat')) return 'chat';
 		if (p === '/app/goals') return 'tasks';
+		if (p === '/app/inspiration') return 'tasks';
 		return null;
 	});
 

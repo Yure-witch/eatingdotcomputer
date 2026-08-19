@@ -90,7 +90,8 @@
 	// user reaches them from the chat menu and treats them as chats — so they get
 	// the same left-swipe-back-to-menu gesture via the legacy menu-slide overlay
 	// (which is only live on non-pager routes, exactly these two).
-	const _isChatLikeRoute = (p) => p === '/app/chat/gemma' || p === '/app/goals';
+	const _isChatLikeRoute = (p) =>
+		p === '/app/chat/gemma' || p === '/app/goals' || p === '/app/inspiration';
 
 	// On mobile, the CURRENT conversation joins the pager as a full-screen panel
 	// at index 0 (left of the chat menu), so conversation → menu → home → orbit
@@ -629,6 +630,12 @@
 	let _menuJustLanded = false;        // ~400ms window right after landing on the menu (pager may not yet handle a fast flick)
 	let _menuLandedT;
 	let _swMode = 'menu';               // 'menu' (conversation → chat menu) | 'home' (fast follow-on → Home)
+	let _swDir = 1;                     // +1 = left→right (slide the menu in), -1 = right→left (exit forward)
+	// After a right→left exit the user is on the chat menu having travelled
+	// "forwards", so a second right→left swipe should continue in that direction
+	// to the panel AFTER chat rather than snapping back to Home.
+	let _swForward = false;
+	let _swForwardT;
 	function onSwipeStart(e) {
 		if (window.innerWidth > 640) { _swArmed = false; return; }
 		// The conversation is now a real pager panel, so conv→menu is handled by
@@ -669,12 +676,17 @@
 		if (!_swDecided) {
 			if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
 			if (Math.abs(dy) >= Math.abs(dx)) { _swArmed = false; return; } // vertical → scroll
-			if (dx < 0) { _swArmed = false; return; }                       // rightward only (left→right)
+			_swDir = dx > 0 ? 1 : -1;
+			// Both directions now leave a chat-like surface. Left→right keeps the
+			// finger-tracked overlay (the menu slides in behind the page, reading
+			// as "back"). Right→left is the forward gesture — there is no menu to
+			// drag in from the right, so it just commits on release.
 			_swDecided = true;
-			if (_swMode === 'menu') { _menuSliding = true; _menuDragging = true; }
+			if (_swMode === 'menu' && _swDir === 1) { _menuSliding = true; _menuDragging = true; }
 		}
-		// 'home' mode just waits for release (no overlay) — the pager will snap.
-		if (_swMode === 'menu') {
+		// 'home' mode, and the forward (right→left) exit, just wait for release —
+		// neither drags the menu overlay.
+		if (_swMode === 'menu' && _swDir === 1) {
 			_setMenuDrag(Math.max(0, Math.min(1, dx / W)));
 		}
 	}
@@ -686,7 +698,29 @@
 		// clear swipe (≥30px left) so it can never collide with a tap (≤16px,
 		// handled by onMenuTouchEnd → opens that conversation).
 		if (_swMode === 'home') {
-			if (_swDecided && (_swLastDx <= -30 || _swVelX < -0.4)) { clearTimeout(_pagerSnapT); pageTitle.set(null); pageTitleHref.set(null); goto('/app', { noScroll: true }); }
+			if (_swDecided && (_swLastDx <= -30 || _swVelX < -0.4)) {
+				clearTimeout(_pagerSnapT);
+				pageTitle.set(null); pageTitleHref.set(null);
+				// Continue the direction the user was already travelling: a forward
+				// (right→left) exit carries on to the panel AFTER chat; the classic
+				// back-swipe still falls through to Home.
+				const _next = _swForward ? (PANELS[_panelIndexFor('/app/chat') + 1]?.route ?? '/app') : '/app';
+				goto(_next, { noScroll: true });
+			}
+			return;
+		}
+		// Forward exit: no overlay was dragged, so commit straight to the chat
+		// menu on a clear right→left swipe and remember the direction so the next
+		// swipe continues forwards instead of doubling back.
+		if (_swDir === -1) {
+			if (_swDecided && (_swLastDx <= -30 || _swVelX < -0.4)) {
+				pageTitle.set(null); pageTitleHref.set(null);
+				_swForward = true;
+				clearTimeout(_swForwardT);
+				_swForwardT = setTimeout(() => (_swForward = false), 1200);
+				_menuNavPending = true;
+				goto('/app/chat', { noScroll: true });
+			}
 			return;
 		}
 		if (!_menuSliding) return;
