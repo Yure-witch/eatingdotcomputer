@@ -156,7 +156,11 @@ const DEFAULTS = {
 	// (drives surfaceVariant, onSurfaceVariant, outline). One slider
 	// for both since they're meant to read as the same family — the
 	// variant just gives neutralVariant a touch more chroma by spec.
-	neutralChroma: null
+	// Surfaces at +50% saturation. SchemeExpressive derives neutral chroma 8.0
+	// (and neutralVariant 12, a 1.5 ratio), which reads as almost-grey; 12 keeps
+	// the same hue but lets the palette show in the backgrounds. The
+	// neutralVariant scales by the same ratio automatically (→ 18).
+	neutralChroma: 12
 };
 
 function readSaved() {
