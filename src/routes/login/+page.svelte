@@ -36,9 +36,6 @@
 	let nativeIdToken = '';
 	let nativeBusy = false;
 	let nativeError = '';
-	// Raw SDK response shown on screen when a native sign-in fails — there is no
-	// console on a phone, and the failure modes are indistinguishable without it.
-	let nativeDebug = '';
 
 	/**
 	 * Inside the Capacitor shell Google refuses the webview OAuth redirect, so
@@ -52,11 +49,7 @@
 		nativeError = '';
 		try {
 			const res = await nativeGoogleIdToken();
-			if (!res?.idToken) {
-				nativeError = 'Google sign-in did not return a token.';
-				nativeDebug = res?.raw ?? '(no response)';
-				return;
-			}
+			if (!res?.idToken) { nativeError = 'Google sign-in did not return a token.'; return; }
 			nativeIdToken = res.idToken;
 			// Let the bound value land in the DOM before submitting the form.
 			await tick();
@@ -94,10 +87,6 @@
 
 		{#if errorMessage || nativeError}
 			<p class="error">{nativeError || errorMessage}</p>
-		{/if}
-		{#if nativeDebug}
-			<pre class="debug" on:click={() => navigator.clipboard?.writeText(nativeDebug)}>{nativeDebug}</pre>
-			<p class="debug-hint">tap the box above to copy</p>
 		{/if}
 
 		<!-- Google. On the web this is an ordinary Auth.js form post. In the
