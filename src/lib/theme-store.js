@@ -135,7 +135,12 @@ const DEFAULTS = {
 	presetId: 'raspberry',
 	seed: '#b61d3e',
 	dark: false,
-	variant: 'expressive',
+	// NOT 'expressive', which the preset uses: that variant rotates the primary
+	// hue by +240°, turning the red seed into a blue primary (blue buttons on
+	// pink surfaces). 'vibrant' keeps the source hue, so primary reads red like
+	// the rest of the scheme. Everything else about Peony is unchanged — same
+	// seed, same custom secondary/tertiary, same surface chroma below.
+	variant: 'vibrant',
 	contrastLevel: 0,
 	// Raspberry (Peony in the source design) ships explicit secondary/tertiary
 	// hues that are NOT derived from primary, so these must be 'custom' to match

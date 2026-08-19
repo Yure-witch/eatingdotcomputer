@@ -260,29 +260,17 @@ export async function nativeGoogleIdToken() {
 	// initialize() is idempotent, so it's safe to call before every sign-in.
 	await SocialLogin.initialize({ google: { iOSClientId: iosClientId } });
 
-	const signIn = (forcePrompt) =>
-		SocialLogin.login({ provider: 'google', options: { scopes: ['email', 'profile'], forcePrompt } });
-
-	let res = await signIn(false);
-	let idToken = res?.result?.idToken ?? null;
-
-	// When the device has signed in with Google before, the plugin silently
-	// restores that session (GIDSignIn.restorePreviousSignIn) instead of showing
-	// the account sheet — and a restored user's idToken is frequently nil,
-	// because restoring does not refresh tokens. That comes back as a *success*
-	// with no token, which is indistinguishable from a cancellation unless you
-	// look. Retry once forcing the real prompt, which skips the restore path.
-	if (!idToken) {
-		console.warn('[auth] Google restore returned no idToken; forcing the account prompt');
-		// Clearing the cached session is stronger than forcePrompt alone: the
-		// plugin only consults forcePrompt before restoring, but GIDSignIn can
-		// still hand back a stale currentUser. After logout() there is nothing
-		// to restore, so the account sheet has to be presented.
-		await SocialLogin.logout({ provider: 'google' }).catch(() => {});
-		res = await signIn(true);
-		idToken = res?.result?.idToken ?? null;
-	}
-
+	// ALWAYS clear the cached session and force the account chooser. The plugin
+	// otherwise calls GIDSignIn.restorePreviousSignIn() and signs you straight
+	// back into whoever you used last — so "Continue with Google" had no way to
+	// switch accounts. This runs from the login screen, where choosing who you
+	// sign in as is the whole point, so the extra tap is the feature.
+	await SocialLogin.logout({ provider: 'google' }).catch(() => {});
+	const res = await SocialLogin.login({
+		provider: 'google',
+		options: { scopes: ['email', 'profile'], forcePrompt: true }
+	});
+	const idToken = res?.result?.idToken ?? null;
 	if (!idToken) {
 		console.warn('[auth] Google login resolved without an idToken:', JSON.stringify(res ?? null));
 		return { idToken: null, raw: JSON.stringify(res ?? null) };
