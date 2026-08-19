@@ -36,6 +36,9 @@
 	let nativeIdToken = '';
 	let nativeBusy = false;
 	let nativeError = '';
+	// Raw SDK response shown on screen when a native sign-in fails — there is no
+	// console on a phone, and the failure modes are indistinguishable without it.
+	let nativeDebug = '';
 
 	/**
 	 * Inside the Capacitor shell Google refuses the webview OAuth redirect, so
@@ -48,9 +51,13 @@
 		nativeBusy = true;
 		nativeError = '';
 		try {
-			const token = await nativeGoogleIdToken();
-			if (!token) { nativeError = 'Google sign-in did not complete. If you did not cancel, tap and hold the error to report it.'; return; }
-			nativeIdToken = token;
+			const res = await nativeGoogleIdToken();
+			if (!res?.idToken) {
+				nativeError = 'Google sign-in did not return a token.';
+				nativeDebug = res?.raw ?? '(no response)';
+				return;
+			}
+			nativeIdToken = res.idToken;
 			// Let the bound value land in the DOM before submitting the form.
 			await tick();
 			googleForm.requestSubmit();
@@ -87,6 +94,10 @@
 
 		{#if errorMessage || nativeError}
 			<p class="error">{nativeError || errorMessage}</p>
+		{/if}
+		{#if nativeDebug}
+			<pre class="debug" on:click={() => navigator.clipboard?.writeText(nativeDebug)}>{nativeDebug}</pre>
+			<p class="debug-hint">tap the box above to copy</p>
 		{/if}
 
 		<!-- Google. On the web this is an ordinary Auth.js form post. In the
@@ -285,6 +296,26 @@
 
 	.btn-primary:hover {
 		opacity: 0.8;
+	}
+
+	.debug {
+		max-height: 9rem;
+		overflow: auto;
+		padding: 0.6rem;
+		border: 1px solid rgba(0, 0, 0, 0.2);
+		border-radius: 6px;
+		background: rgba(0, 0, 0, 0.04);
+		font-size: 0.7rem;
+		line-height: 1.35;
+		white-space: pre-wrap;
+		word-break: break-all;
+		user-select: all;
+	}
+	.debug-hint {
+		margin: 0.25rem 0 0;
+		font-size: 0.7rem;
+		opacity: 0.6;
+		text-align: center;
 	}
 
 	.btn-apple {

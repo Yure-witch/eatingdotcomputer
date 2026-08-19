@@ -245,8 +245,9 @@ export async function registerNativePush() {
  * the `google-native` provider (see src/auth.js), which verifies it and issues
  * the ordinary Auth.js session cookie.
  *
- * @returns {Promise<string|null>} the Google ID token, or null if unavailable
- *   or the user cancelled.
+ * @returns {Promise<{idToken: string|null, raw: string|null}|null>} the ID
+ *   token, or — when the SDK resolved without one — the raw response so the
+ *   caller can surface it. null only when native sign-in isn't available.
  */
 export async function nativeGoogleIdToken() {
 	if (!isNativeApp()) return null;
@@ -263,10 +264,12 @@ export async function nativeGoogleIdToken() {
 	if (!idToken) {
 		// A resolved call with no ID token is NOT the same as a cancellation —
 		// it usually means the SDK came back in offline mode or the client ID
-		// doesn't match the bundle. Log the shape so the difference is visible.
+		// doesn't match the bundle. Return the raw shape so the caller can show
+		// it; on a phone there is often no console to read.
 		console.warn('[auth] Google login resolved without an idToken:', JSON.stringify(res ?? null));
+		return { idToken: null, raw: JSON.stringify(res ?? null) };
 	}
-	return idToken;
+	return { idToken, raw: null };
 }
 
 /**
