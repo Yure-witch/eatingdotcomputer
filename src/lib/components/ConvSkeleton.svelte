@@ -4,10 +4,11 @@
 	 * the chat appears instantly (and stays put) from tap → load → live. Mobile
 	 * only (fixed overlay below the global header); renders nothing on desktop.
 	 *
-	 * `slide` plays an enter animation from the left (the conversation sits left
-	 * of the menu in the swipe model), so opening a chat reads as a screen
-	 * sliding in rather than popping in. The follow-on (Firebase-connect)
-	 * skeleton renders static so it lands exactly where the slide ended.
+	 * `slide` plays an enter animation from the RIGHT, like a pushed screen: the
+	 * chat arrives from the right edge, which is what tells you a rightward
+	 * swipe is the way back out. (It used to enter from the left, implying the
+	 * opposite gesture.) The follow-on (Firebase-connect) skeleton renders
+	 * static so it lands exactly where the slide ended.
 	 */
 	let { slide = false } = $props();
 </script>
@@ -48,13 +49,14 @@
 			flex-direction: column;
 			pointer-events: none;
 		}
-		/* Slide in from the left like a pushed screen. */
+		/* Slide in from the right like a pushed screen — the leading (left) edge
+		   casts the shadow over the gallery it covers. */
 		.conv-skel.slide {
 			animation: cs-slide-in 0.24s cubic-bezier(0.33, 1, 0.68, 1) both;
 			box-shadow: -10px 0 28px rgba(0, 0, 0, 0.16);
 		}
 		@keyframes cs-slide-in {
-			from { transform: translateX(-100%); }
+			from { transform: translateX(100%); }
 			to { transform: translateX(0); }
 		}
 		.cs-list {
