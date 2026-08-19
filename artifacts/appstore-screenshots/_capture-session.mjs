@@ -83,9 +83,10 @@ await sleep(4500);
 // The picker is an overlay that mounts lazily — click, then WAIT for it and say
 // so if it never appears. Previously this clicked blind and silently produced a
 // second plain chat screenshot.
+await sleep(2000); // the emoji dataset is large — let the page settle before clicking
 await page.click('.btn-fmt-expr').catch((e) => console.log('  picker click fail', e.message));
 const pickerUp = await page
-	.waitForSelector('.expr-panel, .picker-popover, .compose-picker-pop', { visible: true, timeout: 8000 })
+	.waitForSelector('.expr-panel, .picker-popover, .compose-picker-pop', { visible: true, timeout: 25000 })
 	.then(() => true)
 	.catch(() => false);
 await sleep(2500);

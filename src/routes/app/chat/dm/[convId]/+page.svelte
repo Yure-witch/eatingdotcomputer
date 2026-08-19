@@ -355,6 +355,9 @@
 	let allowFxMultiply = $state(false);
 	let fxSplitWords = $state(true);
 	let showFormatPanel = $state(false);
+	// Mobile: text-formatting icons collapse behind one toggle (see the channel
+	// page — the two compose bars are kept identical).
+	let showFmtTools = $state(false);
 	let showCodePanel = $state(false);
 	let ceCodeLangPicker = $state(null);
 	function _codeIcon(svg) { return `data:image/svg+xml,${encodeURIComponent(svg)}`; }
@@ -4289,6 +4292,10 @@
 					{/if}
 				</div>
 				<span class="fmt-divider" aria-hidden="true"></span>
+				<button class="btn-fmt btn-fmt-more" class:active={showFmtTools}
+					onmousedown={(e) => { e.preventDefault(); showFmtTools = !showFmtTools; }}
+					title="Formatting" aria-expanded={showFmtTools}><span class="msi msi-18">text_format</span></button>
+				<div class="fmt-tools" class:open={showFmtTools}>
 				<button class="btn-fmt btn-fmt-bold" onmousedown={(e) => { e.preventDefault(); applyTextFx('bold'); }} title="Bold (⌘B)"><span class="msi msi-18">format_bold</span></button>
 				<button class="btn-fmt btn-fmt-italic" onmousedown={(e) => { e.preventDefault(); applyTextFx('italic'); }} title="Italic (⌘I)"><span class="msi msi-18">format_italic</span></button>
 				<button class="btn-fmt btn-fmt-underline" onmousedown={(e) => { e.preventDefault(); applyTextFx('underline'); }} title="Underline (⌘U)"><span class="msi msi-18">format_underlined</span></button>
@@ -4321,6 +4328,7 @@
 						</div>
 					{/if}
 				</div>
+				</div><!-- /.fmt-tools -->
 			</div>
 		</div>
 		{#if tgFxEligible}
@@ -4382,7 +4390,7 @@
 				</div>
 			{/if}
 		</div>
-		<div class="send-wrap" bind:this={sendWrapEl} onpointerdown={onSendDown} onpointerup={onSendQuickUp} onpointermove={sizeSliderActive ? onSendMove : null} onpointercancel={sizeSliderActive ? onSendCancel : null}>
+		<div class="send-wrap" class:behind-picker={showComposePicker || showMediaPicker} bind:this={sendWrapEl} onpointerdown={onSendDown} onpointerup={onSendQuickUp} onpointermove={sizeSliderActive ? onSendMove : null} onpointercancel={sizeSliderActive ? onSendCancel : null}>
 			{#if sizeSliderActive}
 				<div class="sz-panel" style:top="{panelFixedTop}px" style:left="{panelFixedLeft}px" style:right="{panelFixedRight}px" style:height="{panelHeight}px">
 					<div class="sz-track-line"></div>
@@ -5295,6 +5303,7 @@
 		}
 	}
 
+	.send-wrap.behind-picker { z-index: 1; }
 	.send-wrap {
 		position: relative; flex-shrink: 0; touch-action: none; user-select: none; z-index: 299;
 		/* Stretch to the full height of the compose bar so the send button stands
@@ -5303,14 +5312,24 @@
 	}
 	.btn-send {
 		display: inline-flex; align-items: center; justify-content: center;
-		padding: 0.6rem; background: var(--ink); color: var(--paper); border: none;
+		/* Themed rather than flat black: the send button is the one true action in
+		   the bar, so it carries the scheme's primary colour. */
+		padding: 0.6rem; background: var(--md-sys-color-primary, var(--ink));
+		color: var(--md-sys-color-on-primary, var(--paper)); border: none;
 		border-radius: 10px; font-family: inherit; font-size: 0.875rem; font-weight: 600;
 		cursor: pointer; transition: opacity 0.15s; pointer-events: none;
 		position: relative; z-index: 1; width: 2.5rem; height: 100%;
 	}
 	.btn-send svg { display: block; margin-right: 1px; }
 	.btn-send:hover { opacity: 0.8; }
-	.btn-send.btn-send-off { opacity: 0.4; cursor: default; }
+	/* Disabled: a soft tinted chip, not the same slab at 40% — dimming a solid
+	   dark fill reads as a grey block sitting on the page rather than an inactive
+	   control. */
+	.btn-send.btn-send-off {
+		opacity: 1; cursor: default;
+		background: var(--md-sys-color-surface-container-high, rgba(0,0,0,0.06));
+		color: var(--md-sys-color-on-surface-variant, var(--ink));
+	}
 	.btn-send.sz-active { opacity: 0; }
 	/* Slider panel — floats above + below send button */
 	.sz-panel {
@@ -5387,6 +5406,13 @@
 	.btn-fmt-code { border-top-right-radius: 0 !important; border-bottom-right-radius: 0 !important; }
 	.btn-fmt-code-arrow { padding: 0 0.15rem !important; border-top-left-radius: 0 !important; border-bottom-left-radius: 0 !important; margin-left: -1px; min-width: 0; }
 	.code-btn-group { display: flex; align-items: center; }
+	.fmt-tools { display: contents; }
+	.btn-fmt-more { display: none; }
+	@media (max-width: 640px) {
+		.btn-fmt-more { display: inline-flex; }
+		.fmt-tools { display: none; }
+		.fmt-tools.open { display: contents; }
+	}
 	.code-lang-pop {
 		display: flex; flex-wrap: wrap; gap: 0.2rem; padding: 0.45rem; width: 200px;
 	}

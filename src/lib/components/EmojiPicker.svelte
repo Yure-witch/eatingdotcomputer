@@ -1382,6 +1382,13 @@
 		.preview-bar { display: none; }
 	}
 
+	/* Belt and braces: the width query above misses any context where the picker
+	   is narrow but the viewport isn't. A device that can't hover can never fill
+	   this bar, so hide it on capability too. */
+	@media (hover: none) {
+		.preview-bar { display: none; }
+	}
+
 	/* ── Grid ── */
 	.grid-wrap {
 		flex: 1;
