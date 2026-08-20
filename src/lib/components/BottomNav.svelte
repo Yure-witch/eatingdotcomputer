@@ -236,7 +236,7 @@
 			/* Enough that the surface stays VISIBLE to the left and right of the
 			   selected pill at the end slots — at 3px the pill ran into the bar's
 			   own curve and read as sitting on the page rather than on the bar. */
-			--nav-pad: 5px;
+			--nav-pad: 7px;
 			padding-left: var(--nav-pad);
 			padding-right: var(--nav-pad);
 			box-sizing: border-box;
