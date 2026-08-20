@@ -56,7 +56,9 @@
 		// Optional backspace handler — when provided, a ⌫ button sits at the
 		// bottom-right of the (bottom) category strip and deletes the last
 		// character / emote in the compose. Used by the docked mobile picker.
-		onBackspace = null
+		onBackspace = null,
+		// Avatar picker opts out: the saved tab is shared with the chat picker.
+		rememberTab = true
 	} = $props();
 
 	// Top-level tab. Persisted so reopening the picker lands on the
@@ -71,10 +73,23 @@
 	// The App Store review account (users.hide_tg_emoji) drops the third-party
 	// surfaces — Telegram animated emotes AND Emoji Kitchen (Google mashups).
 	const VALID_TABS = new Set(['recent', 'emoji', 'emotes', ...(tgHidden ? [] : ['animated', 'kitchen'])]);
-	const _saved = typeof localStorage !== 'undefined' ? localStorage.getItem(TAB_KEY) : null;
+	// `rememberTab` false (the avatar picker) always opens on plain emoji: the
+	// saved tab is shared with the chat picker, so picking an avatar would drop
+	// you into whatever surface you last used mid-conversation — usually the
+	// animated emotes — which is a strange place to start choosing a face.
+	const _saved = rememberTab && typeof localStorage !== 'undefined' ? localStorage.getItem(TAB_KEY) : null;
 	let tab = $state(VALID_TABS.has(_saved) ? _saved : 'emoji');
 	$effect(() => {
+		if (!rememberTab) return;
 		try { localStorage.setItem(TAB_KEY, tab); } catch {}
+	});
+
+	// The Recent tab is meaningless until something has been picked — an empty
+	// tab as the first thing in the row reads as broken.
+	let hasRecents = $state(false);
+	$effect(() => {
+		try { hasRecents = getExprRecents().filter((it) => it.t !== 'tg' || !tgHidden).length > 0; }
+		catch { hasRecents = false; }
 	});
 
 	// Emotes tab has two sources: the class's uploaded custom emotes
@@ -131,6 +146,10 @@
 	$effect(() => {
 		if (tab === 'recent') recents = getExprRecents().filter((it) => it.t !== 'tg' || !tgHidden);
 	});
+	// A saved 'recent' tab with nothing in it would leave no tab highlighted.
+	$effect(() => {
+		if (tab === 'recent' && !hasRecents) tab = 'emoji';
+	});
 </script>
 
 <div class="expr-panel" class:expr-panel-react={mode === 'react'}>
@@ -143,9 +162,11 @@
 		<EmojiPicker onSelect={fireEmoji} {onClose} />
 	{:else}
 		<nav class="expr-tabs" aria-label="Expression categories">
+		{#if hasRecents}
 		<button class="expr-tab" class:active={tab === 'recent'} onclick={() => (tab = 'recent')} title="Recently used">
 			<span class="msi msi-20" class:msi-fill={tab === 'recent'}>history</span>
 		</button>
+		{/if}
 		<!-- Order: emoji, telegram (animated), emoji kitchen, custom emotes -->
 		<button class="expr-tab" class:active={tab === 'emoji'} onclick={() => (tab = 'emoji')} title="Emoji">
 			<span class="msi msi-20" class:msi-fill={tab === 'emoji'}>mood</span>

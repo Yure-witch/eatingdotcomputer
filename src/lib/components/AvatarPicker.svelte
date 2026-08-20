@@ -119,6 +119,7 @@
 		<div class="ap-expr-popover" use:popoverPos={{ anchor: exprBtnEl, side: 'bottom' }}>
 			<ExpressionPicker
 				inline={true}
+				rememberTab={false}
 				onSelectEmoji={onEmoji}
 				onInsertKitchen={onKitchen}
 				onInsertCustomEmoji={onCustomEmoji}
