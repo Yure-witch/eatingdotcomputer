@@ -190,6 +190,17 @@ main {
 	overflow: hidden;
 }
 
+/* The rule above centres the LANDING page's hero in the viewport. It was also
+   hitting every page inside the app shell, where a full-height grid with centred
+   rows flings sections apart — the huge vertical gaps on Home, Tasks and Weeks.
+   In-app pages lay out top-down like normal documents. */
+.app-shell main {
+	min-height: 0;
+	display: block;
+	place-items: initial;
+	overflow: visible;
+}
+
 /* @mention pill — chat bubbles highlight mentioned users with a
    subtle tinted background and a profile link. */
 .mention-pill {
