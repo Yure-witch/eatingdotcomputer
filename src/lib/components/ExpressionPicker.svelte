@@ -1001,6 +1001,15 @@
 	.expr-track::-webkit-scrollbar { display: none; }
 	.expr-pane {
 		position: relative;   /* containing block for .expr-upload */
+		/* The track is three viewport-wide panes holding ~80 canvases between
+		   them, and it had NO containment: a horizontal swipe made the browser
+		   lay out, paint and composite the whole 1125px surface every frame.
+		   `content-visibility: auto` lets it skip panes that aren't on screen
+		   outright, and `contain-intrinsic-size` keeps a skipped pane's box the
+		   right size so the track geometry (and therefore every scroll
+		   position) is unchanged. */
+		content-visibility: auto;
+		contain-intrinsic-size: auto 100%;
 		flex: 0 0 100%;
 		width: 100%;
 		/* Without min-width:0 a wide child (the Kitchen's 380px shell, a long
