@@ -233,9 +233,10 @@
 			/* Breathing room inside the rounded ends — the slots span the padded
 			   box, not the full pill, so the icons sit closer together and the
 			   curves stay empty. */
-			/* Minimal: the pill itself provides the visual inset now, so the bar
-			   only needs enough padding to keep it 3px clear of the ends. */
-			--nav-pad: 3px;
+			/* Enough that the surface stays VISIBLE to the left and right of the
+			   selected pill at the end slots — at 3px the pill ran into the bar's
+			   own curve and read as sitting on the page rather than on the bar. */
+			--nav-pad: 6px;
 			padding-left: var(--nav-pad);
 			padding-right: var(--nav-pad);
 			box-sizing: border-box;
@@ -307,9 +308,9 @@
 			pointer-events: none;
 			z-index: 0;
 		}
-		/* ~15% up from 24px. .msi only defines 18/20/24, so this is set locally
-		   rather than referencing a size class that doesn't exist. */
-		.bottom-nav .msi { font-size: 28px; }
+		/* Set locally — .msi only defines 18/20/24, so a size class here would be
+		   inventing one that doesn't exist. */
+		.bottom-nav .msi { font-size: 25px; }
 
 		.nav-item {
 			position: relative;
