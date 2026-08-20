@@ -16,6 +16,10 @@ import { getAdminDb } from '$lib/server/firebase-admin.js';
  * are already going wrong.
  */
 function recordError(status, event, err) {
+	// 5xx only. handleError fires for every 404 too — a missing favicon is not
+	// an error anyone needs recorded, and at one row per request the real
+	// failures get buried within seconds.
+	if ((status ?? 500) < 500) return;
 	try {
 		getAdminDb().ref('dev/errors').push({
 			at: Date.now(),
