@@ -20,6 +20,7 @@
 	import { dropAdaptiveFrames as dropCpuAtlasAdaptive } from '$lib/cpu-atlas.js';
 	import { initTheme, onThemeChanged } from '$lib/theme-store.js';
 	import { initEmoteIdle } from '$lib/emote-idle.js';
+	import { installChunkErrorRecovery } from '$lib/hard-refresh.js';
 	import { initKeyboardMetrics } from '$lib/keyboard-metrics.js';
 	import { initEmoteEngine } from '$lib/telegram-emoji-store.js';
 	import { dev } from '$app/environment';
@@ -29,6 +30,12 @@
 	let { children } = $props();
 
 	onMount(() => {
+		// A page loaded from an older build can't fetch chunk names that no longer
+		// exist, so the first route it lazily imports fails and silently never
+		// renders — which looks exactly like "the change didn't ship". Recover by
+		// reloading onto the current build. Installed first: this is what makes
+		// everything after it reachable.
+		installChunkErrorRecovery();
 		// Native shell setup (no-op on web/PWA) — wires the OS keyboard so
 		// the compose coordinates with the real keyboard instead of the web
 		// suppression hacks.

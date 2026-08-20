@@ -38,6 +38,7 @@
 	// server, so SSR can't leak the flag across users.
 	import { setTgHidden } from '$lib/tg-visibility.js';
 	import { emotesAwake } from '$lib/emote-idle.js';
+	import { hardRefresh } from '$lib/hard-refresh.js';
 	if (browser) setTgHidden(data.currentUser?.hideTgEmoji);
 
 	// ── Nav items (Chat omitted — sidebar always shows channels/DMs) ──
@@ -1328,31 +1329,6 @@
 				ua: String(navigator.userAgent ?? '').slice(0, 120)
 			}).catch(() => {});
 		} catch { /* diagnostics never block the app */ }
-	}
-	// Best-effort: every step is optional and the reload happens regardless, so a
-	// browser that refuses one of them still ends up on a fresh load.
-	async function hardRefresh() {
-		try {
-			if ('serviceWorker' in navigator) {
-				const regs = await navigator.serviceWorker.getRegistrations();
-				await Promise.all(regs.map((r) => r.unregister().catch(() => {})));
-			}
-		} catch { /* not fatal */ }
-		try {
-			if (typeof caches !== 'undefined') {
-				const keys = await caches.keys();
-				await Promise.all(keys.map((k) => caches.delete(k).catch(() => {})));
-			}
-		} catch { /* not fatal */ }
-		// Cache-bust the document itself: iOS will otherwise happily re-serve the
-		// same HTML it already had.
-		try {
-			const u = new URL(location.href);
-			u.searchParams.set('_r', String(Date.now()));
-			location.replace(u.toString());
-			return;
-		} catch { /* fall through */ }
-		location.reload();
 	}
 
 	// ── Unread / DMs ──
