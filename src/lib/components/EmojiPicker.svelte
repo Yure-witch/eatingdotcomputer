@@ -806,21 +806,34 @@
 	// previous values were a guess — they produced section pxStart
 	// offsets that didn't line up with the actual rendered rows, so
 	// the scroll-derived active tab pointed to the wrong group.
-	const CELL_PX = 36;
 	const COLS = 9;
 	const HEADER_PX = 28;        // height of `.section-label` row
-	const BUFFER_ROWS = 4;
 	let gridH = $state(280);
 	let gridScrollTop = $state(0);
+
+	// Row pitch, MEASURED. The columns are `minmax(0, 1fr)`, so a cell is
+	// whatever 1/9th of the panel comes to — 37.66px at 375px wide, not the
+	// 36 this used to hardcode. Every row was therefore ~4.7px taller than the
+	// geometry believed (the old constant also ignored the 3px row gap), and
+	// the error compounds down a 190-row list: placeholders were the wrong
+	// height, sections mounted at the wrong scroll offsets, and jumping to a
+	// category landed in the wrong place.
+	let rowPx = $state(39);
+	let gapPx = $state(3);
 
 	function measureGrid() {
 		if (!gridEl) return;
 		gridH = gridEl.clientHeight;
+		const cell = gridEl.querySelector('.cell');
+		const grid = cell?.closest('.grid');
+		if (!cell || !grid) return;
+		const h = cell.getBoundingClientRect().height;
+		const gap = parseFloat(getComputedStyle(grid).rowGap) || 0;
+		if (h > 0) { rowPx = h + gap; gapPx = gap; }
 	}
 
 	// Hardcoded — the CSS pins the grid at 9 columns regardless of
-	// container width. If we ever switch to auto-fill, derive from
-	// `gridEl.clientWidth / CELL_PX` again.
+	// container width.
 	const cellsPerRow = COLS;
 
 	// Build per-section row geometry: rows in section, the starting
@@ -832,12 +845,32 @@
 		let py = 0;
 		for (const s of flowingSections) {
 			const rows = Math.ceil(s.items.length / cellsPerRow);
-			const px = HEADER_PX + rows * CELL_PX;
-			out.push({ groupIdx: s.groupIdx, pxStart: py, pxEnd: py + px });
+			// N rows of grid measure N*cell + (N-1)*gap, i.e. one gap LESS than
+			// N * rowPx. Leaving that out made each rendered section 3px shorter
+			// than the geometry claimed, so scrollHeight drifted as sections
+			// entered and left the window — the list grew and shrank under the
+			// scrollbar while you dragged it.
+			const px = rows ? HEADER_PX + rows * rowPx - gapPx : HEADER_PX;
+			out.push({ groupIdx: s.groupIdx, rows, pxStart: py, pxEnd: py + px });
 			py += px;
 		}
 		return out;
 	});
+
+	// Which ROWS of a section are worth building. Section-level
+	// virtualization alone wasn't enough: a section renders all-or-nothing, and
+	// Smileys is ~180 items, so landing anywhere inside it built every cell —
+	// 322 of them for a 200px-tall viewport. Slicing to the rows actually near
+	// the viewport (plus a screen of buffer either way) cuts that to a few
+	// dozen, which is most of what a low-end phone was choking on.
+	function rowWindow(geo) {
+		const top = gridScrollTop - gridH;
+		const bot = gridScrollTop + gridH * 2;
+		const gridTop = geo.pxStart + HEADER_PX;
+		const first = Math.max(0, Math.floor((top - gridTop) / rowPx));
+		const last = Math.min(geo.rows, Math.ceil((bot - gridTop) / rowPx));
+		return { first, last: Math.max(first, last) };
+	}
 
 	// Scroll-derived active-group sync. Driven from the scroll event
 	// directly instead of as a $effect — the effect approach was
@@ -1088,12 +1121,17 @@
 				{@const visBot = gridScrollTop + gridH * 2}
 				{@const isVisible = geo.pxEnd >= visTop && geo.pxStart <= visBot}
 				{#if isVisible}
+					{@const win = rowWindow(geo)}
 					<div class="section-block">
 						<div class="section-label">{section.name}</div>
+						<!-- Spacers stand in for the rows above / below the window so
+						     the section keeps its full height and the scrollbar (and
+						     every pxStart offset) stays honest. -->
+						{#if win.first > 0}<div class="row-spacer" style:height="{win.first * rowPx}px"></div>{/if}
 						<div class="grid" class:noto={fontStyle === 'noto'}>
 							<!-- item may be null in the Recent section (raw glyphs
 							     with baked skin tones) — those insert via pickRaw -->
-							{#each section.items as { item, e } (item?.cp ?? e)}
+							{#each section.items.slice(win.first * cellsPerRow, win.last * cellsPerRow) as { item, e } (item?.cp ?? e)}
 								<button class="cell" class:has-variants={item?.t?.length} title={item?.n}
 									onpointerdown={(ev) => { if (item) startLp(ev, item); }}
 									onpointermove={moveLp}
@@ -1107,6 +1145,7 @@
 								</button>
 							{/each}
 						</div>
+						{#if win.last < geo.rows}<div class="row-spacer" style:height="{(geo.rows - win.last) * rowPx}px"></div>{/if}
 					</div>
 				{:else}
 					<!-- Placeholder reserves the same vertical band so

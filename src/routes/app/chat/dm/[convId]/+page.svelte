@@ -5247,8 +5247,25 @@
 		   remembered because by the time the picker lays out the keyboard is
 		   already sliding away. The clamp keeps a wrong/absent reading sane, and
 		   the 22rem fallback is the old fixed height. */
-		.input-area { --picker-h: clamp(15rem, var(--kb-h-last, 22rem), 58vh); }
-		.input-area.picker-open { margin-bottom: calc(var(--picker-h) + env(safe-area-inset-bottom, 0px)); }
+		/* --picker-h is the FULL height of the docked sheet, measured from the
+		   physical bottom of the screen — home indicator included.
+		   That definition matters: --kb-h-last is the keyboard's height, and the
+		   keyboard already extends to the bottom of the screen. Adding
+		   env(safe-area-inset-bottom) on top of it (which this used to do, in
+		   both the sheet height and the bar's lift) counted that strip twice, so
+		   the sheet came out ~34px taller than the keyboard it was replacing and
+		   the compose bar sat that much too high. The picker's own tab strip
+		   carries the inset internally, so its buttons still clear the
+		   indicator. The fallback keeps the inset because 22rem is a usable
+		   height, not a screen-bottom measurement. */
+		.input-area {
+			--picker-h: clamp(
+				15rem,
+				var(--kb-h-last, calc(22rem + env(safe-area-inset-bottom, 0px))),
+				58vh
+			);
+		}
+		.input-area.picker-open { margin-bottom: var(--picker-h); }
 		/* The input area must NEVER be transformed while the picker is open.
 		   The picker sheet is `position: fixed` but lives INSIDE .input-area,
 		   and a transform on an ancestor (a) makes that ancestor the containing
@@ -5286,7 +5303,7 @@
 			/* left/right:0 already fixes the width; `100vw` used to override that
 			   with the viewport width INCLUDING any scrollbar, which is what let
 			   the sheet hang past the right edge of the page. */
-			height: calc(var(--picker-h) + env(safe-area-inset-bottom, 0px));
+			height: var(--picker-h);
 			/* No padding-bottom: the picker's bottom tab strip carries the
 			   safe-area inset so its grey background runs to the screen bottom.
 			   No background either: the ExpressionPicker panel inside carries it,
