@@ -482,6 +482,28 @@
 	// the jump is invisible, and what gets revealed is the live panel itself.
 	// Flagged as a programmatic scroll so the pager's own commit / highlight
 	// machinery ignores it.
+	// Scroll-snap has to be off while we write scrollLeft by hand, or it fights
+	// the write. Suspending it USED to capture the current inline value and put it
+	// back — which breaks the moment two suspensions overlap: the second captures
+	// the first's 'none' and restores 'none', leaving snap off on the track for
+	// good. Every later swipe then stops wherever your finger left it, halfway
+	// between two panels, until a reload. (Two overlapping calls are routine:
+	// _parkBeneath runs on the gesture's first move AND again on release, and
+	// touchend regularly lands in the same frame as the last touchmove.)
+	//
+	// So: never capture. Resuming always clears the inline override back to the
+	// stylesheet's `x mandatory`, and a generation token means only the newest
+	// suspension gets to do it.
+	let _snapGen = 0;
+	function _suspendSnap() {
+		if (pagerEl) pagerEl.style.scrollSnapType = 'none';
+		return ++_snapGen;
+	}
+	function _resumeSnap(gen) {
+		if (!pagerEl || gen !== _snapGen) return;
+		if (_pgSnapOff) return; // a hand-driven pan owns it; it restores on scrollend
+		pagerEl.style.scrollSnapType = '';
+	}
 	function _parkBeneath(idx) {
 		if (!pagerEl || idx < 0 || idx >= PANELS.length) return;
 		_warmPanel(PANELS[idx].route);    // last-ditch, in case boot-warming hasn't landed
@@ -491,11 +513,10 @@
 		const left = pagerEl.children?.[idx]?.offsetLeft ?? idx * (pagerEl.clientWidth || 1);
 		if (Math.abs(pagerEl.scrollLeft - left) < 1) return;
 		_pagerProg = true;
-		const prevSnap = pagerEl.style.scrollSnapType;
-		pagerEl.style.scrollSnapType = 'none';
+		const gen = _suspendSnap();
 		pagerEl.scrollLeft = left;
 		requestAnimationFrame(() => {
-			if (pagerEl) pagerEl.style.scrollSnapType = prevSnap;
+			_resumeSnap(gen);
 			_pagerProg = false;
 		});
 	}
@@ -824,7 +845,13 @@
 		_convDrag = 0;
 		if (_convNavBack) _convNavBack = false;
 		if (_fwdEl) { _fwdEl.style.transform = ''; _fwdEl.style.willChange = ''; }
-		if (pagerEl) { pagerEl.style.transform = ''; pagerEl.style.willChange = ''; }
+		if (pagerEl) {
+			pagerEl.style.transform = '';
+			pagerEl.style.willChange = '';
+			// Unconditionally hand snapping back: this runs after every chat
+			// gesture, so it's the one place guaranteed to see a settled track.
+			if (!_pgSnapOff) pagerEl.style.scrollSnapType = '';
+		}
 		_freezeEmotes(false);
 	}
 	let _swVelX = 0, _swPrevX = 0, _swPrevT = 0;
@@ -1083,13 +1110,12 @@
 			// pill is the only thing that animates the move.
 			_glideNavPill();
 			_pagerProg = true;
-			const prevSnap = pagerEl.style.scrollSnapType;
-			pagerEl.style.scrollSnapType = 'none';
+			const gen = _suspendSnap();
 			const t = pagerEl.children?.[idx]?.offsetLeft ?? idx * (pagerEl.clientWidth || 1);
 			pagerEl.scrollLeft = t;        // instant — straight to the target
 			_pagerFraction = idx;          // jump the highlight too (no lag)
 			_pagerVisibleRoute = route;
-			requestAnimationFrame(() => { if (pagerEl) pagerEl.style.scrollSnapType = prevSnap; _pagerProg = false; });
+			requestAnimationFrame(() => { _resumeSnap(gen); _pagerProg = false; });
 			goto(route, { noScroll: true, keepFocus: true });
 			return true;
 		},
