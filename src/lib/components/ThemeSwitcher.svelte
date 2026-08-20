@@ -1,6 +1,16 @@
 <script>
 	import { goto } from '$app/navigation';
-	import { themeStore, PRESETS, setPreset, setDark } from '$lib/theme-store.js';
+	import { themeStore, PRESETS, setPreset, setDark, previewRolesForPreset, previewRoles } from '$lib/theme-store.js';
+
+	// Menu dots show each preset's RESOLVED primary over its resolved
+	// surface for the mode you're currently in — the raw seed is a
+	// generator input, not a colour the theme paints, and it looks the
+	// same in light and dark even though the themes don't.
+	const menuChips = $derived(
+		PRESETS.map((p) => ({ ...p, roles: previewRolesForPreset(p, $themeStore) }))
+	);
+	// The trigger dot mirrors whatever is actually applied right now.
+	const currentRoles = $derived(previewRoles($themeStore));
 
 	let menuOpen = $state(false);
 	let menuEl = $state(null);
@@ -72,7 +82,7 @@
 		aria-expanded={menuOpen}
 		onclick={toggleMenu}
 	>
-		<span class="swatch-dot" style:background={$themeStore.seed}></span>
+		<span class="swatch-dot" style:--swatch={currentRoles.primary} style:--swatch-bg={currentRoles.surface}></span>
 		<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 			<polyline points="6 9 12 15 18 9"/>
 		</svg>
@@ -81,7 +91,7 @@
 	{#if menuOpen}
 		<div bind:this={menuEl} class="menu" role="menu">
 			<div class="menu-section-title">Theme</div>
-			{#each PRESETS as p}
+			{#each menuChips as p (p.id)}
 				<!-- Same emoji-only convention as the full theme picker:
 				     Default keeps its written name; every other entry
 				     shows just the emoji. Full name still surfaces via
@@ -96,7 +106,7 @@
 					title={p.name}
 					aria-label={p.name}
 				>
-					<span class="menu-dot" style:background={p.seed}></span>
+					<span class="menu-dot" style:--swatch={p.roles.primary} style:--swatch-bg={p.roles.surface}></span>
 					<span class="menu-emoji">{p.emoji}</span>
 					{#if p.id === 'default'}
 						<span class="menu-name">{p.name}</span>
@@ -148,11 +158,17 @@
 	.swatch-btn:hover {
 		background: var(--md-sys-color-surface-variant, rgba(0,0,0,0.04));
 	}
-	.swatch-dot {
-		width: 14px;
-		height: 14px;
+	.swatch-dot,
+	.menu-dot {
+		width: 15px;
+		height: 15px;
 		border-radius: 50%;
-		box-shadow: inset 0 0 0 1px rgba(0,0,0,0.12);
+		flex-shrink: 0;
+		background:
+			radial-gradient(circle at 50% 50%,
+				var(--swatch) 0 55%,
+				var(--swatch-bg) 56% 100%);
+		box-shadow: inset 0 0 0 1px rgba(128,128,128,0.35);
 	}
 
 	.menu {
@@ -194,13 +210,7 @@
 	}
 	.menu-item:hover { background: var(--md-sys-color-surface-variant, rgba(0,0,0,0.04)); }
 	.menu-item.active { background: var(--md-sys-color-primary-container, rgba(0,0,0,0.06)); }
-	.menu-dot {
-		width: 14px;
-		height: 14px;
-		border-radius: 50%;
-		box-shadow: inset 0 0 0 1px rgba(0,0,0,0.12);
-		flex-shrink: 0;
-	}
+
 	.menu-emoji { font-size: 0.95rem; }
 	.menu-name { flex: 1; }
 	.menu-check { color: var(--md-sys-color-primary, var(--accent)); flex-shrink: 0; }

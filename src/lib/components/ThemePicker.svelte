@@ -24,9 +24,20 @@
 		applySavedScheme,
 		deleteSavedScheme,
 		renameSavedScheme,
-		presetSnippetFor
+		presetSnippetFor,
+		previewRolesForPreset
 	} from '$lib/theme-store.js';
 	import ThemeDemo from '$lib/components/ThemeDemo.svelte';
+
+	// Preset chips preview the palette each one RESOLVES to in the current
+	// mode, not its raw seed. A seed is an input to the M3 generator, not a
+	// colour the app ever paints: Raspberry's #b61d3e seed renders a blue
+	// primary under `expressive`, and every seed dot looks identical in
+	// light and dark even though the themes don't. Two-tone (surface behind,
+	// primary in front) so the chip reads as a theme rather than a colour.
+	const presetChips = $derived(
+		PRESETS.map((x) => ({ ...x, roles: previewRolesForPreset(x, $themeStore) }))
+	);
 
 	// Live preview of the palette roles. These are the same M3 system
 	// tokens the theme store writes to :root, so the swatches update
@@ -124,7 +135,7 @@
 	<!-- Built-in presets ---------------------------------------------------- -->
 	<div class="row-label">Presets</div>
 	<div class="preset-row">
-		{#each PRESETS as p}
+		{#each presetChips as p (p.id)}
 			<!-- Default keeps its written name; every other preset
 			     shows just its emoji as the chip label. Tooltip still
 			     surfaces the real name on hover for accessibility. -->
@@ -132,7 +143,8 @@
 				type="button"
 				class="preset"
 				class:active={$themeStore.presetId === p.id}
-				style:--swatch={p.seed}
+				style:--swatch={p.roles.primary}
+				style:--swatch-bg={p.roles.surface}
 				onclick={() => setPreset(p.id)}
 				title={p.name}
 				aria-label={p.name}
@@ -562,11 +574,16 @@
 	}
 	.preset .dot {
 		display: inline-block;
-		width: 14px;
-		height: 14px;
+		width: 16px;
+		height: 16px;
 		border-radius: 50%;
-		background: var(--swatch);
-		box-shadow: 0 0 0 1px rgba(0,0,0,0.1);
+		/* Primary disc on the theme's own surface, so the chip previews
+		   the pair the page will actually render. */
+		background:
+			radial-gradient(circle at 50% 50%,
+				var(--swatch) 0 55%,
+				var(--swatch-bg) 56% 100%);
+		box-shadow: 0 0 0 1px rgba(128,128,128,0.35);
 	}
 
 	.controls {

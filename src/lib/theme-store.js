@@ -273,6 +273,22 @@ const SCHEME_ROLES = [
 	'inverseOnSurface', 'inversePrimary'
 ];
 
+// The roles that paint page/card backgrounds, split by which neutral
+// palette feeds them. Vibrance's surface-deepening pass below walks
+// exactly these and nothing else — every on-* role keeps its original
+// tone so contrast can only improve.
+const NEUTRAL_SURFACE_ROLES = [
+	'background', 'surface',
+	'surfaceContainerLowest', 'surfaceContainerLow',
+	'surfaceContainer', 'surfaceContainerHigh', 'surfaceContainerHighest'
+];
+const NEUTRAL_VARIANT_SURFACE_ROLES = ['surfaceVariant'];
+
+// Tone steps to walk the light-mode surfaces down at vibrance 200%.
+// 10 is enough to take a near-white page to a clearly tinted one while
+// leaving on-surface text (tone ~10) with a huge contrast margin.
+const SURFACE_TONE_SHIFT_MAX = 10;
+
 const DYNAMIC_ROLE_FNS = SCHEME_ROLES.reduce((acc, role) => {
 	const fn = MaterialDynamicColors[role];
 	if (fn && typeof fn.getArgb === 'function') acc[role] = (scheme) => fn.getArgb(scheme);
@@ -393,6 +409,39 @@ function buildSchemeRoles(seed, dark, variantId, contrastLevel, opts = {}) {
 		const read = DYNAMIC_ROLE_FNS[role];
 		if (read) out[role] = read(finalScheme);
 	}
+
+	// Light mode puts surfaces at tone 90–100, where sRGB permits almost
+	// no chroma at ANY hue. So raising neutral chroma alone stops doing
+	// anything to the backgrounds somewhere around vibrance 100% — the
+	// value clips, the accents keep moving, and the slider looks broken
+	// on exactly the surfaces it claims to control. Measured: light-mode
+	// surface/surfaceContainer/surfaceVariant are byte-identical at 100%
+	// and 200% without this pass.
+	//
+	// Tone is the only axis that buys chroma headroom, so above 100% we
+	// also walk the surface roles a few steps deeper and re-apply the
+	// target chroma once there — the tone drop is what makes the colour
+	// stick. Dark mode is left alone: its surfaces sit at tone 6–20 and
+	// already respond to chroma across the whole range.
+	if (!dark && vib > 1) {
+		const shift = Math.min(SURFACE_TONE_SHIFT_MAX, (vib - 1) * SURFACE_TONE_SHIFT_MAX);
+		const deepen = (argb, chromaTarget) => {
+			const h = Hct.fromInt(argb);
+			// Order matters: drop the tone first, then ask for the chroma.
+			// The chroma setter solves against the CURRENT tone, so doing
+			// it the other way round just clips again at the old tone.
+			h.tone = Math.max(0, h.tone - shift);
+			h.chroma = chromaTarget;
+			return h.toInt();
+		};
+		for (const role of NEUTRAL_SURFACE_ROLES) {
+			if (out[role] != null) out[role] = deepen(out[role], neutralPalette.chroma);
+		}
+		for (const role of NEUTRAL_VARIANT_SURFACE_ROLES) {
+			if (out[role] != null) out[role] = deepen(out[role], neutralVariantPalette.chroma);
+		}
+	}
+
 	return out;
 }
 
