@@ -2670,13 +2670,46 @@
 						{@const C = panel.Comp}
 						<C data={panelData[panel.route]} form={i === pagerIndex ? $page.form : undefined} />
 					{:else}
-						<div class="pager-skel">
-							<div class="pk pk-title"></div>
-							<div class="pk pk-line"></div>
-							<div class="pk pk-line short"></div>
-							<div class="pk pk-card"></div>
-							<div class="pk pk-card"></div>
-						</div>
+						<!-- Per-route skeletons. One generic shape for every panel meant
+						     the placeholder never resembled the page arriving behind it,
+						     so the swap read as a re-render rather than content landing. -->
+						{#if panel.route === '/app'}
+							<div class="pager-skel">
+								<div class="pk pk-eyebrow"></div>
+								<div class="pk pk-headline"></div>
+								<div class="pk pk-line short"></div>
+								<div class="pk pk-rule"></div>
+								<div class="pk pk-check"></div>
+								<div class="pk pk-rule"></div>
+								<div class="pk pk-line"></div>
+							</div>
+						{:else if panel.route === '/app/orbit'}
+							<div class="pager-skel">
+								<div class="pk pk-title center"></div>
+								<div class="pk pk-wide-btn"></div>
+								<div class="pk pk-card"></div>
+								<div class="pk pk-title center"></div>
+								<div class="pk pk-card tall"></div>
+							</div>
+						{:else if panel.route === '/app/lab'}
+							<div class="pager-skel">
+								<div class="pk pk-title center"></div>
+								<div class="pk-grid">
+									<div class="pk pk-tile"></div>
+									<div class="pk pk-tile"></div>
+									<div class="pk pk-tile"></div>
+									<div class="pk pk-tile"></div>
+								</div>
+							</div>
+						{:else}
+							<div class="pager-skel">
+								<div class="pk pk-title"></div>
+								<div class="pk pk-line"></div>
+								<div class="pk pk-line short"></div>
+								<div class="pk pk-card"></div>
+								<div class="pk pk-card"></div>
+							</div>
+						{/if}
 					{/if}
 				</section>
 			{/each}
@@ -3239,6 +3272,20 @@
 		flex-direction: column;
 		gap: 0.9rem;
 	}
+	/* Shapes chosen to match each page's real furniture, so the placeholder
+	   occupies roughly where the content lands. */
+	.pager-skel .pk-eyebrow { height: 12px; width: 38%; border-radius: 6px; }
+	.pager-skel .pk-headline { height: 40px; width: 72%; }
+	.pager-skel .pk-rule { height: 1px; border-radius: 0; opacity: 0.5; }
+	.pager-skel .pk-check { height: 26px; width: 64%; }
+	.pager-skel .pk-wide-btn { height: 52px; border-radius: 14px; }
+	.pager-skel .pk-title.center { width: 46%; margin: 0 auto; }
+	.pager-skel .pk-card.tall { height: 200px; }
+	.pager-skel .pk-grid {
+		display: grid; grid-template-columns: 1fr 1fr; gap: 0.9rem;
+	}
+	.pager-skel .pk-tile { height: 110px; border-radius: 14px; }
+
 	.pager-skel .pk {
 		border-radius: 10px;
 		background: linear-gradient(90deg,
