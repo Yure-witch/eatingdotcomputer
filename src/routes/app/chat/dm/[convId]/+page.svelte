@@ -252,6 +252,14 @@
 		const was = _prevPickerOpen;
 		_prevPickerOpen = open;
 		if (open === was || !listEl) return;
+		// Opening straight from the keyboard needs NO compensation: the picker
+		// is the keyboard's height, so the space taken at the bottom is the
+		// same before and after and the visible region never changed. The list
+		// loses --kb-height of scroll content (the spacer, dropped in the same
+		// frame) and an equal slice of viewport, which cancel exactly. Writing
+		// scrollTop here would be inventing a jump, then having the spacer's
+		// removal appear to undo it — the double shift.
+		if (open && _pickerFromKb) return;
 		const el = listEl;
 		// One shot, after the layout settles: opening shrinks the list by the
 		// sheet's height, so shift by the delta to leave the bottom-most

@@ -626,6 +626,18 @@ body.native-app.kb-native-open .message-list::after {
 	flex: 0 0 auto;
 	height: var(--kb-height, 0px);
 }
+/* Swapping keyboard -> picker, this spacer has to go at the same moment the
+   compose's margin-bottom appears. `expr-picker-open` is toggled synchronously
+   with `.picker-open`, whereas `kb-native-open` is only removed when
+   keyboardWillHide fires ~250ms later — so leaving it to that produced TWO
+   layout changes a quarter-second apart, and the page visibly jumped twice.
+   Landing both in one frame makes them cancel: the list loses `--kb-height` of
+   scroll content and `--picker-h` of viewport at once, and since the picker is
+   sized to the keyboard those are equal, so the bottom-most message doesn't
+   move at all. */
+body.native-app.expr-picker-open .message-list::after {
+	height: 0;
+}
 
 /* ──────────────────────────────────────────────────────────────────────
    Native notch handling. The status bar OVERLAYS the web view (overlay:true),
