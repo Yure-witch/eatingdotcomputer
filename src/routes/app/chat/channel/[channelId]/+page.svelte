@@ -5591,7 +5591,7 @@
 		   otherwise leave ~34px of dead space on a device with an indicator.
 		   This sets the value outright rather than trying to out-specify each
 		   contributor, so the result doesn't depend on which rule wins. */
-		.input-area { --compose-dock-gap: 2px; }
+		.input-area { --compose-dock-gap: 0.5rem; }
 		.input-area.picker-open .input-bar,
 		.input-area.kb-open .input-bar {
 			padding-bottom: var(--compose-dock-gap);

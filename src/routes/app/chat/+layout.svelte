@@ -294,6 +294,26 @@
 	}
 
 	@media (max-width: 640px) {
+		/* The conversation renders as an ABSOLUTELY POSITIONED layer over the
+		   pager (.fwd-host.conv-layer in /app/+layout.svelte: top:0,
+		   height:100dvh). An abs-positioned element resolves `top: 0` against
+		   its containing block's PADDING box, and that box's top edge is
+		   OUTSIDE the padding — so the layer starts at the viewport top and
+		   skips `body.native-app .app-shell { padding-top: --native-top-inset }`
+		   (>=44px, app.css).
+		   In normal flow that padding is what pushed the chat below the fixed
+		   header, and the height below subtracts the inset on the assumption it
+		   is still being applied. Inside the layer it isn't, so the whole chat
+		   rode up by the inset: the header overlapped the top of the timeline
+		   and the compose bar floated ~44-59px above the bottom of the screen —
+		   which is the gap that kept showing up under the keyboard and the
+		   picker no matter what the compose's own padding was set to.
+		   Put the inset back as the offset it was meant to be. Zero off native,
+		   so the PWA and desktop are untouched. */
+		:global(.fwd-host.conv-layer) .chat-wrap {
+			margin-top: calc(52px + var(--native-top-inset, 0px));
+		}
+
 		/* NOTE: the chat heights deliberately do NOT subtract --kb-h.
 		   Whether the keyboard already shrinks the viewport is browser- and
 		   flag-dependent (Android Chrome's interactive-widget setting, iOS
