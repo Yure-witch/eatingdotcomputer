@@ -57,12 +57,11 @@ const config: CapacitorConfig = {
 			// Matches the icon/splash lockup rather than the app's cream paper —
 			// the launch image itself is black with the green mark.
 			backgroundColor: '#000000',
-			// iOS launch screens are static by requirement, so the only motion we
-			// can offer while the web view loads is the system spinner over the
-			// splash. Green on black to stay in the same palette.
-			showSpinner: true,
-			iosSpinnerStyle: 'large',
-			spinnerColor: '#00ff00'
+			// No native spinner: iOS centres UIActivityIndicator, so it lands ON
+			// the mark rather than around it. The animated ring is rendered by the
+			// web app instead (see src/app.html), which can actually surround the
+			// logo — the splash is just the static mark handing over to it.
+			showSpinner: false
 		}
 	}
 };

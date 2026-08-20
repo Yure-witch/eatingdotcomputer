@@ -117,6 +117,49 @@
 		%sveltekit.head%
 	</head>
 	<body data-sveltekit-preload-data="hover">
+		<!-- Boot loader: the mark with an indeterminate ring around it, covering
+		     the gap between the native splash handing over and the app painting.
+		     Removed by the app on mount (see the root layout), and self-clears on
+		     window load so a failure here can never leave a stuck overlay. -->
+		<div id="boot-loader" aria-hidden="true">
+			<div class="bl-mark">
+				<svg viewBox="0 0 100 100" width="44" height="44" aria-hidden="true">
+					<path fill="#00ff00" transform="translate(22.000 78.000) scale(0.100000 -0.100000)"
+						d="M320 560 440 520 520 400 480 320 160 240 200 80 320 40 400 80 480 160 520 120 440 40 360 0H240L120 40L40 200V360L120 520L240 560ZM200 480 160 280 360 360V480L280 520Z"/>
+				</svg>
+				<span class="bl-ring"></span>
+			</div>
+		</div>
+		<style>
+			#boot-loader {
+				position: fixed; inset: 0; z-index: 99999;
+				display: grid; place-items: center;
+				background: #000;
+			}
+			#boot-loader.done { opacity: 0; pointer-events: none; transition: opacity 0.28s ease; }
+			.bl-mark { position: relative; display: grid; place-items: center; width: 96px; height: 96px; }
+			.bl-mark svg { display: block; }
+			/* The ring SURROUNDS the mark rather than sitting on it. */
+			.bl-ring {
+				position: absolute; inset: 0;
+				border-radius: 50%;
+				border: 3px solid rgba(0, 255, 0, 0.18);
+				border-top-color: #00ff00;
+				animation: bl-spin 0.9s linear infinite;
+			}
+			@keyframes bl-spin { to { transform: rotate(360deg); } }
+			@media (prefers-reduced-motion: reduce) { .bl-ring { animation-duration: 2.6s; } }
+		</style>
+		<script>
+			// Safety net: never let the overlay outlive the page load, even if the
+			// app never gets far enough to remove it itself.
+			addEventListener('load', function () {
+				setTimeout(function () {
+					var el = document.getElementById('boot-loader');
+					if (el) { el.classList.add('done'); setTimeout(function () { el.remove(); }, 320); }
+				}, 150);
+			});
+		</script>
 		<div style="display: contents">%sveltekit.body%</div>
 	</body>
 </html>
