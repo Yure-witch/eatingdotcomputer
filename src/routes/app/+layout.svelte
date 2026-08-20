@@ -788,6 +788,16 @@
 	// How long the layer takes to run off-screen on commit. The route change
 	// unmounts the layer, so we hold the goto until the slide is done — otherwise
 	// it vanishes mid-flight (which is what a "flash" on exit actually was).
+	// ── Swipe diagnostics ───────────────────────────────────────────────
+	// Off unless asked for: add ?swipedbg=1 to any /app URL (it sticks for the
+	// tab). Writes only at gesture MILESTONES, never per frame, so switching it
+	// on doesn't change the thing it's measuring.
+	let _swDbg = $state(false);
+	let _dbgLines = $state([]);
+	function _dbg(msg) {
+		if (!_swDbg) return;
+		_dbgLines = [msg, ..._dbgLines].slice(0, 7);
+	}
 	const CONV_EXIT_MS = 190;
 	// Travel that counts as "leave this chat". Inherited from the gesture this
 	// replaced, where it was the rule that felt right.
@@ -880,16 +890,17 @@
 	function onSwipeStart(e) {
 		// A drag already in flight owns the gesture — later touches are noise.
 		// So does an exit that has already committed: it runs to the route change.
-		if (_swArmed || _convCommitted) return;
-		if (window.innerWidth > 640) { _disarmSwipe(); return; }
+		if (_swArmed) { _dbg('start: ignored (drag in flight)'); return; }
+		if (_convCommitted) { _dbg('start: ignored (exit committed)'); return; }
+		if (window.innerWidth > 640) { _dbg('start: no (wide)'); _disarmSwipe(); return; }
 		// Pager routes drive their own native scroll-snap gestures.
-		if (isPagerActive) { _disarmSwipe(); return; }
+		if (isPagerActive) { _dbg('start: no (pager route)'); _disarmSwipe(); return; }
 		// Only chat surfaces (and a chat still painting its skeleton) swipe out.
-		if (!_onChatSurfaceMobile && !_showConvSkeleton) { _disarmSwipe(); return; }
+		if (!_onChatSurfaceMobile && !_showConvSkeleton) { _dbg('start: no (not a chat)'); _disarmSwipe(); return; }
 		const t = e.touches?.[0];
 		if (!t) { _disarmSwipe(); return; }
 		// Don't hijack the compose / sliders / horizontal scrollers / pickers.
-		if (e.target?.closest?.('.input-area, .send-wrap, .sz-capture, input[type="range"], .text-typo-bar, .expr-panel, .picker-popover, .compose-picker-pop')) { _disarmSwipe(); return; }
+		if (e.target?.closest?.('.input-area, .send-wrap, .sz-capture, input[type="range"], .text-typo-bar, .expr-panel, .picker-popover, .compose-picker-pop')) { _dbg('start: no (compose/picker)'); _disarmSwipe(); return; }
 		// Deliberately NOT cancelling a pending _endConvSlide here. A touch that
 		// turns into a real drag cancels it below, once it's actually taking over;
 		// a touch that turns out to be a tap or a vertical scroll must leave the
@@ -900,6 +911,7 @@
 		_swStartX = t.clientX; _swStartY = t.clientY;
 		_swPrevX = t.clientX; _swPrevT = e.timeStamp; _swVelX = 0;
 		_swArmed = true; _swDecided = false;
+		_dbg('start: armed');
 	}
 	function onSwipeMove(e) {
 		if (!_swArmed || _convCommitted) return;
@@ -914,7 +926,7 @@
 		_swPrevX = t.clientX; _swPrevT = e.timeStamp;
 		if (!_swDecided) {
 			if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
-			if (Math.abs(dy) >= Math.abs(dx)) { _disarmSwipe(); return; } // vertical → scroll
+			if (Math.abs(dy) >= Math.abs(dx)) { _dbg(`bail: vertical dx=${dx|0} dy=${dy|0}`); _disarmSwipe(); return; } // vertical → scroll
 			_swDecided = true;
 			_swDir = dx > 0 ? 1 : -1;
 			clearTimeout(_convExitT); // this drag owns the settle now
@@ -925,6 +937,7 @@
 			_freezeEmotes(true);
 			_convSliding = true; _convDragging = true;
 			_setConvDrag(0);
+			_dbg(`decide: dir=${_swDir} -> panel ${_beneathFor(_swDir)}`);
 		}
 		// Reversing mid-drag switches which side you're uncovering — re-park while
 		// the layer is still (nearly) closed, so the swap can't be seen.
@@ -961,7 +974,9 @@
 		// swipe fell under it, snapped back, and had to be made again. That was the
 		// two-swipe exit — the gesture was being rejected, not dropped.
 		const flicked = Math.abs(_swVelX) > 0.4 && Math.sign(_swVelX) === dir;
-		if (Math.abs(_swLastDx) >= COMMIT_PX || flicked) { _exitChatSurface(dir); return; }
+		const go = Math.abs(_swLastDx) >= COMMIT_PX || flicked;
+		_dbg(`end: dx=${_swLastDx | 0} v=${_swVelX.toFixed(2)} ${go ? 'COMMIT' : 'cancel'}`);
+		if (go) { _exitChatSurface(dir); return; }
 		_setConvDrag(0); // cancelled — slide back into place
 		clearTimeout(_convExitT);
 		_convExitT = setTimeout(_endConvSlide, CONV_EXIT_MS + 20);
@@ -989,6 +1004,7 @@
 		_swDir = dir;
 		const idx = _beneathFor(dir);
 		const route = PANELS[idx]?.route ?? '/app/chat';
+		_dbg(`exit: dir=${dir} -> ${route}`);
 		_parkBeneath(idx);
 		clearTimeout(_convExitT);
 		clearTimeout(_pagerSnapT);
@@ -1008,6 +1024,7 @@
 				_holdMounts();
 				requestAnimationFrame(() => {
 					goto(route, { noScroll: true, keepFocus: true }).then(() => {
+						_dbg(`landed: ${$page.url.pathname}`);
 						_endConvSlide();
 						_repinPager(idx, 0);
 					});
@@ -1669,6 +1686,11 @@
 	afterNavigate(() => { presencePing(); });
 
 	onMount(async () => {
+		try {
+			if ($page.url.searchParams.has('swipedbg')) sessionStorage.setItem('swipedbg', '1');
+			_swDbg = sessionStorage.getItem('swipedbg') === '1';
+		} catch { /* private mode — just stays off */ }
+
 
 		// Load the emote manifests so chat-list previews can resolve emote thumb
 		// URLs (TG / custom packs / custom emoji). Bump _prevVer when each lands so
@@ -2541,6 +2563,14 @@
 	<ConvSkeleton slide />
 {/if}
 
+{#if _swDbg}
+	<!-- Gesture readout (?swipedbg=1). Pointer-transparent so it can't be part
+	     of what it's reporting on. -->
+	<div class="swipe-dbg">
+		{#each _dbgLines as line, i (i + line)}<div class:latest={i === 0}>{line}</div>{/each}
+	</div>
+{/if}
+
 <!-- Global app header. Lives in the layout so it's identical on every
      /app/* page (Home, Atlas, Lab, Manage, Files, Chat, Theme, Profile)
      — wordmark + class switcher + theme switcher + user menu. Per-page
@@ -3101,6 +3131,21 @@
 		/* Default margin matches sidebar width; overridden by inline style when collapsed */
 		.app-shell { margin-left: var(--sidebar-width); transition: margin-left 0.2s ease; }
 	}
+
+	.swipe-dbg {
+		position: fixed;
+		top: calc(var(--header-h, 52px) + 6px);
+		left: 6px;
+		z-index: 3000;
+		pointer-events: none;
+		font: 600 10px/1.45 ui-monospace, monospace;
+		color: #fff;
+		background: rgba(0,0,0,0.72);
+		padding: 5px 7px;
+		border-radius: 7px;
+		max-width: 78vw;
+	}
+	.swipe-dbg .latest { color: #7dff9b; }
 
 	/* ── Toasts ── */
 	.toast-stack {
