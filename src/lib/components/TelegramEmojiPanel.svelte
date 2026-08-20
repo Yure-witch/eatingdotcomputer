@@ -704,6 +704,18 @@
 				type="search" placeholder="Search emotes…" autocomplete="off" spellcheck="false" />
 		{:else}
 		<div class="tg-tabs" bind:this={tabsEl}>
+			{#if _uploadItems.length}
+				<!-- Uploads lead the flow, so they lead the rail. Icon is the
+				     first uploaded emote itself rather than a generic glyph —
+				     it's the section's own artwork, the way pack tabs use their
+				     first sticker. Highlights via the same `active` the scroll
+				     sync drives, so it lights up when you scroll into it. -->
+				<button class="tg-tab tg-tab-upload" class:active={active === UPLOADS_KEY}
+					title={uploadsLabel} onclick={() => goToTab(UPLOADS_KEY)}>
+					<img class="tg-tab-upload-img" src={_uploadItems[0].url}
+						alt={uploadsLabel} width="22" height="22" loading="eager" decoding="async" />
+				</button>
+			{/if}
 			{#each headCats as cat (cat.key)}
 				<button class="tg-tab" class:active={active === cat.key} title={cat.label} onclick={() => goToTab(cat.key)}>{cat.icon}</button>
 			{/each}
@@ -1086,6 +1098,8 @@
 	}
 	.tg-cell { width: 100%; aspect-ratio: 1 / 1; height: auto; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.12s; }
 	.tg-cell:hover { background: var(--surface-2); }
+	.tg-tab-upload { padding: 0; }
+	.tg-tab-upload-img { width: 22px; height: 22px; object-fit: contain; border-radius: 4px; display: block; }
 	.tg-cell-upload { position: relative; }
 	.tg-upload-img { object-fit: contain; display: block; }
 	/* Instructor delete. Revealed on hover where there is one; always visible
