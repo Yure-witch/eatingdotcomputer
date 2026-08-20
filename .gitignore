@@ -57,3 +57,6 @@ vite.config.ts.timestamp-*
 
 # Stray Web Inspector timeline recordings
 *recording*.json
+
+# Account backups — contain real user messages/sessions, never commit
+artifacts/backups/
