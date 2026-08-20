@@ -238,7 +238,13 @@
 			   own curve and read as sitting on the page rather than on the bar. */
 			--nav-pad: 7px;
 			padding-left: var(--nav-pad);
-			padding-right: var(--nav-pad);
+			/* +2px on the right: the pill's travel runs across slot CENTRES, which
+			   lands the last slot's pill closer to the edge than the first
+			   (measured 7px left vs 5px right). The slot maths below subtracts
+			   both paddings by name, so the highlight tracks this rather than
+			   drifting off its item. */
+			--nav-pad-r: calc(var(--nav-pad) + 2px);
+			padding-right: var(--nav-pad-r);
 			box-sizing: border-box;
 			/* Sits just above the home indicator rather than well clear of it —
 			   max() keeps a small gap on the plain web, where there is no inset. */
@@ -301,7 +307,7 @@
 			/* The bar is an inset island now, so a slot is (viewport - insets) wide,
 			   NOT 100vw — using the viewport put the pill progressively further
 			   right than its icon. --nav-inset keeps the two in one place. */
-			transform: translateX(calc((var(--nav-frac, var(--nav-slot, 0)) + 0.5) * ((100vw - (2 * var(--nav-inset, 12px)) - (2 * var(--nav-pad, 0px))) / var(--slot-count, 5)) - 50%));
+			transform: translateX(calc((var(--nav-frac, var(--nav-slot, 0)) + 0.5) * ((100vw - (2 * var(--nav-inset, 12px)) - var(--nav-pad, 0px) - var(--nav-pad-r, 0px)) / var(--slot-count, 5)) - 50%));
 			will-change: transform;
 			background: var(--sidebar-active);
 			border-radius: 999px;
