@@ -89,8 +89,7 @@
 	const _isConvRoute = (p) => /^\/app\/chat\/(channel|dm)\//.test(p);
 	// Gemma and Tasks aren't message threads (they're not pager panel 0), but the
 	// user reaches them from the chat menu and treats them as chats — so they get
-	// the same left-swipe-back-to-menu gesture via the legacy menu-slide overlay
-	// (which is only live on non-pager routes, exactly these two).
+	// the same swipe-out-of-a-chat gesture (they're layers over the pager too).
 	const _isChatLikeRoute = (p) =>
 		p === '/app/chat/gemma' || p === '/app/goals' || p === '/app/inspiration';
 
@@ -108,11 +107,11 @@
 		_onConvMobile || (_isMobile && _isChatLikeRoute($page.url.pathname))
 	);
 	// Pager tabs, left → right: Home, Chat (menu), Orbit, Lab, [Manage]. A
-	// conversation is NOT a pager panel — it's a full page that slides OVER the
-	// chat menu, dismissed with a left→right swipe (the legacy menu-slide overlay,
-	// shared with Gemma/Tasks). Keeping conversations out of the scroll-snap track
-	// means every panel is uniform full width (so `idx * w` math stays valid) and
-	// a rightward swipe naturally reads as "back to the chat list".
+	// conversation is NOT a pager panel — it's a full-screen layer OVER the
+	// track, parked on the chat menu, dismissed with a left→right swipe (or
+	// carried on to the next section with a right→left one). Keeping
+	// conversations out of the scroll-snap track means every panel is uniform
+	// full width (so `idx * w` math stays valid).
 	const PANELS = $derived([
 		{ route: '/app', Comp: HomePanel },
 		{ route: '/app/chat', chatMenu: true },
@@ -120,6 +119,10 @@
 		{ route: '/app/lab', Comp: LabPanel },
 		...(data.currentUser?.role === 'instructor' ? [{ route: '/app/manage', Comp: ManagePanel }] : [])
 	]);
+	// The chat menu's slot, and the section right after it — the two panels a
+	// swipe out of a chat surface can uncover (back / forward respectively).
+	const _chatMenuIdx = $derived(Math.max(0, PANELS.findIndex((p) => p.chatMenu)));
+	const _afterChatIdx = $derived(Math.min(PANELS.length - 1, _chatMenuIdx + 1));
 	function _panelIndexFor(path) {
 		// Conversations aren't pager panels → -1 (rendered as a full page).
 		if (_isConvRoute(path)) return -1;
@@ -152,25 +155,37 @@
 		)
 	);
 	// Arm the overlay whenever a navigation INTO a conversation begins, with a
-	// safety timeout so it can never get stuck up.
+	// safety timeout so it can never get stuck up — and drop it the moment the
+	// navigation lands. (There's no entry scroll to wait on any more: the pager
+	// stays parked on the chat menu and the conversation opens over it, so the
+	// old "wait for scrollend" release would have hung on for the full timeout.)
 	$effect(() => {
-		const enteringNav = _isMobile && !!$navigating && _isConvRoute($navigating.to?.url?.pathname ?? '');
-		if (!enteringNav) return;
-		untrack(() => {
-			_convEntering = true;
+		const navving = !!$navigating;
+		const enteringNav = _isMobile && navving && _isConvRoute($navigating.to?.url?.pathname ?? '');
+		if (enteringNav) {
+			untrack(() => {
+				_convEntering = true;
+				clearTimeout(_convEnterT);
+				_convEnterT = setTimeout(() => { _convEntering = false; }, 900);
+			});
+			return;
+		}
+		if (!navving) untrack(() => {
+			if (!_convEntering) return;
 			clearTimeout(_convEnterT);
-			_convEnterT = setTimeout(() => { _convEntering = false; }, 900);
+			// One frame for the real message window to paint under it first.
+			requestAnimationFrame(() => { _convEntering = false; });
 		});
 	});
 
-	// Keep the swipe-in menu MOUNTED (off-screen) the whole time you're in a
-	// conversation, so the right→left swipe just animates an already-rendered
-	// list (avatars/presence/previews) instead of building it on-demand mid-drag.
-	// The conversation → menu swipe is now a native pager transition (the conv is
-	// a real panel), so the finger-tracked slide-in overlay only ever mounts if a
-	// legacy drag is genuinely in flight — which it no longer is. Kept gated on
-	// _menuSliding alone so the markup/CSS can stay until fully removed.
-	const _menuOverlayMounted = $derived(_isMobile && _menuSliding);
+	// The pager STAYS MOUNTED underneath a chat surface. A conversation (and the
+	// chat-adjacent surfaces) is a layer on TOP of it, not a replacement for it —
+	// so the chat menu and the section next door are already built, already
+	// painted and already alive the whole time you're in a chat. Swiping out is
+	// then a pure reveal: nothing mounts, nothing re-fetches, nothing flashes.
+	// (Tearing the pager down on entry and rebuilding it on exit is exactly what
+	// made leaving a chat stutter through skeletons.)
+	const _pagerMounted = $derived(_isMobile && (pagerIndex >= 0 || _onChatSurfaceMobile));
 
 	// Bottom-nav visibility now follows the LIVE pager position, not just the
 	// route. The conversation is a pager panel, so while it covers most of the
@@ -183,11 +198,12 @@
 	let _navRiseT;
 	$effect(() => {
 		if (typeof document === 'undefined') return;
-		// A conversation is a full-page overlay now (not a pager panel), so hide
-		// the bottom nav whenever we're in one — route-based, since _pagerFraction
-		// no longer tracks conversations. Gemma / Tasks / Recommendations count as
-		// conversations here for the same reason they get the chat header.
-		const covering = _onChatSurfaceMobile;
+		// A chat surface is a layer over the pager, so the nav hides while it
+		// covers the screen — but it comes back the instant the exit drag passes
+		// halfway, riding WITH the gesture instead of popping in after the route
+		// commits. Gemma / Tasks / Recommendations count as conversations here for
+		// the same reason they get the chat header.
+		const covering = _onChatSurfaceMobile && !_convSwipedPast;
 		const root = document.documentElement;
 		untrack(() => {
 			if (covering === _navHidden) return;
@@ -229,7 +245,7 @@
 	// scroll event must NOT trigger a navigation — set by taps and programmatic
 	// snaps that are already driving their own navigation.
 	function _suppressCommits(ms) { _suppressCommitUntil = Math.max(_suppressCommitUntil, performance.now() + ms); }
-	// Abort any in-flight programmatic scroll (the eased _fastScrollTo or the
+	// Abort any in-flight programmatic scroll (the eased nav scroll or the
 	// hard-snap correction). Both run a rAF loop that keeps writing scrollLeft; if
 	// the user starts swiping while one is running it FIGHTS their finger — yanking
 	// the track back to the chat/home it was heading to and holding it there until
@@ -383,13 +399,6 @@
 			pagerEl.style.scrollSnapType = '';
 			_pgSnapOff = false;
 		}
-		// Entering a conversation: the slide/snap onto the conv panel (and the header
-		// reflow) is now complete, so drop the loading overlay — one rAF lets the
-		// reflow paint first. Checked even during the programmatic entry slide.
-		if (_convEntering && _onConvMobile && pagerEl.scrollLeft < (pagerEl.clientWidth || 1) * 0.5) {
-			clearTimeout(_convEnterT);
-			requestAnimationFrame(() => { _convEntering = false; });
-		}
 		if (_pagerProg || _pagerTouching) return;
 		clearTimeout(_pagerSnapT);
 		commitPagerRoute();
@@ -398,6 +407,10 @@
 	// scrollend (primary) or the idle debounce (fallback).
 	function commitPagerRoute() {
 		if (!pagerEl) return;
+		// While a chat surface covers the pager, the track is PARKED, not browsed
+		// — the exit gesture owns the navigation. A stray scroll/settle event here
+		// would navigate out from under the open conversation.
+		if (_onChatSurfaceMobile) return;
 		// Don't hijack a navigation a tap / programmatic snap just started, and never
 		// commit while a finger is down (committing can tear down the conversation,
 		// which we want to happen between gestures, not mid-swipe). If we're inside
@@ -458,32 +471,43 @@
 		}
 		if (tries > 0) setTimeout(() => _repinPager(idx, tries - 1, gen), 60);
 	}
+	// Park the (currently covered) pager on `idx` with no animation, so the panel
+	// the finger is about to uncover is the right one. Called the instant a chat
+	// exit gesture picks a direction — the chat layer still fills the screen, so
+	// the jump is invisible, and what gets revealed is the live panel itself.
+	// Flagged as a programmatic scroll so the pager's own commit / highlight
+	// machinery ignores it.
+	function _parkBeneath(idx) {
+		if (!pagerEl || idx < 0 || idx >= PANELS.length) return;
+		_pagerFraction = idx;             // mounts the panel (panelShouldMount) + moves the nav pill
+		_pagerVisibleRoute = PANELS[idx].route;
+		_writeNavFrac(idx);
+		const left = pagerEl.children?.[idx]?.offsetLeft ?? idx * (pagerEl.clientWidth || 1);
+		if (Math.abs(pagerEl.scrollLeft - left) < 1) return;
+		_pagerProg = true;
+		const prevSnap = pagerEl.style.scrollSnapType;
+		pagerEl.style.scrollSnapType = 'none';
+		pagerEl.scrollLeft = left;
+		requestAnimationFrame(() => {
+			if (pagerEl) pagerEl.style.scrollSnapType = prevSnap;
+			_pagerProg = false;
+		});
+	}
+	// Entering a chat surface parks the pager on the chat menu — the panel a
+	// backward (left→right) swipe uncovers, and the one the ✕ returns to.
+	$effect(() => {
+		if (!_onChatSurfaceMobile || !pagerEl) return;
+		const idx = _chatMenuIdx;
+		untrack(() => _parkBeneath(idx));
+	});
 	// Keep the visible route synced to the URL after a navigation / on load.
 	$effect(() => { if (pagerIndex >= 0) { _pagerVisibleRoute = PANELS[pagerIndex].route; _pagerFraction = pagerIndex; } });
 
 
-	// Fast (~110ms) programmatic scroll for nav-icon taps — native 'smooth' is
-	// too slow. Snap is suspended during the animation so it doesn't fight it.
+	// Cancel-only handles for programmatic scrolls (kept so
+	// _cancelProgrammaticScroll stays valid — the eased nav-icon scroll it used to
+	// drive is gone; taps jump instantly and chats no longer scroll the track).
 	let _fastScrollRAF = 0;
-	function _fastScrollTo(to, dur = 110) {
-		const el = pagerEl; if (!el) return;
-		const from = el.scrollLeft;
-		if (Math.abs(to - from) < 2) return;
-		// Programmatic: flag _pagerProg so the live per-gesture clamp and the
-		// settle-commit both stand down (a nav-icon tap may jump several panels).
-		_pagerProg = true;
-		el.style.scrollSnapType = 'none';
-		const start = performance.now();
-		cancelAnimationFrame(_fastScrollRAF);
-		function step(now) {
-			const t = Math.min(1, (now - start) / dur);
-			const e = 1 - Math.pow(1 - t, 3); // ease-out cubic
-			el.scrollLeft = from + (to - from) * e;
-			if (t < 1) _fastScrollRAF = requestAnimationFrame(step);
-			else { el.style.scrollSnapType = ''; _suppressCommits(120); requestAnimationFrame(() => { _pagerProg = false; }); }
-		}
-		_fastScrollRAF = requestAnimationFrame(step);
-	}
 
 	// Current panel gets the live page data; neighbours get preloaded so they
 	// render real content the moment you peek toward them. This effect only
@@ -491,15 +515,18 @@
 	// reads & writes are untracked so writing them doesn't re-trigger the effect
 	// (that was an infinite update loop).
 	$effect(() => {
-		const idx = pagerIndex;
+		// On a chat surface the pager is parked on the chat menu, so preload from
+		// THERE — the two panels either side of it are what a swipe out uncovers,
+		// and they have to hold real content before the finger reveals them.
+		const onChat = _onChatSurfaceMobile;
+		const idx = pagerIndex >= 0 ? pagerIndex : (onChat ? _chatMenuIdx : -1);
 		const pdata = $page.data;
 		const panels = PANELS;
 		if (idx < 0) return;
 		untrack(() => {
-			// The conv panel has no route and renders children() directly (not a
-			// keep-alive Comp), so skip its panelData/panelSeen bookkeeping — but
-			// still preload its neighbour (the menu) below.
-			if (panels[idx].route) {
+			// The chat surface's own data belongs to the conversation, not to the
+			// panel the pager is parked on — never file it under that panel's route.
+			if (panels[idx].route && !onChat) {
 				panelData = { ...panelData, [panels[idx].route]: pdata };
 				if (!panelSeen.has(panels[idx].route)) { const s = new Set(panelSeen); s.add(panels[idx].route); panelSeen = s; }
 			}
@@ -520,6 +547,10 @@
 		// position — during a deferred-commit multi-swipe the route lags, so without
 		// the live check a panel you're swiping toward could still be a skeleton.
 		const liveIdx = Math.round(_pagerFraction);
+		// While a chat surface covers the pager the committed route isn't a panel at
+		// all, so anchor on the chat menu instead: both of its neighbours must be
+		// mounted BEFORE the exit gesture uncovers one of them.
+		if (_onChatSurfaceMobile && Math.abs(i - _chatMenuIdx) <= 1) return true;
 		return Math.abs(i - pagerIndex) <= 1 || Math.abs(i - liveIdx) <= 1 || panelSeen.has(PANELS[i].route);
 	}
 
@@ -611,81 +642,64 @@
 		document.documentElement.style.setProperty('--nav-frac', String(_navSlotForPath(path)));
 	});
 
-	// Conversation → menu swipe. A conversation (channel/DM) is a full-screen,
-	// non-pager view; a clear right-to-left swipe navigates to the chat menu
-	// (the pager's left panel), from which you can keep swiping to Home etc.
+	// ── Leaving a chat surface: reveal, never rebuild ──────────────────────
+	// A conversation (channel/DM) — and the chat-adjacent surfaces (Gemma, Tasks,
+	// Recommendations) — is a full-screen LAYER sitting on top of the pager, which
+	// stays mounted and live underneath (see _pagerMounted). So both exit
+	// directions are the same gesture: drag the layer off and the real destination
+	// is already there behind it. Left→right uncovers the chat menu, right→left
+	// uncovers the section after chat; the route commits once the layer is gone,
+	// mounting nothing and re-fetching nothing.
+	//
+	// The layer tracks the finger through the `--cd` custom property (-1 = fully
+	// off to the left … 0 = covering … +1 = fully off to the right), written
+	// straight to the DOM so a drag costs one composited transform per frame and
+	// no Svelte reactivity flush.
 	// (_swDragX/_swDragging kept only so the desktop sidebar's drag bindings
 	// stay defined — unused on mobile now.)
 	let _swStartX = 0, _swStartY = 0, _swArmed = false, _swDecided = false;
 	let _swDragX = $state(0);
 	let _swDragging = $state(false);
-	// Menu overlay drag: 0 = off-screen left (conversation), 1 = fully covering.
-	// Forward (right→left) exit. There is no overlay to bring in from the right —
-	// the destination panel needs panelData that isn't loaded while you're in a
-	// conversation — so instead the screen you're LEAVING tracks the finger and
-	// slides out to the left. Same imperative --fd custom property trick as the
-	// menu overlay: no Svelte reactivity per frame, just a composited transform.
-	let _fwdSliding = $state(false);
-	let _fwdDragging = $state(false);
-	let _fwdEl = $state(null);
-	function _setFwdDrag(v) { _fwdEl?.style.setProperty('--fd', String(v)); }
-
-	let _menuSliding = $state(false);   // overlay present (dragging or settling)
-	let _menuDragging = $state(false);  // finger is actively dragging (no transition)
-	// Plain (non-reactive) — the visual transform is driven imperatively via the
-	// `--md` custom property on the overlay element, so dragging doesn't run a
-	// Svelte reactivity flush per touch-move (that's what kept it from feeling as
-	// smooth as the compositor-driven pager). This var only feeds the threshold
-	// logic in onSwipeEnd.
-	let _menuDrag = 0;
-	let _menuSlideEl = $state(null);
-	function _setMenuDrag(v) {
-		_menuDrag = v;
-		_menuSlideEl?.style.setProperty('--md', String(v));
+	// How long the layer takes to run off-screen on commit. The route change
+	// unmounts the layer, so we hold the goto until the slide is done — otherwise
+	// it vanishes mid-flight (which is what a "flash" on exit actually was).
+	const CONV_EXIT_MS = 190;
+	let _convSliding = $state(false);    // layer is transformed (dragging or settling)
+	let _convDragging = $state(false);   // finger is down → no transition, track it 1:1
+	let _convSwipedPast = $state(false); // dragged past halfway → header + nav flip NOW
+	let _fwdEl = $state(null);           // the chat layer element
+	let _convDrag = 0;                   // plain (non-reactive) live drag position
+	let _convExitT;
+	function _setConvDrag(v) {
+		_convDrag = v;
+		_fwdEl?.style.setProperty('--cd', String(v));
+		const past = Math.abs(v) > 0.5;
+		if (past !== _convSwipedPast) _convSwipedPast = past;
 	}
-	let _menuGen = 0;                   // bumps each gesture so a stale settle never drops a newer overlay
-	let _menuNavPending = false;        // true between the conv→menu commit and the menu actually landing
-	let _menuJustLanded = false;        // ~400ms window right after landing on the menu (pager may not yet handle a fast flick)
-	let _menuLandedT;
-	let _swMode = 'menu';               // 'menu' (conversation → chat menu) | 'home' (fast follow-on → Home)
-	let _swDir = 1;                     // +1 = left→right (back to the gallery), -1 = right→left (on to the next section)
-	// A conversation / Gemma / Tasks / Recommendations behaves as though it sits
-	// in the pager right where the chat gallery is: swiping back (left→right)
-	// returns to the gallery, swiping forward (right→left) continues to whatever
-	// section follows chat — one gesture each, never a two-step hop via chat.
-	const _sectionAfterChat = () => PANELS[_panelIndexFor('/app/chat') + 1]?.route ?? '/app/chat';
+	let _swVelX = 0, _swPrevX = 0, _swPrevT = 0;
+	let _swDir = 1; // +1 = left→right (back to the chat menu), -1 = right→left (on to the next section)
+	// Which panel a given direction uncovers.
+	const _beneathFor = (dir) => (dir > 0 ? _chatMenuIdx : _afterChatIdx);
+
 	function onSwipeStart(e) {
 		if (window.innerWidth > 640) { _swArmed = false; return; }
-		// The conversation is now a real pager panel, so conv→menu is handled by
-		// the native scroll-snap track (compositor-smooth). The old finger-tracked
-		// overlay is fully redundant whenever the pager is live — never arm it.
+		// Pager routes drive their own native scroll-snap gestures.
 		if (isPagerActive) { _swArmed = false; return; }
+		// Only chat surfaces (and a chat still painting its skeleton) swipe out.
+		if (!_onChatSurfaceMobile && !_showConvSkeleton) { _swArmed = false; return; }
 		const t = e.touches?.[0];
 		if (!t) { _swArmed = false; return; }
 		// Don't hijack the compose / sliders / horizontal scrollers / pickers.
 		if (e.target?.closest?.('.input-area, .send-wrap, .sz-capture, input[type="range"], .text-typo-bar, .expr-panel, .picker-popover, .compose-picker-pop')) { _swArmed = false; return; }
-		if ((_isConvRoute($page.url.pathname) || _isChatLikeRoute($page.url.pathname) || _showConvSkeleton) && !_menuNavPending) {
-			// In a conversation (or Gemma / Tasks, which behave like chats) OR a
-			// chat's loading skeleton → a left-swipe opens the chat menu (so you
-			// can bail back out of a still-loading chat too).
-			_swMode = 'menu';
-		} else if (_menuNavPending || _menuJustLanded) {
-			// Just opened the menu and the pager isn't reliably catching a FAST
-			// follow-on flick yet → treat a left-swipe as "carry on to Home".
-			_swMode = 'home';
-		} else {
-			_swArmed = false; return;
-		}
+		clearTimeout(_convExitT);
 		_swStartX = t.clientX; _swStartY = t.clientY;
 		_swPrevX = t.clientX; _swPrevT = e.timeStamp; _swVelX = 0;
 		_swArmed = true; _swDecided = false;
 	}
-	let _swLastDx = 0, _swVelX = 0, _swPrevX = 0, _swPrevT = 0;
 	function onSwipeMove(e) {
 		if (!_swArmed) return;
 		const t = e.touches?.[0]; if (!t) return;
-		const dx = t.clientX - _swStartX, dy = t.clientY - _swStartY, W = window.innerWidth;
-		_swLastDx = dx;
+		const dx = t.clientX - _swStartX, dy = t.clientY - _swStartY, W = window.innerWidth || 1;
 		// Instantaneous horizontal velocity (px/ms) — lets a quick FLICK commit
 		// even at low drag distance, matching the native pager's momentum snap.
 		const _dt = e.timeStamp - _swPrevT;
@@ -694,111 +708,65 @@
 		if (!_swDecided) {
 			if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
 			if (Math.abs(dy) >= Math.abs(dx)) { _swArmed = false; return; } // vertical → scroll
-			_swDir = dx > 0 ? 1 : -1;
-			// Both directions now leave a chat-like surface. Left→right keeps the
-			// finger-tracked overlay (the menu slides in behind the page, reading
-			// as "back"). Right→left is the forward gesture — there is no menu to
-			// drag in from the right, so it just commits on release.
 			_swDecided = true;
-			if (_swMode === 'menu' && _swDir === 1) { _menuSliding = true; _menuDragging = true; }
-			if (_swMode === 'menu' && _swDir === -1) { _fwdSliding = true; _fwdDragging = true; _setFwdDrag(0); }
+			_swDir = dx > 0 ? 1 : -1;
+			// Put the destination behind the layer BEFORE it moves, so the very
+			// first frame of the drag already shows the real panel.
+			_parkBeneath(_beneathFor(_swDir));
+			_convSliding = true; _convDragging = true;
+			_setConvDrag(0);
 		}
-		// 'home' mode just waits for release. The two exit directions each drive
-		// their own transform: back drags the menu overlay in from the left,
-		// forward drags the current screen out to the left.
-		if (_swMode === 'menu' && _swDir === 1) {
-			_setMenuDrag(Math.max(0, Math.min(1, dx / W)));
-		} else if (_swMode === 'menu' && _swDir === -1) {
-			_setFwdDrag(Math.max(0, Math.min(1, -dx / W)));
-		}
+		// Reversing mid-drag switches which side you're uncovering — re-park while
+		// the layer is still (nearly) closed, so the swap can't be seen.
+		const dir = dx > 0 ? 1 : -1;
+		if (dir !== _swDir && Math.abs(dx) < 24) { _swDir = dir; _parkBeneath(_beneathFor(dir)); }
+		_setConvDrag(Math.max(-1, Math.min(1, dx / W)));
 	}
 	function onSwipeEnd() {
 		if (!_swArmed) return;
 		_swArmed = false;
-		// Fast follow-on swipe right after opening the menu → go on to Home,
-		// without waiting for the pager's native scroll-snap to engage. Require a
-		// clear swipe (≥30px left) so it can never collide with a tap (≤16px,
-		// handled by onMenuTouchEnd → opens that conversation).
-		if (_swMode === 'home') {
-			if (_swDecided && (_swLastDx <= -30 || _swVelX < -0.4)) {
-				clearTimeout(_pagerSnapT);
-				pageTitle.set(null); pageTitleHref.set(null);
-				goto('/app', { noScroll: true });
-			}
-			return;
-		}
-		// Forward exit: straight to the section after chat, in ONE gesture. Landing
-		// on the gallery first and requiring a second swipe made the surface feel
-		// like it sat on top of chat rather than beside it.
-		if (_swDir === -1) {
-			_fwdDragging = false; // re-enable the transition so it animates to the snap
-			if (!(_swDecided && (_swLastDx <= -30 || _swVelX < -0.4))) {
-				// Cancelled — slide back into place.
-				_setFwdDrag(0);
-				setTimeout(() => { _fwdSliding = false; }, 130);
-				return;
-			}
-			{
-				const route = _sectionAfterChat();
-				const idx = _panelIndexFor(route);
-				_setFwdDrag(1); // finish the slide off-screen
-				// Cancel any pending scroll-driven commit, and PIN the track onto
-				// the destination panel as soon as the route lands. Without the pin
-				// the pager mounts wherever it was, paints one frame there, then
-				// gets corrected — which reads as a half re-render on the way out.
-				// Retries cover the layout shift as the conversation tears down.
-				clearTimeout(_pagerSnapT);
+		if (!_swDecided || !_convSliding) return;
+		_convDragging = false; // re-enable the transition so it animates to the snap
+		const dir = _convDrag !== 0 ? (_convDrag > 0 ? 1 : -1) : _swDir;
+		// Commit on a clear drag (past 30%) or a flick that agrees with it.
+		const flicked = Math.abs(_swVelX) > 0.4 && Math.sign(_swVelX) === dir;
+		if (Math.abs(_convDrag) > 0.3 || flicked) { _exitChatSurface(dir); return; }
+		_setConvDrag(0); // cancelled — slide back into place
+		clearTimeout(_convExitT);
+		_convExitT = setTimeout(() => { _convSliding = false; }, CONV_EXIT_MS + 20);
+	}
+	// Run the layer off-screen and commit the route it uncovered. The pager is
+	// already parked on that panel and already painted, so the navigation swaps
+	// nothing visible — no mount, no skeleton, no flash. The goto waits for the
+	// slide to finish because landing on the route unmounts the layer.
+	function _exitChatSurface(dir) {
+		const idx = _beneathFor(dir);
+		const route = PANELS[idx]?.route ?? '/app/chat';
+		_parkBeneath(idx);
+		clearTimeout(_convExitT);
+		clearTimeout(_pagerSnapT);
+		_suppressCommits(CONV_EXIT_MS + 400);
+		_convEntering = false;
+		const run = () => {
+			_setConvDrag(dir); // off-screen, in CONV_EXIT_MS
+			_convExitT = setTimeout(() => {
+				// Clear any chat title so the header is already the standard one.
 				pageTitle.set(null); pageTitleHref.set(null);
 				goto(route, { noScroll: true, keepFocus: true }).then(() => {
-					if (idx >= 0) _repinPager(idx, 3);
-					// The wrapper unmounts with the route change (the pager branch
-					// renders instead), but reset so a cancelled-then-committed
-					// sequence can never leave it parked off-screen.
-					_fwdSliding = false; _setFwdDrag(0);
+					_convSliding = false; _convDragging = false; _setConvDrag(0);
+					_repinPager(idx, 0);
 				});
-			}
-			return;
-		}
-		if (!_menuSliding) return;
-		_menuDragging = false; // re-enable the transition so it animates to the snap
-		// Commit on a clear drag (past 30%) OR a quick leftward flick (velocity),
-		// like the native pager's momentum snap.
-		if (_menuDrag > 0.3 || _swVelX > 0.4) {
-			const gen = ++_menuGen;
-			_setMenuDrag(1); // settle fully in (fast transition)
-			// Commit the navigation IMMEDIATELY (no settle delay) so the real
-			// pager menu is live underneath the overlay right away — the overlay
-			// is pointer-events:none, so a quick SECOND left-swipe passes straight
-			// through and scrolls the pager to Home. Drop the overlay ONLY once
-			// BOTH (a) the pager menu has actually painted underneath and (b) the
-			// slide-in has finished — dropping before the paint is what made the
-			// old chat flash back for a few frames.
-			let painted = false, slid = false;
-			const drop = () => {
-				if (painted && slid && gen === _menuGen) { _menuSliding = false; _setMenuDrag(0); }
-			};
-			_menuNavPending = true; // block re-arming until the menu route actually lands
-			// A fast follow-on left-swipe within this window is routed to Home by
-			// onSwipeEnd ('home' mode), since the pager's native snap may not catch
-			// a quick flick this soon after mounting.
-			_menuJustLanded = true;
-			clearTimeout(_menuLandedT);
-			_menuLandedT = setTimeout(() => { _menuJustLanded = false; }, 450);
-			// Clear any eager chat title so the menu header isn't left showing it
-			// (covers the case where we bail before the conversation ever mounts).
-			pageTitle.set(null); pageTitleHref.set(null);
-			goto('/app/chat', { noScroll: true }).then(() => {
-				_menuNavPending = false; // pager is now live → further swipes go to it
-				requestAnimationFrame(() => requestAnimationFrame(() => { painted = true; drop(); }));
-			});
-			// Safety net: never leave it stuck pending if the nav promise stalls.
-			setTimeout(() => { _menuNavPending = false; }, 400);
-			setTimeout(() => { slid = true; drop(); }, 120);
-		} else {
-			_menuGen++;
-			_setMenuDrag(0); // cancel — slide back out
-			setTimeout(() => { _menuSliding = false; }, 130);
-		}
+				// Safety: never leave the layer parked off-screen if the nav stalls.
+				_convExitT = setTimeout(() => {
+					if (!_onChatSurfaceMobile) { _convSliding = false; _setConvDrag(0); }
+				}, 800);
+			}, CONV_EXIT_MS);
+		};
+		if (_convSliding) { _convDragging = false; run(); return; }
+		// Not dragging (the ✕ button): the transition only exists once `.sliding`
+		// is on the element, so let that class land before moving it.
+		_convSliding = true; _convDragging = false; _setConvDrag(0);
+		requestAnimationFrame(() => requestAnimationFrame(run));
 	}
 
 	// Tap-to-navigate for the chat-menu panel. When you swipe Home → Chat and
@@ -854,12 +822,9 @@
 		if (goingToConv) {
 			_setEagerChatTitle(href);
 			goto(href);
-			// The conversation panel is the permanent index 0 — just slide the track
-			// to it (eased, like the rest of the pager). Activates as soon as the
-			// route commits; the loading overlay covers the gap. Works the same
-			// whether we came from the menu or are re-opening from a stale conv route,
-			// with no index shift to fight.
-			_fastScrollTo(0, 260);
+			// Leave the track exactly where it is: the conversation opens as a layer
+			// ON TOP of this menu, and the menu staying parked underneath is what
+			// makes the swipe back out instant.
 		} else {
 			goto(href);
 		}
@@ -895,11 +860,11 @@
 	setContext('pagerNav', {
 		get activeRoute() { return isPagerActive ? _pagerVisibleRoute : null; },
 		get sidebarOpen() { return sidebarOpen; },
-		// True while the conversation panel covers most of the screen. Goes false
-		// the instant you swipe past halfway toward the menu — so the header can
-		// switch from the chat name back to the standard wordmark live with the
-		// scroll, instead of waiting for the deferred route commit to settle.
-		get convCovering() { return _onConvMobile && _pagerFraction < 0.5; },
+		// True while the conversation layer covers the screen. Goes false the
+		// instant the exit drag passes halfway — so the header switches from the
+		// chat name back to the standard wordmark live with the finger, instead of
+		// waiting for the route commit to settle.
+		get convCovering() { return _onConvMobile && !_convSwipedPast; },
 		// Fractional BOTTOM-NAV slot (0 = Chat, 1 = Home, …). The chat panels
 		// (conversation + menu, which both sit left of Home) collapse onto the
 		// single Chat slot, so the pill rides correctly across the 4 nav icons
@@ -913,18 +878,14 @@
 		// jump, hard-set scrollLeft to the panel, and commit the route. (An eased
 		// scroll here could collide with a swipe animation still settling, which
 		// caused the transform fighting.) Returns true so the <a> can preventDefault.
-		// ✕ in the chat header: SLIDE back to the chat menu with the same
-		// glide a swipe has (native smooth scroll → scroll-snap settle →
-		// scrollend commits /app/chat), instead of a hard route jump.
+		// ✕ in the chat header: run the exact same exit as a backward swipe —
+		// slide the chat layer off to the right, uncovering the live chat menu
+		// that was behind it all along.
 		slideToChatMenu() {
-			if (!isPagerActive || !pagerEl || !_onConvMobile) return false;
-			const idx = PANELS.findIndex((p) => p.chatMenu);
-			if (idx < 0) return false;
+			if (!_isMobile || !_onChatSurfaceMobile || !pagerEl) return false;
 			_cancelProgrammaticScroll();
 			_repinGen++;
-			clearTimeout(_pagerSnapT);
-			const t = pagerEl.children?.[idx]?.offsetLeft ?? idx * (pagerEl.clientWidth || 1);
-			pagerEl.scrollTo({ left: t, behavior: 'smooth' });
+			_exitChatSurface(1);
 			return true;
 		},
 		goToSection(route) {
@@ -2248,8 +2209,8 @@
 
 <BottomNav isInstructor={data.currentUser?.role === 'instructor'} {totalUnread} />
 
-<div class="app-shell" style:margin-left={sidebarCollapsed ? '52px' : `${sidebarWidth}px`} style:transition={resizing ? 'none' : null}>
-	{#if isPagerActive}
+<div class="app-shell" class:layered={_onChatSurfaceMobile} style:margin-left={sidebarCollapsed ? '52px' : `${sidebarWidth}px`} style:transition={resizing ? 'none' : null}>
+	{#if _pagerMounted}
 		<!-- Native scroll-snap pager: one panel per tab section, swiping
 		     between them is compositor-smooth and the real pages are live
 		     under your finger. Panels lazy-mount (current ± 1, then cached);
@@ -2276,31 +2237,16 @@
 				</section>
 			{/each}
 		</div>
-	{:else}
-		<div class="fwd-host" class:sliding={_fwdSliding} class:dragging={_fwdDragging} bind:this={_fwdEl}>
+	{/if}
+	{#if !isPagerActive}
+		<!-- Everything that isn't a pager section. On mobile a chat surface is a
+		     LAYER over the still-live pager (.conv-layer) — dragging it aside
+		     uncovers the destination instead of navigating to a blank rebuild. -->
+		<div class="fwd-host" class:conv-layer={_onChatSurfaceMobile} class:sliding={_convSliding} class:dragging={_convDragging} bind:this={_fwdEl}>
 			{@render children()}
 		</div>
 	{/if}
 </div>
-
-<!-- Slide-in chat menu — animates the conversation → menu swipe (the live
-     pager menu takes over once the navigation lands underneath it). -->
-{#if _menuOverlayMounted}
-	<div class="menu-slide" class:dragging={_menuDragging} class:idle={!_menuSliding} bind:this={_menuSlideEl}>
-		<!-- The standard (wordmark) header rides in with the menu, covering the
-		     chat header, so the whole screen slides as one. -->
-		<div class="ms-header">
-			<span class="ms-wordmark">eating.computer</span>
-			{#if data.currentClass?.name}<span class="ms-class">{data.currentClass.name}</span>{/if}
-		</div>
-		<div class="ms-scroll">
-			<div class="chat-menu-panel">
-				<div class="chat-menu-title">{data.currentClass?.name ?? 'Chat'}</div>
-				{@render chatListContent()}
-			</div>
-		</div>
-	</div>
-{/if}
 
 <!-- Instant placeholder while a tapped conversation loads. Covers the menu the
      moment you tap so the message window appears immediately; the real page
@@ -2735,6 +2681,12 @@
 	   the chat layout inside (header + input bar) scrolls with the
 	   page instead of staying anchored. */
 	.app-shell { min-height: 100dvh; }
+	/* Positioning context for the chat layer (below). `position: relative` with
+	   z-index:auto creates NO stacking context, so the conversation's pickers and
+	   popovers keep stacking against the page root exactly as before — which a
+	   `position: fixed` layer would have broken by trapping them under the
+	   header. */
+	.app-shell.layered { position: relative; }
 	/* Native scroll-snap pager — one panel per tab section. The browser's
 	   compositor drives the swipe, so it's smooth regardless of page weight. */
 	.pager-track {
@@ -2790,88 +2742,6 @@
 	   no longer pager panels; they render as full pages via the chat +layout's
 	   own .chat-wrap sizing, driven by html.in-conversation.) */
 	.chat-menu-panel { padding: 0 0.25rem 1.5rem; }
-	.chat-menu-title {
-		font-family: 'Avara', serif;
-		font-size: 1.15rem;
-		color: var(--ink);
-		padding: 0.75rem 0.75rem 0.4rem;
-	}
-	/* Slide-in menu overlay for the conversation → menu swipe. Covers the
-	   content area (below header, above bottom nav) and slides in from the
-	   right; the live pager menu is identical underneath, so the swap is
-	   invisible once it lands. */
-	/* Forward (right→left) exit: the screen you're leaving tracks the finger out
-	   to the left. The transform is applied ONLY while sliding — a permanent
-	   transform (even translateX(0)) makes this a containing block for
-	   position:fixed descendants, which would reposition the compose bar and the
-	   pickers on every non-pager page. */
-	.fwd-host.sliding {
-		transform: translateX(calc(var(--fd, 0) * -100%));
-		will-change: transform;
-		/* Same 110ms ease-out as the menu overlay and the pager's snap, so both
-		   directions settle identically. */
-		transition: transform 0.11s cubic-bezier(0.33, 1, 0.68, 1);
-	}
-	.fwd-host.sliding.dragging { transition: none; }
-
-	.menu-slide {
-		position: fixed;
-		/* Covers the whole screen (incl. the header) so the standard header rides
-		   in with the menu over the chat header. */
-		top: 0;
-		left: 0; right: 0;
-		bottom: 0;
-		background: var(--paper);
-		/* Above the loading skeleton (z 1100) so swiping back is visible while a
-		   conversation is still loading. */
-		z-index: 1200;
-		display: flex;
-		flex-direction: column;
-		/* Touches pass THROUGH the settling overlay to the live pager menu
-		   underneath, so a quick second swipe scrolls the pager immediately. */
-		pointer-events: none;
-		/* Promote to its own GPU layer so dragging it (a heavy full-screen list)
-		   is a composited transform, not a per-frame repaint. The drag position is
-		   the `--md` custom property (0 = off-screen LEFT … 1 = fully covering),
-		   set imperatively during the drag so there's NO Svelte reactivity per
-		   frame — the transform recalc + composite is all that runs, like the
-		   native pager. The menu enters from the LEFT to match the left→right
-		   (rightward) swipe-out gesture. */
-		transform: translateX(calc((var(--md, 0) - 1) * 100%));
-		will-change: transform;
-		/* Transition only kicks in on release to animate to the snapped position.
-		   Snappy so the hand-off to the pager is quick. */
-		/* Match the pager's programmatic scroll exactly: 110ms ease-out cubic
-		   (cubic-bezier(0.33,1,0.68,1)), so the conv→menu settle feels identical
-		   to a menu→home tap/snap. */
-		transition: transform 0.11s cubic-bezier(0.33, 1, 0.68, 1);
-		box-shadow: -10px 0 28px rgba(0,0,0,0.16);
-	}
-	.menu-slide.dragging { transition: none; }
-	/* Mounted but parked off-screen (ready for the swipe): no transition flash on
-	   first paint, and hide the edge shadow that would otherwise peek in. */
-	.menu-slide.idle { transition: none; box-shadow: none; }
-	/* Header strip — matches the real header's measured height + padding so the
-	   hand-off to the global header on land is seamless. */
-	.ms-header {
-		flex-shrink: 0;
-		height: var(--header-h, 52px);
-		box-sizing: border-box;
-		display: flex;
-		flex-direction: column;
-		justify-content: center;
-		gap: 0.1rem;
-		padding: 0 1rem;
-		padding-top: var(--native-top-inset, 0px);
-		border-bottom: 1.5px solid var(--border);
-		background: var(--paper);
-	}
-	.ms-wordmark { font-family: 'Avara', serif; font-size: 1.25rem; color: var(--ink); line-height: 1.1; }
-	.ms-class { font-size: 0.72rem; color: var(--md-sys-color-on-surface-variant, var(--muted-fg)); }
-	.ms-scroll { flex: 1; min-height: 0; overflow-y: auto; }
-	/* Keep the list clear of the bottom strip the nav will rise into. */
-	.menu-slide .chat-menu-panel { padding-bottom: calc(56px + env(safe-area-inset-bottom, 0px) + 0.5rem); }
-
 	/* Skeleton shown for a panel until its section mounts. */
 	.pager-skel {
 		padding: 1.25rem;
