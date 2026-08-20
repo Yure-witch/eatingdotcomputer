@@ -162,6 +162,7 @@
 	const tabIndex = $derived(Math.max(0, TABS.indexOf(tab)));
 
 	let trackEl = $state(null);
+	let railEl = $state(null);
 
 	// Panes mount lazily and then STAY mounted. Tearing a pane down on
 	// every tab change is what made switching categories feel slow: each
@@ -260,6 +261,10 @@
 			const el = trackEl;
 			if (!el || !el.clientWidth) return;
 			const f = el.scrollLeft / el.clientWidth;
+			// Straight to the element, NOT through $state: this runs every frame
+			// of a swipe and a Svelte flush here would make the block trail the
+			// finger. Same trick the bottom nav's --nav-frac uses.
+			railEl?.style.setProperty('--expr-frac', String(f));
 			// Mount whatever the gesture is heading toward before it lands, so
 			// the incoming category slides in with content rather than as a
 			// blank panel that pops once the swipe finishes.
@@ -294,6 +299,9 @@
 		if (!first && _touching) return;
 		const i = Math.max(0, TABS.indexOf(untrack(() => tab)));
 		el.scrollLeft = i * el.clientWidth;
+		// Seed the block too: without this it starts at slot 0 while the track
+		// may have opened on a remembered tab further along.
+		railEl?.style.setProperty('--expr-frac', String(i));
 	});
 
 	$effect(() => { ensure(tab); scheduleNeighbours(); });
@@ -531,7 +539,15 @@
 			</div>
 		{/if}
 		<nav class="expr-tabs" aria-label="Expression categories"
+			bind:this={railEl}
+			style:--expr-slots={TABS.length}
 			class:chrome-dim={chrome === 'dim'} class:chrome-page={chrome === 'page'}>
+			<!-- One block that GLIDES with the live scroll fraction, rather than a
+			     per-tab background snapping on and off — so it's visibly halfway
+			     between two icons when your swipe is. Copied from the bottom
+			     nav's .nav-indicator. No transition: it follows --expr-frac
+			     every frame, and a transition would make it lag the finger. -->
+			<span class="expr-indicator" aria-hidden="true"></span>
 		{#if hasRecents}
 		<button class="expr-tab" class:active={tab === 'recent'} onclick={() => goTo('recent')} title="Recently used">
 			<span class="msi msi-20" class:msi-fill={tab === 'recent'}>history</span>
@@ -780,6 +796,7 @@
 	   flex column (so the last row of emotes is never hidden behind it) and
 	   floats within that row via margins. */
 	.expr-tabs {
+		position: relative;   /* containing block for .expr-indicator */
 		display: flex;
 		gap: 1px;
 		flex-shrink: 0;
@@ -806,7 +823,7 @@
 		/* Scale about the bottom edge so shrinking pulls it toward the screen
 		   edge rather than floating it into the content. */
 		transform-origin: bottom center;
-		transition: opacity 0.18s ease, transform 0.18s cubic-bezier(0.33, 1, 0.68, 1);
+		transition: opacity 0.11s ease, transform 0.11s cubic-bezier(0.33, 1, 0.68, 1);
 		/* Own layer: the drop shadow is expensive to rasterise, and without this
 		   it was re-rasterised every frame of the scale. Promoted, the shadow is
 		   painted once and the layer is merely transformed. */
@@ -864,7 +881,7 @@
 		color: var(--ink);
 		cursor: pointer;
 		transform-origin: bottom right;
-		transition: opacity 0.18s ease, transform 0.18s cubic-bezier(0.33, 1, 0.68, 1);
+		transition: opacity 0.11s ease, transform 0.11s cubic-bezier(0.33, 1, 0.68, 1);
 		will-change: transform, opacity;
 	}
 	.expr-del :global(.msi) { font-variation-settings: 'wght' 700; font-size: 25px; }
@@ -888,13 +905,27 @@
 		cursor: pointer;
 		border-bottom: 2px solid transparent;
 	}
-	/* Concentric with the island: it pads 3px, so a fully-rounded selection
-	   inside it reads as parallel to the outer curve — same relationship the
-	   bottom nav's pill has to its bar. */
-	.expr-tab.active {
-		background: var(--sidebar-active, var(--md-sys-color-secondary-container, var(--paper)));
-		color: var(--sidebar-active-fg, var(--md-sys-color-on-secondary-container, var(--ink)));
+	/* Concentric with the island: it pads 3px, so the block's curve runs
+	   parallel to the outer one — the same relationship the bottom nav's pill
+	   has to its bar. Width is exactly one slot, and it translates by whole
+	   multiples of its own width, so no viewport maths is needed. */
+	.expr-indicator {
+		position: absolute;
+		top: 3px;
+		bottom: 3px;
+		left: 3px;
+		width: calc((100% - 6px) / var(--expr-slots, 4));
 		border-radius: 999px;
+		background: var(--sidebar-active, var(--md-sys-color-secondary-container, var(--paper)));
+		transform: translate3d(calc(var(--expr-frac, 0) * 100%), 0, 0);
+		will-change: transform;
+		pointer-events: none;
+		z-index: 0;
+	}
+	/* Icons ride above the block. */
+	.expr-tab { position: relative; z-index: 1; }
+	.expr-tab.active {
+		color: var(--sidebar-active-fg, var(--md-sys-color-on-secondary-container, var(--ink)));
 		border-bottom-color: transparent;
 	}
 	.expr-tab-back { flex: 0 0 auto; color: var(--muted-fg); padding: 0.5rem 0.85rem; }
