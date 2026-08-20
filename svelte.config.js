@@ -10,6 +10,13 @@ const config = {
 		// web/PWA it registers exactly as before.
 		serviceWorker: {
 			register: false
+		},
+		// Poll for a newer deploy. Without this, $updated NEVER becomes true on
+		// its own — it only flips when something calls updated.check(), which
+		// only happened on native resume. So the reload banner never appeared on
+		// the web no matter how many times we shipped.
+		version: {
+			pollInterval: 60_000
 		}
 	}
 };
