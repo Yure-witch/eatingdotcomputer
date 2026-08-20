@@ -48,6 +48,9 @@
 				<a href="/app/ai" class="dropdown-item" onclick={() => menuOpen = false}>
 					Gemma AI
 				</a>
+				<form method="POST" action="/app?/switchaccount" style="display:contents">
+					<button type="submit" class="dropdown-item dropdown-item-btn">Switch account</button>
+				</form>
 				<form method="POST" action="/app?/signout" style="display:contents">
 					<button type="submit" class="dropdown-item dropdown-item-btn">Sign out</button>
 				</form>

@@ -97,6 +97,14 @@ export const actions = {
 		redirect(303, '/login');
 	},
 
+	// Same sign-out, but tells the login page to open the account chooser
+	// instead of silently restoring the last Google session — otherwise
+	// "Switch account" just signs you straight back into the account you left.
+	switchaccount: async (event) => {
+		await signOut(event, { redirect: false });
+		redirect(303, '/login?switch=1');
+	},
+
 	createWeekPlan: async ({ request, locals }) => {
 		const session = await locals.auth();
 		if (!session || session.user.role !== 'instructor') return fail(403, { error: 'Forbidden' });
