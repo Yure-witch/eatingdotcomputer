@@ -1046,6 +1046,12 @@
 		// the navigation. With this the header leaves chat mode at the halfway
 		// point and the wordmark is already there when the title goes.
 		get convCovering() { return (_onChatSurfaceMobile || _enteringChatSurface) && !_convSwipedPast; },
+		// True while a chat layer is being dragged or settling over the pager. The
+		// header reads it to hold back --header-h: that var is inherited from
+		// <html> AND drives the pager track's margin and height, so republishing it
+		// mid-gesture invalidates the whole document and relayouts every mounted
+		// panel — the single most expensive thing that can happen during a swipe.
+		get sliding() { return _convSliding; },
 		// Fractional BOTTOM-NAV slot (0 = Chat, 1 = Home, …). The chat panels
 		// (conversation + menu, which both sit left of Home) collapse onto the
 		// single Chat slot, so the pill rides correctly across the 4 nav icons

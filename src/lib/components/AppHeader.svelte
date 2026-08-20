@@ -1,5 +1,5 @@
 <script>
-	import { onMount, getContext } from 'svelte';
+	import { onMount, getContext, untrack } from 'svelte';
 	import { page, navigating } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import ClassSwitcher from './ClassSwitcher.svelte';
@@ -85,13 +85,28 @@
 	// was a few px short, so the menu underlapped the bar). Tracks changes
 	// (subtitle wrap, safe-area, font load) via ResizeObserver.
 	let headerEl = $state(null);
+	// …but NEVER mid-swipe. The header changes shape when it leaves chat mode,
+	// which happens halfway through an exit drag — and writing --header-h there
+	// invalidates every style in the document and relayouts all of the pager's
+	// mounted panels. That reflow is what froze the gesture at the halfway mark.
+	// Defer to the settle instead; the height is the same either way.
+	let _headerHPending = false;
+	function _applyHeaderH() {
+		if (!headerEl || typeof document === 'undefined') return;
+		if (pagerNav?.sliding) { _headerHPending = true; return; }
+		document.documentElement.style.setProperty('--header-h', `${headerEl.offsetHeight}px`);
+	}
 	$effect(() => {
 		if (!headerEl || typeof ResizeObserver === 'undefined') return;
-		const apply = () => document.documentElement.style.setProperty('--header-h', `${headerEl.offsetHeight}px`);
-		apply();
-		const ro = new ResizeObserver(apply);
+		untrack(_applyHeaderH);
+		const ro = new ResizeObserver(_applyHeaderH);
 		ro.observe(headerEl);
 		return () => ro.disconnect();
+	});
+	// Catch up on whatever was skipped once the gesture is done.
+	$effect(() => {
+		if (pagerNav?.sliding) return;
+		untrack(() => { if (_headerHPending) { _headerHPending = false; _applyHeaderH(); } });
 	});
 </script>
 
@@ -103,8 +118,11 @@
 			<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
 		</button>
 	{/if}
-	{#if !_convMobile}
-		<div class="wordmark-wrap" class:desktop-hidden={_titleHasSwitcher} class:title-present={_titlePresent}>
+	<!-- Mounted in chat mode too, just hidden. Swapping these in and out ran a
+	     ClassSwitcher, a NotificationBell (which fetches on mount) and a UserMenu
+	     through mount/destroy in the middle of the exit swipe, since the bar flips
+	     at the halfway point. Hiding costs nothing and the swap is now a class. -->
+	<div class="wordmark-wrap" class:mode-hidden={_convMobile} class:desktop-hidden={_titleHasSwitcher} class:title-present={_titlePresent}>
 			<a class="wordmark" href="/">eating.computer</a>
 			<!-- When a page title is showing, ITS lockup carries the class
 			     switcher (title + dropdown) — don't render a second, lone
@@ -112,8 +130,7 @@
 			{#if !_titleHasSwitcher}
 				<ClassSwitcher {currentClass} {allClasses} />
 			{/if}
-		</div>
-	{/if}
+	</div>
 	{#if $pageTitle && !_convSwipedAway}
 		<!-- Per-page title (e.g. chat channel name, DM partner). Pages
 		     publish this via the pageTitle store — set on mount, clear
@@ -141,12 +158,10 @@
 			{/if}
 		</div>
 	{/if}
-	<div class="header-right">
-		{#if !_convMobile}
-			<!-- Bell sits top-right, just left of the profile photo -->
-			<NotificationBell {user} />
-			<UserMenu {user} />
-		{/if}
+	<div class="header-right" class:mode-hidden={_convMobile}>
+		<!-- Bell sits top-right, just left of the profile photo -->
+		<NotificationBell {user} />
+		<UserMenu {user} />
 	</div>
 </header>
 
@@ -160,6 +175,9 @@
 	.wordmark-wrap {
 		display: flex; flex-direction: column; gap: 0.1rem; flex-shrink: 0;
 	}
+	/* Chat mode: present in the tree, absent from the layout — same result as
+	   not rendering, without the mount/destroy churn mid-gesture. */
+	.mode-hidden { display: none !important; }
 	.wordmark {
 		font-family: 'Avara', serif; font-size: 1.25rem; color: var(--ink);
 		text-decoration: none; white-space: nowrap;
