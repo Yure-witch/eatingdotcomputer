@@ -872,7 +872,8 @@
 		}
 		_freezeEmotes(false);
 	}
-	let _swLastDx = 0, _swVelX = 0, _swPrevX = 0, _swPrevT = 0;
+	let _swLastDx = 0, _swVelX = 0, _swPrevX = 0, _swPrevT = 0, _swStartT = 0;
+	let _dbgMoveNoted = false;
 	let _swDir = 1; // +1 = left→right (back to the chat menu), -1 = right→left (on to the next section)
 	// Which panel a given direction uncovers.
 	const _beneathFor = (dir) => (dir > 0 ? _chatMenuIdx : _afterChatIdx);
@@ -921,12 +922,18 @@
 		// parks behind the layer, which offset every panel horizontally for good.
 		_swTouchId = t.identifier;
 		_swStartX = t.clientX; _swStartY = t.clientY;
+		_swStartT = e.timeStamp ?? 0;
 		_swPrevX = t.clientX; _swPrevT = e.timeStamp; _swVelX = 0;
-		_swArmed = true; _swDecided = false;
+		_swArmed = true; _swDecided = false; _dbgMoveNoted = false;
 		_dbg('start: armed');
 	}
 	function onSwipeMove(e) {
-		if (!_swArmed || _convCommitted) return;
+		if (!_swArmed || _convCommitted) {
+			// Once per gesture — enough to see WHY moves are being ignored without
+			// flooding the readout.
+			if (!_dbgMoveNoted) { _dbgMoveNoted = true; _dbg(`move ignored: armed=${_swArmed ? 1 : 0} committed=${_convCommitted ? 1 : 0}`); }
+			return;
+		}
 		// Only our finger drives it; another one moving is not this gesture. If the
 		// tracked id has gone missing but exactly one finger is down, that finger
 		// IS the gesture — adopt it rather than stalling forever.
@@ -1017,6 +1024,30 @@
 		// strands the gesture armed, and the next swipe inherits its origin.
 		const anyLeft = (e?.touches?.length ?? 0) > 0;
 		if (_swArmed && anyLeft && e?.changedTouches && !_trackedTouch(e.changedTouches)) return;
+		// The release carries a position and a timestamp, which is everything the
+		// decision needs — so a gesture that never got a usable touchmove can still
+		// be honoured here instead of being thrown away. Where you let go, and how
+		// fast you got there, is the whole question; tracking the finger on the way
+		// is only what makes it look good. This is the difference between a swipe
+		// that does nothing and one that just doesn't animate under your thumb.
+		if (_swArmed && !_swDecided) {
+			const t = _trackedTouch(e?.changedTouches) ?? e?.changedTouches?.[0];
+			if (t) {
+				const dx = t.clientX - _swStartX, dy = t.clientY - _swStartY;
+				const dt = Math.max(1, (e.timeStamp ?? 0) - _swStartT);
+				const v = dx / dt;
+				const horiz = Math.abs(dx) > Math.abs(dy);
+				const far = Math.abs(dx) >= COMMIT_PX;
+				const fast = Math.abs(v) > 0.25;
+				_dbg(`${e?.type ?? 'end'}: undecided dx=${dx | 0} dy=${dy | 0} v=${v.toFixed(2)}${horiz && (far || fast) ? ' RESCUE' : ''}`);
+				if (horiz && (far || fast)) {
+					_swArmed = false;
+					_swTouchId = null;
+					_exitChatSurface(dx > 0 ? 1 : -1);
+					return;
+				}
+			}
+		}
 		_disarmSwipe();
 	}
 	// Run the layer off-screen and commit the route it uncovered. The pager is
