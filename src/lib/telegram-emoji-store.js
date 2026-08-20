@@ -77,7 +77,7 @@ export function tgThumbUrl(cp) {
 // Loaded once at picker open → every cell renders with background-image
 // + background-position. Zero per-cell network requests after the sheet
 // arrives. Sheet key format: "tg:<cp>" for default, "tgc:<short>:<id>" for custom.
-import { writable } from 'svelte/store';
+import { writable, get } from 'svelte/store';
 export const spriteSheet = writable(null);
 let _sprite = null;
 let _spritePromise = null;
@@ -139,10 +139,13 @@ export function spriteKeyForCustom(short, id) { return `tgc:${short}:${id}`; }
 const ENGINE_KEY = 'tgEngine';
 const VALID_ENGINES = new Set(['rlottie', 'skottie', 'skottie-worker', 'skottie-webgpu', 'webgpu-rasterized', 'cpu-rasterized']);
 
-// iOS Safari (including iPadOS in mobile mode) silently breaks on the
-// OffscreenCanvas + WebGL combo the WorkerGPU engine uses — frames
-// stop after a few seconds, sometimes the WebGL context is killed
-// entirely. Until WebGPU lands stably on iOS, default to rlottie there.
+// OLDER iOS Safari (including iPadOS in mobile mode) silently breaks on the
+// OffscreenCanvas + WebGL combo the worker engines use — frames stop after a
+// few seconds, sometimes the WebGL context is killed entirely. This is now
+// only a DEMOTION signal, not a default: iOS starts on the GPU rasterizer
+// like every other platform and drops to the CPU atlas only if the WebGPU
+// probe comes back false (which is the marker for a WebKit old enough to
+// have the bug).
 function isIOS() {
 	if (typeof navigator === 'undefined') return false;
 	const ua = navigator.userAgent || '';
@@ -155,20 +158,25 @@ function isIOS() {
 // platform — it bakes each animation's frames to a small atlas once and plays
 // back by blitting, instead of holding a live per-emote render context. That's
 // the memory-friendly path everywhere. `webgpu-rasterized` uses the GPU
-// (worker atlas); `cpu-rasterized` is the WebGL-free fallback (rlottie → 2D
-// atlas) for devices where worker-WebGL is unreliable (older iOS).
+// (worker atlas) and is the default everywhere; `cpu-rasterized` is the
+// WebGL-free fallback (rlottie → 2D atlas), reserved for the devices where
+// worker-WebGL is actually unreliable (older iOS, detected by probe).
 const RASTER_ENGINES = new Set(['webgpu-rasterized', 'cpu-rasterized']);
 const MANUAL_KEY = 'tgEngineManual';
 
-// Synchronous best-guess default (refined by initEmoteEngine() once the async
-// WebGPU probe resolves). iOS gets the WebGL-free CPU atlas until the probe
-// confirms a capable GPU; everything else gets the GPU rasterizer.
+// Synchronous default: the GPU rasterizer on EVERY platform, iOS included.
+// It used to start iOS on the CPU atlas and upgrade once the async WebGPU
+// probe confirmed a capable GPU — which meant every iPhone spent its first
+// moments baking frames on the CPU and then threw that work away on the
+// engine swap, on the one platform least able to afford either. Modern iOS
+// runs the GPU path fine, so it's the optimistic default and
+// initEmoteEngine() DEMOTES the minority that fails the probe.
 const _initialEngine = (() => {
-	if (typeof localStorage === 'undefined') return 'cpu-rasterized';
+	if (typeof localStorage === 'undefined') return 'webgpu-rasterized';
 	const v = localStorage.getItem(ENGINE_KEY);
 	// Honour an explicit, user-chosen engine (any valid one, incl. live modes).
 	if (v && VALID_ENGINES.has(v) && localStorage.getItem(MANUAL_KEY) === '1') return v;
-	return isIOS() ? 'cpu-rasterized' : 'webgpu-rasterized';
+	return 'webgpu-rasterized';
 })();
 export const engineMode = writable(_initialEngine);
 if (typeof window !== 'undefined') {
@@ -190,6 +198,12 @@ export function setEngineManual(engine) {
 // low-fps bake. Resolved once by initEmoteEngine() alongside the WebGPU probe.
 export const emoteHiTier = writable(false);
 
+// Result of the WebGPU probe, resolved once by initEmoteEngine(). `null` until
+// then. It's the same signal the engine default is chosen from, published so
+// anything picking an engine later (see rasterEngineFor) makes the SAME call
+// instead of re-guessing from the user agent.
+export const emoteWebgpuOk = writable(null);
+
 // Refine the rasterized engine once the WebGPU probe resolves: WebGPU-capable
 // devices (incl. iOS 18+) get the GPU rasterizer; otherwise iOS falls back to
 // the WebGL-free CPU atlas. Also sets the LOD device tier. No-op on the engine
@@ -203,13 +217,39 @@ export async function initEmoteEngine() {
 	const cores = navigator.hardwareConcurrency || 4;
 	// High-end = desktop, OR WebGPU-capable, OR a beefy phone (RAM + cores).
 	emoteHiTier.set(!coarse || webgpu || (mem >= 6 && cores >= 6));
+	emoteWebgpuOk.set(webgpu);
 
 	let manual = false;
 	try { manual = localStorage.getItem(MANUAL_KEY) === '1'; } catch { /* private mode */ }
 	if (manual) return;
-	engineMode.set(webgpu ? 'webgpu-rasterized' : (isIOS() ? 'cpu-rasterized' : 'webgpu-rasterized'));
+	// Demote ONLY the case that's actually broken: iOS without WebGPU, i.e. a
+	// WebKit old enough for the OffscreenCanvas+WebGL bug. Everything else
+	// stays on the GPU rasterizer it already booted with, so there's no
+	// engine swap at all on the common path.
+	engineMode.set(!webgpu && isIOS() ? 'cpu-rasterized' : 'webgpu-rasterized');
 }
 export { RASTER_ENGINES };
+
+// Coerce an engine choice to a RASTERIZED one. Surfaces that mount a lot of
+// cells at once and are visited briefly (the picker's Recent grid) can't
+// afford a live per-emote render context each, so they force the baked-atlas
+// path: the current engine if it's already rasterized, otherwise this device's
+// rasterized default.
+//
+// `webgpu-rasterized` is the answer for everyone, iOS included — it bakes
+// frames with Skia on the GPU, so it's faster AND sharper than the CPU atlas.
+// The one exception is an iOS device that fails the WebGPU probe, which marks
+// a WebKit old enough that the OffscreenCanvas+WebGL path this engine really
+// renders through (see MakeWebGLCanvasSurface in skottie-worker.js — the
+// `webgpu` in the name is aspirational) dies mid-animation. A pending probe
+// (null) is treated as capable, matching the boot default: the rare wrong
+// guess corrects itself the moment the probe lands, instead of everyone
+// paying for the rare device up front. Same rule as initEmoteEngine()'s —
+// the two must not drift apart.
+export function rasterEngineFor(engine, webgpuOk = get(emoteWebgpuOk)) {
+	if (RASTER_ENGINES.has(engine)) return engine;
+	return webgpuOk === false && isIOS() ? 'cpu-rasterized' : 'webgpu-rasterized';
+}
 
 export function tgAnimationUrl(cp, i) {
 	return _manifest ? `${_manifest.base}/animations/${cp}_${i}.json` : '';
