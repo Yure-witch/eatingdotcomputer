@@ -17,7 +17,7 @@
 	import { isTgHidden } from '$lib/tg-visibility.js';
 	import {
 		loadTelegramEmoji, loadCustomPacks, getCachedTgEmoji, getCachedCustomPacks,
-		engineMode, setEngineManual, rasterEngineFor
+		engineMode, setEngineManual, rasterEngineFor, emoteWebgpuOk
 	} from '$lib/telegram-emoji-store.js';
 	import { getExprRecents, addExprRecent, exprRecentKey } from '$lib/expr-recents.js';
 	import { ekTokenToUrl } from '$lib/message-render.js';
@@ -484,7 +484,10 @@
 	// up a render context per emote on arrival. It always renders on a
 	// RASTERIZED engine (baked atlas, still moving): the selected one if that's
 	// already rasterized, otherwise this device's rasterized default.
-	const recentEngine = $derived(rasterEngineFor($engineMode));
+	// $emoteWebgpuOk is read so this re-resolves if the picker opened before the
+	// WebGPU probe landed — otherwise a capable phone would stay on the
+	// conservative pre-probe guess for the life of the page.
+	const recentEngine = $derived(rasterEngineFor($engineMode, $emoteWebgpuOk));
 	// Same control as the Emotes tab's, but it only offers the two rasterized
 	// engines — so what the bar reports is always what Recent is actually
 	// rendering on, and cycling from here can't drop the app onto a live
@@ -836,11 +839,12 @@
 		position: absolute;
 		bottom: var(--expr-rail-bottom); right: 6px;
 		z-index: 5;
-		/* Height matches the rail exactly; width is narrower because the rail is
-		   inset --nav-inset (56px) and a square 52px key wouldn't fit in that
-		   band without overlapping it. Taller than wide keeps the rounded-square
-		   read while staying clear. */
-		width: var(--expr-tab-h); height: var(--expr-rail-h);
+		/* Bigger than the rail it sits beside — it reads as a distinct control
+		   rather than a tab that wandered out of the row — while sharing the
+		   rail's bottom edge so the two sit on one baseline. Width stays
+		   narrower than the height: the rail is inset --nav-inset (56px) and
+		   anything wider than ~48px overlaps it. */
+		width: 3rem; height: calc(var(--expr-rail-h) + 4px);
 		box-sizing: border-box;
 		display: inline-flex; align-items: center; justify-content: center;
 		padding: 0;
@@ -1087,7 +1091,10 @@
 		gap: 0.2rem;
 		padding: 0.5rem;
 		overflow-y: auto;
-		height: 100%;
+		/* Shares the pane's column with the bar above it, so it takes the
+		   remaining height rather than a full 100% that would overflow. */
+		flex: 1 1 auto;
+		min-height: 0;
 		align-content: start;
 	}
 	.expr-recent-cell {
