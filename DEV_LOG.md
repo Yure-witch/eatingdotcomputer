@@ -4,6 +4,28 @@ This document is a running record of what has been attempted, what is in progres
 
 ---
 
+## Scroll & gesture listeners: use the bus (`$lib/scroll-bus.js`)
+
+Components were each attaching their own `scroll` / `wheel` / `touch` listeners.
+There is now ONE capture-phase `scroll` listener on the document and ONE each of
+`wheel` / `touchstart` / `touchmove` on the window; everything else subscribes.
+See **SCROLL_BUS.md** for usage and the reasoning.
+
+Two things worth carrying forward:
+
+- Derive scroll DIRECTION from wheel/touch deltas, never from `scrollTop`.
+  Virtualised grids nudge `scrollTop` as rows mount, so the last event of a
+  gesture is often a correction the other way (measured: a downward flick
+  settling 400 → 393, an upward one 93 → 99). Reading that inverts the
+  direction on every flick.
+- This is hygiene, NOT the fix for emote jank. Profiled at 6x CPU throttle with
+  ~15 gesture listeners: zero long tasks during idle, vertical scroll and
+  horizontal swipe. The real steady-state cost is ~63 simultaneously animating
+  canvases plus a 10-worker rlottie pool — GPU/compositor work that never
+  appears as main-thread blocking.
+
+---
+
 ## Format
 
 Each entry includes:

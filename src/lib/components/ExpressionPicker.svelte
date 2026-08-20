@@ -23,6 +23,7 @@
 	import { getCustomEmojiMap, getCachedCustomEmojiMap } from '$lib/custom-emoji-store.js';
 	import { ekTokenToUrl } from '$lib/message-render.js';
 	import { holdEmotes } from '$lib/emote-idle.js';
+	import { onScrollGesture } from '$lib/scroll-bus.js';
 
 	// Per-user switch (users.hide_tg_emoji): drop the Telegram surfaces —
 	// the Animated tab and the Emotes Library sub-tab.
@@ -393,23 +394,14 @@
 		_scrollThawT = setTimeout(() => thawEmotes(), 220);
 	}
 
-	function onAnyWheel(e) {
+	// Direction arrives from the shared scroll bus rather than this component
+	// attaching its own wheel + touchstart + touchmove. Three listeners became
+	// one subscription — see $lib/scroll-bus.js.
+	onMount(() => onScrollGesture((dir) => {
 		holdForScroll();
 		if (chrome === 'page') return;         // a swipe owns the chrome
-		if (e.deltaY > 0) setChrome('dim');
-		else if (e.deltaY < 0) setChrome('rest');
-	}
-	let _touchY = 0;
-	function onAnyTouchStart(e) { _touchY = e.touches?.[0]?.clientY ?? 0; }
-	function onAnyTouchMove(e) {
-		holdForScroll();
-		if (chrome === 'page') return;
-		const y = e.touches?.[0]?.clientY ?? 0;
-		const dy = _touchY - y;                // finger up = reading downward
-		if (Math.abs(dy) < 2) return;
-		_touchY = y;
-		setChrome(dy > 0 ? 'dim' : 'rest');
-	}
+		setChrome(dir === 'down' ? 'dim' : 'rest');
+	}));
 
 	// ── Drag-to-dismiss ──────────────────────────────────────────────
 	// On mobile the picker is a docked sheet, so it should dismiss the way
@@ -554,8 +546,6 @@
 
 <div class="expr-panel"
      class:expr-panel-react={mode === 'react'} class:expr-dragging={dragging}
-     onwheelcapture={onAnyWheel}
-     ontouchstartcapture={onAnyTouchStart} ontouchmovecapture={onAnyTouchMove}
      bind:this={panelEl} style:transform={dragY ? `translate3d(0,${dragY}px,0)` : null}>
 	{#if mode === 'react'}
 		<!-- Reaction mode: just the EmojiPicker, no chrome. The chat
