@@ -260,18 +260,24 @@
 			position: absolute;
 			/* Concentric with the bar: the pill is inset 3px on every side, so for
 			   its curve to run parallel to the bar's its radius must be the bar's
-			   MINUS that inset. The bar is 76px tall and fully rounded (radius 38),
-			   so a 70px pill at 999px resolves to 35 — exactly 38 − 3. Note `top`
-			   is measured from the PADDING box, inside the 1px border, so top:2
-			   lands 3px in from the outer edge and the remaining 2px + border
-			   matches it at the bottom. Nudge either number and the two curves
-			   stop being parallel.
+			   MINUS that inset. A fully-rounded pill's radius IS half its height,
+			   so height and gap are locked together: 68px → radius 34 → a 4px gap
+			   against the bar's 38. (70px would give 3px; anything shorter opens
+			   the gap further.) Note `top` is measured from the PADDING box,
+			   inside the 1px border, so top:3 lands 4px in from the outer edge and
+			   the remaining 3px + border matches it at the bottom.
+
+			   The width is deliberately wider than a slot: neighbouring pills
+			   would overlap, which never shows because only one is ever drawn,
+			   and it buys a highlight that wraps the whole item instead of
+			   leaving dead space at the bar's ends.
+
 			   Starts after the bar's inner padding, which the slot maths above
 			   also subtracts. */
-			top: 2px;
+			top: 3px;
 			left: var(--nav-pad, 0px);
-			width: 74px;
-			height: 70px;
+			width: 96px;
+			height: 68px;
 			border-radius: 999px;
 			/* Move with transform (compositor / GPU) instead of `left` (which forced a
 			   layout reflow every scroll frame → framey). The nav is full-viewport
