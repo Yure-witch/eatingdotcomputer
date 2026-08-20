@@ -13,13 +13,14 @@
 	import TelegramEmojiPanel from './TelegramEmojiPanel.svelte';
 	import PickerStickyBtn from './PickerStickyBtn.svelte';
 	import SpriteSticker from './SpriteSticker.svelte';
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { isTgHidden } from '$lib/tg-visibility.js';
 	import {
 		loadTelegramEmoji, loadCustomPacks, getCachedTgEmoji, getCachedCustomPacks
 	} from '$lib/telegram-emoji-store.js';
 	import { getExprRecents, addExprRecent, exprRecentKey } from '$lib/expr-recents.js';
 	import { ekTokenToUrl } from '$lib/message-render.js';
+	import { holdEmotes } from '$lib/emote-idle.js';
 
 	// Per-user switch (users.hide_tg_emoji): drop the Telegram surfaces —
 	// the Animated tab and the Emotes Library sub-tab.
@@ -33,9 +34,14 @@
 	// Both are cached and no-op on a second call.
 	let _packVer = $state(0);
 	onMount(() => {
-		if (tgHidden) return;
-		if (!getCachedTgEmoji()) loadTelegramEmoji().then(() => _packVer++).catch(() => {});
-		if (!getCachedCustomPacks()) loadCustomPacks().then(() => _packVer++).catch(() => {});
+		if (!tgHidden) {
+			if (!getCachedTgEmoji()) loadTelegramEmoji().then(() => _packVer++).catch(() => {});
+			if (!getCachedCustomPacks()) loadCustomPacks().then(() => _packVer++).catch(() => {});
+		}
+		// Emote holds are refcounted globally, so one leaked by a picker that
+		// unmounted mid-gesture (swipe down to dismiss, say) would freeze every
+		// emote in the app for the rest of the session.
+		return () => { clearTimeout(_settleT); thawEmotes(); };
 	});
 
 	let {
@@ -96,9 +102,17 @@
 	// animated emotes — which is a strange place to start choosing a face.
 	const _saved = rememberTab && typeof localStorage !== 'undefined' ? localStorage.getItem(TAB_KEY) : null;
 	let tab = $state(VALID_TABS.has(_saved) ? _saved : 'emoji');
+	// Debounced: a swipe walks `tab` through every category it crosses, and a
+	// synchronous localStorage write per crossing is main-thread work landing
+	// squarely inside the gesture.
+	let _tabSaveT = null;
 	$effect(() => {
 		if (!rememberTab) return;
-		try { localStorage.setItem(TAB_KEY, tab); } catch {}
+		const t = tab;
+		clearTimeout(_tabSaveT);
+		_tabSaveT = setTimeout(() => {
+			try { localStorage.setItem(TAB_KEY, t); } catch {}
+		}, 250);
 	});
 
 	// The Recent tab is meaningless until something has been picked — an empty
@@ -135,21 +149,27 @@
 		if (id && !mounted[id]) mounted = { ...mounted, [id]: true };
 	}
 
-	// Neighbours mount during idle time rather than up front, so opening
-	// the picker only ever pays for the ONE pane you land on. By the time
-	// a swipe starts, the pane next door is usually already there; if it
-	// isn't, the scroll handler below mounts it mid-gesture.
-	let _idleH = null;
+	// Neighbours mount just AFTER the open has painted, one per frame — not
+	// up front (which would put their cost on the open you're waiting for)
+	// and not on requestIdleCallback either, which was the earlier approach
+	// and the reason swiping felt broken: on a busy main thread idle may not
+	// run before you swipe, so the incoming category was still empty and had
+	// to mount mid-gesture. Paying for it a couple of frames after open means
+	// the pane next door is already there when the gesture starts.
+	let _neighbourRaf = 0;
 	function scheduleNeighbours() {
-		if (_idleH != null) return;
-		const run = () => {
-			_idleH = null;
-			ensure(TABS[tabIndex - 1]);
-			ensure(TABS[tabIndex + 1]);
-		};
-		_idleH = typeof requestIdleCallback === 'function'
-			? requestIdleCallback(run, { timeout: 600 })
-			: setTimeout(run, 200);
+		if (_neighbourRaf) return;
+		// Two frames: the first lets the open itself paint, the second starts
+		// the (heavier) neighbour work with the picker already on screen.
+		_neighbourRaf = requestAnimationFrame(() => {
+			requestAnimationFrame(() => {
+				_neighbourRaf = 0;
+				const prev = TABS[tabIndex - 1], next = TABS[tabIndex + 1];
+				ensure(next);
+				// Split across frames so two heavy panes never land in one.
+				if (prev) requestAnimationFrame(() => ensure(prev));
+			});
+		});
 	}
 
 	// Guard so our own scrollTo() doesn't feed back through onscroll and
@@ -161,6 +181,9 @@
 		ensure(id);
 		const el = trackEl;
 		if (!el) return;
+		// A tab tap can't land mid-swipe, but a stray programmatic call could;
+		// writing scrollLeft while the compositor is animating is a visible jerk.
+		if (_touching) return;
 		const i = TABS.indexOf(id);
 		if (i < 0) return;
 		const left = i * el.clientWidth;
@@ -173,17 +196,47 @@
 		_progT = setTimeout(() => { _progScroll = false; }, smooth ? 420 : 0);
 	}
 
+	// True from touchstart until the scroll settles. Anything that would
+	// move the track has to check this first — the compositor owns the
+	// scroll position during a gesture and any write to it is a visible jerk.
+	let _touching = $state(false);
+	let _settleT = null;
+	// Freeze every looping emote for the duration of a page gesture. Dozens of
+	// Skottie canvases competing for the same frames is what stops the incoming
+	// category from sliding in cleanly; frozen, the swipe gets the main thread
+	// to itself and the emotes resume the moment it settles.
+	let _releaseEmotes = null;
+	function freezeEmotes() { _releaseEmotes ??= holdEmotes(); }
+	function thawEmotes() { _releaseEmotes?.(); _releaseEmotes = null; }
+
+	function settleSoon() {
+		clearTimeout(_settleT);
+		_settleT = setTimeout(() => { _touching = false; thawEmotes(); }, 260);
+	}
+
+	function onTrackPointerDown() { _touching = true; freezeEmotes(); }
+	function onTrackPointerUp() {
+		// Don't clear immediately: the fling continues after the finger lifts,
+		// and the track is still settling toward a snap point.
+		settleSoon();
+	}
+
 	// Scroll -> active tab. Read in a rAF so a fling doesn't run layout
 	// reads on every scroll event.
 	let _rafScroll = 0;
 	function onTrackScroll() {
+		// A wheel / trackpad page never sends pointerdown, so freeze here too.
+		freezeEmotes();
+		settleSoon();
 		if (_rafScroll) return;
 		_rafScroll = requestAnimationFrame(() => {
 			_rafScroll = 0;
 			const el = trackEl;
 			if (!el || !el.clientWidth) return;
 			const f = el.scrollLeft / el.clientWidth;
-			// Mount whatever the gesture is heading toward before it lands.
+			// Mount whatever the gesture is heading toward before it lands, so
+			// the incoming category slides in with content rather than as a
+			// blank panel that pops once the swipe finishes.
 			ensure(TABS[Math.floor(f)]);
 			ensure(TABS[Math.ceil(f)]);
 			if (_progScroll) return;
@@ -192,14 +245,29 @@
 		});
 	}
 
-	// Keep the track aligned with `tab` whenever the pane list changes
-	// shape — picking the first-ever recent inserts a pane at index 0 and
-	// would otherwise silently shift every pane one slot to the right.
+	// Re-align the track when the pane LIST CHANGES SHAPE — picking the
+	// first-ever recent inserts a pane at index 0, which would otherwise
+	// silently shift every pane one slot to the right.
+	//
+	// It must key off the shape and nothing else. An earlier version also
+	// depended on `tabIndex`, which the scroll handler updates *mid-swipe*:
+	// the moment a drag crossed the halfway point the effect re-ran, found
+	// scrollLeft mid-gesture, and issued an instant scrollTo that yanked the
+	// track out from under the finger. That single line is why paging never
+	// felt like the app shell's pager.
+	let _shape = null;
 	$effect(() => {
-		const i = tabIndex, el = trackEl;
-		void TABS.length;
+		const shape = TABS.join('|');
+		const el = trackEl;
 		if (!el || !el.clientWidth) return;
-		if (Math.abs(el.scrollLeft - i * el.clientWidth) > 1) goTo(TABS[i], false);
+		if (shape === _shape) return;
+		const first = _shape === null;
+		_shape = shape;
+		// Never fight an in-flight gesture; the shape can only change from a
+		// pick, and picking is not something you do mid-swipe.
+		if (!first && _touching) return;
+		const i = Math.max(0, TABS.indexOf(untrack(() => tab)));
+		el.scrollLeft = i * el.clientWidth;
 	});
 
 	$effect(() => { ensure(tab); scheduleNeighbours(); });
@@ -370,7 +438,9 @@
 	     swiping sideways pages between expression types exactly like the
 	     app shell's section pager. Every pane is always present so the
 	     track geometry is stable; only its CONTENTS mount lazily. -->
-	<div class="expr-track" bind:this={trackEl} onscroll={onTrackScroll}>
+	<div class="expr-track" bind:this={trackEl} onscroll={onTrackScroll}
+	     onpointerdown={onTrackPointerDown} onpointerup={onTrackPointerUp}
+	     onpointercancel={onTrackPointerUp}>
 		{#each TABS as t (t)}
 			<section class="expr-pane" aria-hidden={t !== tab}>
 				{#if mounted[t]}

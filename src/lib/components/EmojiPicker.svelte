@@ -1445,6 +1445,10 @@
 	.grid-wrap {
 		flex: 1;
 		overflow-y: scroll;
+		/* A box with overflow-y scroll/auto and overflow-x visible computes
+		   overflow-x to `auto`, so sub-pixel track rounding was enough to make
+		   this scroll sideways. Nothing here should ever pan horizontally. */
+		overflow-x: hidden;
 		/* Stops the scroll from chaining to the parent page once the
 		   user reaches the top / bottom of the picker (i.e. scrolling
 		   past the last emoji category no longer scrolls the chat /
@@ -1608,6 +1612,10 @@
 		gap: 0;
 		max-height: 300px;
 		overflow-y: auto;
+		/* A box with overflow-y scroll/auto and overflow-x visible computes
+		   overflow-x to `auto`, so sub-pixel track rounding was enough to make
+		   this scroll sideways. Nothing here should ever pan horizontally. */
+		overflow-x: hidden;
 		overscroll-behavior: contain;
 		scrollbar-width: thin;
 		scrollbar-color: var(--md-sys-color-outline-variant, var(--border)) transparent;

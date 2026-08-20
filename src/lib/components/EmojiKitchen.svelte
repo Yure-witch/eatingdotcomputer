@@ -989,6 +989,10 @@
 	.kitchen-content {
 		flex: 1;
 		overflow-y: auto;
+		/* A box with overflow-y scroll/auto and overflow-x visible computes
+		   overflow-x to `auto`, so sub-pixel track rounding was enough to make
+		   this scroll sideways. Nothing here should ever pan horizontally. */
+		overflow-x: hidden;
 		overflow-x: hidden;
 		overscroll-behavior: contain;
 		padding: 0.75rem;
@@ -1303,6 +1307,10 @@
 		grid-template-columns: repeat(10, 1fr);
 		gap: 1px;
 		overflow-y: auto;
+		/* A box with overflow-y scroll/auto and overflow-x visible computes
+		   overflow-x to `auto`, so sub-pixel track rounding was enough to make
+		   this scroll sideways. Nothing here should ever pan horizontally. */
+		overflow-x: hidden;
 		overscroll-behavior: contain;
 		padding: 0 0.35rem 0.4rem;
 		flex: 1;

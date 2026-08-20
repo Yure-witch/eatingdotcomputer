@@ -450,7 +450,7 @@
 	.ce-bg-swatch-label { font-size: 0.7rem; color: var(--muted-fg); font-family: monospace; }
 	.ce-error { font-size: 0.72rem; color: var(--danger); }
 
-	.ce-grid-wrap { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 0.5rem 0.65rem; min-height: 0; }
+	.ce-grid-wrap { flex: 1; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; padding: 0.5rem 0.65rem; min-height: 0; }
 	.ce-grid-wrap::-webkit-scrollbar { width: 4px; }
 	.ce-grid-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 
