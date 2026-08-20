@@ -5293,10 +5293,20 @@
 			.compose-picker-pop,
 			.input-area.from-kb .compose-picker-pop { animation: none; }
 		}
-		.input-area.picker-open .input-bar { padding-bottom: 0.5rem; }
-		/* Keyboard open → drop the safe-area padding (keyboard covers the home
-		   indicator) so there's no empty gap above the keyboard. */
-		.input-area.kb-open .input-bar { padding-bottom: 0.5rem; }
+		/* Gap between the bottom of the compose and whatever is docked under it
+		   (keyboard or picker). ONE knob — raise it if the bar wants breathing
+		   room, drop it to 0 to sit flush.
+		   Whenever something IS docked, the home indicator is covered by that
+		   thing, so the bar must not reserve safe-area space of its own; the
+		   base rule's `max(0.5rem, env(safe-area-inset-bottom, 0.5rem))` would
+		   otherwise leave ~34px of dead space on a device with an indicator.
+		   This sets the value outright rather than trying to out-specify each
+		   contributor, so the result doesn't depend on which rule wins. */
+		.input-area { --compose-dock-gap: 2px; }
+		.input-area.picker-open .input-bar,
+		.input-area.kb-open .input-bar {
+			padding-bottom: var(--compose-dock-gap);
+		}
 		.compose-picker-pop {
 			position: fixed;
 			left: 0; right: 0; bottom: 0;
