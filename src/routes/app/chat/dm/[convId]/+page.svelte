@@ -5318,7 +5318,7 @@
 		color: var(--md-sys-color-on-primary, var(--paper)); border: none;
 		border-radius: 10px; font-family: inherit; font-size: 0.875rem; font-weight: 600;
 		cursor: pointer; transition: opacity 0.15s; pointer-events: none;
-		position: relative; z-index: 1; width: 2.5rem; height: 100%;
+		position: relative; z-index: 1; width: 44px; height: 100%;
 	}
 	.btn-send svg { display: block; margin-right: 1px; }
 	.btn-send:hover { opacity: 0.8; }
@@ -5431,7 +5431,9 @@
 	.compose-effect-wrap { position: relative; flex-shrink: 0; align-self: stretch; }
 	.btn-effect {
 		display: flex; align-items: center; justify-content: center;
-		width: 36px; height: 100%; font-size: 1rem; line-height: 1;
+		/* Same footprint as the send button beside it — 36 vs 40 read as a
+		   misalignment even though both already match the compose bar's height. */
+		width: 44px; height: 100%; font-size: 1rem; line-height: 1;
 		border: 1.5px solid var(--border); border-radius: 10px;
 		background: var(--paper); color: var(--ink); cursor: pointer;
 		transition: border-color 0.15s, background 0.15s;
