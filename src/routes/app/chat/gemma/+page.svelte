@@ -595,12 +595,19 @@
 	textarea:focus { border-color: var(--ink); }
 	.gm-send {
 		display: inline-flex; align-items: center; justify-content: center;
-		width: 2.5rem; height: 2.5rem; flex-shrink: 0;
-		background: var(--ink); color: var(--paper);
+		width: 2.75rem; height: 2.75rem; flex-shrink: 0;
+		/* Themed like the other chat compose bars — a flat dark fill dimmed to
+		   45% reads as a grey slab rather than an inactive control. */
+		background: var(--md-sys-color-primary, var(--ink));
+		color: var(--md-sys-color-on-primary, var(--paper));
 		border: none; border-radius: 10px; padding: 0.6rem; cursor: pointer;
 	}
 	.gm-send svg { display: block; margin-right: 1px; }
-	.gm-send:disabled { opacity: 0.45; cursor: default; }
+	.gm-send:disabled {
+		opacity: 1; cursor: default;
+		background: var(--md-sys-color-surface-container-high, rgba(0,0,0,0.06));
+		color: var(--md-sys-color-on-surface-variant, var(--ink));
+	}
 
 	/* mobile bottom-nav clearance comes from .chat-wrap, like other chats */
 </style>
