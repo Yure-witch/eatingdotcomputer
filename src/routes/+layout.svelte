@@ -20,6 +20,7 @@
 	import { dropAdaptiveFrames as dropCpuAtlasAdaptive } from '$lib/cpu-atlas.js';
 	import { initTheme, onThemeChanged } from '$lib/theme-store.js';
 	import { initEmoteIdle } from '$lib/emote-idle.js';
+	import { initKeyboardMetrics } from '$lib/keyboard-metrics.js';
 	import { initEmoteEngine } from '$lib/telegram-emoji-store.js';
 	import { dev } from '$app/environment';
 	import { initNativeShell, isNativeApp, updateStatusBarTheme } from '$lib/native.js';
@@ -81,6 +82,11 @@
 		// emotes freeze after ~45s of no interaction (and wake on any) — that
 		// sustained 60fps emote churn was jetsamming the native WebView.
 		if (window.matchMedia?.('(pointer: coarse)')?.matches) initEmoteIdle();
+		// Publishes --kb-h / --kb-h-last on <html>. Needed on every platform:
+		// the chat layout sizes itself against the keyboard, and the expression
+		// picker opens at the keyboard's height so swapping between the two
+		// doesn't shift the compose bar.
+		initKeyboardMetrics();
 
 		// Pick the best RASTERIZED emote engine for this device — WebGPU-capable
 		// devices get the GPU rasterizer, others the WebGL-free CPU atlas. Runs

@@ -217,6 +217,12 @@
 	// entrypoint to the right of the expression button.
 	let showMediaPicker = $state(false);
 	const _anyComposePicker = $derived(showComposePicker || showMediaPicker);
+	// True when a compose picker was opened straight from the keyboard. The
+	// picker is sized to the keyboard, so in that case the bar is already in
+	// its final spot and must NOT play the rise animation — see `.from-kb`.
+	// Latched at open time because `keyboardOpen` flips false the moment we
+	// blur the compose to dismiss the keyboard.
+	let _pickerFromKb = $state(false);
 	// Signal the layout (BottomNav) to hide while either picker is open
 	// — it docks where the mobile nav sits, so they'd otherwise overlap.
 	$effect(() => {
@@ -4275,7 +4281,7 @@
 	{/key}
 {/if}
 
-<div class="input-area" class:kb-open={keyboardOpen} class:picker-open={_anyComposePicker} bind:clientHeight={inputAreaHeight} style:--input-area-h="{inputAreaHeight}px" ondragenter={onDragEnter} ondragover={onDragOver} ondragleave={onDragLeave} ondrop={onDrop}>
+<div class="input-area" class:kb-open={keyboardOpen} class:picker-open={_anyComposePicker} class:from-kb={_anyComposePicker && _pickerFromKb} bind:clientHeight={inputAreaHeight} style:--input-area-h="{inputAreaHeight}px" ondragenter={onDragEnter} ondragover={onDragOver} ondragleave={onDragLeave} ondrop={onDrop}>
 	{#if replyingTo}
 		<div class="reply-bar">
 			<div class="reply-bar-content">
@@ -4501,7 +4507,7 @@
 				</label>
 				<div class="compose-picker-wrap">
 					<button class="btn-fmt btn-fmt-expr" class:active={showComposePicker} title="Expressions"
-						onmousedown={(e) => { e.preventDefault(); showComposePicker = !showComposePicker; if (showComposePicker) { showMediaPicker = false; inputEl?.blur(); } }}>
+						onmousedown={(e) => { e.preventDefault(); const opening = !showComposePicker; if (opening) _pickerFromKb = keyboardOpen; showComposePicker = opening; if (opening) { showMediaPicker = false; inputEl?.blur(); } }}>
 						<span class="msi msi-18" class:msi-fill={showComposePicker}>mood</span>
 					</button>
 					{#if showComposePicker}
@@ -4520,7 +4526,7 @@
 				</div>
 				<div class="compose-picker-wrap">
 					<button class="btn-fmt btn-fmt-media" class:active={showMediaPicker} title="GIFs &amp; reaction images"
-						onmousedown={(e) => { e.preventDefault(); showMediaPicker = !showMediaPicker; if (showMediaPicker) { showComposePicker = false; inputEl?.blur(); } }}>
+						onmousedown={(e) => { e.preventDefault(); const opening = !showMediaPicker; if (opening) _pickerFromKb = keyboardOpen; showMediaPicker = opening; if (opening) { showComposePicker = false; inputEl?.blur(); } }}>
 						<span class="msi msi-18" class:msi-fill={showMediaPicker}>gif_box</span>
 					</button>
 					{#if showMediaPicker}
@@ -5508,8 +5514,47 @@
 		}
 		.compose-fmt-row .btn-fmt-code-arrow { min-width: 18px !important; width: 18px; }
 
-		.input-area { --picker-h: min(58vh, 22rem); }
+		/* The picker opens at the height the KEYBOARD occupies, so tapping the
+		   expression button while typing swaps one panel for the other without
+		   the compose bar moving at all — the iOS Messages behaviour. --kb-h-last
+		   is the last real keyboard height (see $lib/keyboard-metrics.js),
+		   remembered because by the time the picker lays out the keyboard is
+		   already sliding away. The clamp keeps a wrong/absent reading sane, and
+		   the 22rem fallback is the old fixed height. */
+		.input-area { --picker-h: clamp(15rem, var(--kb-h-last, 22rem), 58vh); }
 		.input-area.picker-open { margin-bottom: calc(var(--picker-h) + env(safe-area-inset-bottom, 0px)); }
+		/* Animate the RISE, not the layout. The margin above is applied in one
+		   shot (so the flex column resolves once, not on every frame — animating
+		   margin would relayout the whole message list 60 times a second); the
+		   bar is then drawn starting from where it used to be and translated
+		   home. Transform only, so the motion runs on the compositor. */
+		.input-area.picker-open:not(.from-kb) {
+			animation: compose-rise 0.24s cubic-bezier(0.32, 0.72, 0, 1);
+		}
+		@keyframes compose-rise {
+			from { transform: translate3d(0, calc(var(--picker-h) + env(safe-area-inset-bottom, 0px)), 0); }
+			to   { transform: translate3d(0, 0, 0); }
+		}
+		/* Coming FROM the keyboard there is nothing to animate: the picker is
+		   the keyboard's height, so the bar is already exactly where it belongs
+		   and any rise would be a bounce the user never asked for. */
+		.compose-picker-pop { animation: sheet-rise 0.24s cubic-bezier(0.32, 0.72, 0, 1); }
+		@keyframes sheet-rise {
+			from { transform: translate3d(0, 100%, 0); }
+			to   { transform: translate3d(0, 0, 0); }
+		}
+		/* Swapping straight from the keyboard: the keyboard is still sliding
+		   down over the sheet, so sliding the sheet up as well reads as two
+		   things moving past each other. Fade it in under the keyboard instead. */
+		.input-area.from-kb .compose-picker-pop {
+			animation: sheet-fade 0.18s ease-out;
+		}
+		@keyframes sheet-fade { from { opacity: 0; } to { opacity: 1; } }
+		@media (prefers-reduced-motion: reduce) {
+			.input-area.picker-open:not(.from-kb),
+			.compose-picker-pop,
+			.input-area.from-kb .compose-picker-pop { animation: none; }
+		}
 		.input-area.picker-open .input-bar { padding-bottom: 0.5rem; }
 		/* Keyboard open → the home indicator is covered by the keyboard, so the
 		   input bar's safe-area padding would just be an empty gap above the

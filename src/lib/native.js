@@ -9,6 +9,7 @@
  */
 import { Capacitor } from '@capacitor/core';
 import { env as publicEnv } from '$env/dynamic/public';
+import { noteKeyboardHeight } from '$lib/keyboard-metrics.js';
 
 /**
  * Set this to the App Store listing URL once the app is approved. While it's
@@ -140,6 +141,11 @@ export async function initNativeShell() {
 		Keyboard.addListener('keyboardWillShow', (info) => {
 			const kb = info?.keyboardHeight ?? 0;
 			root.style.setProperty('--kb-height', `${kb}px`);
+			// The native web view never shrinks (resize:'none'), so
+			// visualViewport can't see the keyboard — this plugin height is the
+			// only signal, and the shared tracker needs it to size the
+			// expression picker to match. See $lib/keyboard-metrics.js.
+			noteKeyboardHeight(kb);
 			document.body.classList.add('kb-native-open');
 			// resize:'none' means the web view doesn't shrink, so nothing
 			// auto-scrolls. The ::after spacer (app.css) adds `kb` px of
@@ -155,6 +161,7 @@ export async function initNativeShell() {
 		Keyboard.addListener('keyboardWillHide', () => {
 			document.body.classList.remove('kb-native-open');
 			root.style.setProperty('--kb-height', '0px');
+			noteKeyboardHeight(0);
 		});
 	} catch {}
 
