@@ -3,7 +3,10 @@
 	import Avatar from './Avatar.svelte';
 	import { nativeGoogleSignOut } from '$lib/native.js';
 
-	let { user = null } = $props();
+	// `minimal` — onboarding: the Profile / Theme / Gemma links all live behind
+	// the app shell, which you can't reach until onboarding completes. Only the
+	// account actions make sense there.
+	let { user = null, minimal = false } = $props();
 
 	let menuOpen = $state(false);
 	let menuEl = $state(null);
@@ -49,15 +52,17 @@
 		</button>
 		{#if menuOpen}
 			<div class="user-dropdown">
-				<a href="/app/profile/{user.id}" class="dropdown-item" onclick={() => menuOpen = false}>
-					Profile
-				</a>
-				<a href="/app/theme" class="dropdown-item" onclick={() => menuOpen = false}>
-					Customize theme
-				</a>
-				<a href="/app/ai" class="dropdown-item" onclick={() => menuOpen = false}>
-					Gemma AI
-				</a>
+				{#if !minimal}
+					<a href="/app/profile/{user.id}" class="dropdown-item" onclick={() => menuOpen = false}>
+						Profile
+					</a>
+					<a href="/app/theme" class="dropdown-item" onclick={() => menuOpen = false}>
+						Customize theme
+					</a>
+					<a href="/app/ai" class="dropdown-item" onclick={() => menuOpen = false}>
+						Gemma AI
+					</a>
+				{/if}
 				<form method="POST" action="/app?/switchaccount" style="display:contents" bind:this={switchForm}>
 					<button type="button" class="dropdown-item dropdown-item-btn" onclick={switchAccount}>Switch account</button>
 				</form>

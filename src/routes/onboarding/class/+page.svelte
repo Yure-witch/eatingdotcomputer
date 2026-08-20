@@ -68,8 +68,10 @@
 	}
 
 	.back {
-		display: inline-block;
-		font-size: 0.82rem;
+		display: inline-flex;
+		align-items: center;
+		min-height: 44px;
+		font-size: 0.95rem;
 		color: var(--muted-fg);
 		text-decoration: none;
 		margin-bottom: 1rem;

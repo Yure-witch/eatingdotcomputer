@@ -53,6 +53,9 @@
 			<form method="POST" action="?/check" use:enhance>
 				<button type="submit" class="btn-check">Check status</button>
 			</form>
+			<form method="POST" action="?/back" use:enhance>
+				<button type="submit" class="btn-back">← Choose a different class</button>
+			</form>
 		{/if}
 	{/if}
 </div>
@@ -85,6 +88,14 @@
 	@keyframes spin { to { transform: rotate(360deg); } }
 	@media (prefers-reduced-motion: reduce) {
 		.spinner { animation-duration: 2.4s; }
+	}
+	.btn-back {
+		min-height: 44px;
+		padding: 0.6rem 1rem;
+		border: none; background: none;
+		color: var(--md-sys-color-on-surface-variant, var(--muted-fg));
+		font: inherit; font-size: 0.9rem; cursor: pointer;
+		text-decoration: underline;
 	}
 	.waiting-long {
 		font-size: 0.95rem;

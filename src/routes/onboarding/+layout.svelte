@@ -1,7 +1,8 @@
 <script>
 	import { page } from '$app/stores';
+	import UserMenu from '$lib/components/UserMenu.svelte';
 
-	let { children } = $props();
+	let { data, children } = $props();
 
 	const STEPS = [
 		{ key: 'profile', label: 'Your profile', path: '/onboarding/profile' },
@@ -17,6 +18,11 @@
 <div class="shell">
 	<header>
 		<span class="wordmark">eating.computer</span>
+		<!-- Available from step one: signing in as the wrong account is easiest
+		     to notice DURING setup, and there was no way out of the flow. -->
+		{#if data?.user}
+			<UserMenu user={data.user} minimal />
+		{/if}
 	</header>
 
 	<div class="stepper">
@@ -58,6 +64,13 @@
 	header {
 		padding: 1.25rem 2rem;
 		border-bottom: 1.5px solid var(--border);
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+	}
+	@media (max-width: 640px) {
+		header { padding: 0.9rem 1rem; }
 	}
 
 	.wordmark {

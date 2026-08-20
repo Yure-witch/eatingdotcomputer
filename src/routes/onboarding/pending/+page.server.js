@@ -41,6 +41,27 @@ export async function load({ locals }) {
 }
 
 export const actions = {
+	// Going "back" from here means withdrawing the request: submitting sets
+	// onboarding_step to 'pending', so a plain link to the class step would
+	// bounce off its guard. Only permitted while still pending — an approved or
+	// denied decision isn't the student's to undo.
+	back: async ({ locals }) => {
+		const session = await locals.auth();
+		if (!session) redirect(303, '/login');
+		const db = getDb();
+		if (!db) redirect(303, '/onboarding/pending');
+
+		await db.execute({
+			sql: "DELETE FROM class_memberships WHERE user_id = ? AND status = 'pending'",
+			args: [session.user.id]
+		});
+		await db.execute({
+			sql: "UPDATE users SET onboarding_step = 'class' WHERE id = ? AND onboarding_step = 'pending'",
+			args: [session.user.id]
+		});
+		redirect(303, '/onboarding/class');
+	},
+
 	check: async ({ locals }) => {
 		const session = await locals.auth();
 		if (!session) redirect(303, '/login');
