@@ -89,6 +89,11 @@ export const actions = {
 			args: [session.user.id]
 		});
 
+		// Clear any approval flag left from a previous enrollment: the pending
+		// page treats the mere existence of approvals/<uid> as "you're in", so a
+		// stale node would bounce a still-pending student straight into /app.
+		getAdminDb().ref(`approvals/${session.user.id}`).remove().catch(() => {});
+
 		// Signal the manage page that a new request is pending
 		getAdminDb().ref(`pendingRequests/${classId}`).set(Date.now()).catch(() => {});
 

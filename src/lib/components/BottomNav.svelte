@@ -171,7 +171,7 @@
 		<a href={item.href} class="nav-item" class:active={isActive}
 			onclick={(e) => { if (pagerNav?.goToSection?.(item.href)) e.preventDefault(); }}>
 			<span class="icon-wrap">
-				<span class="msi msi-20" class:msi-fill={isActive}>{item.iconName}</span>
+				<span class="msi msi-24" class:msi-fill={isActive}>{item.iconName}</span>
 			</span>
 			<span class="label">{item.label}</span>
 		</a>
@@ -181,7 +181,7 @@
 			<a href="/app/chat" class="nav-item" class:active={chatActive}
 				onclick={(e) => { if (pagerNav?.goToSection?.('/app/chat')) e.preventDefault(); }}>
 				<span class="icon-wrap">
-					<span class="msi msi-20" class:msi-fill={chatActive}>{chatIconName}</span>
+					<span class="msi msi-24" class:msi-fill={chatActive}>{chatIconName}</span>
 					{#if totalUnread > 0}
 						<span class="nav-badge">{totalUnread > 99 ? '99+' : totalUnread}</span>
 					{/if}
@@ -214,16 +214,33 @@
 		.bottom-nav {
 			display: flex;
 			position: fixed;
-			bottom: 0; left: 0; right: 0;
-			height: calc(56px + env(safe-area-inset-bottom, 0px));
-			padding-bottom: env(safe-area-inset-bottom, 0px);
+			/* A narrow, fully rounded pill floating clear of the screen edge —
+			   icons close together, little dead space beside them, and the page
+			   visibly continuing underneath rather than stopping at a bar. That
+			   read is what sells the "glass", not transparency: the surface is
+			   fully opaque and gets its depth from elevation alone. */
+			--nav-inset: 44px;
+			bottom: calc(env(safe-area-inset-bottom, 0px) + 18px);
+			left: var(--nav-inset); right: var(--nav-inset);
+			height: 58px;
+			padding-bottom: 0;
+			border-radius: 999px;
 			/* Reuse the sidebar tokens so the mobile bottom nav reads
 			   as the same chrome surface as the desktop left rail —
 			   secondary-family-tinted bg + matching border + the
 			   same active-pill colour scheme. Previously this was
 			   var(--ink) which never tracked the theme palette. */
+			/* Fully opaque — depth comes from elevation and a light top edge, not
+			   from blur or translucency. */
 			background: var(--sidebar-bg);
-			border-top: 1px solid var(--sidebar-border);
+			border: 1px solid var(--sidebar-border);
+			/* The boundary is only just visible — depth comes from a soft drop
+			   shadow and a faint inner highlight along the top edge, never from
+			   blur or transparency. */
+			box-shadow:
+				0 10px 30px rgba(0, 0, 0, 0.14),
+				0 2px 8px rgba(0, 0, 0, 0.07),
+				inset 0 1px 0 rgba(255, 255, 255, 0.45);
 			z-index: 1000;
 		}
 
@@ -232,17 +249,23 @@
 		   Sits behind the icons (z-index 0); positioned at the icon row. */
 		.nav-indicator {
 			position: absolute;
-			top: 7px;
+			/* Vertically centred in the 58px bar and fully rounded, matching the
+			   bar's own ends. */
+			top: 5px;
 			left: 0;
-			width: 48px;
-			height: 26px;
+			width: 58px;
+			height: 48px;
+			border-radius: 999px;
 			/* Move with transform (compositor / GPU) instead of `left` (which forced a
 			   layout reflow every scroll frame → framey). The nav is full-viewport
 			   width, so each slot is 100vw/slot-count; centre on the slot, minus half
 			   the pill's own width. --nav-frac is written straight to <html> by the
 			   pager (imperatively, per frame) so there's no Svelte flush in the hot
 			   path; --slot-count is the stable inline value. */
-			transform: translateX(calc((var(--nav-frac, 0) + 0.5) * (100vw / var(--slot-count, 5)) - 50%));
+			/* The bar is an inset island now, so a slot is (viewport - insets) wide,
+			   NOT 100vw — using the viewport put the pill progressively further
+			   right than its icon. --nav-inset keeps the two in one place. */
+			transform: translateX(calc((var(--nav-frac, 0) + 0.5) * ((100vw - (2 * var(--nav-inset, 12px))) / var(--slot-count, 5)) - 50%));
 			will-change: transform;
 			background: var(--sidebar-active);
 			border-radius: 999px;
