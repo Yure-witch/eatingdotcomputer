@@ -929,6 +929,10 @@
 		_dbg('start: armed');
 	}
 	function onSwipeMove(e) {
+		try { _onSwipeMoveInner(e); }
+		catch (err) { _dbg('ERR mv: ' + (err?.message ?? err)); }
+	}
+	function _onSwipeMoveInner(e) {
 		_mvCount++; // counted before every guard, so "did moves arrive at all?" is answerable
 		if (!_swArmed || _convCommitted) {
 			// Once per gesture — enough to see WHY moves are being ignored without
@@ -958,15 +962,27 @@
 			if (Math.abs(dy) >= Math.abs(dx)) { _dbg(`bail: vertical dx=${dx|0} dy=${dy|0}`); _disarmSwipe(); return; } // vertical → scroll
 			_swDecided = true;
 			_swDir = dx > 0 ? 1 : -1;
+			// State that MUST be true for the rest of the gesture goes first. It
+			// used to sit behind _parkBeneath and _freezeEmotes, so anything those
+			// threw took the drag with it: _swDecided was already set, so later
+			// moves skipped the whole block, but _convSliding was still false, so
+			// the release found nothing to settle and quietly did nothing. Decided
+			// but not sliding is exactly the state the readout showed (dec=1 and no
+			// `decide:` line, because the log came last too).
+			_convSliding = true; _convDragging = true;
 			clearTimeout(_convExitT); // this drag owns the settle now
 			_convSettling = false;
-			// Put the destination behind the layer BEFORE it moves, so the very
-			// first frame of the drag already shows the real panel.
-			_parkBeneath(_beneathFor(_swDir));
-			_freezeEmotes(true);
-			_convSliding = true; _convDragging = true;
-			_setConvDrag(0);
 			_dbg(`decide: dir=${_swDir} -> panel ${_beneathFor(_swDir)}`);
+			// Preparation, not preconditions: putting the destination behind the
+			// layer and parking the emotes are both worth doing and neither is
+			// worth losing the gesture over.
+			try {
+				_parkBeneath(_beneathFor(_swDir));
+			} catch (err) { _dbg('ERR park: ' + (err?.message ?? err)); }
+			try {
+				_freezeEmotes(true);
+			} catch (err) { _dbg('ERR emotes: ' + (err?.message ?? err)); }
+			_setConvDrag(0);
 		}
 		// Reversing mid-drag switches which side you're uncovering — re-park while
 		// the layer is still (nearly) closed, so the swap can't be seen.
