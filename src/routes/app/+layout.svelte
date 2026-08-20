@@ -479,6 +479,7 @@
 	// machinery ignores it.
 	function _parkBeneath(idx) {
 		if (!pagerEl || idx < 0 || idx >= PANELS.length) return;
+		_warmPanel(PANELS[idx].route);    // last-ditch, in case boot-warming hasn't landed
 		_pagerFraction = idx;             // mounts the panel (panelShouldMount) + moves the nav pill
 		_pagerVisibleRoute = PANELS[idx].route;
 		_writeNavFrac(idx);
@@ -532,15 +533,40 @@
 			}
 			for (const j of [idx - 1, idx + 1]) {
 				if (j < 0 || j >= panels.length) continue;
-				const route = panels[j].route;
-				if (!route) continue; // conv neighbour — nothing to preload
-				if (!panelData[route]) {
-					preloadData(route).then(r => {
-						if (r?.type === 'loaded') untrack(() => { panelData = { ...panelData, [route]: r.data }; });
-					}).catch(() => {});
-				}
+				_warmPanel(panels[j].route);
 			}
 		});
+	});
+	// Fetch a panel's data once and cache it. A panel with no data renders the
+	// shimmer skeleton, so anything that can be UNCOVERED by a swipe has to be
+	// warm before the finger gets there. Failures clear their in-flight mark so a
+	// later call retries instead of leaving that panel permanently skeletal.
+	const _warming = new Set();
+	function _warmPanel(route) {
+		if (!route || _warming.has(route)) return;
+		if (untrack(() => panelData[route])) return;
+		_warming.add(route);
+		preloadData(route).then((r) => {
+			if (r?.type === 'loaded') untrack(() => { panelData = { ...panelData, [route]: r.data }; });
+			else _warming.delete(route);
+		}).catch(() => { _warming.delete(route); });
+	}
+	// Warm EVERY section once on mobile, shortly after boot. The pager keeps all
+	// of them mounted anyway, and this is what guarantees the panel a chat exit
+	// uncovers is real content rather than a skeleton — opening a chat from a
+	// notification (or reloading inside one) otherwise leaves the section next
+	// door cold, and the swipe out beats its preload.
+	$effect(() => {
+		if (!_isMobile) return;
+		const routes = PANELS.map((p) => p.route).filter(Boolean);
+		const kick = () => untrack(() => { for (const r of routes) _warmPanel(r); });
+		const idle = typeof requestIdleCallback === 'function'
+			? requestIdleCallback(kick, { timeout: 2500 })
+			: setTimeout(kick, 1200);
+		return () => {
+			if (typeof cancelIdleCallback === 'function' && typeof requestIdleCallback === 'function') cancelIdleCallback(idle);
+			else clearTimeout(idle);
+		};
 	});
 	function panelShouldMount(i) {
 		// Mount panels adjacent to the COMMITTED route AND to the LIVE scroll
