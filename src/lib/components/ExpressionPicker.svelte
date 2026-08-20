@@ -20,6 +20,7 @@
 		engineMode, setEngineManual, rasterEngineFor, emoteWebgpuOk
 	} from '$lib/telegram-emoji-store.js';
 	import { getExprRecents, addExprRecent, exprRecentKey } from '$lib/expr-recents.js';
+	import { getCustomEmojiMap, getCachedCustomEmojiMap } from '$lib/custom-emoji-store.js';
 	import { ekTokenToUrl } from '$lib/message-render.js';
 	import { holdEmotes } from '$lib/emote-idle.js';
 
@@ -39,12 +40,14 @@
 		if (!tgHidden) {
 			if (!getCachedTgEmoji()) loadTelegramEmoji().then(() => _packVer++).catch(() => {});
 			if (!getCachedCustomPacks()) loadCustomPacks().then(() => _packVer++).catch(() => {});
+		}
 		// The class's uploaded emotes resolve [ce:…] tokens. Same story as the
 		// packs above: only /app/+layout.svelte loaded this, so a [ce:] avatar
 		// picked during onboarding had nothing to render against.
+		// NOT gated on tgHidden — class uploads have nothing to do with whether
+		// the Telegram surfaces are shown.
 		if (!Object.keys(getCachedCustomEmojiMap()).length) {
 			getCustomEmojiMap().then(() => _packVer++).catch(() => {});
-		}
 		}
 		// Emote holds are refcounted globally, so one leaked by a picker that
 		// unmounted mid-gesture (swipe down to dismiss, say) would freeze every
@@ -286,6 +289,33 @@
 	// scrollLeft mid-gesture, and issued an instant scrollTo that yanked the
 	// track out from under the finger. That single line is why paging never
 	// felt like the app shell's pager.
+	// Put the track (and the indicator) on `tab`, without animating.
+	function alignToTab() {
+		const el = trackEl;
+		if (!el || !el.clientWidth) return false;
+		const i = Math.max(0, TABS.indexOf(untrack(() => tab)));
+		el.scrollLeft = i * el.clientWidth;
+		railEl?.style.setProperty('--expr-frac', String(i));
+		return true;
+	}
+
+	// Retried across frames rather than done once in an effect. The effect
+	// version read clientWidth while the sheet was still animating in, got 0,
+	// bailed — and because nothing it depended on changed afterwards, it never
+	// ran again. Opening on a remembered tab therefore left the strip
+	// highlighting that tab while the track still showed pane 0, with the
+	// indicator parked on the wrong icon.
+	onMount(() => {
+		// Re-aligned a few times over the first half-second, not just once. The
+		// panes mount their contents lazily and the sheet animates in, so the
+		// track's layout keeps changing underneath us; a single early write got
+		// undone and left the strip highlighting a tab the track wasn't on.
+		const timers = [];
+		let raf = requestAnimationFrame(() => { alignToTab(); });
+		for (const d of [80, 200, 450]) timers.push(setTimeout(alignToTab, d));
+		return () => { cancelAnimationFrame(raf); for (const t of timers) clearTimeout(t); };
+	});
+
 	let _shape = null;
 	$effect(() => {
 		const shape = TABS.join('|');
@@ -297,14 +327,21 @@
 		// Never fight an in-flight gesture; the shape can only change from a
 		// pick, and picking is not something you do mid-swipe.
 		if (!first && _touching) return;
-		const i = Math.max(0, TABS.indexOf(untrack(() => tab)));
-		el.scrollLeft = i * el.clientWidth;
-		// Seed the block too: without this it starts at slot 0 while the track
-		// may have opened on a remembered tab further along.
-		railEl?.style.setProperty('--expr-frac', String(i));
+		alignToTab();
 	});
 
 	$effect(() => { ensure(tab); scheduleNeighbours(); });
+
+	// Park the indicator on the active tab whenever a gesture ISN'T driving it.
+	// Seeding it once during the initial align wasn't enough: that runs before
+	// `railEl` is necessarily bound, so opening on a remembered tab left the
+	// block on slot 0 while the content showed slot 2. During a swipe the
+	// scroll handler owns --expr-frac and this stays out of the way.
+	$effect(() => {
+		const i = tabIndex;
+		if (_touching || _progScroll) return;
+		railEl?.style.setProperty('--expr-frac', String(i));
+	});
 
 	// (The Emotes tab used to keep an Uploaded/Library sub-tab here. Both
 	// sources now render in one scroll — see the merged TelegramEmojiPanel
@@ -914,7 +951,9 @@
 		position: absolute;
 		top: 3px;
 		bottom: 3px;
-		left: 3px;
+		/* Same inset as the rail's horizontal padding, or the block sits 6px
+		   left of the icon it is supposed to be highlighting. */
+		left: var(--expr-pad);
 		/* One slot wide. Was a fraction of the container, which is wrong now
 		   that the container also holds the delete key. */
 		width: var(--expr-slot-w, 3rem);
