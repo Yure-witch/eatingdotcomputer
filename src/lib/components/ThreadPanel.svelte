@@ -554,7 +554,17 @@
 <style>
 	.thread-panel {
 		position: fixed;
-		top: 0; right: 0; bottom: 0;
+		top: 0; right: 0;
+		/* Sit on TOP of the keyboard rather than behind it. The panel is a fixed
+		   sheet pinned to the bottom of the layout viewport, and neither platform
+		   shrinks that viewport for the keyboard — iOS Safari shrinks only the
+		   VISUAL viewport, and the native shell is resize:'none' and shrinks
+		   nothing. So `bottom: 0` puts the composer under the keys.
+		   keyboard-metrics.js already publishes the height both ways: --kb-h from
+		   visualViewport on web/PWA, and --kb-height fed by the Capacitor plugin
+		   natively (native.js). Take whichever is live. */
+		bottom: var(--kb-h, 0px);
+		transition: bottom 0.18s ease-out;
 		width: min(400px, 100vw);
 		display: flex; flex-direction: column;
 		background: var(--paper);
@@ -816,6 +826,14 @@
 		cursor: pointer;
 	}
 	.thread-send:disabled { opacity: 0.35; cursor: default; }
+
+	/* Native shell: visualViewport never moves, so --kb-h stays 0 and the plugin
+	   height is the only signal. Same lift, different source. */
+	:global(body.native-app.kb-native-open) .thread-panel { bottom: var(--kb-height, 0px); }
+	/* While the expression picker is docked it owns the bottom of the screen and
+	   the keyboard is on its way down — matching how chat stops transforming its
+	   input area for exactly this window. */
+	:global(body.expr-picker-open) .thread-panel { bottom: 0; transition: none; }
 
 	@media (max-width: 640px) {
 		/* left/right rather than 100vw: the viewport unit counts the scrollbar and
