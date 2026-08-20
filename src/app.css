@@ -615,10 +615,21 @@ body.native-app .input-area {
 body.native-app.kb-native-open .input-area {
 	transform: translateY(calc(-1 * var(--kb-height, 0px)));
 }
-/* Belt-and-suspenders: never transform the input area while the picker is
-   open, so the fixed picker always anchors to the viewport. */
+/* Never transform the input area while the picker is open, so the fixed picker
+   always anchors to the viewport.
+   `transition: none` is load-bearing, not tidiness. The rule above transitions
+   transform over 0.2s, so going from the keyboard's translateY(-336px) to
+   `none` ANIMATES through intermediate non-none transforms — and a non-none
+   transform makes .input-area the containing block for its fixed descendant.
+   For those 200ms the docked picker was anchored to the lifted compose bar
+   rather than the screen: it appeared up over the keyboard and slid down as
+   the transform resolved, which reads as the sheet "compensating" into place.
+   Measured mid-swap, the sheet's bottom edge sat at 643 of an 812px viewport
+   with the transition, and at 812 without it. Snapping the transform off in
+   one frame means the picker simply opens at the bottom of the app. */
 body.native-app.expr-picker-open .input-area {
 	transform: none;
+	transition: none;
 }
 body.native-app.kb-native-open .message-list::after {
 	content: '';
