@@ -14,6 +14,18 @@ Each entry includes:
 
 ---
 
+### 2026-08-20 — Theme: green maxed default + onboarding swatches use resolved tokens
+- **Status**: `attempted` (built, pending user confirmation)
+- **What**: Two changes, both requested.
+  1. **New default**: the `default` preset is now green (`#00c853`, vibrant) with `contrastLevel: 1`, `vibrance: 200` and `masterChroma: 80` (= `MASTER_CHROMA_MAX`) — full contrast, full vibrance, full saturation. `DEFAULTS` mirrors it exactly *including* `dark: true`, so a brand-new account opens on it and onboarding's mode toggle starts on Dark. Still labelled "Default".
+  2. **Onboarding swatches** (`onboarding/profile/+page.svelte`) painted from `p.seed` — the raw generator input, identical in light and dark — so the mode toggle above them visibly did nothing to the grid it claims to recolour. Now uses `previewRolesForPreset` and renders resolved primary/secondary on that theme's resolved surface, same as the desktop picker, ThemeSwitcher and the mobile tiles.
+- **Design change**: presets are now **self-describing** — `presetRecord` resets `vibrance` to 100 and `masterChroma` to null unless the preset names them, where previously both persisted across preset changes as a standing taste preference. Had to change: with Default carrying 200/80, the old rule meant tapping Default then Porcelain gave a blasted Porcelain, and no preset could be trusted to look like itself. Cost is that a slider tweak is dropped when auditioning another palette.
+- **Measured** (`previewRoles` on the new default):
+  - DARK (the default): surface `#001804`, onSurface `#ffffff`, primary `#c2ffc3`, secondary `#baffd9`, tertiary `#b2ffeb`. onSurface/surface contrast **18.5**. Looks the way it was asked for.
+  - LIGHT: surface `#00933e` — a saturated MID-green page, not a light theme. onSurface `#000000`, contrast 5.2 (AA passes); primary `#003410` against surface is only 3.5. Legible but bold. This is `masterChroma 80` meeting `SURFACE_TONE_SHIFT_MAX = 45` (raised earlier at the user's request), which walks light surfaces from tone 98 down to ~53. **Flagged to the user, not silently altered** — full saturation was specified for the dark default, and chroma is a single value that applies to whichever mode is live.
+- **Notes**: build verified green (`npx vite build` → done) since main had been red earlier in the day.
+
+
 ### 2026-08-20 — Theme: no-flash cold start (full palette replayed before first paint)
 - **Status**: `attempted` (built, pending user confirmation)
 - **What**: The theme only applied once `theme-store.js` had loaded and hydration ran, so every cold start — and every native WebView reload — painted the app.css DEFAULT palette first. app.html restored only the background colour, which made it worse rather than better: the page got the user's dark background while cards stayed cream, text stayed near-black and the accent stayed the default red.

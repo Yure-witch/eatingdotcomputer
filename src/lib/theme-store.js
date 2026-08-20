@@ -120,7 +120,12 @@ const VARIANT_CTORS = Object.fromEntries(VARIANTS.map((v) => [v.id, v.ctor]));
 export const PRESETS = [
 	// Default — promoted from a saved scheme. Listed first so it's
 	// the most prominent option in the picker.
-	{ id: 'default',     name: 'Default',                  seed: '#ffa305', emoji: '🎨', variant: 'vibrant' },
+	// Green, and cranked: full contrast, full vibrance, full master chroma.
+	// This is the look a brand-new account opens on (DEFAULTS below mirrors
+	// it, including dark), so the "Default" chip always reproduces exactly
+	// what the app shipped you rather than a washed-out cousin of it.
+	{ id: 'default',     name: 'Default',       seed: '#00c853', emoji: '🟢', variant: 'vibrant',
+		contrastLevel: 1, vibrance: 200, masterChroma: MASTER_CHROMA_MAX },
 	// TEST themes — seeds taken from each theme's LIGHT-mode primary
 	// value in examples/TESTthemes.json. Variants chosen to match
 	// each theme's character (vibrant for the punchy colours,
@@ -164,20 +169,21 @@ const DEFAULTS = {
 	// customised a theme hit these values on first paint. Existing
 	// users with a record in `localStorage["mdTheme"]` keep whatever
 	// they had — readSaved won't overwrite their settings.
-	// Red Peony — Raspberry/Peony's palette with an unrotated (red) primary.
-	// Chosen over the old orange 'default' so the app doesn't open on a
-	// generic palette. Raspberry itself is left exactly as designed.
-	presetId: 'redpeony',
-	seed: '#b61d3e',
-	dark: false,
+	// Green, dark, and maxed out — the same values as the 'default' preset
+	// above, so a fresh account and the "Default" chip agree. Dark is part
+	// of the default rather than a separate choice: the app opens dark and
+	// the onboarding mode toggle starts on Dark because of this.
+	presetId: 'default',
+	seed: '#00c853',
+	dark: true,
 	variant: 'vibrant',
-	contrastLevel: 0,
-	// Raspberry (Peony in the source design) ships explicit secondary/tertiary
-	// hues that are NOT derived from primary, so these must be 'custom' to match
-	// the preset — auto-derived values give a different palette.
-	secondaryMode: 'custom',   // 'auto' | 'complement' | 'custom'
+	contrastLevel: 1,
+	// Auto: the green default lets the variant derive its own secondary and
+	// tertiary. The hexes remain as the fallback sanitizeTheme uses when a
+	// stored record is missing them.
+	secondaryMode: 'auto',     // 'auto' | 'complement' | 'custom'
 	secondarySeed: '#a03961',  // only used when secondaryMode === 'custom'
-	tertiaryMode: 'custom',
+	tertiaryMode: 'auto',
 	tertiarySeed: '#6d49b2',
 	// Per-family chroma overrides. null = let the variant's
 	// auto-derived chroma stand; a number (0–120-ish in M3 units)
@@ -191,11 +197,10 @@ const DEFAULTS = {
 	// (drives surfaceVariant, onSurfaceVariant, outline). One slider
 	// for both since they're meant to read as the same family — the
 	// variant just gives neutralVariant a touch more chroma by spec.
-	// Surfaces at +50% saturation. SchemeExpressive derives neutral chroma 8.0
-	// (and neutralVariant 12, a 1.5 ratio), which reads as almost-grey; 12 keeps
-	// the same hue but lets the palette show in the backgrounds. The
-	// neutralVariant scales by the same ratio automatically (→ 18).
-	neutralChroma: 12,
+	// Left to the variant — master chroma below overrides every family's
+	// chroma anyway, so pinning the neutrals here would just be a value the
+	// master immediately replaces.
+	neutralChroma: null,
 	// ── Vibrance ─────────────────────────────────────────────────────────
 	// One master saturation knob that multiplies the effective chroma of
 	// EVERY family — primary/secondary/tertiary AND the two neutral
@@ -208,7 +213,7 @@ const DEFAULTS = {
 	// reset by setPreset() — "how saturated do I like things" is a
 	// standing preference that should survive switching palettes, the same
 	// way `dark` does.
-	vibrance: 100,
+	vibrance: 200,
 	// ── Master chroma ────────────────────────────────────────────────────
 	// One absolute chroma applied to EVERY family — primary, secondary,
 	// tertiary and both neutrals. null = off, and each family keeps
@@ -228,7 +233,7 @@ const DEFAULTS = {
 	// Like vibrance, it survives a preset change and doesn't clear
 	// presetId: it's a standing taste setting, so you can audition
 	// palettes without it resetting under you.
-	masterChroma: null
+	masterChroma: MASTER_CHROMA_MAX
 };
 
 // Coerce an arbitrary object (localStorage blob, RTDB snapshot, saved
@@ -715,7 +720,7 @@ function presetRecord(p, s) {
 		// some themes (Lemongrass, Iris, Peony, etc.) intentionally
 		// use a hue that's NOT derived from primary, so auto-mode
 		// wouldn't match the design.
-		contrastLevel: 0,
+		contrastLevel: p.contrastLevel ?? 0,
 		secondaryMode: p.secondaryMode || (p.secondarySeed ? 'custom' : 'auto'),
 		secondarySeed: p.secondarySeed || s.secondarySeed,
 		tertiaryMode:  p.tertiaryMode  || (p.tertiarySeed  ? 'custom' : 'auto'),
@@ -725,10 +730,18 @@ function presetRecord(p, s) {
 		tertiaryChroma: null,
 		// Presets may raise the surface chroma; without this, picking one would
 		// silently drop back to the variant's auto-derived (near-grey) neutrals.
-		neutralChroma: p.neutralChroma ?? null
-		// NOTE: `vibrance` is intentionally absent — the spread keeps the
-		// user's current value. It's a standing taste preference, not part
-		// of the preset's identity.
+		neutralChroma: p.neutralChroma ?? null,
+		// Presets are SELF-DESCRIBING: a preset that doesn't name a value
+		// resets it, rather than inheriting whatever the last one left
+		// behind. Earlier these two persisted across preset changes as a
+		// standing taste preference, which was fine until Default started
+		// carrying full vibrance + full chroma — under the old rule, tapping
+		// Default and then Porcelain gave you a blasted Porcelain, and no
+		// preset could be trusted to look like itself. The cost is that a
+		// slider tweak is dropped when you audition another palette, which
+		// is the more predictable of the two surprises.
+		vibrance: p.vibrance ?? 100,
+		masterChroma: p.masterChroma ?? null
 	};
 }
 

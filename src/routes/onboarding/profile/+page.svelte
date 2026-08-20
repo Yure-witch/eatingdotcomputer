@@ -11,7 +11,16 @@
 	import { page } from '$app/stores';
 	import { fly } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
-	import { PRESETS, setPreset, setDark, themeStore } from '$lib/theme-store.js';
+	import { PRESETS, setPreset, setDark, themeStore, previewRolesForPreset } from '$lib/theme-store.js';
+
+	// Each swatch renders in the palette it actually RESOLVES to under the
+	// currently-selected mode, not its raw seed. A seed is an input to the M3
+	// generator, not a colour the app paints — and it looks identical in light
+	// and dark, which made the mode toggle above look like it did nothing to
+	// the grid it explicitly claims to recolour.
+	const swatches = $derived(
+		PRESETS.map((p) => ({ ...p, roles: previewRolesForPreset(p, $themeStore) }))
+	);
 	import AvatarPicker from '$lib/components/AvatarPicker.svelte';
 	import FormattedInput from '$lib/components/FormattedInput.svelte';
 	let { data, form } = $props();
@@ -207,10 +216,10 @@
 			     swatch grid IS the preview. Theme lives in localStorage, so
 			     there's nothing to submit with the form. -->
 			<div class="theme-grid">
-				{#each PRESETS as p (p.id)}
+				{#each swatches as p (p.id)}
 					<button type="button" class="theme-swatch" class:selected={$themeStore.presetId === p.id}
 						onclick={() => setPreset(p.id)} title={p.name} aria-label={p.name}
-						style="--sw: {p.seed}">
+						style="--sw: {p.roles.primary}; --sw-bg: {p.roles.surface}; --sw-2: {p.roles.secondary}">
 						<span class="sw-dot" aria-hidden="true"></span>
 						<span class="sw-name">{p.name}</span>
 					</button>
@@ -312,10 +321,15 @@
 		border-color: var(--md-sys-color-primary, var(--ink));
 		box-shadow: inset 0 0 0 1px var(--md-sys-color-primary, var(--ink));
 	}
+	/* Primary disc on that theme's own surface, with a bite of its secondary —
+	   the pair the page will actually render, rather than one flat seed. */
 	.sw-dot {
 		width: 34px; height: 34px; border-radius: 50%;
-		background: var(--sw);
-		box-shadow: inset 0 0 0 1px rgba(0,0,0,0.12);
+		background:
+			linear-gradient(135deg, var(--sw) 0 62%, var(--sw-2) 62% 100%);
+		box-shadow:
+			0 0 0 3px var(--sw-bg),
+			0 0 0 4px rgba(128,128,128,0.28);
 	}
 	.sw-name { text-align: center; line-height: 1.2; }
 
