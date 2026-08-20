@@ -15,6 +15,8 @@
 		setTertiaryChroma,
 		setNeutralChroma,
 		setVibrance,
+		setMasterChroma,
+		MASTER_CHROMA_MAX,
 		autoChromaFor,
 		setVariant,
 		setContrast,
@@ -81,6 +83,16 @@
 	// resettable from the desktop picker rather than acting as an
 	// invisible multiplier under the per-family sliders.
 	const vibrance = $derived($themeStore.vibrance ?? 100);
+
+	// Master chroma — one flat chroma for every family. Parks at
+	// primary's auto value while unset; the label reads "Auto" so a
+	// resting thumb isn't mistaken for a setting. Moving any per-family
+	// slider below releases it (see setPrimaryChroma et al).
+	const chromaIsAuto = $derived($themeStore.masterChroma == null);
+	const masterChroma = $derived(
+		$themeStore.masterChroma
+			?? Math.round(Math.min(MASTER_CHROMA_MAX, autoP))
+	);
 
 	function chromaInputHandler(setter) {
 		return (e) => setter(parseFloat(e.target.value));
@@ -330,6 +342,32 @@
 				onclick={() => setVibrance(100)}
 				title="Reset to 100%"
 			>100%</button>
+		</div>
+
+		<!-- Master chroma — replaces every family's chroma with one value.
+		     Sits under Vibrance because the two pair up: this sets the
+		     level, vibrance scales it. -->
+		<div class="chroma-row master">
+			<div class="chroma-label">
+				<span class="chip chroma-chip"></span>
+				<span class="role">Chroma</span>
+				<em class="auto-val">{chromaIsAuto ? 'auto per family' : 'all families'}</em>
+			</div>
+			<input
+				class="chroma-slider"
+				type="range" min="0" max={MASTER_CHROMA_MAX} step="1"
+				value={masterChroma}
+				oninput={(e) => setMasterChroma(parseFloat(e.target.value))}
+			/>
+			<span class="chroma-val">{chromaIsAuto ? '—' : masterChroma}</span>
+			<button
+				type="button"
+				class="reset-btn"
+				class:dim={chromaIsAuto}
+				disabled={chromaIsAuto}
+				onclick={() => setMasterChroma(null)}
+				title="Reset to auto"
+			>Auto</button>
 		</div>
 
 		<div class="chroma-row">
@@ -753,6 +791,13 @@
 	.chroma-row.master {
 		padding-bottom: 0.55rem;
 		border-bottom: 1px dashed var(--md-sys-color-outline-variant, rgba(0,0,0,0.15));
+	}
+	.chroma-label .chroma-chip {
+		background: linear-gradient(
+			to right,
+			var(--md-sys-color-surface-container-highest, #ddd),
+			var(--md-sys-color-secondary, var(--accent))
+		);
 	}
 	.chroma-label .vib-chip {
 		background: linear-gradient(

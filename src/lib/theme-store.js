@@ -87,6 +87,10 @@ const clamp01_120 = (n) => Math.max(0, Math.min(120, n));
 // 200 = double saturation.
 const clampVibrance = (n) => Math.max(0, Math.min(200, n));
 
+// Master chroma shares the Surface slider's ceiling — see MASTER_CHROMA_MAX.
+export const MASTER_CHROMA_MAX = 80;
+const clampMasterChroma = (n) => Math.max(0, Math.min(MASTER_CHROMA_MAX, n));
+
 // ── Variant catalogue ────────────────────────────────────────────────────
 // `id` is what we store in the theme record; `label` is the menu copy;
 // `ctor` is the M3 dynamic-scheme constructor for that variant. All of
@@ -198,7 +202,27 @@ const DEFAULTS = {
 	// reset by setPreset() — "how saturated do I like things" is a
 	// standing preference that should survive switching palettes, the same
 	// way `dark` does.
-	vibrance: 100
+	vibrance: 100,
+	// ── Master chroma ────────────────────────────────────────────────────
+	// One absolute chroma applied to EVERY family — primary, secondary,
+	// tertiary and both neutrals. null = off, and each family keeps
+	// whatever the variant derived or a per-family slider set.
+	//
+	// Range is the Surface slider's 0–80 rather than the 0–120 the accent
+	// sliders use, because 80 on the neutrals is already an extremely
+	// saturated page; matching Surface is what makes "as intense as
+	// Surface, but for everything" true.
+	//
+	// Distinct from `vibrance`: vibrance is a RELATIVE multiplier that
+	// preserves the palette's internal chroma balance, this REPLACES it
+	// with one flat value. They compose — master sets the base, vibrance
+	// scales it — so the pair reads as "how colourful" plus "how much
+	// more/less than that".
+	//
+	// Like vibrance, it survives a preset change and doesn't clear
+	// presetId: it's a standing taste setting, so you can audition
+	// palettes without it resetting under you.
+	masterChroma: null
 };
 
 // Coerce an arbitrary object (localStorage blob, RTDB snapshot, saved
@@ -227,7 +251,8 @@ export function sanitizeTheme(v) {
 		secondaryChroma: typeof v.secondaryChroma === 'number' ? clamp01_120(v.secondaryChroma) : null,
 		tertiaryChroma: typeof v.tertiaryChroma === 'number' ? clamp01_120(v.tertiaryChroma) : null,
 		neutralChroma: typeof v.neutralChroma === 'number' ? clamp01_120(v.neutralChroma) : null,
-		vibrance: typeof v.vibrance === 'number' ? clampVibrance(v.vibrance) : DEFAULTS.vibrance
+		vibrance: typeof v.vibrance === 'number' ? clampVibrance(v.vibrance) : DEFAULTS.vibrance,
+		masterChroma: typeof v.masterChroma === 'number' ? clampMasterChroma(v.masterChroma) : null
 	};
 }
 
@@ -284,10 +309,22 @@ const NEUTRAL_SURFACE_ROLES = [
 ];
 const NEUTRAL_VARIANT_SURFACE_ROLES = ['surfaceVariant'];
 
-// Tone steps to walk the light-mode surfaces down at vibrance 200%.
-// 10 is enough to take a near-white page to a clearly tinted one while
-// leaving on-surface text (tone ~10) with a huge contrast margin.
-const SURFACE_TONE_SHIFT_MAX = 10;
+// How far the light-mode surfaces may be walked down in tone to make
+// room for chroma, and how fast that happens per unit of extra chroma
+// asked for. 0.85 is calibrated so vibrance 200% alone (which takes the
+// default neutral 12 → 24) lands at ~10 steps, matching the behaviour
+// before master chroma existed; the higher ceiling only comes into play
+// for the master slider, which can ask for far more.
+// 30 is a measured ceiling, not a round number. At 45 the light-mode
+// surface keeps darkening all the way to master chroma 80, but two
+// things break: on-surface contrast falls to 4.3 (under AA), and the hue
+// starts jumping — #dd5f80 pink at 60 to #d9541b orange at 70 — because
+// Hct's chroma setter trades hue away to stay in gamut once you ask past
+// the sRGB edge. At 30 the ramp stays hue-stable and contrast never
+// drops below 7.0. Surfaces do saturate out around master chroma 50 as a
+// result; the accents keep climbing over the rest of the range.
+const SURFACE_TONE_SHIFT_MAX = 30;
+const SURFACE_TONE_SHIFT_PER_CHROMA = 0.85;
 
 const DYNAMIC_ROLE_FNS = SCHEME_ROLES.reduce((acc, role) => {
 	const fn = MaterialDynamicColors[role];
@@ -320,8 +357,17 @@ function buildSchemeRoles(seed, dark, variantId, contrastLevel, opts = {}) {
 	const {
 		secondarySource, tertiarySource,
 		primaryChroma, secondaryChroma, tertiaryChroma, neutralChroma,
-		vibrance
+		masterChroma, vibrance
 	} = opts;
+
+	// Master chroma, when set, replaces the base chroma of every family —
+	// including the per-family overrides. It has to win over them, not
+	// defer to them: presets ship their own `neutralChroma` (Red Peony
+	// sets 12), so a master that yielded to per-family values would leave
+	// the surfaces untouched on exactly the themes people use.
+	const master = typeof masterChroma === 'number' && isFinite(masterChroma)
+		? clampMasterChroma(masterChroma)
+		: null;
 
 	// Vibrance → a plain multiplier. 100 (or absent) means "leave every
 	// chroma exactly where the variant/overrides put it", so the whole
@@ -336,8 +382,8 @@ function buildSchemeRoles(seed, dark, variantId, contrastLevel, opts = {}) {
 	// whichever of the two won, so the master knob and the per-family
 	// sliders compose instead of fighting.
 	const paletteWith = (sourcePalette, overrideChroma) => {
-		if (overrideChroma == null && vib === 1) return sourcePalette;
-		const base = overrideChroma == null ? sourcePalette.chroma : overrideChroma;
+		if (master == null && overrideChroma == null && vib === 1) return sourcePalette;
+		const base = master ?? (overrideChroma == null ? sourcePalette.chroma : overrideChroma);
 		return TonalPalette.fromHueAndChroma(sourcePalette.hue, clamp01_120(base * vib));
 	};
 
@@ -379,9 +425,14 @@ function buildSchemeRoles(seed, dark, variantId, contrastLevel, opts = {}) {
 	// grey as the slider moves.
 	let neutralPalette = base.neutralPalette;
 	let neutralVariantPalette = base.neutralVariantPalette;
-	if (neutralChroma != null || vib !== 1) {
-		const nBase = neutralChroma == null ? base.neutralPalette.chroma : neutralChroma;
-		const nFinal = clamp01_120(nBase * vib);
+	// `nRest` is the chroma the surfaces carry with neither master nor
+	// vibrance applied; the deepening pass at the bottom measures how far
+	// past it we've pushed them.
+	const nRest = neutralChroma == null ? base.neutralPalette.chroma : neutralChroma;
+	let nFinal = nRest;
+	if (neutralChroma != null || master != null || vib !== 1) {
+		const nBase = master ?? nRest;
+		nFinal = clamp01_120(nBase * vib);
 		neutralPalette = TonalPalette.fromHueAndChroma(base.neutralPalette.hue, nFinal);
 		// Match the variant's auto-derived ratio so neutralVariant stays
 		// a touch punchier than neutral.
@@ -418,13 +469,25 @@ function buildSchemeRoles(seed, dark, variantId, contrastLevel, opts = {}) {
 	// surface/surfaceContainer/surfaceVariant are byte-identical at 100%
 	// and 200% without this pass.
 	//
-	// Tone is the only axis that buys chroma headroom, so above 100% we
-	// also walk the surface roles a few steps deeper and re-apply the
-	// target chroma once there — the tone drop is what makes the colour
-	// stick. Dark mode is left alone: its surfaces sit at tone 6–20 and
-	// already respond to chroma across the whole range.
-	if (!dark && vib > 1) {
-		const shift = Math.min(SURFACE_TONE_SHIFT_MAX, (vib - 1) * SURFACE_TONE_SHIFT_MAX);
+	// Tone is the only axis that buys chroma headroom, so whenever we ask
+	// the surfaces to carry MORE chroma than they'd rest at, we also walk
+	// them a few steps deeper and re-apply the target chroma once there —
+	// the tone drop is what makes the colour stick.
+	//
+	// Keyed on the chroma excess rather than on vibrance directly, so the
+	// master chroma slider gets the same treatment; keying it to vibrance
+	// would have left the new slider clipping exactly the way vibrance
+	// used to. Excess 0 (the untouched default) means shift 0, so themes
+	// nobody has fiddled with render byte-identically.
+	//
+	// Dark mode is left alone: its surfaces sit at tone 6–20 and already
+	// respond to chroma across the whole range.
+	const chromaExcess = Math.max(0, nFinal - nRest);
+	if (!dark && chromaExcess > 0) {
+		const shift = Math.min(
+			SURFACE_TONE_SHIFT_MAX,
+			chromaExcess * SURFACE_TONE_SHIFT_PER_CHROMA
+		);
 		const deepen = (argb, chromaTarget) => {
 			const h = Hct.fromInt(argb);
 			// Order matters: drop the tone first, then ask for the chroma.
@@ -481,6 +544,7 @@ function applyTokens(theme) {
 			secondaryChroma: theme.secondaryChroma,
 			tertiaryChroma: theme.tertiaryChroma,
 			neutralChroma: theme.neutralChroma,
+			masterChroma: theme.masterChroma,
 			vibrance: theme.vibrance
 		}
 	);
@@ -650,7 +714,7 @@ export function previewRoles(theme) {
 	const key = [
 		t.seed, t.variant, t.dark, t.contrastLevel, t.secondaryMode, t.secondarySeed,
 		t.tertiaryMode, t.tertiarySeed, t.primaryChroma, t.secondaryChroma,
-		t.tertiaryChroma, t.neutralChroma, t.vibrance
+		t.tertiaryChroma, t.neutralChroma, t.masterChroma, t.vibrance
 	].join('|');
 	const hit = _previewCache.get(key);
 	if (hit) return hit;
@@ -662,6 +726,7 @@ export function previewRoles(theme) {
 		secondaryChroma: t.secondaryChroma,
 		tertiaryChroma: t.tertiaryChroma,
 		neutralChroma: t.neutralChroma,
+		masterChroma: t.masterChroma,
 		vibrance: t.vibrance
 	});
 	const out = {};
@@ -713,19 +778,27 @@ export function setTertiaryMode(mode) {
 // auto-derived chroma for that family.
 export function setPrimaryChroma(v) {
 	const n = v == null ? null : clamp01_120(Number(v));
-	themeStore.update((s) => ({ ...s, presetId: null, primaryChroma: n }));
+	// Touching one family is taking manual control, so the master
+	// slider steps aside rather than continuing to override this value.
+	themeStore.update((s) => ({ ...s, presetId: null, masterChroma: null, primaryChroma: n }));
 }
 export function setSecondaryChroma(v) {
 	const n = v == null ? null : clamp01_120(Number(v));
-	themeStore.update((s) => ({ ...s, presetId: null, secondaryChroma: n }));
+	// Touching one family is taking manual control, so the master
+	// slider steps aside rather than continuing to override this value.
+	themeStore.update((s) => ({ ...s, presetId: null, masterChroma: null, secondaryChroma: n }));
 }
 export function setTertiaryChroma(v) {
 	const n = v == null ? null : clamp01_120(Number(v));
-	themeStore.update((s) => ({ ...s, presetId: null, tertiaryChroma: n }));
+	// Touching one family is taking manual control, so the master
+	// slider steps aside rather than continuing to override this value.
+	themeStore.update((s) => ({ ...s, presetId: null, masterChroma: null, tertiaryChroma: n }));
 }
 export function setNeutralChroma(v) {
 	const n = v == null ? null : clamp01_120(Number(v));
-	themeStore.update((s) => ({ ...s, presetId: null, neutralChroma: n }));
+	// Touching one family is taking manual control, so the master
+	// slider steps aside rather than continuing to override this value.
+	themeStore.update((s) => ({ ...s, presetId: null, masterChroma: null, neutralChroma: n }));
 }
 
 // Master saturation. Unlike the per-family setters this deliberately
@@ -737,6 +810,16 @@ export function setVibrance(v) {
 	const n = clampVibrance(Number(v));
 	if (!isFinite(n)) return;
 	themeStore.update((s) => ({ ...s, vibrance: n }));
+}
+
+// Master chroma across every family. Pass `null` to hand each family
+// back to the variant (or to its per-family slider). Like setVibrance
+// this keeps `presetId`, so the selected palette stays lit while you
+// dial saturation.
+export function setMasterChroma(v) {
+	const n = v == null ? null : clampMasterChroma(Number(v));
+	if (n != null && !isFinite(n)) return;
+	themeStore.update((s) => ({ ...s, masterChroma: n }));
 }
 
 // Read the current AUTO chroma of a family for the active theme — the
@@ -797,6 +880,7 @@ export function saveCurrentScheme(name) {
 		tertiaryChroma: t.tertiaryChroma ?? null,
 		neutralChroma: t.neutralChroma ?? null,
 		vibrance: t.vibrance ?? 100,
+		masterChroma: t.masterChroma ?? null,
 		createdAt: Date.now()
 	};
 	savedSchemesStore.update((arr) => [...arr, entry]);
@@ -824,7 +908,8 @@ export function applySavedScheme(id) {
 		secondaryChroma: typeof s.secondaryChroma === 'number' ? clamp01_120(s.secondaryChroma) : null,
 		tertiaryChroma: typeof s.tertiaryChroma === 'number' ? clamp01_120(s.tertiaryChroma) : null,
 		neutralChroma: typeof s.neutralChroma === 'number' ? clamp01_120(s.neutralChroma) : null,
-		vibrance: typeof s.vibrance === 'number' ? clampVibrance(s.vibrance) : 100
+		vibrance: typeof s.vibrance === 'number' ? clampVibrance(s.vibrance) : 100,
+		masterChroma: typeof s.masterChroma === 'number' ? clampMasterChroma(s.masterChroma) : null
 	}));
 }
 
@@ -864,6 +949,7 @@ export function presetSnippetFor(saved) {
 	if (saved.tertiaryChroma  != null) obj.tertiaryChroma  = saved.tertiaryChroma;
 	if (saved.neutralChroma   != null) obj.neutralChroma   = saved.neutralChroma;
 	if (saved.vibrance != null && saved.vibrance !== 100) obj.vibrance = saved.vibrance;
+	if (saved.masterChroma != null) obj.masterChroma = saved.masterChroma;
 	if (saved.dark) obj.dark = true;
 	return JSON.stringify(obj, null, 2);
 }

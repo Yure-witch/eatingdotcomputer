@@ -23,6 +23,7 @@
 	 */
 	import {
 		themeStore, PRESETS, setPreset, setSeed, setDark, setVibrance,
+		setMasterChroma, MASTER_CHROMA_MAX, autoChromaFor,
 		previewRolesForPreset, previewRoles
 	} from '$lib/theme-store.js';
 	import ThemeDemo from '$lib/components/ThemeDemo.svelte';
@@ -42,6 +43,17 @@
 	const customRoles = $derived(previewRoles($themeStore));
 
 	const vibrance = $derived($themeStore.vibrance ?? 100);
+
+	// Master chroma is null until touched, so the thumb needs a resting
+	// place. Primary's auto chroma is the honest answer — it's the family
+	// the eye reads first — clamped into the slider's range. The label
+	// says "Auto" until there's a real value, so a parked thumb is never
+	// mistaken for a setting.
+	const chromaIsAuto = $derived($themeStore.masterChroma == null);
+	const masterChroma = $derived(
+		$themeStore.masterChroma
+			?? Math.round(Math.min(MASTER_CHROMA_MAX, autoChromaFor($themeStore, 'primary')))
+	);
 </script>
 
 <section class="mtp">
@@ -165,7 +177,27 @@
 		oninput={(e) => setVibrance(parseFloat(e.target.value))}
 		aria-label="Vibrance"
 	/>
-	<p class="note">How much colour bleeds into every surface — backgrounds and cards included, not just the accents.</p>
+	<p class="note">Scales the palette's own saturation up or down, keeping the balance between roles.</p>
+
+	<!-- Master chroma ------------------------------------------------------ -->
+	<div class="label vib-label">
+		Chroma
+		<em>{chromaIsAuto ? 'Auto' : masterChroma}</em>
+		{#if !chromaIsAuto}
+			<button type="button" class="reset" onclick={() => setMasterChroma(null)}>Auto</button>
+		{/if}
+	</div>
+	<input
+		class="vib chroma"
+		type="range"
+		min="0"
+		max={MASTER_CHROMA_MAX}
+		step="1"
+		value={masterChroma}
+		oninput={(e) => setMasterChroma(parseFloat(e.target.value))}
+		aria-label="Chroma"
+	/>
+	<p class="note">Sets one flat saturation for every role at once — accents and surfaces alike — instead of scaling what's there.</p>
 
 	<!-- Live sample -------------------------------------------------------- -->
 	<div class="label">Preview</div>
@@ -426,6 +458,22 @@
 		border-radius: 50%;
 		background: var(--md-sys-color-surface, #fff);
 		box-shadow: 0 1px 4px rgba(0,0,0,0.3), inset 0 0 0 3px var(--md-sys-color-primary, var(--accent));
+	}
+	/* Chroma's track runs neutral → full-strength secondary so it reads as
+	   a different control from vibrance's neutral → primary ramp. */
+	.vib.chroma::-webkit-slider-runnable-track {
+		background: linear-gradient(
+			to right,
+			var(--md-sys-color-surface-container-highest, #ddd),
+			var(--md-sys-color-secondary, var(--accent))
+		);
+	}
+	.vib.chroma::-moz-range-track {
+		background: linear-gradient(
+			to right,
+			var(--md-sys-color-surface-container-highest, #ddd),
+			var(--md-sys-color-secondary, var(--accent))
+		);
 	}
 	.note {
 		margin: -0.15rem 0 0;
