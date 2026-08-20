@@ -224,9 +224,10 @@
 	function settleSoon() {
 		clearTimeout(_settleT);
 		_settleT = setTimeout(() => { _touching = false; thawEmotes(); }, 260);
+		endPaging();
 	}
 
-	function onTrackPointerDown() { _touching = true; freezeEmotes(); }
+	function onTrackPointerDown() { _touching = true; freezeEmotes(); setChrome('page'); }
 	function onTrackPointerUp() {
 		// Don't clear immediately: the fling continues after the finger lifts,
 		// and the track is still settling toward a snap point.
@@ -239,6 +240,7 @@
 	function onTrackScroll() {
 		// A wheel / trackpad page never sends pointerdown, so freeze here too.
 		freezeEmotes();
+		setChrome('page');
 		settleSoon();
 		if (_rafScroll) return;
 		_rafScroll = requestAnimationFrame(() => {
@@ -291,6 +293,53 @@
 	// Reactions tab only handles reactions; pass a no-op for emoji
 	// insertion. CustomEmojiPanel hides the unused side via `mode`.
 	const _noop = () => {};
+
+	// ── Chrome state ─────────────────────────────────────────────────
+	// The category strip and the close button react to what you're doing:
+	//   'rest' — default, and what an insert returns you to. Full opacity.
+	//   'dim'  — you're scrolling DOWN through a category's contents, so the
+	//            chrome gets out of the way: 30% and smaller.
+	//   'page' — you're swiping BETWEEN categories, which is when the strip is
+	//            the thing you're actually using: full opacity and larger.
+	// Scrolling back up returns to 'rest'. An insert also returns to 'rest',
+	// and because 'dim' is only ever entered by a downward scroll, the chrome
+	// then stays opaque until you scroll down again — which is the "if I've
+	// just input something it should stay opaque" behaviour.
+	let chrome = $state('rest');
+	let _chromeT = null;
+	function setChrome(next) {
+		clearTimeout(_chromeT);
+		chrome = next;
+	}
+	// Paging is transient: once the swipe settles, fall back to rest.
+	function endPaging() {
+		clearTimeout(_chromeT);
+		_chromeT = setTimeout(() => { if (chrome === 'page') chrome = 'rest'; }, 260);
+	}
+
+	// Direction comes from the INPUT, not from scrollTop.
+	//
+	// Reading scrollTop deltas looked obvious and was wrong: the grid's
+	// virtualization nudges the position as rows mount, so the last event of a
+	// gesture is a small correction the OTHER way — a downward flick settled
+	// 400 -> 393, an upward one 93 -> 99. Reacting to that inverted the state
+	// every time. Wheel and touch deltas are what the user actually did, and no
+	// programmatic scroll can forge them.
+	function onAnyWheel(e) {
+		if (chrome === 'page') return;         // a swipe owns the chrome
+		if (e.deltaY > 1) setChrome('dim');
+		else if (e.deltaY < -1) setChrome('rest');
+	}
+	let _touchY = 0;
+	function onAnyTouchStart(e) { _touchY = e.touches?.[0]?.clientY ?? 0; }
+	function onAnyTouchMove(e) {
+		if (chrome === 'page') return;
+		const y = e.touches?.[0]?.clientY ?? 0;
+		const dy = _touchY - y;                // finger up = reading downward
+		if (Math.abs(dy) < 6) return;
+		_touchY = y;
+		setChrome(dy > 0 ? 'dim' : 'rest');
+	}
 
 	// ── Drag-to-dismiss ──────────────────────────────────────────────
 	// On mobile the picker is a docked sheet, so it should dismiss the way
@@ -375,6 +424,7 @@
 	// all expression types from all surfaces. Recents replay through the
 	// same wrappers, which also bumps them back to the front.
 	function fireEmoji(e) {
+		setChrome('rest');
 		// stamp the font mode the emoji is being sent in, so the Recent tab
 		// renders it the same way (re-sending refreshes the stamp)
 		let f = 'noto';
@@ -382,12 +432,15 @@
 		addExprRecent({ t: 'emoji', v: e, f });
 		onSelectEmoji?.(e);
 	}
-	function fireKitchen(tok) { addExprRecent({ t: 'ek', v: tok }); onInsertKitchen?.(tok); }
+	function fireKitchen(tok) {
+		setChrome('rest'); addExprRecent({ t: 'ek', v: tok }); onInsertKitchen?.(tok); }
 	function fireCe(em) {
+		setChrome('rest');
 		if (em?.shortcode) addExprRecent({ t: 'ce', v: { shortcode: em.shortcode, url: em.url } });
 		onInsertCustomEmoji?.(em);
 	}
 	function fireTg(it) {
+		setChrome('rest');
 		addExprRecent({ t: 'tg', v: { custom: !!it.custom, mode: it.mode, alt: it.alt, short: it.short, id: it.id, cp: it.cp } });
 		onInsertTgEmoji?.(it);
 	}
@@ -413,6 +466,9 @@
 </script>
 
 <div class="expr-panel" class:expr-panel-react={mode === 'react'} class:expr-dragging={dragging}
+     class:chrome-dim={chrome === 'dim'} class:chrome-page={chrome === 'page'}
+     onwheelcapture={onAnyWheel}
+     ontouchstartcapture={onAnyTouchStart} ontouchmovecapture={onAnyTouchMove}
      bind:this={panelEl} style:transform={dragY ? `translate3d(0,${dragY}px,0)` : null}>
 	{#if mode === 'react'}
 		<!-- Reaction mode: just the EmojiPicker, no chrome. The chat
@@ -620,19 +676,19 @@
 		/* Taller bottom section strip with soft, pill-shaped buttons (no hard
 		   bottom-underline highlight). The buttons fill down to ~5px above the
 		   sheet's safe-area edge. */
+		/* Island on mobile too — it sits just above the home indicator the way
+		   the bottom nav does, rather than running its background to the very
+		   bottom of the screen as the old full-bleed strip did. */
 		.expr-tabs {
-			gap: 0.35rem;
-			/* The strip's grey background runs to the very bottom of the screen;
-			   the safe-area inset is padding INSIDE it so the buttons clear the
-			   home indicator while the grey fills behind it. */
-			padding: 0.35rem 0.5rem calc(0.35rem + env(safe-area-inset-bottom, 0px));
-			border-top: none;
+			gap: 0.2rem;
+			padding: 3px;
+			margin: 4px 10px calc(6px + env(safe-area-inset-bottom, 0px));
 			align-items: stretch;
 		}
 		.expr-tab {
 			padding: 0;
-			min-height: 3.7rem;
-			border-radius: 16px;
+			min-height: 3.1rem;
+			border-radius: 999px;
 			border-bottom: none;
 		}
 		.expr-tab.active { border-bottom-color: transparent; }
@@ -643,13 +699,60 @@
 	/* Picker chrome — neutral `surface-container` background to match
 	   the sidebar/bottom-nav family. The active tab still uses the
 	   secondary pair so the chosen tab pops in the seed's colour. */
+	/* Floating island, copied from the app's bottom nav (BottomNav.svelte):
+	   inset from the edges, fully rounded, OPAQUE — depth there comes from
+	   elevation and a light top edge, never from blur or translucency, so this
+	   matches rather than inventing a glassy variant. It keeps its row in the
+	   flex column (so the last row of emotes is never hidden behind it) and
+	   floats within that row via margins. */
 	.expr-tabs {
 		display: flex;
 		gap: 1px;
-		/* Strip is at the bottom now — divider goes on top. */
-		border-top: 1.5px solid var(--border);
-		background: var(--md-sys-color-surface-container, var(--surface-2));
 		flex-shrink: 0;
+		margin: 4px 10px 8px;
+		padding: 3px;
+		border-radius: 999px;
+		background: var(--sidebar-bg, var(--md-sys-color-surface-container, var(--surface-2)));
+		border: 1px solid var(--sidebar-border, var(--border));
+		box-shadow:
+			0 10px 30px rgba(0, 0, 0, 0.14),
+			0 2px 8px rgba(0, 0, 0, 0.07),
+			inset 0 1px 0 rgba(255, 255, 255, 0.45);
+		/* Scale about the bottom edge so shrinking pulls it toward the screen
+		   edge rather than floating it into the content. */
+		transform-origin: bottom center;
+		transition: opacity 0.2s ease, transform 0.2s cubic-bezier(0.33, 1, 0.68, 1);
+	}
+
+	/* Scrolling DOWN through a category's contents — the chrome gets out of
+	   the way. Pointer-events stay on: it's dimmed, not disabled. */
+	.expr-panel.chrome-dim .expr-tabs {
+		opacity: 0.3;
+		transform: scale(0.88);
+	}
+	/* Swiping BETWEEN categories — the strip is what you're using. */
+	.expr-panel.chrome-page .expr-tabs {
+		opacity: 1;
+		transform: scale(1.12);
+	}
+
+	/* The close button follows the same states. It lives inside the child
+	   panels' bars, so it's reached with :global from the state class here. */
+	.expr-panel :global(.ctl-btn.square) {
+		transition: opacity 0.2s ease, transform 0.2s cubic-bezier(0.33, 1, 0.68, 1);
+		transform-origin: left center;
+	}
+	.expr-panel.chrome-dim :global(.ctl-btn.square) {
+		opacity: 0.3;
+		transform: scale(0.88);
+	}
+	.expr-panel.chrome-page :global(.ctl-btn.square) {
+		opacity: 1;
+		transform: scale(1.12);
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.expr-tabs,
+		.expr-panel :global(.ctl-btn.square) { transition: none; }
 	}
 	.expr-tab {
 		flex: 1;
@@ -666,10 +769,14 @@
 		cursor: pointer;
 		border-bottom: 2px solid transparent;
 	}
+	/* Concentric with the island: it pads 3px, so a fully-rounded selection
+	   inside it reads as parallel to the outer curve — same relationship the
+	   bottom nav's pill has to its bar. */
 	.expr-tab.active {
-		background: var(--md-sys-color-secondary-container, var(--paper));
-		color: var(--md-sys-color-on-secondary-container, var(--ink));
-		border-bottom-color: var(--md-sys-color-secondary, var(--accent));
+		background: var(--sidebar-active, var(--md-sys-color-secondary-container, var(--paper)));
+		color: var(--sidebar-active-fg, var(--md-sys-color-on-secondary-container, var(--ink)));
+		border-radius: 999px;
+		border-bottom-color: transparent;
 	}
 	.expr-tab-back { flex: 0 0 auto; color: var(--muted-fg); padding: 0.5rem 0.85rem; }
 	.expr-tab-back:hover { color: var(--ink); }
