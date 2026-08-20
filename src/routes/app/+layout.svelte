@@ -885,9 +885,11 @@
 	// actually making got abandoned partway, which is why it took two to get
 	// anywhere.
 	let _swTouchId = null;
+	// Indexed loop, not for…of: TouchList is an old-style collection and isn't
+	// reliably iterable in WKWebView.
 	const _trackedTouch = (list) => {
-		if (!list) return null;
-		for (const t of list) if (t.identifier === _swTouchId) return t;
+		if (!list || !list.length) return null;
+		for (let i = 0; i < list.length; i++) if (list[i].identifier === _swTouchId) return list[i];
 		return null;
 	};
 	function onSwipeStart(e) {
@@ -900,7 +902,14 @@
 		if (isPagerActive) { _dbg('start: no (pager route)'); _disarmSwipe(); return; }
 		// Only chat surfaces (and a chat still painting its skeleton) swipe out.
 		if (!_onChatSurfaceMobile && !_showConvSkeleton) { _dbg('start: no (not a chat)'); _disarmSwipe(); return; }
-		const t = e.touches?.[0];
+		// The touch that just went DOWN — `touches[0]` is whatever is first in the
+		// list, which is not the same thing if any other contact is still
+		// registered. Tracking the wrong one meant following a finger that never
+		// moved: the drag never reached its 10px threshold, so it never decided,
+		// and the release never matched either — leaving the gesture armed with a
+		// stale origin for the NEXT swipe to inherit. Which is why the first swipe
+		// did nothing and the second one worked.
+		const t = e.changedTouches?.[0] ?? e.touches?.[0];
 		if (!t) { _disarmSwipe(); return; }
 		// Don't hijack the compose / sliders / horizontal scrollers / pickers.
 		if (e.target?.closest?.('.input-area, .send-wrap, .sz-capture, input[type="range"], .text-typo-bar, .expr-panel, .picker-popover, .compose-picker-pop')) { _dbg('start: no (compose/picker)'); _disarmSwipe(); return; }
@@ -918,8 +927,16 @@
 	}
 	function onSwipeMove(e) {
 		if (!_swArmed || _convCommitted) return;
-		// Only our finger drives it; another one moving is not this gesture.
-		const t = _trackedTouch(e.touches); if (!t) return;
+		// Only our finger drives it; another one moving is not this gesture. If the
+		// tracked id has gone missing but exactly one finger is down, that finger
+		// IS the gesture — adopt it rather than stalling forever.
+		let t = _trackedTouch(e.touches);
+		if (!t && e.touches?.length === 1) {
+			t = e.touches[0];
+			_dbg(`adopt: id ${_swTouchId} -> ${t.identifier}`);
+			_swTouchId = t.identifier;
+		}
+		if (!t) { _dbg(`move: no tracked touch (${e.touches?.length ?? 0} down)`); return; }
 		const dx = t.clientX - _swStartX, dy = t.clientY - _swStartY, W = window.innerWidth || 1;
 		_swLastDx = dx;
 		// Instantaneous horizontal velocity (px/ms) — lets a quick FLICK commit
@@ -995,7 +1012,11 @@
 	// touchend / touchcancel. Another finger lifting is not our release — landing
 	// the layer on it would end the swipe still under way.
 	function onSwipeEnd(e) {
-		if (_swArmed && e?.changedTouches && !_trackedTouch(e.changedTouches)) return;
+		// Another finger lifting is not our release — but "no fingers left" always
+		// is, whatever the identifiers say. Without that second clause a mismatch
+		// strands the gesture armed, and the next swipe inherits its origin.
+		const anyLeft = (e?.touches?.length ?? 0) > 0;
+		if (_swArmed && anyLeft && e?.changedTouches && !_trackedTouch(e.changedTouches)) return;
 		_disarmSwipe();
 	}
 	// Run the layer off-screen and commit the route it uncovered. The pager is
