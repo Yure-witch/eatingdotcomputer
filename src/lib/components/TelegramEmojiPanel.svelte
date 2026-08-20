@@ -158,6 +158,10 @@
 		clearTimeout(_toastT);
 		_toastT = setTimeout(() => { toast = ''; }, 1600);
 	}
+	// "Sends static" should look like what it sends: the grid rests on preview
+	// frames rather than animating something a tap won't insert.
+	const _static = $derived(customMode === 'emoji');
+
 	function toggleCustomMode() {
 		customMode = customMode === 'animated' ? 'emoji' : 'animated';
 		flashToast(customMode === 'animated' ? 'Sends animated' : 'Sends static');
@@ -672,6 +676,11 @@
 	     pinned to the viewport while .tg-grid-wrap scrolls inside it. -->
 	<div class="tg-grid-outer" bind:this={gridOuterEl}>
 	<div class="tg-grid-wrap" bind:this={gridWrapEl} onscroll={onGridScroll}>
+		<!-- Keyed on the mode: cells register with the worker carrying their
+		     paused flag, and there is no message to flip it afterwards, so a
+		     live toggle has to remount them. Only fires on an explicit tap, and
+		     the static direction is the cheap one (nothing to load). -->
+		{#key customMode}
 		{#if loading}
 			<div class="tg-loading"><span class="tg-spinner"></span>Loading…</div>
 		{:else if isStandalone(active) || search.trim()}
@@ -687,10 +696,10 @@
 						onclick={() => cellAction(it)}>
 						{#if i >= visibleStart && i < visibleEnd}
 							{#if it.custom}
-								<LottieSticker short={it.short} id={it.id} size={24} mode="visible"
+								<LottieSticker short={it.short} id={it.id} size={24} mode="visible" staticOnly={_static}
 									ignoreHidden={_showHidden} root={gridWrapEl} title={it.alt} />
 							{:else}
-								<LottieSticker cp={it.cp} flag={it.flag} size={24} mode="visible"
+								<LottieSticker cp={it.cp} flag={it.flag} size={24} mode="visible" staticOnly={_static}
 									ignoreHidden={_showHidden} root={gridWrapEl} title={it.e} />
 							{/if}
 						{/if}
@@ -752,10 +761,10 @@
 										onclick={() => cellAction(it)}>
 										{#if _cellLive}
 											{#if it.custom}
-												<LottieSticker short={it.short} id={it.id} size={24} mode="visible"
+												<LottieSticker short={it.short} id={it.id} size={24} mode="visible" staticOnly={_static}
 													ignoreHidden={_showHidden} root={gridWrapEl} title={it.alt} />
 											{:else}
-												<LottieSticker cp={it.cp} flag={it.flag} size={24} mode="visible"
+												<LottieSticker cp={it.cp} flag={it.flag} size={24} mode="visible" staticOnly={_static}
 													ignoreHidden={_showHidden} root={gridWrapEl} title={it.e} />
 											{/if}
 										{/if}
@@ -767,6 +776,7 @@
 				{/each}
 			</div>
 		{/if}
+		{/key}
 	</div>
 	</div>
 	<div class="tg-foot">

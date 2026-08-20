@@ -62,7 +62,13 @@
 		// picker's moderation view + the Manage list pass this so the instructor
 		// can see what they're hiding). Everywhere else a hidden emote renders as
 		// a neutral placeholder and never loads its animation.
-		ignoreHidden = false
+		ignoreHidden = false,
+		// Render the preview frame and nothing else — no Lottie fetch, no atlas
+		// slot, no ticking. The picker passes this when it's in "sends static"
+		// mode: if that's what a tap will insert, the grid should show it.
+		// Cheapest possible cell — see `paused` below for why it needs no new
+		// machinery.
+		staticOnly = false
 	} = $props();
 
 	const isCustom = $derived(!!(short && id));
@@ -70,7 +76,13 @@
 	const _hidden = $derived(
 		!ignoreHidden && $hiddenEmoteKeys.has(emoteKey({ cp, short, id, custom: isCustom }))
 	);
-	const paused = $derived(isCustom && isStaticPack(short));
+	// `paused` already gates every animation path: the load, the queue, the
+	// rlottie draw loop and the worker's tick. A paused cell still registers
+	// (cheap) but never fetches or renders, so `onFirstPaint` never fires and
+	// `painted` stays false — which leaves the CSS thumb, i.e. the preview
+	// frame, showing. Static mode therefore needs no new rendering path; it
+	// just joins the existing one.
+	const paused = $derived(staticOnly || (isCustom && isStaticPack(short)));
 	// Adaptive (Telegram text_color) packs ship monochrome silhouettes meant
 	// to render in the current text colour. The sprite/thumb placeholder is
 	// baked in a single colour, so for these we recolour it to the live
@@ -343,7 +355,9 @@
 		}
 
 		// LEGACY shared-overlay path (main-thread 'skottie' engine).
-		if (mod.isAnimationLoaded?.(u)) painted = true;
+		// `!paused`: hiding the thumb hands the cell over to the overlay canvas,
+		// which never draws a paused cell — the cell would go blank.
+		if (!paused && mod.isAnimationLoaded?.(u)) painted = true;
 		// Register the cell (thumb only — animation is queued lazily
 		// when the IO observer fires `visible = true`, so off-screen
 		// cells don't request a load until they actually need it).
