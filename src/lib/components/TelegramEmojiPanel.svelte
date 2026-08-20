@@ -647,7 +647,11 @@
 		     what a tap does; paused shows `play_arrow`. No `active` highlight —
 		     the icon already says which state you're in, and a lit background
 		     saying "animated" next to an icon saying "pause" reads as a
-		     contradiction. -->
+		     contradiction.
+		     Hidden in static-only mode (the Emotes tab's Library): those packs
+		     have no motion frame-to-frame, so a play/pause there controls
+		     nothing and only invites a tap that appears to do nothing. -->
+		{#if !_isStaticOnly}
 		<PickerStickyBtn square onclick={toggleCustomMode}
 			title={customMode === 'animated' ? 'Pause — show and send static frames' : 'Play — show and send animated'}
 			label={customMode === 'animated' ? 'Pause emotes' : 'Play emotes'}>
@@ -655,6 +659,7 @@
 				{customMode === 'animated' ? 'pause' : 'play_arrow'}
 			</span>
 		</PickerStickyBtn>
+		{/if}
 		{#if searchOpen}
 			<input bind:this={searchEl} bind:value={search} class="tg-search tg-search-inline"
 				type="search" placeholder="Search emotes…" autocomplete="off" spellcheck="false" />
