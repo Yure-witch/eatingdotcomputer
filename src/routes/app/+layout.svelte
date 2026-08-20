@@ -499,6 +499,15 @@
 			_pagerProg = false;
 		});
 	}
+	// Backstop. A chat layer can only be sliding while a chat surface is on
+	// screen; once the route says otherwise, any leftover slide state is stale —
+	// and stale state means an inline transform stranded on the track, which
+	// offsets every panel horizontally until a reload. Nothing should reach this,
+	// but "should" isn't good enough for a state that survives navigation.
+	$effect(() => {
+		if (_onChatSurfaceMobile || !pagerEl) return;
+		untrack(() => { if (_convSliding || pagerEl.style.transform) _endConvSlide(); });
+	});
 	// Entering a chat surface parks the pager on the chat menu — the panel a
 	// backward (left→right) swipe uncovers, and the one the ✕ returns to.
 	$effect(() => {
@@ -830,7 +839,12 @@
 		if (!t) { _swArmed = false; return; }
 		// Don't hijack the compose / sliders / horizontal scrollers / pickers.
 		if (e.target?.closest?.('.input-area, .send-wrap, .sz-capture, input[type="range"], .text-typo-bar, .expr-panel, .picker-popover, .compose-picker-pop')) { _swArmed = false; return; }
-		clearTimeout(_convExitT);
+		// Deliberately NOT cancelling a pending _endConvSlide here. A touch that
+		// turns into a real drag cancels it below, once it's actually taking over;
+		// a touch that turns out to be a tap or a vertical scroll must leave the
+		// settle alone. Cancelling it up front stranded the teardown whenever you
+		// tapped just after a cancelled swipe — the track kept the transform it
+		// parks behind the layer, which offset every panel horizontally for good.
 		_swStartX = t.clientX; _swStartY = t.clientY;
 		_swPrevX = t.clientX; _swPrevT = e.timeStamp; _swVelX = 0;
 		_swArmed = true; _swDecided = false;
@@ -849,6 +863,7 @@
 			if (Math.abs(dy) >= Math.abs(dx)) { _swArmed = false; return; } // vertical → scroll
 			_swDecided = true;
 			_swDir = dx > 0 ? 1 : -1;
+			clearTimeout(_convExitT); // this drag owns the settle now
 			// Put the destination behind the layer BEFORE it moves, so the very
 			// first frame of the drag already shows the real panel.
 			_parkBeneath(_beneathFor(_swDir));
