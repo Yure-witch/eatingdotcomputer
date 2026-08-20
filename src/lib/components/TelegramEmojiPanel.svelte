@@ -156,6 +156,7 @@
 	let _fillFrac = $state(_IS_COARSE ? 1 : 0.34);
 	let gridH = $state(420);
 	let gridW = $state(340);
+	let _roCleanup = null;
 	// "Animated" inserts the Lottie token; "Emoji" inserts the underlying Unicode char
 	let customMode = $state('animated'); // 'animated' | 'emoji'
 
@@ -374,6 +375,7 @@
 
 	onDestroy(() => {
 		clearTimeout(_toastT);
+		_roCleanup?.();
 		// Release the picker's grid wrapper as the Skottie host so the
 		// stage canvas detaches cleanly on close. Both stages.
 		setSkottieHosts(null);
@@ -508,16 +510,18 @@
 	// Pitch derived from the column count, floored so rows stay on whole pixels
 	// (the virtualization multiplies it by row index — a fractional pitch drifts
 	// the further down you scroll).
-	const CELL_PX = $derived(
-		gridW > 0
-			? Math.max(24, Math.floor((gridW - GRID_PAD_X * 2) / COLS))
-			: CELL_FALLBACK
-	);
+	// MEASURED from a rendered cell, because the virtualization multiplies it by
+	// row index — a value that disagrees with the CSS drifts further the more
+	// you scroll. Falls back to the constant until the first cell exists.
+	let CELL_PX = $state(CELL_FALLBACK);
 	const cellsPerRow = $derived(COLS);
 	function measureGrid() {
 		if (!gridWrapEl) return;
 		gridH = gridWrapEl.clientHeight;
 		gridW = gridWrapEl.clientWidth;
+		const cell = gridWrapEl.querySelector('.tg-cell');
+		const w = cell?.getBoundingClientRect().width;
+		if (w > 0) CELL_PX = w;
 	}
 	function onGridScroll(e) {
 		scrollTop = e.target.scrollTop;
@@ -526,6 +530,15 @@
 	}
 	onMount(() => {
 		measureGrid();
+		// The panel mounts inside a sheet that is still animating in, so the
+		// mount-time width is not the final one. Without this the geometry kept
+		// whatever it read mid-animation.
+		let ro;
+		if (typeof ResizeObserver !== 'undefined' && gridWrapEl) {
+			ro = new ResizeObserver(() => measureGrid());
+			ro.observe(gridWrapEl);
+		}
+		_roCleanup = () => ro?.disconnect();
 		// Grow the live band to full over successive frames (see _fillFrac). Each
 		// frame mounts ~a row or two more, keeping every frame under budget.
 		if (_fillFrac < 1) {
@@ -725,7 +738,7 @@
 		{:else if isStandalone(active) || search.trim()}
 			<!-- Standalone view: Effects, Custom, or active search.
 			     Single flat grid, index-virtualized against scrollTop. -->
-			<div class="tg-grid" bind:this={gridEl} style:--tg-cell="{CELL_PX}px">
+			<div class="tg-grid" bind:this={gridEl}>
 				{#each filteredItems as it, i (it.custom ? `c:${it.id}` : it.cp + ':' + i)}
 					<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 					<div class="tg-cell" class:tg-cell-hidden={_showHidden && _isCellHidden(it)}
@@ -767,7 +780,7 @@
 			{@const _cpr = Math.max(1, cellsPerRow)}
 			{@const _cellVisTop = scrollTop - CELL_PX * 2}
 			{@const _cellVisBot = scrollTop + (gridH + CELL_PX * 2) * _fillFrac}
-			<div class="tg-grid tg-grid-flow" bind:this={gridEl} style:height="{totalHeight}px" style:--tg-cell="{CELL_PX}px">
+			<div class="tg-grid tg-grid-flow" bind:this={gridEl} style:height="{totalHeight}px">
 				{#each flowingSections as section, sIdx (section.key)}
 					{@const geo = flowingGeometry[sIdx]}
 					{@const sectionVisible = geo
@@ -885,7 +898,10 @@
 		}
 		/* Compact the tab strip + mode row a touch so the grid gets
 		   more of the panel. */
-		.tg-tab, .tg-tab-pack { padding: 0.3rem 0.5rem !important; }
+		/* Bigger tile on touch — 2.5rem lines the selection up with the 40px
+		   grid cells below it. The old rule padded these instead, which is what
+		   made the selected state a wide rectangle. */
+		.tg-tabs { --tg-tab: 2.5rem; }
 		.tg-mode-row { padding: 0.2rem 0.5rem !important; }
 		.tg-search-row { padding: 0.2rem 0.5rem 0.25rem !important; }
 	}
@@ -897,13 +913,33 @@
 	/* No opacity fade on unselected tabs; hover/active mirror the
 	   ExpressionPicker strip (M3 state layer + secondary container) so
 	   all the category bars read as one family. */
-	.tg-tab { flex: 1 0 auto; min-width: 34px; padding: 0.45rem 0; border: none; background: none; font-size: 1.05rem; line-height: 1; cursor: pointer; border-radius: 10px; transition: background 0.13s; }
+	/* Square tabs, so the selected background is a 1:1 tile rather than the
+	   wide content-width rectangle it used to be (min-width 34px with
+	   asymmetric padding — taller on desktop, much wider on mobile, never
+	   square). Fixed-size and non-growing: the strip scrolls, so tabs should
+	   not stretch to fill it, and a constant box means the selection tile is
+	   the same shape wherever it lands. */
+	.tg-tab {
+		flex: 0 0 auto;
+		width: var(--tg-tab, 2.125rem);
+		height: var(--tg-tab, 2.125rem);
+		aspect-ratio: 1 / 1;
+		padding: 0;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		border: none; background: none;
+		font-size: 1.05rem; line-height: 1;
+		cursor: pointer; border-radius: 10px;
+		transition: background 0.13s;
+	}
 	.tg-tab:hover:not(.active) { background: color-mix(in srgb, var(--md-sys-color-on-surface, var(--ink)) 7%, transparent); }
 	.tg-tab.active {
 		background: var(--md-sys-color-secondary-container, var(--surface-2));
 		color: var(--md-sys-color-on-secondary-container, var(--ink));
 	}
-	.tg-tab-pack { display: inline-flex; align-items: center; justify-content: center; min-width: 32px; padding: 0.3rem 0.18rem; }
+	/* Pack tabs share the square box so the selection tile never changes shape. */
+	.tg-tab-pack { display: inline-flex; align-items: center; justify-content: center; padding: 0; }
 	.tg-tab-sep { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; padding: 0 0.35rem; color: #b8aea0; font-size: 0.85rem; font-weight: 700; user-select: none; }
 
 	.tg-pack-header { flex-shrink: 0; padding: 0.45rem 0.65rem 0.35rem; border-bottom: 1px solid var(--border); background: var(--paper); font-size: 0.82rem; font-weight: 600; color: var(--ink, var(--ink)); display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
@@ -944,7 +980,14 @@
 	.tg-grid-wrap::-webkit-scrollbar { width: 4px; }
 	.tg-grid-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 	/* Match the regular EmojiPicker: 36×36 cells, no gap, light hover. */
-	.tg-grid { display: flex; flex-wrap: wrap; gap: 0; }
+	/* CSS owns the column count. This was flex-wrap over fixed-width cells
+	   whose width came from a JS measurement of the wrapper — and that
+	   measurement only runs on mount, when the sheet is still animating in and
+	   the wrapper is narrower than it ends up. A stale reading used to only
+	   skew the virtualization count; once the cell SIZE derived from it too, it
+	   became visible as 15 tiny columns instead of 9. Grid tracks can't go
+	   stale. */
+	.tg-grid { display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); gap: 0; }
 	/* Flow variant: explicit-height container, sections pinned at
 	   their precomputed pxStart. Container height is locked at
 	   `flowingGeometry`'s last pxEnd, so the ResizeObserver on
@@ -974,11 +1017,11 @@
 		color: var(--md-sys-color-on-surface-variant, var(--muted-fg));
 	}
 	.tg-grid-flow .tg-section-grid {
-		display: flex;
-		flex-wrap: wrap;
+		display: grid;
+		grid-template-columns: repeat(9, minmax(0, 1fr));
 		gap: 0;
 	}
-	.tg-cell { width: var(--tg-cell, 36px); height: var(--tg-cell, 36px); border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.12s; }
+	.tg-cell { width: 100%; aspect-ratio: 1 / 1; height: auto; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.12s; }
 	.tg-cell:hover { background: var(--surface-2); }
 	/* Moderation: a hidden emote shown to the instructor is dimmed + struck. */
 	.tg-cell-hidden { position: relative; opacity: 0.4; }
