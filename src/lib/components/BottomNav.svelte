@@ -362,7 +362,7 @@
 		   colour — the highlight pill covers just the icon, so the
 		   label keeps its resting colour in every state. */
 		/* Pulls the label up into the glyph's empty line-box space. */
-		.nav-item .label { margin-top: -5px; }
+		.nav-item .label { margin-top: -3px; }
 
 		/* Pulls the label up into the glyph's line box, which is taller than its
 		   ink — the flex gap was already ~1px, so that empty space is what was
