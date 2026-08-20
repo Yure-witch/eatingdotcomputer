@@ -469,7 +469,8 @@
 	});
 </script>
 
-<div class="expr-panel" class:expr-panel-react={mode === 'react'} class:expr-dragging={dragging}
+<div class="expr-panel" style:--expr-tabs-mr={onBackspace ? 'calc(10px + 2.5rem + 8px)' : null}
+     class:expr-panel-react={mode === 'react'} class:expr-dragging={dragging}
      onwheelcapture={onAnyWheel}
      ontouchstartcapture={onAnyTouchStart} ontouchmovecapture={onAnyTouchMove}
      bind:this={panelEl} style:transform={dragY ? `translate3d(0,${dragY}px,0)` : null}>
@@ -479,7 +480,7 @@
 		     through ExpressionPicker means recents + skin-tone +
 		     popular-tab state are shared with the compose picker (via
 		     EmojiPicker's own localStorage keys). -->
-		<EmojiPicker onSelect={fireEmoji} onClose={null} />
+		<EmojiPicker onSelect={fireEmoji} {onClose} />
 	{:else}
 		{#if onClose}
 			<!-- Drag handle. Mobile-only (the desktop popover isn't a sheet);
@@ -503,34 +504,26 @@
 			<span class="msi msi-20" class:msi-fill={tab === 'emoji'}>mood</span>
 		</button>
 		<button class="expr-tab" class:active={tab === 'emotes'} onclick={() => goTo('emotes')} title="Custom emotes">
-			<span class="msi msi-20" class:msi-fill={tab === 'emotes'}>sentiment_very_satisfied</span>
+			<span class="msi msi-20" class:msi-fill={tab === 'emotes'}>animated_images</span>
 		</button>
 		{#if !tgHidden}
 			<button class="expr-tab" class:active={tab === 'kitchen'} onclick={() => goTo('kitchen')} title="Emoji Kitchen">
 				<span class="msi msi-20" class:msi-fill={tab === 'kitchen'}>blender</span>
 			</button>
 		{/if}
-		{#if onBackspace}
-			<!-- Backspace lives at the right end of the (bottom) category
-			     strip — bottom-right corner of the picker, like a native
-			     emoji keyboard's delete key. -->
-			<button class="expr-tab expr-tab-back" onmousedown={(e) => { e.preventDefault(); onBackspace(); }} title="Delete" aria-label="Delete">
-				<span class="msi msi-20">backspace</span>
-			</button>
-		{/if}
 	</nav>
 
-	{#if onClose}
-		<!-- Its own surface, floating over the panes rather than living inside
-		     whichever inner panel happens to be showing. That's what makes it a
-		     separate surface: it no longer inherits a bar's background, it sits
-		     above the content like the category island, and it stays put while
-		     the panes page beneath it. -->
-		<button type="button" class="expr-back"
+	{#if onBackspace}
+		<!-- Delete sits apart from the category icons on purpose: those switch
+		     what you're looking at, this edits what you've typed. Sharing a row
+		     put a destructive action one slip away from navigation. Its own
+		     surface in the bottom-right corner, dimming with the rest of the
+		     chrome. -->
+		<button type="button" class="expr-del"
 			class:chrome-dim={chrome === 'dim'} class:chrome-page={chrome === 'page'}
-			title="Close" aria-label="Close picker"
-			onmousedown={(e) => e.preventDefault()} onclick={onClose}>
-			<span class="msi msi-20">close</span>
+			title="Delete" aria-label="Delete"
+			onmousedown={(e) => { e.preventDefault(); onBackspace(); }}>
+			<span class="msi msi-20">backspace</span>
 		</button>
 	{/if}
 	<!-- One pane per category in a native horizontal scroll-snap track:
@@ -572,9 +565,9 @@
 							</div>
 						{/if}
 					{:else if t === 'emoji'}
-						<EmojiPicker onSelect={fireEmoji} onClose={null} />
+						<EmojiPicker onSelect={fireEmoji} {onClose} />
 					{:else if t === 'kitchen'}
-						<EmojiKitchen onInsert={fireKitchen} onClose={null} />
+						<EmojiKitchen onInsert={fireKitchen} {onClose} />
 					{:else if t === 'emotes'}
 						<!-- Every Telegram pack (animated AND static) plus the
 						     class's uploads, in one ordered flow — see
@@ -583,7 +576,7 @@
 							onInsert={fireTg}
 							packFilter="all"
 							canModerate={isInstructor}
-							onClose={null}
+							{onClose}
 							{uploads}
 							onInsertUpload={(u) => fireCe({ shortcode: u.shortcode, url: u.url })}
 							onDeleteUpload={isInstructor ? deleteUpload : null}
@@ -683,7 +676,7 @@
 		.expr-tabs {
 			gap: 0.2rem;
 			padding: 3px;
-			margin: 4px calc(10px + 2.5rem + 8px) calc(6px + env(safe-area-inset-bottom, 0px)) 10px;
+			margin: 4px var(--expr-tabs-mr, 10px) calc(6px + env(safe-area-inset-bottom, 0px)) 10px;
 			align-items: stretch;
 		}
 		.expr-tab {
@@ -716,8 +709,8 @@
 		position: absolute;
 		left: 0; right: 0; bottom: 0;
 		z-index: 4;
-		/* Right margin clears the close button in its corner. */
-		margin: 4px calc(10px + 2.3rem + 8px) 8px 10px;
+		/* Right margin clears the delete key's corner when one is present. */
+		margin: 4px var(--expr-tabs-mr, 10px) 8px 10px;
 		padding: 3px;
 		border-radius: 999px;
 		background: var(--sidebar-bg, var(--md-sys-color-surface-container, var(--surface-2)));
@@ -752,12 +745,12 @@
 		transform: scale(1.12);
 	}
 
-	/* Close button — its own floating surface, same recipe as the island. */
+	/* Delete key — its own floating surface, same recipe as the island. */
 	/* Bottom-RIGHT corner, and deliberately outside the island rather than a
 	   member of it: the island holds categories, this closes the picker, and
 	   mixing the two put an action in a row of navigation. The island's right
 	   margin is widened to leave this its own corner. */
-	.expr-back {
+	.expr-del {
 		position: absolute;
 		bottom: calc(8px + env(safe-area-inset-bottom, 0px)); right: 10px;
 		z-index: 5;
@@ -777,11 +770,11 @@
 		transition: opacity 0.18s ease, transform 0.18s cubic-bezier(0.33, 1, 0.68, 1);
 		will-change: transform, opacity;
 	}
-	.expr-back :global(.msi) { font-variation-settings: 'wght' 700; }
-	.expr-back.chrome-dim { opacity: 0.5; transform: scale(0.88); transition-duration: 0.08s; }
-	.expr-back.chrome-page { opacity: 1; transform: scale(1.12); }
+	.expr-del :global(.msi) { font-variation-settings: 'wght' 700; }
+	.expr-del.chrome-dim { opacity: 0.5; transform: scale(0.88); transition-duration: 0.08s; }
+	.expr-del.chrome-page { opacity: 1; transform: scale(1.12); }
 	@media (prefers-reduced-motion: reduce) {
-		.expr-tabs, .expr-back { transition: none; }
+		.expr-tabs, .expr-del { transition: none; }
 	}
 	.expr-tab {
 		flex: 1;

@@ -365,13 +365,14 @@
 	// top; user scroll inside the scroller updates the highlighted tab
 	// to whichever section is currently nearest the top edge.
 	// Section order, hand-tuned rather than manifest order:
-	//   1. CreepyEmoji — titled "Cursed Emoji", the pack people actually open
-	//      the picker for, so it leads.
-	//   2. the static packs, right behind their animated counterpart.
-	//   3. the class's own uploads — placed just above Special Effects because
-	//      it's a short section and reads well as a lead-in rather than buried
-	//      among the packs.
-	//   4. everything else, in manifest order.
+	//   1. the class's own uploads, just above Special Effects — a short
+	//      section that reads as a lead-in rather than something buried.
+	//   2. the regular Telegram categories (Special Effects, Smileys, …).
+	//   3. CreepyEmoji — titled "Cursed Emoji" — leading the PACKS, i.e. the
+	//      first thing after the regular emoji end rather than the first thing
+	//      in the picker.
+	//   4. the static packs, right behind their animated counterpart.
+	//   5. everything else, in manifest order.
 	const LEAD_PACKS = ['CreepyEmoji'];
 	const AFTER_LEAD_PACKS = ['MadEmoji', 'MadEmoji2', 'HeartEmoji'];
 	const EFFECTS_KEY = 'Effects';
@@ -393,7 +394,7 @@
 			? [...heads.slice(0, fx), ...uploadsCat, ...heads.slice(fx)]
 			: [...uploadsCat, ...heads];
 
-		return [...lead, ...statics, ...headsWithUploads, ...rest];
+		return [...headsWithUploads, ...lead, ...statics, ...rest];
 	});
 	const flowingSections = $derived(
 		flowingCats.map((c) => ({
