@@ -874,6 +874,7 @@
 	}
 	let _swLastDx = 0, _swVelX = 0, _swPrevX = 0, _swPrevT = 0, _swStartT = 0;
 	let _dbgMoveNoted = false;
+	let _mvCount = 0; // touchmoves seen this gesture, counted before any guard
 	let _swDir = 1; // +1 = left→right (back to the chat menu), -1 = right→left (on to the next section)
 	// Which panel a given direction uncovers.
 	const _beneathFor = (dir) => (dir > 0 ? _chatMenuIdx : _afterChatIdx);
@@ -924,10 +925,11 @@
 		_swStartX = t.clientX; _swStartY = t.clientY;
 		_swStartT = e.timeStamp ?? 0;
 		_swPrevX = t.clientX; _swPrevT = e.timeStamp; _swVelX = 0;
-		_swArmed = true; _swDecided = false; _dbgMoveNoted = false;
+		_swArmed = true; _swDecided = false; _dbgMoveNoted = false; _mvCount = 0;
 		_dbg('start: armed');
 	}
 	function onSwipeMove(e) {
+		_mvCount++; // counted before every guard, so "did moves arrive at all?" is answerable
 		if (!_swArmed || _convCommitted) {
 			// Once per gesture — enough to see WHY moves are being ignored without
 			// flooding the readout.
@@ -1019,6 +1021,11 @@
 	// touchend / touchcancel. Another finger lifting is not our release — landing
 	// the layer on it would end the swipe still under way.
 	function onSwipeEnd(e) {
+		// Unconditional, before any return: this one line answers whether moves
+		// arrived, whether the gesture survived to the release, and what the touch
+		// lists actually looked like — the three things every silent path has been
+		// hiding.
+		_dbg(`${e?.type ?? 'end'}: mv=${_mvCount} armed=${_swArmed ? 1 : 0} dec=${_swDecided ? 1 : 0} left=${e?.touches?.length ?? 0} ch=${e?.changedTouches?.length ?? 0}`);
 		// Another finger lifting is not our release — but "no fingers left" always
 		// is, whatever the identifiers say. Without that second clause a mismatch
 		// strands the gesture armed, and the next swipe inherits its origin.
