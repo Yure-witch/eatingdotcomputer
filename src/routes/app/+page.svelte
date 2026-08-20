@@ -199,6 +199,9 @@
 	// surrounding <fieldset disabled> belt-and-suspenders also blocks
 	// any form submission if they tap a Submit button by mistake.
 	let previewAsStudent = $state(false);
+	// The syllabus provenance line is behind the (i) — it's reference detail, not
+	// something the week's headline should carry.
+	let showSylFrom = $state(false);
 
 	function addItem() {
 		items = [...items, { label: '', requiresSubmission: false, acceptedTypes: ['link'], resourceUrl: '', resourceLabel: '', resourceFile: null }];
@@ -666,16 +669,24 @@
 			{#if data.currentPlan}
 				<div class="week-meta">
 					<span class="week-tag">Class {data.currentPlan.week}</span>
-					{#if data.currentPlan.dueDate}
-						<span class="due-date">Due {formatDate(data.currentPlan.dueDate)}</span>
-					{/if}
 				</div>
 
 				<h1 class="headline">{@html contentHtml(data.currentPlan.headline, false)}</h1>
-				{#if data.currentPlan.sylTitle}
-					<p class="week-syl-from" title="From the key syllabus">
-						<span class="msi msi-16">info</span>
-						From
+
+				<div class="week-subline">
+					{#if data.currentPlan.dueDate}
+						<span class="due-date">Due {formatDate(data.currentPlan.dueDate)}</span>
+					{/if}
+					{#if data.currentPlan.sylTitle}
+						<button class="syl-info-btn" class:open={showSylFrom}
+							onclick={() => (showSylFrom = !showSylFrom)}
+							aria-expanded={showSylFrom} aria-label="Where this came from"
+							title="From the key syllabus"><span class="msi msi-16">info</span></button>
+					{/if}
+				</div>
+
+				{#if showSylFrom && data.currentPlan.sylTitle}
+					<p class="week-syl-from">
 						{#if data.currentPlan.sylWeekOf}
 							{new Date(...data.currentPlan.sylWeekOf.split('-').map((v, i) => i === 1 ? v - 1 : +v)).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} ·
 						{/if}
@@ -1031,8 +1042,28 @@
 
 	/* ── Student: headline ── */
 	.headline {
-		font-family: 'Avara', serif; font-size: 2.25rem; font-weight: 400;
-		color: var(--ink); margin: 0 0 2rem; line-height: 1.2;
+		/* Avara has no symbol coverage, so glyphs carried in from the syllabus
+		   (✦, ⊙, arrows) rendered as tofu. The fallbacks below are what the
+		   syllabus body already resolves to. */
+		font-family: 'Avara', 'Apple Color Emoji', 'Segoe UI Symbol', 'Noto Color Emoji', serif;
+		font-size: 2.6rem; font-weight: 400;
+		color: var(--ink); margin: 0 0 0.75rem; line-height: 1.15;
+	}
+	/* Due date + provenance sit under the headline, where they read as detail
+	   about it rather than a label above it. */
+	.week-subline {
+		display: flex; align-items: center; gap: 0.6rem;
+		margin: 0 0 2rem;
+	}
+	.syl-info-btn {
+		display: inline-flex; align-items: center; justify-content: center;
+		width: 28px; height: 28px; padding: 0;
+		border: none; border-radius: 999px; background: none;
+		color: var(--muted-fg); cursor: pointer;
+		transition: background 0.15s ease, color 0.15s ease;
+	}
+	.syl-info-btn:hover, .syl-info-btn.open {
+		background: var(--surface-2); color: var(--ink);
 	}
 
 	/* ── Student: checklist ── */

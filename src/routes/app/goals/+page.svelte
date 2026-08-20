@@ -325,11 +325,17 @@
 		padding: 0.3rem 0.4rem 0.3rem 0.95rem;
 	}
 	.goal-add-inner:focus-within { border-color: var(--accent); max-width: 640px; }
-	/* The Add button rides in with the expansion rather than crowding the
-	   collapsed bar — it's disabled while empty anyway. Width/opacity rather
-	   than display:none so it animates. */
+	/* Collapsed, the button keeps its accent fill and the + glyph — only the
+	   word "Add" folds away, so the affordance stays legible at half width. */
+	.goal-add-btn span {
+		display: inline-block; overflow: hidden; white-space: nowrap; max-width: 4rem;
+		transition: max-width 0.3s cubic-bezier(0.33, 1, 0.68, 1), opacity 0.2s ease;
+	}
 	.goal-add-inner:not(:focus-within) .goal-add-btn {
-		max-width: 0; padding-left: 0; padding-right: 0; opacity: 0;
+		padding-left: 0.5rem; padding-right: 0.5rem;
+	}
+	.goal-add-inner:not(:focus-within) .goal-add-btn span {
+		max-width: 0; opacity: 0;
 	}
 	.goal-add-input {
 		flex: 1; min-width: 0; border: none; background: none; outline: none;
@@ -342,9 +348,7 @@
 		display: inline-flex; align-items: center; gap: 0.3rem;
 		padding: 0.45rem 0.9rem 0.45rem 0.75rem;
 		font-family: inherit; font-size: 0.85rem; font-weight: 700; cursor: pointer;
-		overflow: hidden; white-space: nowrap; max-width: 8rem;
-		transition: opacity 0.2s ease, max-width 0.3s cubic-bezier(0.33, 1, 0.68, 1),
-			padding 0.3s cubic-bezier(0.33, 1, 0.68, 1);
+		transition: opacity 0.15s ease, padding 0.3s cubic-bezier(0.33, 1, 0.68, 1);
 	}
 	.goal-add-btn svg { display: block; }
 	.goal-add-btn:disabled { opacity: 0.35; cursor: default; }
