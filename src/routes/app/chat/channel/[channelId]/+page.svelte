@@ -4288,6 +4288,8 @@
 		classId={data.currentClass?.id ?? null}
 		currentUser={data.currentUser}
 		resolveUser={(uid) => userMap[uid] ?? null}
+		chatName={'# ' + data.channelId}
+		{userMap}
 		onClose={() => (threadOpen = null)}
 		onCountChange={(pid, total) => { threadCountsExact = { ...threadCountsExact, [pid]: total }; }}
 	/>
@@ -4783,6 +4785,18 @@
 		background: var(--paper); color: var(--md-sys-color-primary, var(--accent));
 		font-family: inherit; font-size: 0.72rem; font-weight: 600;
 		cursor: pointer; transition: border-color 0.12s, background 0.12s;
+	}
+	@media (max-width: 640px) {
+		/* This is the only way into a thread on a phone, and at desktop size it
+		   was a target you had to aim at. Bigger text, and enough padding to
+		   clear the 44px the rest of the app's touch targets use. */
+		.thread-chip {
+			margin-top: 0.4rem;
+			padding: 0.5rem 0.85rem;
+			font-size: 0.85rem;
+			gap: 0.4rem;
+		}
+		.thread-chip-dot { width: 8px; height: 8px; }
 	}
 	.thread-chip:hover { border-color: var(--md-sys-color-primary, var(--accent)); background: var(--surface-2); }
 	.thread-chip.unread { border-color: var(--md-sys-color-primary, var(--accent)); font-weight: 700; }

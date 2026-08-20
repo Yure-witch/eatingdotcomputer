@@ -8,8 +8,11 @@ export async function POST({ request, locals }) {
 	const session = await locals.auth();
 	await requireClassAccess(session);
 
-	const { messageId, emoji, conversationId, type } = await request.json();
+	const { messageId, emoji, conversationId, type, parentId } = await request.json();
 	if (!messageId || !emoji || !conversationId) error(400, 'Missing fields');
+	// Threads hang off a parent message, so they need one more path segment.
+	const isThread = type === 'thread';
+	if (isThread && !parentId) error(400, 'Missing parentId');
 
 	const userId = session.user.id;
 	const adminDb = getAdminDb();
@@ -20,7 +23,13 @@ export async function POST({ request, locals }) {
 	// ([tg:…], [tgc:…], [ce:…], [ek:…]) contain `[`/`]`/`/` which Firebase rejects,
 	// which is why animated/custom emote reactions silently failed to write. Turso
 	// keeps the RAW token (no key restrictions); only the Firebase path is escaped.
-	const base = type === 'dm' ? `dms/${conversationId}` : `channels/${conversationId}`;
+	const base = isThread
+		? `threads/${conversationId}/${parentId}`
+		: type === 'dm' ? `dms/${conversationId}` : `channels/${conversationId}`;
+	// Thread replies archive to their own table, and their reactions with them —
+	// message_reactions is foreign-keyed to chat_messages and can't hold them.
+	const msgTable = isThread ? 'thread_messages' : 'messages';
+	const rxTable = isThread ? 'thread_message_reactions' : 'message_reactions';
 	const msgReactionsPath = `${base}/reactions/${messageId}`;
 	const fbEmojiKey = encodeReactionKey(emoji);
 	const reactionPath = `${msgReactionsPath}/${fbEmojiKey}/${userId}`;
@@ -31,12 +40,12 @@ export async function POST({ request, locals }) {
 	// and gets added instead of removed, and the client merge loses other users' reactions.
 	if (turso) {
 		const msgRow = await turso.execute({
-			sql: 'SELECT id FROM messages WHERE id = ?',
+			sql: `SELECT id FROM ${msgTable} WHERE id = ?`,
 			args: [messageId]
 		});
 		if (msgRow.rows.length > 0) {
 			const tursoRxRows = await turso.execute({
-				sql: 'SELECT emoji, user_id FROM message_reactions WHERE message_id = ?',
+				sql: `SELECT emoji, user_id FROM ${rxTable} WHERE message_id = ?`,
 				args: [messageId]
 			});
 			if (tursoRxRows.rows.length > 0) {
@@ -70,18 +79,18 @@ export async function POST({ request, locals }) {
 	// Keep Turso in sync for archived messages
 	if (turso) {
 		const msgRow = await turso.execute({
-			sql: 'SELECT id FROM messages WHERE id = ?',
+			sql: `SELECT id FROM ${msgTable} WHERE id = ?`,
 			args: [messageId]
 		});
 		if (msgRow.rows.length > 0) {
 			if (removing) {
 				await turso.execute({
-					sql: 'DELETE FROM message_reactions WHERE message_id = ? AND emoji = ? AND user_id = ?',
+					sql: `DELETE FROM ${rxTable} WHERE message_id = ? AND emoji = ? AND user_id = ?`,
 					args: [messageId, emoji, userId]
 				});
 			} else {
 				await turso.execute({
-					sql: 'INSERT OR IGNORE INTO message_reactions (message_id, emoji, user_id) VALUES (?, ?, ?)',
+					sql: `INSERT OR IGNORE INTO ${rxTable} (message_id, emoji, user_id) VALUES (?, ?, ?)`,
 					args: [messageId, emoji, userId]
 				});
 			}

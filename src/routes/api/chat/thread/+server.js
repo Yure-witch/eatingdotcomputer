@@ -51,6 +51,25 @@ export async function GET({ url, locals }) {
 		args: [convId, parentId]
 	});
 
+	// Reactions for the archived replies, in the same shape Firebase uses
+	// ({ [emoji]: { [uid]: true } }) so the client can merge the two sources
+	// without caring which side a given reply came from.
+	const ids = result.rows.map((r) => String(r.id));
+	const rxByMsg = {};
+	if (ids.length) {
+		const rx = await db.execute({
+			sql: `SELECT message_id, emoji, user_id FROM thread_message_reactions
+			      WHERE message_id IN (${ids.map(() => '?').join(',')})`,
+			args: ids
+		});
+		for (const r of rx.rows) {
+			const mid = String(r.message_id);
+			const em = String(r.emoji);
+			(rxByMsg[mid] ??= {})[em] ??= {};
+			rxByMsg[mid][em][String(r.user_id)] = true;
+		}
+	}
+
 	const messages = result.rows.map((r) => ({
 		id: String(r.id),
 		userId: String(r.user_id),
@@ -58,6 +77,7 @@ export async function GET({ url, locals }) {
 		userRole: String(r.user_role),
 		content: String(r.content),
 		createdAt: new Date(String(r.created_at)).getTime(),
+		reactions: rxByMsg[String(r.id)] ?? null,
 		attachment: r.attachment_url ? {
 			url: String(r.attachment_url),
 			filename: r.attachment_filename ? String(r.attachment_filename) : null,

@@ -11,7 +11,7 @@
 	import { fly } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
 	import { db as rtdb } from '$lib/firebase.js';
-	import { ref, onChildAdded, off, set } from 'firebase/database';
+	import { ref, onChildAdded, onValue, off, set } from 'firebase/database';
 	import { createContentRenderer, jumboEmojiCountM, bubbleFontSize } from '$lib/message-render.js';
 	import { mountStaticEmotes } from '$lib/emote-mount.js';
 	import { getCachedCustomEmojiMap } from '$lib/custom-emoji-store.js';
@@ -80,6 +80,8 @@
 	}
 	import ExpressionTip from './ExpressionTip.svelte';
 	import MessageAttachment from './MessageAttachment.svelte';
+	import ExpressionPicker from './ExpressionPicker.svelte';
+	import { decodeReactionKey } from '$lib/reaction-key.js';
 	import { wrapEmojiInText } from '$lib/emoji-tip.js';
 
 	let {
@@ -89,7 +91,9 @@
 		resolveUser = null,   // (uid) => { name, role } for live compact msgs
 		onClose = null,
 		onCountChange = null, // (parentId, totalCount) → parent page updates its chip
-		classId = null        // for /api/upload bookkeeping
+		classId = null,       // for /api/upload bookkeeping
+		chatName = '',        // "# general" / the DM partner — shown in the header
+		userMap = {}          // uid → { name } for reaction tooltips
 	} = $props();
 
 	// wrapEmoji bakes .e-tip name pops into plain emoji — hover parity with chat
@@ -147,13 +151,18 @@
 			const res = await fetch(`/api/chat/thread?convId=${encodeURIComponent(convId)}&parentId=${encodeURIComponent(parentId)}`);
 			if (res.ok) {
 				const data = await res.json();
-				for (const m of data.messages || []) addReply(m);
+				for (const m of data.messages || []) {
+					if (m.reactions) _archivedRx[m.id] = m.reactions;
+					addReply(m);
+				}
+				if (Object.keys(_archivedRx).length) reactions = { ..._archivedRx, ...reactions };
 			}
 		} catch { /* live-only fallback */ }
 		loading = false;
 
 		// 2) live replies from Firebase
 		_ref = ref(rtdb, `threads/${convId}/${parentId}/messages`);
+		watchReactions();
 		onChildAdded(_ref, (snap) => {
 			const v = snap.val() || {};
 			const uid = v.u ?? v.userId ?? '';
@@ -175,6 +184,8 @@
 
 	onDestroy(() => {
 		if (_ref) off(_ref);
+		_rxUnsub?.();
+		clearTimeout(_tpExitT);
 		markRead(); // closing the panel = you've seen everything in it
 	});
 
@@ -219,6 +230,51 @@
 		pendingAtt = null;
 	}
 
+	// ── Reactions ───────────────────────────────────────────────────────
+	// Same contract as chat: live state at threads/{convId}/{parentId}/reactions
+	// as { [messageId]: { [encodedEmoji]: { [uid]: true } } }, written only by
+	// the server (RTDB rules keep these paths client-read-only), and archived
+	// replies bring theirs back from Turso in the GET above. Merged here so a
+	// reply's chips look the same either side of the 24h line.
+	let reactions = $state({});
+	let _rxUnsub = null;
+	function watchReactions() {
+		const r = ref(rtdb, `threads/${convId}/${parentId}/reactions`);
+		_rxUnsub = onValue(r, (snap) => {
+			const live = snap.val() ?? {};
+			// Live wins per-message: it's the same data, just fresher.
+			reactions = { ..._archivedRx, ...live };
+		});
+	}
+	let _archivedRx = {};
+	// Reaction KEYS are Firebase-escaped; the raw token is what renders and what
+	// the API expects back.
+	const rxEntries = (msgId) => Object.entries(reactions[msgId] ?? {})
+		.map(([k, users]) => [decodeReactionKey(k), users])
+		.filter(([, users]) => Object.keys(users ?? {}).length > 0);
+
+	let pickerMsgId = $state(null);
+	let pickerPos = $state({ x: 0, y: 0 });
+	function openPicker(msgId, e) {
+		if (pickerMsgId === msgId) { pickerMsgId = null; return; }
+		const rect = e.currentTarget.getBoundingClientRect();
+		const pw = 264, ph = 192;
+		let x = rect.left;
+		let y = rect.top - ph - 8;
+		if (x + pw > window.innerWidth - 8) x = window.innerWidth - pw - 8;
+		if (y < 8) y = rect.bottom + 8;
+		pickerPos = { x, y };
+		pickerMsgId = msgId;
+	}
+	async function toggleReaction(msgId, emoji) {
+		if (!msgId || !emoji) return;
+		await fetch('/api/chat/react', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ messageId: msgId, emoji, conversationId: convId, type: 'thread', parentId })
+		}).catch(() => {});
+	}
+
 	async function send() {
 		const text = draft.trim();
 		if ((!text && !pendingAtt) || !currentUser?.id) return;
@@ -261,6 +317,22 @@
 <!-- |global: transitions are LOCAL by default, and the {#key} wrapper the
      pages use for thread-switch remounts made the mount belong to an outer
      block — silently skipping the intro. Global plays it on every mount. -->
+{#snippet reactionRow(msgId)}
+	<div class="thread-rx">
+		{#each rxEntries(msgId) as [emoji, users] (emoji)}
+			{@const mine = currentUser?.id in (users ?? {})}
+			<button class="thread-rx-chip" class:reacted={mine} onclick={() => toggleReaction(msgId, emoji)}
+				title={Object.keys(users).map((uid) => userMap[uid]?.name ?? 'Someone').join(', ')}>
+				<span class="thread-rx-emoji">{@html contentHtml(emoji)}</span>
+				<span class="thread-rx-count">{Object.keys(users).length}</span>
+			</button>
+		{/each}
+		<button class="thread-rx-add" onclick={(e) => openPicker(msgId, e)} title="Add reaction" aria-label="Add reaction">
+			<span class="msi msi-18">add_reaction</span>
+		</button>
+	</div>
+{/snippet}
+
 <aside class="thread-panel" class:tp-swiping={_tpSwiping} class:tp-dragging={_tpDragging} bind:this={panelEl} aria-label="Thread" transition:fly|global={{ x: 420, duration: _tpClosing ? 0 : 260, easing: cubicOut }} ontouchstart={tpTouchStart} ontouchmove={tpTouchMove} ontouchend={tpTouchEnd} ontouchcancel={tpTouchEnd} ondragenter={onDragEnter} ondragover={onDragOver} ondragleave={onDragLeave} ondrop={onDrop}>
 	{#if dragActive}
 		<div class="thread-drop" aria-hidden="true">
@@ -271,8 +343,14 @@
 		</div>
 	{/if}
 	<header class="thread-head">
-		<span class="thread-title">Thread</span>
-		<button class="thread-close" onclick={onClose} title="Close thread" aria-label="Close thread">✕</button>
+		<!-- Back, not close: a thread sits on top of its conversation, and the
+		     arrow says which way out — matching the swipe that does the same. -->
+		<button class="thread-back" onclick={onClose} title="Back to the conversation" aria-label="Back to the conversation">
+			<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+		</button>
+		<span class="thread-title">
+			Thread{#if chatName}<span class="thread-title-in"> in </span><span class="thread-title-chat">{chatName}</span>{/if}
+		</span>
 	</header>
 
 	<div class="thread-scroll" bind:this={listEl}>
@@ -285,6 +363,7 @@
 			{#if parentSnapshot.attachment}
 				<div class="thread-att"><MessageAttachment attachment={parentSnapshot.attachment} /></div>
 			{/if}
+			{@render reactionRow(parentSnapshot.id)}
 		</div>
 		<div class="thread-count-rule">
 			{#if loading}
@@ -302,6 +381,7 @@
 				{#if r.attachment}
 					<div class="thread-att"><MessageAttachment attachment={r.attachment} mine={r.userId === currentUser?.id} /></div>
 				{/if}
+				{@render reactionRow(r.id)}
 			</div>
 		{/each}
 		{#if !loading && !replies.length}
@@ -336,6 +416,24 @@
 	</div>
 </aside>
 
+{#if pickerMsgId}
+	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+	<div class="thread-picker-overlay" onclick={() => (pickerMsgId = null)}></div>
+	<div class="thread-picker-pop" style:left="{pickerPos.x}px" style:top="{pickerPos.y}px">
+		<!-- The same inline picker chat's reaction popover uses, so threads get
+		     the identical four tabs (Emoji / Kitchen / Emotes / Animated). -->
+		<ExpressionPicker
+			inline
+			isInstructor={currentUser?.role === 'instructor'}
+			onClose={() => (pickerMsgId = null)}
+			onSelectEmoji={(emoji) => { toggleReaction(pickerMsgId, emoji); pickerMsgId = null; }}
+			onInsertKitchen={(token) => { toggleReaction(pickerMsgId, token); pickerMsgId = null; }}
+			onInsertCustomEmoji={(emoji) => { toggleReaction(pickerMsgId, `[ce:${emoji.shortcode}]`); pickerMsgId = null; }}
+			onInsertTgEmoji={(it) => { toggleReaction(pickerMsgId, it.token ?? `[tg:${it.id}]`); pickerMsgId = null; }}
+		/>
+	</div>
+{/if}
+
 <ExpressionTip root={panelEl} />
 
 <style>
@@ -360,7 +458,62 @@
 		background: var(--md-sys-color-surface-container, var(--surface-2));
 		flex-shrink: 0;
 	}
-	.thread-title { font-weight: 700; font-size: 0.95rem; color: var(--ink); }
+	.thread-title {
+		font-weight: 700; font-size: 0.95rem; color: var(--ink);
+		min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+	}
+	/* "in" stays quiet so the chat's name is what you actually read. */
+	.thread-title-in { font-weight: 400; color: var(--muted-fg); }
+	.thread-title-chat { font-weight: 700; }
+	.thread-back {
+		display: flex; align-items: center; justify-content: center;
+		width: 34px; height: 34px; flex-shrink: 0; margin-right: 0.15rem;
+		background: none; border: none; border-radius: 999px;
+		color: var(--ink); cursor: pointer;
+	}
+	.thread-back:hover { background: var(--surface-2); }
+
+	/* ── Reactions ── */
+	.thread-rx { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem; margin-top: 0.3rem; }
+	.thread-rx-chip {
+		display: inline-flex; align-items: center; gap: 0.25rem;
+		padding: 0.1rem 0.45rem;
+		border: 1.5px solid var(--border); border-radius: 999px;
+		background: var(--paper); color: var(--ink);
+		font: inherit; font-size: 0.75rem; cursor: pointer;
+		transition: border-color 0.12s, background 0.12s;
+	}
+	.thread-rx-chip:hover { background: var(--surface-2); }
+	.thread-rx-chip.reacted { border-color: var(--md-sys-color-primary, var(--accent)); background: color-mix(in srgb, var(--md-sys-color-primary, var(--accent)) 12%, transparent); }
+	.thread-rx-emoji { display: inline-flex; align-items: center; line-height: 1; }
+	.thread-rx-count { font-weight: 700; font-variant-numeric: tabular-nums; }
+	/* Only shows on hover on desktop; always available to a thumb. */
+	.thread-rx-add {
+		display: inline-flex; align-items: center; justify-content: center;
+		width: 24px; height: 24px; padding: 0;
+		border: none; border-radius: 999px;
+		background: none; color: var(--muted-fg); cursor: pointer;
+		opacity: 0; transition: opacity 0.12s, color 0.12s;
+	}
+	.thread-reply:hover .thread-rx-add,
+	.thread-parent:hover .thread-rx-add,
+	.thread-rx-add:focus-visible { opacity: 1; }
+	.thread-rx-add:hover { color: var(--ink); background: var(--surface-2); }
+	@media (hover: none) {
+		.thread-rx-add { opacity: 0.55; }
+	}
+	.thread-picker-overlay { position: fixed; inset: 0; z-index: 340; }
+	.thread-picker-pop { position: fixed; z-index: 341; }
+	@media (max-width: 640px) {
+		/* Dock it as a bottom sheet, like the chat reaction picker. */
+		.thread-picker-pop {
+			left: 0 !important; right: 0;
+			top: auto !important; bottom: 0;
+			height: calc(min(58vh, 22rem) + env(safe-area-inset-bottom, 0px));
+			padding-bottom: env(safe-area-inset-bottom, 0px);
+		}
+		.thread-picker-overlay { background: rgba(0,0,0,0.45); }
+	}
 	.thread-close {
 		background: none; border: none; cursor: pointer;
 		color: var(--muted-fg); font-size: 0.95rem; line-height: 1; padding: 0.25rem 0.4rem;
