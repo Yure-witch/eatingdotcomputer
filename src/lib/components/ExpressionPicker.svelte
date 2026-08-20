@@ -541,7 +541,7 @@
 		<nav class="expr-tabs" aria-label="Expression categories"
 			bind:this={railEl}
 			style:--expr-slots={TABS.length}
-			class:chrome-dim={chrome === 'dim'} class:chrome-page={chrome === 'page'}>
+			class:chrome-dim={chrome === 'dim'}>
 			<!-- One block that GLIDES with the live scroll fraction, rather than a
 			     per-tab background snapping on and off — so it's visibly halfway
 			     between two icons when your swipe is. Copied from the bottom
@@ -565,18 +565,21 @@
 				<span class="msi msi-20" class:msi-fill={tab === 'kitchen'}>blender</span>
 			</button>
 		{/if}
-		{#if onBackspace}
-			<!-- Same container as the categories now, pushed to the right end by
-			     margin-left:auto. Being a child means it dims and scales with the
-			     rail for free, instead of mirroring its states from outside. -->
-			<button type="button" class="expr-tab expr-tab-del"
-				title="Delete" aria-label="Delete"
-				onmousedown={(e) => { e.preventDefault(); onBackspace(); }}>
-				<span class="msi msi-20">backspace</span>
-			</button>
-		{/if}
 	</nav>
 
+	{#if onBackspace}
+		<!-- Its own surface, but lined up with the rail: same bottom edge, same
+		     height, immediately to its right — grouped with the icons
+		     positionally without sharing their container. Squarer corners than
+		     the fully-rounded rail so it reads as a distinct control rather than
+		     a tab that escaped the pill. -->
+		<button type="button" class="expr-del"
+			class:chrome-dim={chrome === 'dim'}
+			title="Delete" aria-label="Delete"
+			onmousedown={(e) => { e.preventDefault(); onBackspace(); }}>
+			<span class="msi msi-20">backspace</span>
+		</button>
+	{/if}
 	<!-- One pane per category in a native horizontal scroll-snap track:
 	     swiping sideways pages between expression types exactly like the
 	     app shell's section pager. Every pane is always present so the
@@ -780,9 +783,35 @@
 		/* Same glyph size as the bottom nav (25px) — the icons match, there's
 		   just no label under them here. */
 		.expr-tab .msi { font-size: 25px; }
-		/* Pushed to the far end, away from the navigation slots. */
-	.expr-tab-del { margin-left: auto; color: var(--muted-fg); }
-	.expr-tab-del:hover { color: var(--ink); }
+		.expr-del {
+		position: absolute;
+		bottom: var(--expr-rail-bottom);
+		/* Just outside the rail's right edge — the rail is inset --nav-inset,
+		   so this sits in that band, aligned with it rather than inside it. */
+		right: 6px;
+		z-index: 5;
+		width: 3rem;
+		height: var(--expr-rail-h);
+		box-sizing: border-box;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0;
+		/* Squarer than the rail's fully-rounded pill. */
+		border-radius: 14px;
+		background: var(--sidebar-bg, var(--paper));
+		border: 1px solid var(--sidebar-border, var(--border));
+		box-shadow:
+			0 6px 16px rgba(0, 0, 0, 0.13),
+			0 1px 4px rgba(0, 0, 0, 0.06),
+			inset 0 1px 0 rgba(255, 255, 255, 0.4);
+		color: var(--ink);
+		cursor: pointer;
+		transition: opacity 0.11s ease;
+		will-change: opacity;
+	}
+	.expr-del :global(.msi) { font-size: 25px; }
+	.expr-del.chrome-dim { opacity: 0.5; }
 	.expr-tab.active { border-bottom-color: transparent; }
 		.expr-tab-back { padding: 0 0.6rem; min-height: 3.7rem; border-radius: 16px; }
 	}
@@ -824,28 +853,22 @@
 		/* Scale about the bottom edge so shrinking pulls it toward the screen
 		   edge rather than floating it into the content. */
 		transform-origin: bottom center;
-		transition: opacity 0.11s ease, transform 0.11s cubic-bezier(0.33, 1, 0.68, 1);
+		transition: opacity 0.11s ease;
 		/* Own layer: the drop shadow is expensive to rasterise, and without this
 		   it was re-rasterised every frame of the scale. Promoted, the shadow is
 		   painted once and the layer is merely transformed. */
-		will-change: transform, opacity;
+		will-change: opacity;
 	}
 
 	/* Scrolling DOWN through a category's contents — the chrome gets out of
 	   the way. Pointer-events stay on: it's dimmed, not disabled. */
-	.expr-tabs.chrome-dim {
-		opacity: 0.5;
-		transform: scale(0.88);
-		/* Getting out of the way should feel instant — the moment you start
-		   scrolling, not a fifth of a second later. Coming back can take its
-		   time, which is the slower transition on the base rule. */
-		transition-duration: 0.08s;
-	}
+	/* Opacity ONLY — no scaling. Resizing the chrome mid-scroll drew the eye
+	   to the thing that was supposed to be getting out of the way, and the
+	   icons are the right size as they are. Down = translucent; up or sideways
+	   = fully visible (there is no `chrome-page` rule, so paging simply falls
+	   through to the opaque default). */
+	.expr-tabs.chrome-dim { opacity: 0.5; }
 	/* Swiping BETWEEN categories — the strip is what you're using. */
-	.expr-tabs.chrome-page {
-		opacity: 1;
-		transform: scale(1.12);
-	}
 
 	/* Close button in the inner panels' bars, sized off the same token as the
 	   category icons so the picker's controls share one height. */
