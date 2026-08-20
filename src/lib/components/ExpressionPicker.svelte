@@ -240,7 +240,7 @@
 	function onTrackScroll() {
 		// A wheel / trackpad page never sends pointerdown, so freeze here too.
 		freezeEmotes();
-		setChrome('page');
+		if (chrome !== 'page') setChrome('page');
 		settleSoon();
 		if (_rafScroll) return;
 		_rafScroll = requestAnimationFrame(() => {
@@ -466,7 +466,6 @@
 </script>
 
 <div class="expr-panel" class:expr-panel-react={mode === 'react'} class:expr-dragging={dragging}
-     class:chrome-dim={chrome === 'dim'} class:chrome-page={chrome === 'page'}
      onwheelcapture={onAnyWheel}
      ontouchstartcapture={onAnyTouchStart} ontouchmovecapture={onAnyTouchMove}
      bind:this={panelEl} style:transform={dragY ? `translate3d(0,${dragY}px,0)` : null}>
@@ -476,7 +475,7 @@
 		     through ExpressionPicker means recents + skin-tone +
 		     popular-tab state are shared with the compose picker (via
 		     EmojiPicker's own localStorage keys). -->
-		<EmojiPicker onSelect={fireEmoji} {onClose} />
+		<EmojiPicker onSelect={fireEmoji} onClose={null} />
 	{:else}
 		{#if onClose}
 			<!-- Drag handle. Mobile-only (the desktop popover isn't a sheet);
@@ -488,7 +487,8 @@
 				<span class="expr-grab-pill"></span>
 			</div>
 		{/if}
-		<nav class="expr-tabs" aria-label="Expression categories">
+		<nav class="expr-tabs" aria-label="Expression categories"
+			class:chrome-dim={chrome === 'dim'} class:chrome-page={chrome === 'page'}>
 		{#if hasRecents}
 		<button class="expr-tab" class:active={tab === 'recent'} onclick={() => goTo('recent')} title="Recently used">
 			<span class="msi msi-20" class:msi-fill={tab === 'recent'}>history</span>
@@ -521,6 +521,19 @@
 		{/if}
 	</nav>
 
+	{#if onClose}
+		<!-- Its own surface, floating over the panes rather than living inside
+		     whichever inner panel happens to be showing. That's what makes it a
+		     separate surface: it no longer inherits a bar's background, it sits
+		     above the content like the category island, and it stays put while
+		     the panes page beneath it. -->
+		<button type="button" class="expr-back"
+			class:chrome-dim={chrome === 'dim'} class:chrome-page={chrome === 'page'}
+			title="Close" aria-label="Close picker"
+			onmousedown={(e) => e.preventDefault()} onclick={onClose}>
+			<span class="msi msi-20">close</span>
+		</button>
+	{/if}
 	<!-- One pane per category in a native horizontal scroll-snap track:
 	     swiping sideways pages between expression types exactly like the
 	     app shell's section pager. Every pane is always present so the
@@ -560,9 +573,9 @@
 							</div>
 						{/if}
 					{:else if t === 'emoji'}
-						<EmojiPicker onSelect={fireEmoji} {onClose} />
+						<EmojiPicker onSelect={fireEmoji} onClose={null} />
 					{:else if t === 'kitchen'}
-						<EmojiKitchen onInsert={fireKitchen} {onClose} />
+						<EmojiKitchen onInsert={fireKitchen} onClose={null} />
 					{:else if t === 'emotes'}
 						<!-- Two sources, two sub-tabs. Uploaded = class custom
 						     emotes (R2). Library = the static Telegram packs
@@ -574,7 +587,7 @@
 						<TelegramEmojiPanel
 							onInsert={fireTg}
 							packFilter="static"
-							{onClose}
+							onClose={null}
 							{uploads}
 							onInsertUpload={(u) => fireCe({ shortcode: u.shortcode, url: u.url })}
 							onDeleteUpload={isInstructor ? deleteUpload : null}
@@ -596,7 +609,7 @@
 					{:else if t === 'animated'}
 						<!-- Animated stickers only — static packs live in the
 						     Emotes tab's Library sub-tab. -->
-						<TelegramEmojiPanel onInsert={fireTg} packFilter="animated" canModerate={isInstructor} {onClose} />
+						<TelegramEmojiPanel onInsert={fireTg} packFilter="animated" canModerate={isInstructor} onClose={null} />
 					{/if}
 				{/if}
 			</section>
@@ -709,6 +722,12 @@
 		display: flex;
 		gap: 1px;
 		flex-shrink: 0;
+		/* Floats OVER the grid instead of reserving a row, so content scrolls
+		   behind it. The panes' scrollers get matching bottom padding (below)
+		   so the last row can still be scrolled clear of it. */
+		position: absolute;
+		left: 0; right: 0; bottom: 0;
+		z-index: 4;
 		margin: 4px 10px 8px;
 		padding: 3px;
 		border-radius: 999px;
@@ -721,38 +740,51 @@
 		/* Scale about the bottom edge so shrinking pulls it toward the screen
 		   edge rather than floating it into the content. */
 		transform-origin: bottom center;
-		transition: opacity 0.2s ease, transform 0.2s cubic-bezier(0.33, 1, 0.68, 1);
+		transition: opacity 0.18s ease, transform 0.18s cubic-bezier(0.33, 1, 0.68, 1);
+		/* Own layer: the drop shadow is expensive to rasterise, and without this
+		   it was re-rasterised every frame of the scale. Promoted, the shadow is
+		   painted once and the layer is merely transformed. */
+		will-change: transform, opacity;
 	}
 
 	/* Scrolling DOWN through a category's contents — the chrome gets out of
 	   the way. Pointer-events stay on: it's dimmed, not disabled. */
-	.expr-panel.chrome-dim .expr-tabs {
+	.expr-tabs.chrome-dim {
 		opacity: 0.3;
 		transform: scale(0.88);
 	}
 	/* Swiping BETWEEN categories — the strip is what you're using. */
-	.expr-panel.chrome-page .expr-tabs {
+	.expr-tabs.chrome-page {
 		opacity: 1;
 		transform: scale(1.12);
 	}
 
-	/* The close button follows the same states. It lives inside the child
-	   panels' bars, so it's reached with :global from the state class here. */
-	.expr-panel :global(.ctl-btn.square) {
-		transition: opacity 0.2s ease, transform 0.2s cubic-bezier(0.33, 1, 0.68, 1);
-		transform-origin: left center;
+	/* Close button — its own floating surface, same recipe as the island. */
+	.expr-back {
+		position: absolute;
+		top: 8px; left: 10px;
+		z-index: 5;
+		width: 2.3rem; height: 2.3rem;
+		display: inline-flex; align-items: center; justify-content: center;
+		padding: 0;
+		border-radius: 12px;
+		background: var(--sidebar-bg, var(--paper));
+		border: 1px solid var(--sidebar-border, var(--border));
+		box-shadow:
+			0 6px 16px rgba(0, 0, 0, 0.13),
+			0 1px 4px rgba(0, 0, 0, 0.06),
+			inset 0 1px 0 rgba(255, 255, 255, 0.4);
+		color: var(--ink);
+		cursor: pointer;
+		transform-origin: top left;
+		transition: opacity 0.18s ease, transform 0.18s cubic-bezier(0.33, 1, 0.68, 1);
+		will-change: transform, opacity;
 	}
-	.expr-panel.chrome-dim :global(.ctl-btn.square) {
-		opacity: 0.3;
-		transform: scale(0.88);
-	}
-	.expr-panel.chrome-page :global(.ctl-btn.square) {
-		opacity: 1;
-		transform: scale(1.12);
-	}
+	.expr-back :global(.msi) { font-variation-settings: 'wght' 700; }
+	.expr-back.chrome-dim { opacity: 0.3; transform: scale(0.88); }
+	.expr-back.chrome-page { opacity: 1; transform: scale(1.12); }
 	@media (prefers-reduced-motion: reduce) {
-		.expr-tabs,
-		.expr-panel :global(.ctl-btn.square) { transition: none; }
+		.expr-tabs, .expr-back { transition: none; }
 	}
 	.expr-tab {
 		flex: 1;
@@ -943,6 +975,27 @@
 		box-shadow: none !important;
 		background: transparent !important;
 	}
+
+	/* Clearance for the floating close button. It's absolutely positioned over
+	   the top-left of the pane, so each inner panel's own control bar has to
+	   start to the right of it or its first button ends up underneath. */
+	.expr-pane :global(.emoji-topbar),
+	.expr-pane :global(.tg-tabs-bar),
+	.expr-pane :global(.ce-tabs),
+	.expr-pane :global(.kitchen-topbar) {
+		padding-left: 3.1rem;
+	}
+
+	/* Clearance for the floating island. Each inner panel owns its own
+	   scroller, so the padding has to reach into them — without it the last row
+	   of every grid sits permanently under the strip. */
+	.expr-pane :global(.grid-wrap),
+	.expr-pane :global(.tg-grid-wrap),
+	.expr-pane :global(.ce-grid-wrap),
+	.expr-pane :global(.kitchen-content) {
+		padding-bottom: 68px;
+	}
+	.expr-recent-grid { padding-bottom: 68px; }
 
 	/* Recently used — one flat grid mixing every expression type */
 	.expr-recent-grid {

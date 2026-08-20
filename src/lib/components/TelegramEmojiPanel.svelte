@@ -664,6 +664,31 @@
 		     their own above the panel. The Emotes tab uses it for its
 		     Uploaded / Library switch. -->
 		{@render leading?.()}
+		{#if !_isStaticOnly}
+			<!-- Engine picker, moved up from its own footer row. It only means
+			     anything where something animates, so it stays out of
+			     static-only mode — and as a bar button it costs no vertical
+			     space, which the bottom island now wants for category icons. -->
+			<PickerStickyBtn square onclick={() => setEngineManual((e =>
+					e === 'rlottie' ? 'skottie'
+					: e === 'skottie' ? 'skottie-worker'
+					: e === 'skottie-worker' ? 'skottie-webgpu'
+					: e === 'skottie-webgpu' ? 'webgpu-rasterized'
+					: e === 'webgpu-rasterized' ? 'cpu-rasterized'
+					: 'rlottie'
+				)($engineMode))}
+				title="Render engine: {$engineMode} — tap to cycle"
+				label="Cycle render engine">
+				<span class="tg-engine-abbr">{
+					$engineMode === 'cpu-rasterized' ? 'RC'
+					: $engineMode === 'webgpu-rasterized' ? 'R'
+					: $engineMode === 'skottie-webgpu' ? 'WG'
+					: $engineMode === 'skottie-worker' ? 'WK'
+					: $engineMode === 'skottie' ? 'G'
+					: 'C'
+				}</span>
+			</PickerStickyBtn>
+		{/if}
 		{#if onUpload}
 			<!-- The upload form used to sit permanently above the grid. It's
 			     behind this button now — it's an occasional action, and the
@@ -900,38 +925,6 @@
 		{/key}
 	</div>
 	</div>
-	<!-- The engine toggle picks between Lottie renderers, so it only means
-	     anything where something animates. In static-only mode (the Emotes
-	     tab: class uploads, which are plain images, plus packs chosen for
-	     having no motion) it controls nothing, and it costs a row of a sheet
-	     that would rather spend it on emotes. -->
-	{#if !_isStaticOnly}
-	<div class="tg-foot">
-		<button class="tg-engine-toggle"
-			title="Toggle render engine. CPU = rlottie WASM (pixel-perfect). GPU = Skia/Skottie main thread. WorkerGPU = Skia/Skottie in a worker (default on desktop). WebGPU = experimental, requires WebGPU-capable browser."
-			onclick={() => setEngineManual((e =>
-				e === 'rlottie' ? 'skottie'
-				: e === 'skottie' ? 'skottie-worker'
-				: e === 'skottie-worker' ? 'skottie-webgpu'
-				: e === 'skottie-webgpu' ? 'webgpu-rasterized'
-				: e === 'webgpu-rasterized' ? 'cpu-rasterized'
-				: 'rlottie'
-			)($engineMode))}>
-			Engine: <strong>{
-				$engineMode === 'cpu-rasterized' ? 'Rasterized (CPU)'
-				: $engineMode === 'webgpu-rasterized' ? 'Rasterized'
-				: $engineMode === 'skottie-webgpu' ? 'WebGPU'
-				: $engineMode === 'skottie-worker' ? 'WorkerGPU'
-				: $engineMode === 'skottie' ? 'GPU'
-				: 'CPU'
-			}</strong>
-		</button>
-		<span class="tg-foot-status">
-			{#if active === 'Custom' || activeCat?.pack}{items.length} items · {customMode === 'animated' ? 'animated' : 'unicode'}
-			{:else}click in chat to replay{/if}
-		</span>
-	</div>
-	{/if}
 </div>
 
 <style>
@@ -1098,6 +1091,7 @@
 	}
 	.tg-cell { width: 100%; aspect-ratio: 1 / 1; height: auto; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.12s; }
 	.tg-cell:hover { background: var(--surface-2); }
+	.tg-engine-abbr { font-size: 0.62rem; font-weight: 800; letter-spacing: 0.02em; line-height: 1; }
 	.tg-tab-upload { padding: 0; }
 	.tg-tab-upload-img { width: 22px; height: 22px; object-fit: contain; border-radius: 4px; display: block; }
 	.tg-cell-upload { position: relative; }
