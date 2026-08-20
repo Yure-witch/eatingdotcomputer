@@ -414,7 +414,7 @@
 			{/if}
 			{#if !isParent && (m.userId === currentUser?.id || currentUser?.role === 'instructor')}
 				<button class="action-btn action-btn-delete" onclick={(e) => { e.stopPropagation(); deleteReply(m); }} title="Delete">
-					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
 				</button>
 			{/if}
 		</div>
@@ -681,6 +681,7 @@
 		border: 1.5px solid var(--border);
 		border-radius: 10px;
 		padding: 1px;
+		overflow: visible;
 		box-shadow: 0 2px 10px rgba(0,0,0,0.12);
 		opacity: 0; pointer-events: none;
 		transition: opacity 0.1s;
