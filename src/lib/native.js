@@ -291,6 +291,22 @@ export async function nativeGoogleIdToken(forceChooser = false) {
 }
 
 /**
+ * Forget the native Google session. Signing out of the app clears OUR cookie,
+ * but GIDSignIn keeps its own — which is why "switch account" would hand the
+ * same account straight back. Call this before returning to the login screen so
+ * there is nothing left to restore.
+ */
+export async function nativeGoogleSignOut() {
+	if (!isNativeApp()) return;
+	try {
+		const { SocialLogin } = await import('@capgo/capacitor-social-login');
+		await SocialLogin.logout({ provider: 'google' });
+	} catch (e) {
+		console.warn('[auth] native Google sign-out failed', e);
+	}
+}
+
+/**
  * Native "Sign in with Apple". Offered only inside the shell — App Store
  * Guideline 4.8 requires a privacy-preserving login option alongside Google.
  * Apple returns the user's display name ONLY on the first authorisation, so we

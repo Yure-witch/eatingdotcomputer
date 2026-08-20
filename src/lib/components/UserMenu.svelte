@@ -1,11 +1,21 @@
 <script>
 	import { onMount } from 'svelte';
 	import Avatar from './Avatar.svelte';
+	import { nativeGoogleSignOut } from '$lib/native.js';
 
 	let { user = null } = $props();
 
 	let menuOpen = $state(false);
 	let menuEl = $state(null);
+	let switchForm = $state(null);
+
+	// Clear the native Google session BEFORE signing out of the app. Our cookie
+	// going away isn't enough — GIDSignIn keeps its own session, so the next
+	// "Continue with Google" would silently restore the account you just left.
+	async function switchAccount() {
+		await nativeGoogleSignOut();
+		switchForm?.requestSubmit();
+	}
 
 	function firstName(name) {
 		return (name || '').split(/\s+/)[0] || name;
@@ -48,8 +58,8 @@
 				<a href="/app/ai" class="dropdown-item" onclick={() => menuOpen = false}>
 					Gemma AI
 				</a>
-				<form method="POST" action="/app?/switchaccount" style="display:contents">
-					<button type="submit" class="dropdown-item dropdown-item-btn">Switch account</button>
+				<form method="POST" action="/app?/switchaccount" style="display:contents" bind:this={switchForm}>
+					<button type="button" class="dropdown-item dropdown-item-btn" onclick={switchAccount}>Switch account</button>
 				</form>
 				<form method="POST" action="/app?/signout" style="display:contents">
 					<button type="submit" class="dropdown-item dropdown-item-btn">Sign out</button>
