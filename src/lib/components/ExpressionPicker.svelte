@@ -13,13 +13,30 @@
 	import TelegramEmojiPanel from './TelegramEmojiPanel.svelte';
 	import PickerStickyBtn from './PickerStickyBtn.svelte';
 	import SpriteSticker from './SpriteSticker.svelte';
+	import { onMount } from 'svelte';
 	import { isTgHidden } from '$lib/tg-visibility.js';
+	import {
+		loadTelegramEmoji, loadCustomPacks, getCachedTgEmoji, getCachedCustomPacks
+	} from '$lib/telegram-emoji-store.js';
 	import { getExprRecents, addExprRecent, exprRecentKey } from '$lib/expr-recents.js';
 	import { ekTokenToUrl } from '$lib/message-render.js';
 
 	// Per-user switch (users.hide_tg_emoji): drop the Telegram surfaces —
 	// the Animated tab and the Emotes Library sub-tab.
 	const tgHidden = isTgHidden();
+
+	// Load the Telegram / custom packs HERE rather than relying on the caller.
+	// /app/+layout.svelte kicks these off, so the picker worked in chat — but the
+	// avatar picker also mounts under /onboarding, which has its own layout and
+	// never loaded them, so the Animated and Library surfaces rendered empty. A
+	// shared component shouldn't depend on which layout happens to host it.
+	// Both are cached and no-op on a second call.
+	let _packVer = $state(0);
+	onMount(() => {
+		if (tgHidden) return;
+		if (!getCachedTgEmoji()) loadTelegramEmoji().then(() => _packVer++).catch(() => {});
+		if (!getCachedCustomPacks()) loadCustomPacks().then(() => _packVer++).catch(() => {});
+	});
 
 	let {
 		onSelectEmoji,        // (emoji: string) → from EmojiPicker
