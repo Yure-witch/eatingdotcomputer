@@ -135,6 +135,33 @@
 	let gridW = $state(340);
 	// "Animated" inserts the Lottie token; "Emoji" inserts the underlying Unicode char
 	let customMode = $state('animated'); // 'animated' | 'emoji'
+
+	// Search collapses into a magnifier in the sticky bar, matching the emoji
+	// and kitchen tabs — it used to be a permanently-open input row, which cost
+	// a row of vertical space in a sheet that only has ~330px of it.
+	let searchOpen = $state(false);
+	let searchEl = $state(null);
+	function toggleSearch() {
+		searchOpen = !searchOpen;
+		if (searchOpen) tick().then(() => searchEl?.focus());
+		else search = '';
+	}
+
+	// Animated/static used to be a labelled "Send as:" row that scrolled with
+	// the content. It's now a single play/pause button pinned in the bar, and
+	// the wording it used to carry moves into a brief toast on tap — the state
+	// is worth confirming, but not worth a permanent row.
+	let toast = $state('');
+	let _toastT = null;
+	function flashToast(msg) {
+		toast = msg;
+		clearTimeout(_toastT);
+		_toastT = setTimeout(() => { toast = ''; }, 1600);
+	}
+	function toggleCustomMode() {
+		customMode = customMode === 'animated' ? 'emoji' : 'animated';
+		flashToast(customMode === 'animated' ? 'Sends animated' : 'Sends static');
+	}
 	let search = $state('');
 	// Per-pack opt-in: do alt-emoji CLDR names + keywords count for search in this pack?
 	// Default OFF since most packs' artwork has nothing to do with the underlying emoji.
@@ -319,6 +346,7 @@
 	let _programmaticActive = false;
 
 	onDestroy(() => {
+		clearTimeout(_toastT);
 		// Release the picker's grid wrapper as the Skottie host so the
 		// stage canvas detaches cleanly on close. Both stages.
 		setSkottieHosts(null);
@@ -555,6 +583,26 @@
 				<span class="msi msi-20">close</span>
 			</PickerStickyBtn>
 		{/if}
+		<PickerStickyBtn square active={searchOpen} onclick={toggleSearch}
+			title="Search emotes" label="Search emotes">
+			<span class="msi msi-20">search</span>
+		</PickerStickyBtn>
+		<!-- Always present, never conditional on the active section. The row this
+		     replaced was hidden on Effects, but a control that appears and
+		     disappears as you scroll between sections is the opposite of fixed
+		     in place — and it costs nothing to show, since customMode only
+		     applies to custom emotes and the other surfaces just ignore it. -->
+		<PickerStickyBtn square active={customMode === 'animated'} onclick={toggleCustomMode}
+			title={customMode === 'animated' ? 'Sending animated — tap for static' : 'Sending static — tap for animated'}
+			label="Toggle animated or static">
+			<span class="msi msi-20" class:msi-fill={customMode === 'animated'}>
+				{customMode === 'animated' ? 'play_arrow' : 'pause'}
+			</span>
+		</PickerStickyBtn>
+		{#if searchOpen}
+			<input bind:this={searchEl} bind:value={search} class="tg-search tg-search-inline"
+				type="search" placeholder="Search emotes…" autocomplete="off" spellcheck="false" />
+		{:else}
 		<div class="tg-tabs" bind:this={tabsEl}>
 			{#each headCats as cat (cat.key)}
 				<button class="tg-tab" class:active={active === cat.key} title={cat.label} onclick={() => goToTab(cat.key)}>{cat.icon}</button>
@@ -575,6 +623,7 @@
 				</button>
 			{/each}
 		</div>
+		{/if}
 	</div>
 
 	{#if activeCat?.pack && isStandalone(active)}
@@ -592,17 +641,13 @@
 			</label>
 		</div>
 	{/if}
+	<!-- The "Send as:" row and the always-open search row used to live here.
+	     Both are now controls in the sticky bar above: search collapses to a
+	     magnifier (as on the emoji / kitchen tabs) and the animated-vs-static
+	     choice is a play/pause button that toasts the mode it switched to. That
+	     reclaims two rows of a sheet only ~330px tall, and neither control
+	     scrolls away with the grid any more. -->
 	{#if active !== 'Effects'}
-		<div class="tg-mode-row">
-			<span class="tg-mode-label">Send as:</span>
-			<button class="tg-mode-btn" class:active={customMode === 'animated'} onclick={() => (customMode = 'animated')}>Animated</button>
-			<button class="tg-mode-btn" class:active={customMode === 'emoji'} onclick={() => (customMode = 'emoji')}>Emoji</button>
-		</div>
-		<div class="tg-search-row">
-			<input class="tg-search" type="search" placeholder="search by name, keyword, emoji…"
-				bind:value={search} />
-			{#if search}<button class="tg-search-clear" onclick={() => (search = '')} title="Clear">×</button>{/if}
-		</div>
 		{#if canModerate}
 			<div class="tg-mod-row">
 				<button class="tg-mod-btn" class:active={moderating}
@@ -616,6 +661,11 @@
 				{/if}
 			</div>
 		{/if}
+	{/if}
+	{#if toast}
+		<!-- role=status so it's announced without stealing focus; pointer-events
+		     off so it can't swallow a tap on the emote underneath it. -->
+		<div class="tg-toast" role="status">{toast}</div>
 	{/if}
 	<!-- Non-scrolling host for the Skottie canvas (see setSkottieHosts
 	     $effect). The canvas mounts here as position:absolute and stays
@@ -749,6 +799,8 @@
 <style>
 	.tg-panel {
 		width: 340px; height: 420px;
+		/* containing block for .tg-toast */
+		position: relative;
 		background: var(--paper, var(--paper)); color: var(--ink, var(--ink));
 		border-radius: 12px;
 		box-shadow: 0 4px 24px rgba(0,0,0,0.13), 0 1.5px 4px rgba(0,0,0,0.07);
@@ -916,6 +968,35 @@
 	.tg-engine-toggle:hover { background: #e0d8c5; }
 	.tg-engine-toggle strong { color: var(--ink); font-weight: 600; }
 	.tg-foot-status { flex: 1; text-align: right; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+	/* Pinned over the grid, bottom-centred. Auto-dismisses; purely a
+	   confirmation of the mode the play/pause button just switched to. */
+	.tg-toast {
+		position: absolute;
+		left: 50%;
+		bottom: 12px;
+		transform: translateX(-50%);
+		z-index: 5;
+		padding: 0.32rem 0.7rem;
+		border-radius: 999px;
+		background: color-mix(in srgb, var(--md-sys-color-inverse-surface, var(--ink)) 92%, transparent);
+		color: var(--md-sys-color-inverse-on-surface, var(--paper));
+		font-size: 0.72rem;
+		font-weight: 600;
+		white-space: nowrap;
+		pointer-events: none;
+		box-shadow: 0 2px 10px rgba(0,0,0,0.18);
+		animation: tg-toast-in 0.14s ease-out;
+	}
+	@keyframes tg-toast-in {
+		from { opacity: 0; transform: translate(-50%, 4px); }
+		to   { opacity: 1; transform: translate(-50%, 0); }
+	}
+	@media (prefers-reduced-motion: reduce) { .tg-toast { animation: none; } }
+
+	/* Search input when expanded in the sticky bar — takes the space the tab
+	   strip occupies, same swap the emoji picker's top bar does. */
+	.tg-search-inline { flex: 1; min-width: 4rem; }
 
 	.tg-mode-row { display: flex; align-items: center; gap: 0.4rem; padding: 0.35rem 0.55rem; border-bottom: 1px solid var(--border); flex-shrink: 0; background: var(--surface-2); }
 	.tg-mode-label { font-size: 0.7rem; color: var(--muted-fg); font-weight: 600; }
