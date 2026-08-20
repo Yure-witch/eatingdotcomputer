@@ -81,6 +81,7 @@
 	import ExpressionTip from './ExpressionTip.svelte';
 	import MessageAttachment from './MessageAttachment.svelte';
 	import ExpressionPicker from './ExpressionPicker.svelte';
+	import MediaPicker from './MediaPicker.svelte';
 	import Avatar from './Avatar.svelte';
 	import ProfileHover from './ProfileHover.svelte';
 	import { decodeReactionKey } from '$lib/reaction-key.js';
@@ -289,6 +290,19 @@
 		}).catch(() => {});
 	}
 
+	// GIFs + reaction images, the same MediaPicker chat uses. A GIF is just an
+	// attachment here, which is exactly what chat does with it too — no separate
+	// media path, so it rides the existing pendingAtt preview and send.
+	let showMedia = $state(false);
+	function onGifSelect(gif) {
+		pendingAtt = { url: gif.gif, filename: gif.title || 'GIF', mimetype: 'image/gif', size: 0 };
+		showMedia = false;
+	}
+	function onInsertReaction(r) {
+		pendingAtt = { url: r.url, filename: r.name || 'reaction', mimetype: r.mimetype || 'image/png', size: 0 };
+		showMedia = false;
+	}
+
 	let editingId = $state(null);
 	let editDraft = $state('');
 	function startEdit(m) { editingId = m.id; editDraft = m.content ?? ''; }
@@ -366,6 +380,9 @@
 {#snippet composeTools()}
 	<button class="thread-attach" onclick={() => fileEl?.click()} disabled={uploading} title="Attach a file" aria-label="Attach a file">
 		<span class="msi msi-18" class:msi-spin={uploading}>{uploading ? 'progress_activity' : 'attach_file'}</span>
+	</button>
+	<button class="thread-attach" onclick={() => (showMedia = !showMedia)} title="GIFs & reaction images" aria-label="GIFs and reaction images">
+		<span class="msi msi-18">gif_box</span>
 	</button>
 {/snippet}
 
@@ -531,6 +548,14 @@
 	</div>
 </aside>
 
+{#if showMedia}
+	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+	<div class="thread-picker-overlay" onclick={() => (showMedia = false)}></div>
+	<div class="thread-media-pop">
+		<MediaPicker {onGifSelect} {onInsertReaction} isInstructor={currentUser?.role === 'instructor'} onClose={() => (showMedia = false)} />
+	</div>
+{/if}
+
 {#if pickerMsgId}
 	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 	<div class="thread-picker-overlay" onclick={() => (pickerMsgId = null)}></div>
@@ -638,6 +663,15 @@
 	.thread-rx-emoji { display: inline-flex; align-items: center; line-height: 1; }
 	.thread-rx-count { font-weight: 700; font-variant-numeric: tabular-nums; }
 	.thread-picker-overlay { position: fixed; inset: 0; z-index: 340; }
+	/* Docked at the bottom like chat's media picker, and sized to the keyboard it
+	   replaces (--kb-h-last) so swapping between them doesn't move the bar. */
+	.thread-media-pop {
+		position: fixed; left: 0; right: 0; bottom: 0; z-index: 341;
+		height: min(var(--kb-h-last, 22rem), 58vh);
+		background: var(--paper);
+		border-top: 1.5px solid var(--border);
+		padding-bottom: env(safe-area-inset-bottom, 0px);
+	}
 	.thread-picker-pop { position: fixed; z-index: 341; }
 	@media (max-width: 640px) {
 		/* Dock it as a bottom sheet, like the chat reaction picker. */
