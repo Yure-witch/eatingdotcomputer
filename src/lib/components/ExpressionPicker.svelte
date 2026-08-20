@@ -526,7 +526,7 @@
 	});
 </script>
 
-<div class="expr-panel"
+<div class="expr-panel" class:paging={chrome === 'page'}
      class:expr-panel-react={mode === 'react'} class:expr-dragging={dragging}
      bind:this={panelEl} style:transform={dragY ? `translate3d(0,${dragY}px,0)` : null}>
 	{#if mode === 'react'}
@@ -646,7 +646,7 @@
 												id={it.v.custom ? it.v.id : null}
 												size={34} loop={true} mode="visible"
 												root={recentGridEl} forceEngine={recentEngine}
-												maxFps={24} title={it.v.alt || ''} />
+												title={it.v.alt || ''} />
 										{/if}
 									</button>
 								{/each}
@@ -702,7 +702,7 @@
 		   fully-rounded pill curves away over its last ~half-height, so an icon
 		   flush to the end sits in the curve and reads as falling out of the
 		   container — which is exactly what the kitchen icon was doing. */
-		--expr-pad: 9px;
+		--expr-pad: 12px;
 		/* Shared bottom offset — these used to differ (6px vs 8px), so the two
 		   surfaces sat on different baselines. */
 		--expr-rail-bottom: 8px;
@@ -933,19 +933,35 @@
 		position: absolute;
 		top: 3px;
 		bottom: 3px;
-		/* Same inset as the rail's horizontal padding, or the block sits 6px
-		   left of the icon it is supposed to be highlighting. */
-		left: var(--expr-pad);
-		/* One slot wide. Was a fraction of the container, which is wrong now
-		   that the container also holds the delete key. */
-		width: var(--expr-slot-w, 3rem);
+		/* Inset 2px inside the slot, so at the LAST slot the block's rounded end
+		   doesn't run flush into the rail's own cap — two curves meeting with no
+		   gap is what made the kitchen icon read as spilling out of the pill. */
+		left: calc(var(--expr-pad) + 2px);
+		/* Slightly narrower than a slot (see `left`). */
+		width: calc(var(--expr-slot-w, 3rem) - 4px);
 		border-radius: 999px;
 		background: var(--sidebar-active, var(--md-sys-color-secondary-container, var(--paper)));
-		transform: translate3d(calc(var(--expr-frac, 0) * 100%), 0, 0);
+		/* Steps by the SLOT width, not by `100%` of the block's own width — now
+		   that the block is narrower than a slot, a self-relative step would
+		   drift further from the icons with every slot. */
+		transform: translate3d(calc(var(--expr-frac, 0) * var(--expr-slot-w, 3rem)), 0, 0);
 		will-change: transform;
 		pointer-events: none;
 		z-index: 0;
 	}
+	/* While PAGING, swap every live emote canvas for its static thumb.
+	   The Telegram pane carries ~70 canvases; compositing that many textures
+	   across a moving scroller is what's left of the swipe cost now that the
+	   rounded-clip mask is gone. The thumbs are already rendered underneath
+	   (SpriteSticker keeps them behind the canvas), so this is a visibility
+	   swap, not a re-render — and the frame it lands on is a still frame
+	   anyway, because emotes are frozen for the duration of a gesture.
+	   The class sits on the panel, which invalidates the subtree's style — but
+	   only twice per swipe (start and end), rather than the per-frame
+	   compositing it replaces. */
+	.expr-panel.paging :global(.tg-canvas) { visibility: hidden; }
+	.expr-panel.paging :global(.tg-thumb) { opacity: 1; }
+
 	/* Icons ride above the block. */
 	.expr-tab { position: relative; z-index: 1; }
 	.expr-tab.active {
