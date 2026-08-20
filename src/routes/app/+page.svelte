@@ -1072,6 +1072,10 @@
 		display: flex; align-items: flex-start; gap: 0.875rem;
 		padding: 1rem 0; border-bottom: 1px solid var(--surface-2);
 	}
+	/* The last row's rule sat 2rem above .next-preview's own border-top, and two
+	   lines with a gap between them read as an empty list row. The section
+	   divider below is enough. */
+	.checklist .check-row:last-child { border-bottom: none; }
 	.check-row:first-child { border-top: 1px solid var(--surface-2); }
 
 	.check-box-wrap {
