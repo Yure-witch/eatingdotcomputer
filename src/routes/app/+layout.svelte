@@ -840,6 +840,7 @@
 	// full-screen composited layer alive and makes the element a containing block
 	// for its fixed descendants (the compose bar, the pickers).
 	function _endConvSlide() {
+		_convCommitted = false;
 		_convSettling = false;
 		_convSliding = false;
 		_convDragging = false;
@@ -875,7 +876,8 @@
 	};
 	function onSwipeStart(e) {
 		// A drag already in flight owns the gesture — later touches are noise.
-		if (_swArmed) return;
+		// So does an exit that has already committed: it runs to the route change.
+		if (_swArmed || _convCommitted) return;
 		if (window.innerWidth > 640) { _disarmSwipe(); return; }
 		// Pager routes drive their own native scroll-snap gestures.
 		if (isPagerActive) { _disarmSwipe(); return; }
@@ -897,7 +899,7 @@
 		_swArmed = true; _swDecided = false;
 	}
 	function onSwipeMove(e) {
-		if (!_swArmed) return;
+		if (!_swArmed || _convCommitted) return;
 		// Only our finger drives it; another one moving is not this gesture.
 		const t = _trackedTouch(e.touches); if (!t) return;
 		const dx = t.clientX - _swStartX, dy = t.clientY - _swStartY, W = window.innerWidth || 1;
@@ -936,6 +938,13 @@
 	// across the screen with Orbit behind it — permanently, since nothing else
 	// resets it.
 	let _convSettling = false;
+	// Once the exit is committed the layer belongs to the animation, not to the
+	// finger. Without this, anything that re-enters the gesture during the ~190ms
+	// run-off cancels the pending navigation (the decide branch clears the same
+	// timer) and drags the chat back to covering — so the swipe you just made is
+	// undone and you have to do it again. That is the "two swipes to get to
+	// Orbit": the first one worked and was then reeled back in.
+	let _convCommitted = false;
 	function _settleConvGesture() {
 		if (!_convSliding || _convSettling) return;
 		_convSettling = true;
@@ -967,6 +976,7 @@
 	// nothing visible — no mount, no skeleton, no flash. The goto waits for the
 	// slide to finish because landing on the route unmounts the layer.
 	function _exitChatSurface(dir) {
+		_convCommitted = true;
 		_swDir = dir;
 		const idx = _beneathFor(dir);
 		const route = PANELS[idx]?.route ?? '/app/chat';
