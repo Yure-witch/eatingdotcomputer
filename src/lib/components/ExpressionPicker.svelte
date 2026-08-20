@@ -22,7 +22,6 @@
 	import { getExprRecents, addExprRecent, exprRecentKey } from '$lib/expr-recents.js';
 	import { getCustomEmojiMap, getCachedCustomEmojiMap } from '$lib/custom-emoji-store.js';
 	import { ekTokenToUrl } from '$lib/message-render.js';
-	import { holdEmotes } from '$lib/emote-idle.js';
 	import { onScrollGesture } from '$lib/scroll-bus.js';
 
 	// Per-user switch (users.hide_tg_emoji): drop the Telegram surfaces —
@@ -50,13 +49,8 @@
 		if (!Object.keys(getCachedCustomEmojiMap()).length) {
 			getCustomEmojiMap().then(() => _packVer++).catch(() => {});
 		}
-		// Emote holds are refcounted globally, so one leaked by a picker that
-		// unmounted mid-gesture (swipe down to dismiss, say) would freeze every
-		// emote in the app for the rest of the session.
 		return () => {
 			clearTimeout(_settleT);
-			clearTimeout(_scrollThawT);
-			thawEmotes();
 			// The picker is the heaviest consumer of the emote renderer: it's
 			// the only surface that puts hundreds of distinct stickers on
 			// screen. Closing it is the best moment to give the atlases for
@@ -230,21 +224,15 @@
 	// scroll position during a gesture and any write to it is a visible jerk.
 	let _touching = $state(false);
 	let _settleT = null;
-	// Freeze every looping emote for the duration of a page gesture. Dozens of
-	// Skottie canvases competing for the same frames is what stops the incoming
-	// category from sliding in cleanly; frozen, the swipe gets the main thread
-	// to itself and the emotes resume the moment it settles.
-	let _releaseEmotes = null;
-	function freezeEmotes() { _releaseEmotes ??= holdEmotes(); }
-	function thawEmotes() { _releaseEmotes?.(); _releaseEmotes = null; }
-
 	function settleSoon() {
 		clearTimeout(_settleT);
-		_settleT = setTimeout(() => { _touching = false; thawEmotes(); }, 260);
+		_settleT = setTimeout(() => { _touching = false; }, 260);
 		endPaging();
 	}
 
-	function onTrackPointerDown() { _touching = true; freezeEmotes(); setChrome('page'); }
+	// No freeze here: this fires on ANY pointerdown inside the picker, which
+	// includes the touch that's about to scroll the grid vertically.
+	function onTrackPointerDown() { _touching = true; setChrome('page'); }
 	function onTrackPointerUp() {
 		// Don't clear immediately: the fling continues after the finger lifts,
 		// and the track is still settling toward a snap point.
@@ -255,8 +243,6 @@
 	// reads on every scroll event.
 	let _rafScroll = 0;
 	function onTrackScroll() {
-		// A wheel / trackpad page never sends pointerdown, so freeze here too.
-		freezeEmotes();
 		if (chrome !== 'page') setChrome('page');
 		settleSoon();
 		if (_rafScroll) return;
@@ -383,22 +369,18 @@
 	// 400 -> 393, an upward one 93 -> 99. Reacting to that inverted the state
 	// every time. Wheel and touch deltas are what the user actually did, and no
 	// programmatic scroll can forge them.
-	// Scrolling freezes the emotes outright. A grid of looping Skottie cells
-	// and a scroll are both after the same frames, and the animation is the one
-	// nobody is looking at while the list is moving — this is what keeps a
-	// scroll through animated packs at full rate. They resume once it settles.
-	let _scrollThawT = null;
-	function holdForScroll() {
-		freezeEmotes();
-		clearTimeout(_scrollThawT);
-		_scrollThawT = setTimeout(() => thawEmotes(), 220);
-	}
+	// Scrolling used to freeze every emote outright and thaw 220ms after it
+	// settled. The theory was that a scroll and a grid of looping cells are
+	// after the same frames — but that was written when the cells were
+	// main-thread rAF loops. They render in a worker now, so they aren't
+	// competing for the frames the scroll needs, and all the freeze bought was
+	// the animations visibly stopping and restarting every time the list moved.
+	// Scrolling leaves the emotes alone.
 
 	// Direction arrives from the shared scroll bus rather than this component
 	// attaching its own wheel + touchstart + touchmove. Three listeners became
 	// one subscription — see $lib/scroll-bus.js.
 	onMount(() => onScrollGesture((dir) => {
-		holdForScroll();
 		if (chrome === 'page') return;         // a swipe owns the chrome
 		setChrome(dir === 'down' ? 'dim' : 'rest');
 	}));
@@ -736,7 +718,17 @@
 		color: var(--ink);
 		border-radius: 12px;
 		box-shadow: 0 4px 24px rgba(0,0,0,0.13), 0 1.5px 4px rgba(0,0,0,0.07);
-		overflow: hidden;
+		/* Deliberately NOT `overflow: hidden`.
+		   This element is an ancestor of the horizontal pager, and a rounded
+		   CLIPPING ancestor makes the compositor mask the scrolling layer —
+		   which on iOS WebKit takes the scroller off the fast path and
+		   re-rasterises it every frame. That matched the symptom exactly: the
+		   swipe was slow in every tab, with emote animation paused, on the
+		   rasterized engine — i.e. independent of content. The app shell's
+		   pager, which IS smooth on device, has no such ancestor.
+		   Nothing needs the clip: the track clips its own overflow
+		   rectangularly (cheap), each pane clips its own, and the rounded top
+		   corners sit under the grabber strip. */
 		position: relative;
 		font-family: 'Google Sans Flex', 'Space Grotesk', sans-serif;
 		font-size: 0.85rem;
