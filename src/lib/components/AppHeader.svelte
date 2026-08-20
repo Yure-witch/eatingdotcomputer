@@ -44,30 +44,25 @@
 		mq.addEventListener?.('change', u);
 		return () => mq.removeEventListener?.('change', u);
 	});
-	// On mobile a chat surface is a layer over the pager: while you swipe it away
-	// the route is briefly still the chat, so drop chat-mode live with the finger
-	// rather than at the commit. This covers Gemma / Tasks / Recommendations as
-	// well as real conversations — in chat mode the header renders ONLY the title
-	// block, so if the title clears before the route changes the bar is empty, and
-	// on those surfaces that lasted the whole navigation.
-	// `convCovering` is true whenever a chat surface owns the screen (including
-	// one being navigated into), so `=== false` here means swiped past — not
-	// merely "not a pager conversation", which is what it used to mean.
-	const _convSwipedAway = $derived(
-		_isConv && _isMobile && !!pagerNav && pagerNav.convCovering === false
-	);
-	const _convMobile = $derived(_isConv && _isMobile && !_convSwipedAway);
+	// Chat mode follows the ROUTE, and only the route. It used to flip halfway
+	// through the exit swipe so the header could change "with your finger", but
+	// the flip re-renders the bar — a title block and a ClassSwitcher mount and
+	// unmount, and the header can change height, which republishes --header-h and
+	// relayouts the pager. Landing all of that at the midpoint of a drag is what
+	// made the gesture stick there. It now flips once, at the commit, when the
+	// screen is still.
+	const _convMobile = $derived(_isConv && _isMobile);
 
 	// When a page publishes a title, the title lockup carries the class
 	// switcher; the wordmark block is then EMPTY on desktop (the wordmark
 	// itself is desktop-hidden — the sidebar has it) but still eats a flex
 	// gap, indenting the title ~2rem past where other pages' header content
 	// starts. Hide the whole block on desktop in that case.
-	const _titleHasSwitcher = $derived(!!($pageTitle && currentClass?.name && !_convSwipedAway));
+	const _titleHasSwitcher = $derived(!!($pageTitle && currentClass?.name));
 	// A page title is showing (Tasks, Gemma, a channel …). On mobile that means
 	// the "eating.computer" wordmark is redundant — the title IS the heading —
 	// so we hide the wordmark and let the section name stand alone.
-	const _titlePresent = $derived(!!$pageTitle && !_convSwipedAway);
+	const _titlePresent = $derived(!!$pageTitle);
 	const _isGemma = $derived($page.url.pathname === '/app/chat/gemma');
 	// A small identifying glyph next to the title. Gemma keeps its own mark;
 	// other chat surfaces get a chat bubble; Tasks gets a target.
@@ -91,10 +86,18 @@
 	// mounted panels. That reflow is what froze the gesture at the halfway mark.
 	// Defer to the settle instead; the height is the same either way.
 	let _headerHPending = false;
+	let _lastHeaderH = -1;
 	function _applyHeaderH() {
 		if (!headerEl || typeof document === 'undefined') return;
 		if (pagerNav?.sliding) { _headerHPending = true; return; }
-		document.documentElement.style.setProperty('--header-h', `${headerEl.offsetHeight}px`);
+		const h = headerEl.offsetHeight;
+		// Republishing an unchanged value is not free: it's an inherited custom
+		// property on <html>, so every write invalidates the document's styles and
+		// relayouts the pager. The chat bar is built to match the standard header's
+		// height exactly, so entering or leaving a chat should cost nothing here.
+		if (h === _lastHeaderH) return;
+		_lastHeaderH = h;
+		document.documentElement.style.setProperty('--header-h', `${h}px`);
 	}
 	$effect(() => {
 		if (!headerEl || typeof ResizeObserver === 'undefined') return;
@@ -122,7 +125,7 @@
 	     ClassSwitcher, a NotificationBell (which fetches on mount) and a UserMenu
 	     through mount/destroy in the middle of the exit swipe, since the bar flips
 	     at the halfway point. Hiding costs nothing and the swap is now a class. -->
-	<div class="wordmark-wrap" class:mode-hidden={_convMobile} class:desktop-hidden={_titleHasSwitcher} class:title-present={_titlePresent}>
+	<div class="wordmark-wrap" class:mode-hidden={_convMobile && _titlePresent} class:desktop-hidden={_titleHasSwitcher} class:title-present={_titlePresent}>
 			<a class="wordmark" href="/">eating.computer</a>
 			<!-- When a page title is showing, ITS lockup carries the class
 			     switcher (title + dropdown) — don't render a second, lone
@@ -131,7 +134,7 @@
 				<ClassSwitcher {currentClass} {allClasses} />
 			{/if}
 	</div>
-	{#if $pageTitle && !_convSwipedAway}
+	{#if $pageTitle}
 		<!-- Per-page title (e.g. chat channel name, DM partner). Pages
 		     publish this via the pageTitle store — set on mount, clear
 		     on destroy. If the page also sets pageTitleHref, the title

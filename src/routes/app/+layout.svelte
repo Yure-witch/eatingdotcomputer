@@ -107,14 +107,6 @@
 	const _onChatSurfaceMobile = $derived(
 		_onConvMobile || (_isMobile && _isChatLikeRoute($page.url.pathname))
 	);
-	// Same thing, one step earlier: a chat surface we're still navigating INTO.
-	// The header keys its chat bar off this so it doesn't flicker standard→chat
-	// while the route commits.
-	const _enteringChatSurface = $derived.by(() => {
-		if (!_isMobile || !$navigating) return false;
-		const to = $navigating.to?.url?.pathname ?? '';
-		return _isConvRoute(to) || _isChatLikeRoute(to);
-	});
 	// Pager tabs, left → right: Home, Chat (menu), Orbit, Lab, [Manage]. A
 	// conversation is NOT a pager panel — it's a full-screen layer OVER the
 	// track, parked on the chat menu, dismissed with a left→right swipe (or
@@ -182,8 +174,12 @@
 		if (!navving) untrack(() => {
 			if (!_convEntering) return;
 			clearTimeout(_convEnterT);
-			// One frame for the real message window to paint under it first.
-			requestAnimationFrame(() => { _convEntering = false; });
+			// Wait for the conversation to be in the DOM (tick) AND painted (rAF)
+			// before lifting the placeholder. `$navigating` clearing is not the same
+			// moment as the new page appearing, and lifting a frame early now shows
+			// the chat MENU through the gap — the pager sits live underneath these
+			// days, where there used to be nothing to see.
+			tick().then(() => requestAnimationFrame(() => { _convEntering = false; }));
 		});
 	});
 
@@ -705,9 +701,16 @@
 	// ── Bottom-nav pill position (driven via a CSS var, not Svelte, for 60fps) ──
 	// Nav slots now line up 1:1 with the pager panels: 0 = Home, 1 = Chat, 2 =
 	// Orbit, 3 = Lab, 4 = Manage. So the pager fraction IS the nav fraction.
+	let _lastNavFrac = null;
 	function _writeNavFrac(frac) {
 		if (typeof document === 'undefined') return;
-		document.documentElement.style.setProperty('--nav-frac', String(Math.max(0, frac)));
+		const v = String(Math.max(0, frac));
+		// Inherited custom property on the ROOT: every write invalidates the whole
+		// document's styles, so a redundant one costs a real frame with a
+		// conversation mounted. The scroll handler calls this per frame.
+		if (v === _lastNavFrac) return;
+		_lastNavFrac = v;
+		document.documentElement.style.setProperty('--nav-frac', v);
 	}
 	// A tap on a nav icon (and any route change that isn't a swipe) jumps the
 	// fraction straight to the new slot, so the pill teleported. Turn its
@@ -767,7 +770,6 @@
 	const CONV_EXIT_MS = 190;
 	let _convSliding = $state(false);    // layer is transformed (dragging or settling)
 	let _convDragging = $state(false);   // finger is down → no transition, track it 1:1
-	let _convSwipedPast = $state(false); // dragged past halfway → the header flips NOW
 	let _convNavBack = $state(false);    // drag clearly underway → the bottom nav starts returning
 	let _fwdEl = $state(null);           // the chat layer element
 	let _convDrag = 0;                   // plain (non-reactive) live drag position
@@ -793,8 +795,6 @@
 			const dir = v !== 0 ? Math.sign(v) : _swDir;
 			pagerEl.style.transform = `translate3d(${dir < 0 ? (1 + v) * 100 : (v - 1) * 30}%, 0, 0)`;
 		}
-		const past = Math.abs(v) > 0.5;
-		if (past !== _convSwipedPast) _convSwipedPast = past;
 		// The nav is chrome, not content: it can come back long before the swipe
 		// is committed, and waiting until halfway is what made it feel like it was
 		// catching up with the page rather than moving with it.
@@ -822,7 +822,6 @@
 		_convSliding = false;
 		_convDragging = false;
 		_convDrag = 0;
-		if (_convSwipedPast) _convSwipedPast = false;
 		if (_convNavBack) _convNavBack = false;
 		if (_fwdEl) { _fwdEl.style.transform = ''; _fwdEl.style.willChange = ''; }
 		if (pagerEl) { pagerEl.style.transform = ''; pagerEl.style.willChange = ''; }
@@ -1035,17 +1034,6 @@
 		// lagging behind the swipe.
 		get activeRoute() { return (isPagerActive || _convSliding) ? _pagerVisibleRoute : null; },
 		get sidebarOpen() { return sidebarOpen; },
-		// True while a chat surface owns the screen — any of them, not just real
-		// conversations, and including one we're still navigating into. Goes false
-		// the instant the exit drag passes halfway, so the header can switch from
-		// the chat name back to the wordmark live with the finger.
-		//
-		// It has to cover Gemma / Tasks / Recommendations too: on those the header
-		// renders ONLY the title block, so the moment pageTitle cleared (on exit,
-		// before the route committed) the whole bar went blank for the length of
-		// the navigation. With this the header leaves chat mode at the halfway
-		// point and the wordmark is already there when the title goes.
-		get convCovering() { return (_onChatSurfaceMobile || _enteringChatSurface) && !_convSwipedPast; },
 		// True while a chat layer is being dragged or settling over the pager. The
 		// header reads it to hold back --header-h: that var is inherited from
 		// <html> AND drives the pager track's margin and height, so republishing it
