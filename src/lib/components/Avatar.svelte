@@ -51,10 +51,6 @@
 	// `expr` rendering goes through contentHtml so emote tokens
 	// produce the right `<img>` / `<span>` shape. Plain emoji chars
 	// pass straight through.
-	const exprHtml = $derived(
-		(void _ceVer, avatarKind === 'expr' && avatarValue) ? contentHtml(avatarValue, false) : ''
-	);
-
 	// A [ce:…] avatar needs the class's custom-emote map to resolve. Only the app
 	// layout used to load it, so the same token rendered fine in chat and blank
 	// during onboarding, which has its own layout. Fetch it on demand and bump
@@ -65,6 +61,10 @@
 		if (Object.keys(getCachedCustomEmojiMap()).length) return;
 		getCustomEmojiMap().then(() => _ceVer++).catch(() => {});
 	});
+
+	const exprHtml = $derived(
+		(void _ceVer, avatarKind === 'expr' && avatarValue) ? contentHtml(avatarValue, false) : ''
+	);
 
 	let exprEl = $state(null);
 	$effect(() => {
