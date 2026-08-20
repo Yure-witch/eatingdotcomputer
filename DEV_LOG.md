@@ -14,6 +14,20 @@ Each entry includes:
 
 ---
 
+### 2026-08-20 — Theme: no-flash cold start (full palette replayed before first paint)
+- **Status**: `attempted` (built, pending user confirmation)
+- **What**: The theme only applied once `theme-store.js` had loaded and hydration ran, so every cold start — and every native WebView reload — painted the app.css DEFAULT palette first. app.html restored only the background colour, which made it worse rather than better: the page got the user's dark background while cards stayed cream, text stayed near-black and the accent stayed the default red.
+  - **Measured baseline** (dark Iris @160% vibrance): pre-hydration `--paper #f7f2ea` / `--ink #0a0a0a` / `--accent #b61d3e` / `theme-dark false`, with `<html>` background `#e04d00` left over from a *stale* `theme-bg`. Post-hydration `#0f1223 / #fafafa / #bac3ff / true`. Three inconsistent palettes on screen at once.
+  - `applyTokens` now writes a full boot snapshot to `localStorage['theme-boot']` (`{v, dark, bg, tokens}` — 34 tokens, ~1.5 KB) alongside the live writes, so the snapshot is exactly what was painted with no second derivation to drift. It also retints `<meta name="theme-color">`, which had been hardcoded `#0c0c0c` forever.
+  - app.html replays the whole snapshot synchronously in `<head>`: every `--md-sys-color-*`, the `theme-dark` class, `color-scheme`, the element background and the theme-color meta. Placed AFTER the theme-color meta so it can rewrite it.
+  - **Result**: every token identical pre- and post-hydration, in both light and dark, custom seeds and master chroma included. Verified on `/login` too — the first screen most users see.
+- **Notes**:
+  - **Bug found while testing the degraded path**: applying `theme-dark` without a surface to go with it flips `--ink` to near-white against the cream fallback paper — white on cream, i.e. invisible text (measured 1.0:1). The script now only claims dark when it actually has a surface; with nothing stored it stays entirely on the self-consistent light defaults. Fallback matrix checked: valid / corrupt JSON / future version / null tokens / nothing at all / legacy `theme-bg` only — all render, none below 17.8:1.
+  - `theme-bg` is still written for one release, because HTML cached by an older service worker still runs the previous background-only boot script.
+  - **Not fixed**: a brand-new device has no localStorage, so its very first paint is still the default palette until theme-sync pulls the account theme. Fixing that needs the theme server-side (cookie or a Turso mirror), not localStorage.
+  - **Not fixed**: `static/manifest.json` `background_color` is a static `#f7f2ea`, so Android's PWA launch splash is cream for dark-theme users. A per-user manifest isn't reliable — the OS caches it at install time.
+
+
 ### 2026-08-20 — Theme: mobile picker, RTDB cross-device sync, vibrance slider
 - **Status**: `attempted` (built, pending user confirmation)
 - **What**: Four changes to the colour scheme picker.

@@ -76,6 +76,12 @@ import {
 
 const STORAGE_KEY = 'mdTheme';
 const SAVED_KEY = 'mdSavedSchemes';
+// Snapshot of the last painted palette, replayed by app.html's inline
+// script before first paint. Bump BOOT_VERSION if the shape changes —
+// the reader ignores anything it doesn't recognise and falls back to the
+// app.css defaults rather than painting a half-understood record.
+const BOOT_KEY = 'theme-boot';
+const BOOT_VERSION = 1;
 
 // Clamp a chroma input to a sensible M3 range. Material's HCT chroma
 // is unbounded but in practice palettes top out around 130; 120 is a
@@ -556,19 +562,44 @@ function applyTokens(theme) {
 	);
 	const root = document.documentElement;
 	let surfaceHex = null;
+	// Collected alongside the live writes so the boot snapshot below is
+	// exactly what we just painted — no second derivation to drift.
+	const tokens = {};
 	for (const [role, argb] of Object.entries(roles)) {
 		if (argb == null) continue;
 		const hex = hexFromArgb(argb);
-		root.style.setProperty(`--md-sys-color-${kebab(role)}`, hex);
+		const name = `--md-sys-color-${kebab(role)}`;
+		root.style.setProperty(name, hex);
+		tokens[name] = hex;
 		if (role === 'surface') surfaceHex = hex;
 	}
-	// Persist the resolved page background (--paper === surface) so app.html can
-	// paint it inline BEFORE hydration — kills the white/default-bg flash when the
-	// native WebView reloads. Apply it now too so it's there immediately.
 	if (surfaceHex) {
 		root.style.backgroundColor = surfaceHex;
-		try { localStorage.setItem('theme-bg', surfaceHex); } catch {}
+		// Browser chrome (Android address bar, iOS Safari surround) follows
+		// the page instead of sitting on a hardcoded near-black.
+		const metaTheme = document.querySelector('meta[name="theme-color"]');
+		if (metaTheme) metaTheme.setAttribute('content', surfaceHex);
 	}
+	// ── Boot snapshot ────────────────────────────────────────────────────
+	// The whole resolved palette, replayed by the inline script in app.html
+	// before first paint. Persisting only the background (which is all this
+	// used to do) left every OTHER token on the app.css fallbacks during a
+	// cold load: a dark-mode user got their dark background behind cream
+	// cards, near-black text and the default red accent until JS booted —
+	// three palettes on screen at once. `dark` matters as much as the
+	// colours, since app.css keys --ink/--muted-fg off the `theme-dark`
+	// class and gets them backwards without it.
+	try {
+		localStorage.setItem(BOOT_KEY, JSON.stringify({
+			v: BOOT_VERSION,
+			dark: !!theme.dark,
+			bg: surfaceHex,
+			tokens
+		}));
+		// Kept for one release: HTML cached by an older service worker still
+		// runs the previous background-only boot script, which reads this.
+		if (surfaceHex) localStorage.setItem('theme-bg', surfaceHex);
+	} catch { /* private mode / quota — boot just falls back to app.css */ }
 	// Surface for plain `color-scheme` so form controls / scrollbars
 	// follow the theme without per-element styling.
 	root.style.colorScheme = theme.dark ? 'dark' : 'light';

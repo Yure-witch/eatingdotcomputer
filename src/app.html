@@ -2,16 +2,6 @@
 <html lang="en">
 	<head>
 		<meta charset="utf-8" />
-		<!-- Paint the saved theme background BEFORE first paint so a WebView reload
-		     (native app) doesn't flash white/default while the theme CSS + JS load.
-		     theme-store.js writes the resolved surface colour to localStorage on
-		     every theme apply; we read it back synchronously here. -->
-		<script>
-			try {
-				var __bg = localStorage.getItem('theme-bg');
-				if (__bg) document.documentElement.style.backgroundColor = __bg;
-			} catch (e) {}
-		</script>
 		<!--
 			`interactive-widget=resizes-content` tells mobile browsers
 			to shrink the layout viewport when the on-screen keyboard
@@ -23,6 +13,79 @@
 		-->
 		<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
 		<meta name="theme-color" content="#0c0c0c" />
+		<!--
+			Replay the user's palette BEFORE first paint.
+
+			theme-store.js can only apply the theme once its module has loaded
+			and hydration has run, which on a cold start (and every native
+			WebView reload) is several hundred ms of the DEFAULT palette from
+			app.css. Restoring only the background — the previous version of
+			this script — made that worse rather than better: the page got the
+			user's dark background while cards stayed cream, text stayed
+			near-black and the accent stayed the default red, so the flash was
+			three palettes deep instead of one.
+
+			So we replay the whole resolved token set that theme-store wrote on
+			its last paint. Runs synchronously in <head>, before <body> exists,
+			so there is nothing to see in between. Deliberately placed AFTER the
+			theme-color meta above so it can retint the browser chrome too.
+
+			Everything is wrapped in try/catch and every step is independently
+			optional: a missing, corrupt or future-versioned snapshot just
+			leaves the app.css fallbacks in place, which is exactly the old
+			behaviour. Nothing here can break the page.
+		-->
+		<script>
+			(function () {
+				try {
+					var root = document.documentElement;
+					var snap = null;
+					try { snap = JSON.parse(localStorage.getItem('theme-boot') || 'null'); } catch (e) {}
+
+					var dark = null;
+					var surface = null;
+
+					if (snap && snap.v === 1 && snap.tokens) {
+						var t = snap.tokens;
+						for (var k in t) {
+							if (Object.prototype.hasOwnProperty.call(t, k)) root.style.setProperty(k, t[k]);
+						}
+						dark = !!snap.dark;
+						surface = snap.bg || t['--md-sys-color-surface'] || null;
+					} else {
+						// No usable snapshot: the first load after this shipped, a
+						// cleared cache, or a corrupt/future-versioned record.
+						// `theme-bg` is the older background-only key, and mdTheme
+						// has always carried the light/dark flag.
+						surface = localStorage.getItem('theme-bg');
+						try { dark = !!JSON.parse(localStorage.getItem('mdTheme') || '{}').dark; } catch (e) {}
+						// Drive the surface TOKEN, not just the element background.
+						// --paper reads from this; setting only backgroundColor
+						// leaves cards and panels on the light default sitting on a
+						// dark page.
+						if (surface) root.style.setProperty('--md-sys-color-surface', surface);
+					}
+
+					if (surface) {
+						root.style.backgroundColor = surface;
+						var m = document.querySelector('meta[name="theme-color"]');
+						if (m) m.setAttribute('content', surface);
+					}
+
+					// `theme-dark` flips --ink to near-white in app.css, so it is
+					// only safe once we have a dark surface to put that text on.
+					// Applying it on its own — which the first version of this did
+					// — renders white text on the cream fallback paper, i.e.
+					// invisible. No surface means no claim about dark: stay
+					// entirely on the app.css defaults, which are at least
+					// self-consistent.
+					if (dark !== null && surface) {
+						root.classList.toggle('theme-dark', dark);
+						root.style.colorScheme = dark ? 'dark' : 'light';
+					}
+				} catch (e) { /* never let theming break the document */ }
+			})();
+		</script>
 		<meta name="apple-mobile-web-app-capable" content="yes" />
 		<meta name="apple-mobile-web-app-status-bar-style" content="black" />
 		<meta name="apple-mobile-web-app-title" content="eating.computer" />
