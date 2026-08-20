@@ -258,13 +258,20 @@
 		   Sits behind the icons (z-index 0); positioned at the icon row. */
 		.nav-indicator {
 			position: absolute;
-			/* Vertically centred in the 58px bar and fully rounded, matching the
-			   bar's own ends. Starts after the bar's inner padding, which the
-			   slot maths above also subtracts. */
-			top: 8px;
+			/* Concentric with the bar: the pill is inset 3px on every side, so for
+			   its curve to run parallel to the bar's its radius must be the bar's
+			   MINUS that inset. The bar is 76px tall and fully rounded (radius 38),
+			   so a 70px pill at 999px resolves to 35 — exactly 38 − 3. Note `top`
+			   is measured from the PADDING box, inside the 1px border, so top:2
+			   lands 3px in from the outer edge and the remaining 2px + border
+			   matches it at the bottom. Nudge either number and the two curves
+			   stop being parallel.
+			   Starts after the bar's inner padding, which the slot maths above
+			   also subtracts. */
+			top: 2px;
 			left: var(--nav-pad, 0px);
 			width: 74px;
-			height: 60px;
+			height: 70px;
 			border-radius: 999px;
 			/* Move with transform (compositor / GPU) instead of `left` (which forced a
 			   layout reflow every scroll frame → framey). The nav is full-viewport
