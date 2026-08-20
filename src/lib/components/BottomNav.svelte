@@ -171,7 +171,7 @@
 		<a href={item.href} class="nav-item" class:active={isActive}
 			onclick={(e) => { if (pagerNav?.goToSection?.(item.href)) e.preventDefault(); }}>
 			<span class="icon-wrap">
-				<span class="msi msi-24" class:msi-fill={isActive}>{item.iconName}</span>
+				<span class="msi msi-20" class:msi-fill={isActive}>{item.iconName}</span>
 			</span>
 			<span class="label">{item.label}</span>
 		</a>
@@ -181,7 +181,7 @@
 			<a href="/app/chat" class="nav-item" class:active={chatActive}
 				onclick={(e) => { if (pagerNav?.goToSection?.('/app/chat')) e.preventDefault(); }}>
 				<span class="icon-wrap">
-					<span class="msi msi-24" class:msi-fill={chatActive}>{chatIconName}</span>
+					<span class="msi msi-20" class:msi-fill={chatActive}>{chatIconName}</span>
 					{#if totalUnread > 0}
 						<span class="nav-badge">{totalUnread > 99 ? '99+' : totalUnread}</span>
 					{/if}
@@ -220,6 +220,13 @@
 			   read is what sells the "glass", not transparency: the surface is
 			   fully opaque and gets its depth from elevation alone. */
 			--nav-inset: 44px;
+			/* Breathing room inside the rounded ends — the slots span the padded
+			   box, not the full pill, so the icons sit closer together and the
+			   curves stay empty. */
+			--nav-pad: 16px;
+			padding-left: var(--nav-pad);
+			padding-right: var(--nav-pad);
+			box-sizing: border-box;
 			bottom: calc(env(safe-area-inset-bottom, 0px) + 18px);
 			left: var(--nav-inset); right: var(--nav-inset);
 			height: 58px;
@@ -250,11 +257,12 @@
 		.nav-indicator {
 			position: absolute;
 			/* Vertically centred in the 58px bar and fully rounded, matching the
-			   bar's own ends. */
-			top: 5px;
-			left: 0;
-			width: 58px;
-			height: 48px;
+			   bar's own ends. Starts after the bar's inner padding, which the
+			   slot maths above also subtracts. */
+			top: 6px;
+			left: var(--nav-pad, 0px);
+			width: 52px;
+			height: 44px;
 			border-radius: 999px;
 			/* Move with transform (compositor / GPU) instead of `left` (which forced a
 			   layout reflow every scroll frame → framey). The nav is full-viewport
@@ -265,7 +273,7 @@
 			/* The bar is an inset island now, so a slot is (viewport - insets) wide,
 			   NOT 100vw — using the viewport put the pill progressively further
 			   right than its icon. --nav-inset keeps the two in one place. */
-			transform: translateX(calc((var(--nav-frac, 0) + 0.5) * ((100vw - (2 * var(--nav-inset, 12px))) / var(--slot-count, 5)) - 50%));
+			transform: translateX(calc((var(--nav-frac, 0) + 0.5) * ((100vw - (2 * var(--nav-inset, 12px)) - (2 * var(--nav-pad, 0px))) / var(--slot-count, 5)) - 50%));
 			will-change: transform;
 			background: var(--sidebar-active);
 			border-radius: 999px;
@@ -302,7 +310,7 @@
 		.nav-item:not(.active):active { color: var(--sidebar-fg-muted); }
 
 		.label {
-			font-size: 0.58rem;
+			font-size: 0.52rem;
 			font-weight: 600;
 			text-transform: uppercase;
 			letter-spacing: 0.05em;
@@ -320,8 +328,9 @@
 
 		.nav-badge {
 			position: absolute;
-			top: -6px;
-			right: -8px;
+			/* Tucked against the glyph rather than floating off it. */
+			top: -4px;
+			right: -10px;
 			background: #e53935;
 			color: #fff;
 			font-size: 0.55rem;
