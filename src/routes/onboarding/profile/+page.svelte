@@ -11,7 +11,7 @@
 	import { page } from '$app/stores';
 	import { fly } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
-	import { PRESETS, setPreset, themeStore } from '$lib/theme-store.js';
+	import { PRESETS, setPreset, setDark, themeStore } from '$lib/theme-store.js';
 	import AvatarPicker from '$lib/components/AvatarPicker.svelte';
 	import FormattedInput from '$lib/components/FormattedInput.svelte';
 	let { data, form } = $props();
@@ -187,8 +187,21 @@
 			</label>
 
 		{:else}
-			<h1>Pick a colour</h1>
+			<h1>Pick a colour scheme</h1>
 			<p class="sub">This is yours alone — it changes how the app looks for you, and you can swap it any time from your avatar menu.</p>
+
+			<!-- Light/dark first: it recolours every swatch below it, so choosing
+			     the colour against the wrong ground means choosing twice. -->
+			<div class="mode-row" role="group" aria-label="Light or dark">
+				<button type="button" class="mode-btn" class:selected={!$themeStore.dark} onclick={() => setDark(false)} aria-pressed={!$themeStore.dark}>
+					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.1 5.1l1.4 1.4M17.5 17.5l1.4 1.4M18.9 5.1l-1.4 1.4M6.5 17.5l-1.4 1.4"/></svg>
+					Light
+				</button>
+				<button type="button" class="mode-btn" class:selected={$themeStore.dark} onclick={() => setDark(true)} aria-pressed={$themeStore.dark}>
+					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 14.3A8.5 8.5 0 1 1 9.7 3.5a6.8 6.8 0 0 0 10.8 10.8z"/></svg>
+					Dark
+				</button>
+			</div>
 
 			<!-- Applies immediately: the whole page recolours as you tap, so the
 			     swatch grid IS the preview. Theme lives in localStorage, so
@@ -305,6 +318,21 @@
 		box-shadow: inset 0 0 0 1px rgba(0,0,0,0.12);
 	}
 	.sw-name { text-align: center; line-height: 1.2; }
+
+	.mode-row { display: flex; gap: 0.6rem; }
+	.mode-btn {
+		flex: 1;
+		display: flex; align-items: center; justify-content: center; gap: 0.45rem;
+		padding: 0.8rem 0.5rem;
+		border: 1.5px solid var(--border); border-radius: 12px;
+		background: var(--paper); color: var(--ink);
+		font: inherit; font-size: 0.85rem; font-weight: 600; cursor: pointer;
+		transition: border-color 0.15s, box-shadow 0.15s;
+	}
+	.mode-btn.selected {
+		border-color: var(--accent, var(--ink));
+		box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, var(--ink)) 25%, transparent);
+	}
 	@media (prefers-reduced-motion: reduce) {
 		.step-pane { transition: none !important; animation: none !important; }
 	}
