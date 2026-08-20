@@ -860,7 +860,22 @@
 	// Which panel a given direction uncovers.
 	const _beneathFor = (dir) => (dir > 0 ? _chatMenuIdx : _afterChatIdx);
 
+	// The drag follows ONE finger, by identifier. Everything here used to read
+	// `touches[0]` and fire on any touchend, so a second contact point — a second
+	// finger, a thumb resting near the edge, a palm — hijacked the gesture: its
+	// touchstart re-entered this function and disarmed on one of the guards
+	// below, and its touchend was taken for the release. The swipe you were
+	// actually making got abandoned partway, which is why it took two to get
+	// anywhere.
+	let _swTouchId = null;
+	const _trackedTouch = (list) => {
+		if (!list) return null;
+		for (const t of list) if (t.identifier === _swTouchId) return t;
+		return null;
+	};
 	function onSwipeStart(e) {
+		// A drag already in flight owns the gesture — later touches are noise.
+		if (_swArmed) return;
 		if (window.innerWidth > 640) { _disarmSwipe(); return; }
 		// Pager routes drive their own native scroll-snap gestures.
 		if (isPagerActive) { _disarmSwipe(); return; }
@@ -876,13 +891,15 @@
 		// settle alone. Cancelling it up front stranded the teardown whenever you
 		// tapped just after a cancelled swipe — the track kept the transform it
 		// parks behind the layer, which offset every panel horizontally for good.
+		_swTouchId = t.identifier;
 		_swStartX = t.clientX; _swStartY = t.clientY;
 		_swPrevX = t.clientX; _swPrevT = e.timeStamp; _swVelX = 0;
 		_swArmed = true; _swDecided = false;
 	}
 	function onSwipeMove(e) {
 		if (!_swArmed) return;
-		const t = e.touches?.[0]; if (!t) return;
+		// Only our finger drives it; another one moving is not this gesture.
+		const t = _trackedTouch(e.touches); if (!t) return;
 		const dx = t.clientX - _swStartX, dy = t.clientY - _swStartY, W = window.innerWidth || 1;
 		// Instantaneous horizontal velocity (px/ms) — lets a quick FLICK commit
 		// even at low drag distance, matching the native pager's momentum snap.
@@ -936,9 +953,15 @@
 	// a touch down.
 	function _disarmSwipe() {
 		_swArmed = false;
+		_swTouchId = null;
 		_settleConvGesture();
 	}
-	function onSwipeEnd() { _disarmSwipe(); }
+	// touchend / touchcancel. Another finger lifting is not our release — landing
+	// the layer on it would end the swipe still under way.
+	function onSwipeEnd(e) {
+		if (_swArmed && e?.changedTouches && !_trackedTouch(e.changedTouches)) return;
+		_disarmSwipe();
+	}
 	// Run the layer off-screen and commit the route it uncovered. The pager is
 	// already parked on that panel and already painted, so the navigation swaps
 	// nothing visible — no mount, no skeleton, no flash. The goto waits for the
