@@ -844,6 +844,7 @@
 	// for its fixed descendants (the compose bar, the pickers).
 	function _endConvSlide() {
 		_convCommitted = false;
+		_convGone = false;
 		_convSettling = false;
 		_convSliding = false;
 		_convDragging = false;
@@ -984,6 +985,14 @@
 	// undone and you have to do it again. That is the "two swipes to get to
 	// Orbit": the first one worked and was then reeled back in.
 	let _convCommitted = false;
+	// Set the moment the layer finishes leaving, cleared when the slide state is
+	// torn down. Between those two points the chat is off-screen but the ROUTE is
+	// still the chat — and during that gap the pager was untouchable, because the
+	// rule that stops you poking a covered track keyed on the route rather than on
+	// anything being covered. Swipe out and straight on again and the second
+	// gesture hit a dead screen: no drag (the exit owns it) and no native scroll
+	// either. That is the "first swipe doesn't register" when you move quickly.
+	let _convGone = $state(false);
 	function _settleConvGesture() {
 		if (!_convSliding || _convSettling) return;
 		_convSettling = true;
@@ -1073,6 +1082,9 @@
 			_convExitT = setTimeout(() => {
 				// Clear any chat title so the header is already the standard one.
 				pageTitle.set(null); pageTitleHref.set(null);
+				// The layer has finished its run-off: hand the track back before the
+				// route catches up, so a follow-on swipe lands on a live pager.
+				_convGone = true;
 				// Tearing down a conversation is the single heaviest thing in this
 				// gesture — hundreds of message components, their emote canvases and
 				// their listeners, all destroyed synchronously. Hold the mount window
@@ -2625,7 +2637,7 @@
 
 <BottomNav isInstructor={data.currentUser?.role === 'instructor'} {totalUnread} />
 
-<div class="app-shell" class:layered={_onChatSurfaceMobile} style:margin-left={sidebarCollapsed ? '52px' : `${sidebarWidth}px`} style:transition={resizing ? 'none' : null}>
+<div class="app-shell" class:layered={_onChatSurfaceMobile} class:covered={_onChatSurfaceMobile && !_convGone} style:margin-left={sidebarCollapsed ? '52px' : `${sidebarWidth}px`} style:transition={resizing ? 'none' : null}>
 	{#if _pagerMounted}
 		<!-- Native scroll-snap pager: one panel per tab section, swiping
 		     between them is compositor-smooth and the real pages are live
@@ -3178,8 +3190,10 @@
 	   context, which would trap the conversation's pickers and popovers under
 	   the header. Absolute with z-index:auto creates none, so they keep stacking
 	   against the page root exactly as they did before. */
-	/* Parked under an opaque layer, the track is scenery: skip hit-testing it. */
-	.app-shell.layered .pager-track { pointer-events: none; }
+	/* Scenery only while something is actually on top of it. Keyed on `covered`
+	   rather than `layered`, because the layer leaves before the route does and a
+	   track nobody can touch is indistinguishable from a swipe that didn't work. */
+	.app-shell.covered .pager-track { pointer-events: none; }
 	.fwd-host.conv-layer {
 		position: absolute;
 		top: 0; left: 0;
