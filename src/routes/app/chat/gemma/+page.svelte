@@ -10,6 +10,10 @@
 	// image_url) — Gemma is multimodal, images ride as data URLs.
 	let checked = $state(false);
 	let hasKey = $state(false);
+	// Whether Gemma is usable AT ALL — own key, an instructor's, or the
+	// class-wide default. The setup steps below are only worth showing when
+	// none of those exist.
+	let canUse = $state(false);
 	let messages = $state([]);
 	let draft = $state('');
 	let pendingImg = $state(null);   // { dataUrl, name }
@@ -24,7 +28,7 @@
 		pageTitle.set('Gemma');
 		try { messages = JSON.parse(localStorage.getItem(STORE) ?? '[]'); } catch { messages = []; }
 		const res = await fetch('/api/ai/key');
-		if (res.ok) hasKey = (await res.json()).hasKey;
+		if (res.ok) { const j = await res.json(); hasKey = j.hasKey; canUse = j.canUse ?? j.hasKey; }
 		checked = true;
 		scrollDown();
 		loadDigests();
@@ -166,7 +170,7 @@
 			});
 			if (!res.ok) {
 				const body = await res.json().catch(() => null);
-				if (body?.code === 'no_key') { hasKey = false; messages = messages.slice(0, -2); }
+				if (body?.code === 'no_key') { hasKey = false; canUse = false; messages = messages.slice(0, -2); }
 				else if (body?.code === 'auth_failed') errorText = `Your API key was rejected (${body.status}) — check it in Gemma settings.`;
 				else if (body?.status) errorText = `Gemma is down right now (${body.status}) — try again later.`;
 				else errorText = 'Gemma is unreachable right now.';
@@ -245,7 +249,7 @@
 		</div>
 	{/if}
 
-	{#if checked && !hasKey}
+	{#if checked && !canUse}
 		<div class="gm-setup">
 			<p><b>Gemma needs your API key first.</b> It takes a minute:</p>
 			<ol>

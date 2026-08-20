@@ -1,5 +1,6 @@
 import { json, error } from '@sveltejs/kit';
 import { getDb } from '$lib/server/turso.js';
+import { canUseAi } from '$lib/server/ai-creds.js';
 
 const DEFAULT_BASE = 'https://chatterbox.ee.cooper.edu/api/v1';
 
@@ -15,9 +16,13 @@ export async function GET({ locals }) {
 		args: [session.user.id]
 	});
 	const row = res.rows[0];
-	if (!row) return json({ hasKey: false, baseUrl: DEFAULT_BASE });
+	// `hasKey` stays strictly about the caller's OWN row — the settings page
+	// reports on that. `canUse` also counts the instructor / class-wide
+	// fallbacks, and is what gates the Gemma chat.
+	if (!row) return json({ hasKey: false, canUse: await canUseAi(session.user.id), baseUrl: DEFAULT_BASE });
 	return json({
 		hasKey: true,
+		canUse: true,
 		baseUrl: row.base_url,
 		last4: String(row.api_key).slice(-4),
 		updatedAt: Number(row.updated_at)

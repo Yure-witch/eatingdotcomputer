@@ -1,5 +1,6 @@
 import { json, error } from '@sveltejs/kit';
 import { getDb } from '$lib/server/turso.js';
+import { resolveAiCreds } from '$lib/server/ai-creds.js';
 
 const SYSTEM_PROMPT =
 	'You are Gemma, a friendly AI assistant inside eating.computer, the class ' +
@@ -13,10 +14,10 @@ export async function POST({ request, locals }) {
 	const session = await locals.auth();
 	if (!session) error(401, 'Unauthorized');
 
-	const creds = (await getDb().execute({
-		sql: 'SELECT base_url, api_key FROM user_ai_keys WHERE user_id = ?',
-		args: [session.user.id]
-	})).rows[0];
+	// Own key → an instructor's → the class-wide GEMMA_KEY. Without the last
+	// rung, anyone who hasn't fetched a personal key (including the App Store
+	// review account) hits a setup wall instead of Gemma.
+	const creds = await resolveAiCreds(session.user.id);
 	if (!creds) return json({ code: 'no_key' }, { status: 400 });
 
 	const { messages } = await request.json();
