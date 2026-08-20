@@ -48,8 +48,24 @@
 		// Snippet rendered in the tabs bar, right of the ✕ — lets a host put
 		// its own controls in this panel's scrollable bar rather than stacking
 		// another row above it.
-		leading = null
+		leading = null,
+		// Class-uploaded emotes, rendered as the FIRST flow section so uploads
+		// and the library read as one list instead of two views behind a
+		// switch. Plain images ({ id, shortcode, url }), not Lottie — they get
+		// their own cell branch below.
+		uploads = [],
+		uploadsLabel = 'Uploaded',
+		onInsertUpload = null,
+		// Instructor-only. The picker is the only place an uploaded emote can
+		// be deleted, so the affordance has to survive the merge.
+		onDeleteUpload = null,
+		// When set, an upload button appears in the sticky bar.
+		onUpload = null
 	} = $props();
+	const UPLOADS_KEY = '__uploads';
+	const _uploadItems = $derived(
+		(uploads ?? []).map((u) => ({ upload: true, id: u.id, shortcode: u.shortcode, url: u.url }))
+	);
 	// Instructor moderation: when `moderating` is on (instructor only), the
 	// library shows hidden emotes (dimmed) and clicking one toggles its hidden
 	// state instead of inserting it. When off, hidden emotes are filtered out
@@ -59,8 +75,19 @@
 	const _showHidden = $derived(canModerate && moderating);
 	const _cellKey = (it) => emoteKey({ cp: it.cp, short: it.short, id: it.id, custom: it.custom });
 	const _keep = (it) => _showHidden || !_hiddenSet.has(_cellKey(it));
+	// Uploads have no hidden-emote key (that list is keyed by TG cp/pack), so
+	// they only ever filter on the search box, matched against the shortcode
+	// the user types to insert them.
+	const _keepUpload = (it) => {
+		const q = search.trim().toLowerCase();
+		return !q || (it.shortcode || '').toLowerCase().includes(q);
+	};
 	const _isCellHidden = (it) => _hiddenSet.has(_cellKey(it));
 	function cellAction(it) {
+		// Uploads insert a [ce:] token through their own callback, and are not
+		// part of the hidden-emote system (that list is keyed by TG cp/pack),
+		// so the moderation tap doesn't apply to them either.
+		if (it.upload) { onInsertUpload?.(it); return; }
 		if (_showHidden) {
 			if (_isCellHidden(it)) unhideEmote(it); else hideEmote(it);
 			return;
@@ -338,6 +365,8 @@
 	// top; user scroll inside the scroller updates the highlighted tab
 	// to whichever section is currently nearest the top edge.
 	const flowingCats = $derived([
+		// Uploads lead — they're the class's own, and far fewer than the packs.
+		...(_uploadItems.length ? [{ key: UPLOADS_KEY, label: uploadsLabel, icon: '📤' }] : []),
 		...headCats.filter((c) => !isStandalone(c.key)),
 		...packCats.map((c) => ({ key: c.key, label: c.label, icon: null, pack: c.pack }))
 	]);
@@ -345,7 +374,9 @@
 		flowingCats.map((c) => ({
 			key: c.key,
 			label: c.label ?? c.key,
-			items: (byCat[c.key] ?? []).filter(_keep)
+			items: c.key === UPLOADS_KEY
+				? _uploadItems.filter(_keepUpload)
+				: (byCat[c.key] ?? []).filter(_keep)
 		}))
 	);
 
@@ -633,6 +664,14 @@
 		     their own above the panel. The Emotes tab uses it for its
 		     Uploaded / Library switch. -->
 		{@render leading?.()}
+		{#if onUpload}
+			<!-- The upload form used to sit permanently above the grid. It's
+			     behind this button now — it's an occasional action, and the
+			     sheet's height is better spent on emotes. -->
+			<PickerStickyBtn square onclick={onUpload} title="Upload a custom emote" label="Upload a custom emote">
+				<span class="msi msi-20">add_photo_alternate</span>
+			</PickerStickyBtn>
+		{/if}
 		<PickerStickyBtn square active={searchOpen} onclick={toggleSearch}
 			title="Search emotes" label="Search emotes">
 			<span class="msi msi-20">search</span>
@@ -812,12 +851,28 @@
 									{@const _cellLive = _cellAbsY + CELL_PX > _cellVisTop && _cellAbsY < _cellVisBot}
 									<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 									<div class="tg-cell" class:tg-cell-hidden={_showHidden && _isCellHidden(it)}
-										title={it.custom
+										class:tg-cell-upload={it.upload}
+										title={it.upload
+											? `:${it.shortcode}:`
+											: it.custom
 											? `${it.name || it.alt}  ${it.alt}  ·  ${it.packTitle}${it.kw?.length ? '\n' + it.kw.slice(0, 6).join(', ') : ''}`
 											: it.e}
 										onclick={() => cellAction(it)}>
 										{#if _cellLive}
-											{#if it.custom}
+											{#if it.upload}
+												<!-- Class upload: a plain image, no Lottie pipeline. -->
+												<img class="tg-upload-img" src={it.url} alt={':' + it.shortcode + ':'}
+													width={STICKER_PX} height={STICKER_PX} loading="lazy" decoding="async" />
+												{#if onDeleteUpload}
+													<!-- The picker is the ONLY place an uploaded emote can be
+													     deleted, so this has to survive the merge. Hover on
+													     desktop; on touch it's always shown, since there is no
+													     hover to reveal it. -->
+													<button class="tg-upload-del" title="Remove :{it.shortcode}:"
+														aria-label="Remove :{it.shortcode}:"
+														onclick={(ev) => { ev.stopPropagation(); onDeleteUpload(it.id); }}>×</button>
+												{/if}
+											{:else if it.custom}
 												<LottieSticker short={it.short} id={it.id} size={STICKER_PX} mode="visible" staticOnly={_static}
 													ignoreHidden={_showHidden} root={gridWrapEl} title={it.alt} />
 											{:else}
@@ -1028,6 +1083,23 @@
 	}
 	.tg-cell { width: 100%; aspect-ratio: 1 / 1; height: auto; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.12s; }
 	.tg-cell:hover { background: var(--surface-2); }
+	.tg-cell-upload { position: relative; }
+	.tg-upload-img { object-fit: contain; display: block; }
+	/* Instructor delete. Revealed on hover where there is one; always visible
+	   on touch, where there isn't. */
+	.tg-upload-del {
+		position: absolute; top: -2px; right: -2px;
+		width: 15px; height: 15px; padding: 0; line-height: 1;
+		display: none; align-items: center; justify-content: center;
+		border: none; border-radius: 50%;
+		background: var(--md-sys-color-error, #b3261e);
+		color: var(--md-sys-color-on-error, #fff);
+		font-size: 11px; cursor: pointer;
+	}
+	.tg-cell-upload:hover .tg-upload-del { display: inline-flex; }
+	@media (hover: none) {
+		.tg-upload-del { display: inline-flex; }
+	}
 	/* Moderation: a hidden emote shown to the instructor is dimmed + struck. */
 	.tg-cell-hidden { position: relative; opacity: 0.4; }
 	.tg-cell-hidden::after {

@@ -248,7 +248,7 @@
 </script>
 
 <div class="ce-panel">
-	{#if onClose || leading || mode === 'both'}
+	{#if mode !== 'upload' && (onClose || leading || mode === 'both')}
 		<div class="ce-tabs">
 			{#if onClose}
 				<PickerStickyBtn square onclick={onClose} title="Close" label="Close picker">
@@ -265,7 +265,7 @@
 	{/if}
 
 	{#if tab === 'emoji'}
-		<div class="ce-upload-section">
+		<div class="ce-upload-section" class:ce-upload-only={mode === 'upload'}>
 			<label class="ce-file-label">
 				<span class="ce-file-btn">{emojiFile ? emojiFile.name.slice(0, 20) : 'Choose image…'}</span>
 				<input type="file" accept="image/*,.heic,.heif" style="display:none" bind:this={emojiFileInput}
@@ -300,6 +300,10 @@
 			</button>
 			{#if emojiUploadError}<div class="ce-error">{emojiUploadError}</div>{/if}
 		</div>
+		<!-- 'upload' mode renders the FORM only. The emote list itself has moved
+		     into the merged picker grid, so showing it again here would be a
+		     second copy of the same emotes. -->
+		{#if mode !== 'upload'}
 		<div class="ce-grid-wrap" bind:this={gridWrapEl} onscroll={onEmojiScroll}>
 			{#if emojiLoading}
 				<div class="ce-loading"><span class="ce-spinner"></span>Loading…</div>
@@ -328,6 +332,7 @@
 				</div>
 			{/if}
 		</div>
+		{/if}
 
 	{:else}
 		<div class="ce-upload-section">
@@ -421,6 +426,7 @@
 	.ce-tab:hover { color: var(--ink, var(--ink)); background: var(--surface-2); }
 	.ce-tab.active { color: var(--ink, var(--ink)); background: var(--paper, var(--paper)); border-bottom: 2px solid var(--ink, var(--ink)); margin-bottom: -1.5px; }
 
+	.ce-upload-only { max-height: none !important; flex: 1; border-bottom: none; }
 	.ce-upload-section { padding: 0.5rem 0.65rem 0.4rem; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 0.3rem; flex-shrink: 0; max-height: 55%; overflow-y: auto; overscroll-behavior: contain; }
 
 	.ce-mode-toggle { display: flex; gap: 0.3rem; }

@@ -34,6 +34,7 @@
 	// Both are cached and no-op on a second call.
 	let _packVer = $state(0);
 	onMount(() => {
+		loadUploads();
 		if (!tgHidden) {
 			if (!getCachedTgEmoji()) loadTelegramEmoji().then(() => _packVer++).catch(() => {});
 			if (!getCachedCustomPacks()) loadCustomPacks().then(() => _packVer++).catch(() => {});
@@ -283,19 +284,9 @@
 
 	$effect(() => { ensure(tab); scheduleNeighbours(); });
 
-	// Emotes tab has two sources: the class's uploaded custom emotes
-	// (R2-backed PNGs / GIFs / WebPs) and the static Telegram packs
-	// (CrazyEmoji / MadEmoji2 / HeartEmoji) — packs whose artwork
-	// has no frame-to-frame motion, so they belong with non-animated
-	// emotes rather than under Animated. A sub-tab persists each
-	// section's own search / scroll chrome so they don't fight inside
-	// the 320 px mobile panel.
-	const EMOTES_SUB_KEY = 'exprEmotesSub';
-	const _savedSub = typeof localStorage !== 'undefined' ? localStorage.getItem(EMOTES_SUB_KEY) : null;
-	let emotesSub = $state(_savedSub === 'library' && !tgHidden ? 'library' : 'uploaded');
-	$effect(() => {
-		try { localStorage.setItem(EMOTES_SUB_KEY, emotesSub); } catch {}
-	});
+	// (The Emotes tab used to keep an Uploaded/Library sub-tab here. Both
+	// sources now render in one scroll — see the merged TelegramEmojiPanel
+	// below — so there is no sub-selection left to remember.)
 
 	// Reactions tab only handles reactions; pass a no-op for emoji
 	// insertion. CustomEmojiPanel hides the unused side via `mode`.
@@ -350,6 +341,35 @@
 		}
 	}
 
+	// ── Class uploads (merged into the Emotes flow) ──────────────────
+	// Uploaded emotes and the static library used to be two views behind an
+	// Uploaded/Library switch. They're one scroll now — uploads first, then the
+	// packs — so the switch is gone and TelegramEmojiPanel renders both.
+	let uploads = $state([]);
+	let showUpload = $state(false);
+	async function loadUploads() {
+		try {
+			const r = await fetch('/api/custom-emoji', { cache: 'no-store' });
+			if (!r.ok) return;
+			// The endpoint returns a bare array of { id, shortcode, url, tags } —
+			// same shape CustomEmojiPanel reads.
+			const d = await r.json();
+			uploads = Array.isArray(d) ? d.filter((e) => e && e.url) : [];
+		} catch { /* leave the section empty */ }
+	}
+	async function deleteUpload(id) {
+		const prev = uploads;
+		uploads = uploads.filter((u) => u.id !== id); // optimistic
+		try {
+			const r = await fetch('/api/custom-emoji', {
+				method: 'DELETE',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ id })
+			});
+			if (!r.ok) uploads = prev;
+		} catch { uploads = prev; }
+	}
+
 	// ── Shared recents ───────────────────────────────────────────────
 	// Every insert routes through these wrappers so the Recent tab sees
 	// all expression types from all surfaces. Recents replay through the
@@ -391,18 +411,6 @@
 		if (tab === 'recent' && !hasRecents) tab = 'emoji';
 	});
 </script>
-
-{#snippet sourceTabs()}
-	<!-- Uploaded / Library used to be a nav row of their own, stacked above the
-	     panel and costing a full row in a sheet only ~330px tall. They ride the
-	     panel's own scrolling bar now, beside its ✕ and search — same row, no
-	     extra height. Defined once and passed to whichever source is showing so
-	     the pair stays identical across the switch. -->
-	<button class="expr-srctab" class:active={emotesSub === 'uploaded'}
-		onclick={() => (emotesSub = 'uploaded')}>Uploaded</button>
-	<button class="expr-srctab" class:active={emotesSub === 'library'}
-		onclick={() => (emotesSub = 'library')}>Library</button>
-{/snippet}
 
 <div class="expr-panel" class:expr-panel-react={mode === 'react'} class:expr-dragging={dragging}
      bind:this={panelEl} style:transform={dragY ? `translate3d(0,${dragY}px,0)` : null}>
@@ -505,11 +513,29 @@
 						     (CrazyEmoji / MadEmoji2 / HeartEmoji) which don't
 						     animate, so they belong here next to the rest of the
 						     non-animated emotes rather than under Animated. -->
-						{#if emotesSub === 'uploaded'}
-							<CustomEmojiPanel mode="emoji" onInsertEmoji={fireCe} onInsertReaction={_noop}
-								{isInstructor} {onClose} leading={tgHidden ? null : sourceTabs} />
-						{:else}
-							<TelegramEmojiPanel onInsert={fireTg} packFilter="static" {onClose} leading={sourceTabs} />
+						<!-- One scroll: the class's uploads lead, the static library
+						     packs follow, and the pack rail jumps between them. -->
+						<TelegramEmojiPanel
+							onInsert={fireTg}
+							packFilter="static"
+							{onClose}
+							{uploads}
+							onInsertUpload={(u) => fireCe({ shortcode: u.shortcode, url: u.url })}
+							onDeleteUpload={isInstructor ? deleteUpload : null}
+							onUpload={() => (showUpload = true)} />
+						{#if showUpload}
+							<!-- The upload form, reused from CustomEmojiPanel in its
+							     form-only mode so the working upload logic isn't
+							     duplicated. Refreshes the section on close, which is
+							     when a new emote should appear in it. -->
+							<div class="expr-upload">
+								<div class="expr-upload-bar">
+									<button class="expr-upload-close"
+										onclick={() => { showUpload = false; loadUploads(); }}>Done</button>
+									<span class="expr-upload-title">Upload a custom emote</span>
+								</div>
+								<CustomEmojiPanel mode="upload" onInsertEmoji={_noop} onInsertReaction={_noop} {isInstructor} />
+							</div>
 						{/if}
 					{:else if t === 'animated'}
 						<!-- Animated stickers only — static packs live in the
@@ -687,6 +713,7 @@
 	}
 	.expr-track::-webkit-scrollbar { display: none; }
 	.expr-pane {
+		position: relative;   /* containing block for .expr-upload */
 		flex: 0 0 100%;
 		width: 100%;
 		/* Without min-width:0 a wide child (the Kitchen's 380px shell, a long
@@ -699,6 +726,32 @@
 		overflow: hidden;
 		scroll-snap-align: start;
 		scroll-snap-stop: always;
+	}
+
+	/* Upload form, over the grid. Covers the pane rather than displacing it,
+	   so dismissing puts you back exactly where you were in the list. */
+	.expr-upload {
+		position: absolute;
+		inset: 0;
+		z-index: 6;
+		display: flex;
+		flex-direction: column;
+		background: var(--paper);
+	}
+	.expr-upload-bar {
+		display: flex; align-items: center; gap: 0.5rem;
+		padding: 0.35rem 0.5rem;
+		border-bottom: 1.5px solid var(--border);
+		background: var(--md-sys-color-surface-container, var(--surface-2));
+		flex-shrink: 0;
+	}
+	.expr-upload-title { font-size: 0.78rem; font-weight: 600; color: var(--ink); }
+	.expr-upload-close {
+		border: none; border-radius: 999px;
+		padding: 0.3rem 0.7rem;
+		background: var(--md-sys-color-secondary-container, var(--paper));
+		color: var(--md-sys-color-on-secondary-container, var(--ink));
+		font: inherit; font-size: 0.74rem; font-weight: 600; cursor: pointer;
 	}
 
 	/* Source switch (Uploaded / Library) rendered INTO the inner panel's own
