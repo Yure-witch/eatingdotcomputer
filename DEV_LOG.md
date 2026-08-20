@@ -511,6 +511,16 @@ The following major areas need to be built. None are started yet.
 - **Notes**: First version was a labeled pill above the input bar; user feedback moved it into the input bar as a 40px checkbox, then added the visible "Send with special effect" text next to it.
 - **Follow-up (2026-07-21)**: click-to-play on a jumbo av>0 emote now ALWAYS plays the special-effect variant (first version gated clicks on `msg.tgFx` too, which made old/unflagged messages play a lame plain enlarge). The checkbox now only gates the on-receipt auto-play; small/inline emotes still never render the special effect.
 
+## Dev tooling — remote hard refresh via RTDB
+
+### `dev/refreshNeeded` forces every client to drop its cache and reload — 2026-08-20
+- **Status**: `attempted`
+- **What**: A DEV-ONLY kill switch for the stale-build problem: the installed iOS app serves whatever its service worker cached (`cache-${version}`, cache-first on static assets), so a device can sit several deploys behind with nothing on screen to say so — which makes "is this fixed yet?" unanswerable during a debugging session.
+  - **RTDB path**: `dev/refreshNeeded`. Write a NEW value (a `Date.now()` timestamp is the obvious choice) and every signed-in client unregisters its service worker, deletes every Cache Storage entry, and reloads with a cache-busting query param.
+  - **Rules** (`database.rules.json`): `dev` is `.read: auth != null`, `dev/refreshNeeded` is `.write: false` — only the Admin SDK or the Firebase console can set it, so nothing in the app can fire it by accident. **Needs `firebase deploy --only database` to take effect**; until the rules ship, clients get permission-denied on the read and the watcher does nothing.
+  - **Client**: `watchDevRefresh()` in `src/routes/app/+layout.svelte`, started once Firebase auth lands (alongside presence + theme-sync). The last-seen value is kept per device in `localStorage['dev:refreshNeeded']`, so joining the app never reloads — only a value that CHANGES while you are running does. Without that it is a boot loop.
+- **Notes**: Not a product feature and not surfaced in the UI. Setting the value again to the SAME number does nothing; it has to change.
+
 ---
 
 - [ ] Authentication system (login/logout, student vs instructor roles)

@@ -1216,6 +1216,61 @@
 	let creatingChannel = $state(false);
 	let channelError = $state(null);
 
+	// ── Dev: remote hard refresh (RTDB `dev/refreshNeeded`) ─────────────────
+	// DEVELOPMENT TOOL, not a product feature. The installed iOS app serves its
+	// own cached build until the service worker decides otherwise, so a device
+	// can sit several deploys behind with nothing on screen to say so — which
+	// makes "is this fixed?" unanswerable. Writing a NEW value to
+	// `dev/refreshNeeded` (a timestamp is the obvious choice) makes every signed-in
+	// client drop its caches, unregister its service worker and reload, landing
+	// on whatever is actually deployed.
+	//
+	// Only the Admin SDK / Firebase console can write it (rules say `.write:
+	// false`), so nothing in the app can set it by accident.
+	//
+	// The last-seen value is remembered per device, so joining the app does NOT
+	// reload — only a value that CHANGES while you're running does. Without that
+	// this is a boot loop: reload, read the same value, reload.
+	let _devRefreshUnsub = null;
+	function watchDevRefresh() {
+		if (typeof window === 'undefined' || _devRefreshUnsub) return;
+		const KEY = 'dev:refreshNeeded';
+		_devRefreshUnsub = onValue(ref(rtdb, 'dev/refreshNeeded'), (snap) => {
+			const v = snap.val();
+			if (v === null || v === undefined) return;
+			const seen = (() => { try { return localStorage.getItem(KEY); } catch { return null; } })();
+			const now = String(v);
+			try { localStorage.setItem(KEY, now); } catch { /* private mode */ }
+			if (seen === null || seen === now) return; // first sight, or unchanged
+			hardRefresh();
+		});
+	}
+	// Best-effort: every step is optional and the reload happens regardless, so a
+	// browser that refuses one of them still ends up on a fresh load.
+	async function hardRefresh() {
+		try {
+			if ('serviceWorker' in navigator) {
+				const regs = await navigator.serviceWorker.getRegistrations();
+				await Promise.all(regs.map((r) => r.unregister().catch(() => {})));
+			}
+		} catch { /* not fatal */ }
+		try {
+			if (typeof caches !== 'undefined') {
+				const keys = await caches.keys();
+				await Promise.all(keys.map((k) => caches.delete(k).catch(() => {})));
+			}
+		} catch { /* not fatal */ }
+		// Cache-bust the document itself: iOS will otherwise happily re-serve the
+		// same HTML it already had.
+		try {
+			const u = new URL(location.href);
+			u.searchParams.set('_r', String(Date.now()));
+			location.replace(u.toString());
+			return;
+		} catch { /* fall through */ }
+		location.reload();
+	}
+
 	// ── Unread / DMs ──
 	// Seeded from server (Firebase Admin read) so unread indicators are correct immediately,
 	// before any Firebase client subscription fires. Client subscriptions update these live.
@@ -1816,6 +1871,7 @@
 			import('$lib/theme-sync.js')
 				.then((m) => m.initThemeSync(data.currentUser.id))
 				.catch(() => {});
+			watchDevRefresh();
 		}
 
 		// Presence write — per-device so two simultaneous logins don't clobber each other
