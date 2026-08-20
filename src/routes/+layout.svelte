@@ -265,11 +265,19 @@
 <footer class="build-info">build #{__BUILD_NUMBER__} · {__BUILD_SHA__}</footer>
 
 <style>
+	@media (max-width: 640px) {
+		.update-banner {
+			bottom: calc(max(6px, env(safe-area-inset-bottom, 0px)) + 60px + 12px);
+		}
+	}
 	.update-banner {
 		position: fixed; bottom: 1rem; left: 50%; transform: translateX(-50%);
+		/* Above the mobile bottom nav, which is 60px tall, sits at
+		   max(6px, safe-area) and carries z-index 1000 — at bottom:1rem this
+		   banner was landing underneath it. */
 		background: var(--ink); color: var(--paper);
 		border: 1px solid #444; border-radius: 10px;
-		padding: 0.6rem 1rem; z-index: 999;
+		padding: 0.6rem 1rem; z-index: 1001;
 		display: flex; align-items: center; gap: 1rem;
 		font-size: 0.85rem; box-shadow: 0 4px 20px rgba(0,0,0,0.3);
 		white-space: nowrap;
