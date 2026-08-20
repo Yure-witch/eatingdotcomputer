@@ -888,6 +888,12 @@
 		{/key}
 	</div>
 	</div>
+	<!-- The engine toggle picks between Lottie renderers, so it only means
+	     anything where something animates. In static-only mode (the Emotes
+	     tab: class uploads, which are plain images, plus packs chosen for
+	     having no motion) it controls nothing, and it costs a row of a sheet
+	     that would rather spend it on emotes. -->
+	{#if !_isStaticOnly}
 	<div class="tg-foot">
 		<button class="tg-engine-toggle"
 			title="Toggle render engine. CPU = rlottie WASM (pixel-perfect). GPU = Skia/Skottie main thread. WorkerGPU = Skia/Skottie in a worker (default on desktop). WebGPU = experimental, requires WebGPU-capable browser."
@@ -913,6 +919,7 @@
 			{:else}click in chat to replay{/if}
 		</span>
 	</div>
+	{/if}
 </div>
 
 <style>
