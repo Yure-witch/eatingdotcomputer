@@ -1382,13 +1382,6 @@
 		.preview-bar { display: none; }
 	}
 
-	/* Belt and braces: the width query above misses any context where the picker
-	   is narrow but the viewport isn't. A device that can't hover can never fill
-	   this bar, so hide it on capability too. */
-	@media (hover: none) {
-		.preview-bar { display: none; }
-	}
-
 	/* ── Grid ── */
 	.grid-wrap {
 		flex: 1;
@@ -1496,6 +1489,14 @@
 		min-height: 2rem;
 		flex-shrink: 0;
 	}
+	/* Must come AFTER the base .preview-bar rule above: the @media block earlier
+	   in this file has the same specificity, so the later plain `display: flex`
+	   was winning and the bar showed on phones regardless. A device that can't
+	   hover can never fill this bar, so it goes on capability as well as width. */
+	@media (max-width: 640px), (hover: none) {
+		.preview-bar { display: none; }
+	}
+
 	.preview-glyph { font-size: 1.25rem; line-height: 1; flex-shrink: 0; }
 	.preview-glyph.noto { font-family: 'Noto Color Emoji', sans-serif; }
 	.preview-name  { font-size: 0.75rem; color: var(--muted-fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
