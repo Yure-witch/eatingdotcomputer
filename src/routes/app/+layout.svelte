@@ -789,6 +789,9 @@
 	// unmounts the layer, so we hold the goto until the slide is done — otherwise
 	// it vanishes mid-flight (which is what a "flash" on exit actually was).
 	const CONV_EXIT_MS = 190;
+	// Travel that counts as "leave this chat". Inherited from the gesture this
+	// replaced, where it was the rule that felt right.
+	const COMMIT_PX = 30;
 	let _convSliding = $state(false);    // layer is transformed (dragging or settling)
 	let _convDragging = $state(false);   // finger is down → no transition, track it 1:1
 	let _convNavBack = $state(false);    // drag clearly underway → the bottom nav starts returning
@@ -856,7 +859,7 @@
 		}
 		_freezeEmotes(false);
 	}
-	let _swVelX = 0, _swPrevX = 0, _swPrevT = 0;
+	let _swLastDx = 0, _swVelX = 0, _swPrevX = 0, _swPrevT = 0;
 	let _swDir = 1; // +1 = left→right (back to the chat menu), -1 = right→left (on to the next section)
 	// Which panel a given direction uncovers.
 	const _beneathFor = (dir) => (dir > 0 ? _chatMenuIdx : _afterChatIdx);
@@ -903,6 +906,7 @@
 		// Only our finger drives it; another one moving is not this gesture.
 		const t = _trackedTouch(e.touches); if (!t) return;
 		const dx = t.clientX - _swStartX, dy = t.clientY - _swStartY, W = window.innerWidth || 1;
+		_swLastDx = dx;
 		// Instantaneous horizontal velocity (px/ms) — lets a quick FLICK commit
 		// even at low drag distance, matching the native pager's momentum snap.
 		const _dt = e.timeStamp - _swPrevT;
@@ -950,9 +954,14 @@
 		_convSettling = true;
 		_convDragging = false; // re-enable the transition so it animates to the snap
 		const dir = _convDrag !== 0 ? (_convDrag > 0 ? 1 : -1) : _swDir;
-		// Commit on a clear drag (past 30%) or a flick that agrees with it.
+		// Commit on a clear intent, measured in PIXELS — the distance that reads as
+		// "I meant that", not a fraction of the journey. Rewriting this as
+		// `> 0.3` of the viewport looked equivalent to the 30px rule it replaced
+		// and is nearly four times as far (~117px on a phone): every ordinary short
+		// swipe fell under it, snapped back, and had to be made again. That was the
+		// two-swipe exit — the gesture was being rejected, not dropped.
 		const flicked = Math.abs(_swVelX) > 0.4 && Math.sign(_swVelX) === dir;
-		if (Math.abs(_convDrag) > 0.3 || flicked) { _exitChatSurface(dir); return; }
+		if (Math.abs(_swLastDx) >= COMMIT_PX || flicked) { _exitChatSurface(dir); return; }
 		_setConvDrag(0); // cancelled — slide back into place
 		clearTimeout(_convExitT);
 		_convExitT = setTimeout(_endConvSlide, CONV_EXIT_MS + 20);
