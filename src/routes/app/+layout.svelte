@@ -789,9 +789,12 @@
 	// unmounts the layer, so we hold the goto until the slide is done — otherwise
 	// it vanishes mid-flight (which is what a "flash" on exit actually was).
 	// ── Swipe diagnostics ───────────────────────────────────────────────
-	// Off unless asked for: add ?swipedbg=1 to any /app URL (it sticks for the
-	// tab). Writes only at gesture MILESTONES, never per frame, so switching it
-	// on doesn't change the thing it's measuring.
+	// Off unless asked for. Two ways in, because the native iOS shell has no
+	// address bar to type a query string into:
+	//   • ?swipedbg=1 on any /app URL (sticks for the tab) — browsers
+	//   • RTDB `dev/swipeDebug` = true — everywhere, including the installed app
+	// Writes only at gesture MILESTONES, never per frame, so switching it on
+	// doesn't change the thing it's measuring.
 	let _swDbg = $state(false);
 	let _dbgLines = $state([]);
 	function _dbg(msg) {
@@ -1243,6 +1246,18 @@
 			try { localStorage.setItem(KEY, now); } catch { /* private mode */ }
 			if (seen === null || seen === now) return; // first sight, or unchanged
 			hardRefresh();
+		});
+	}
+	// The debug readout, flipped from the console. Lives under the same `dev`
+	// node, which is already `.read: auth != null` with no write rule below it —
+	// so this needs no rules change and, like refreshNeeded, only the Admin SDK or
+	// the console can set it.
+	let _swipeDbgUnsub = null;
+	function watchSwipeDebug() {
+		if (typeof window === 'undefined' || _swipeDbgUnsub) return;
+		_swipeDbgUnsub = onValue(ref(rtdb, 'dev/swipeDebug'), (snap) => {
+			const on = snap.val() === true || snap.val() === 1 || snap.val() === 'true';
+			if (on !== _swDbg) { _swDbg = on; if (!on) _dbgLines = []; }
 		});
 	}
 	// Best-effort: every step is optional and the reload happens regardless, so a
@@ -1872,6 +1887,7 @@
 				.then((m) => m.initThemeSync(data.currentUser.id))
 				.catch(() => {});
 			watchDevRefresh();
+			watchSwipeDebug();
 		}
 
 		// Presence write — per-device so two simultaneous logins don't clobber each other
