@@ -171,7 +171,7 @@
 		<a href={item.href} class="nav-item" class:active={isActive}
 			onclick={(e) => { if (pagerNav?.goToSection?.(item.href)) e.preventDefault(); }}>
 			<span class="icon-wrap">
-				<span class="msi msi-20" class:msi-fill={isActive}>{item.iconName}</span>
+				<span class="msi msi-24" class:msi-fill={isActive}>{item.iconName}</span>
 			</span>
 			<span class="label">{item.label}</span>
 		</a>
@@ -181,7 +181,7 @@
 			<a href="/app/chat" class="nav-item" class:active={chatActive}
 				onclick={(e) => { if (pagerNav?.goToSection?.('/app/chat')) e.preventDefault(); }}>
 				<span class="icon-wrap">
-					<span class="msi msi-20" class:msi-fill={chatActive}>{chatIconName}</span>
+					<span class="msi msi-24" class:msi-fill={chatActive}>{chatIconName}</span>
 					{#if totalUnread > 0}
 						<span class="nav-badge">{totalUnread > 99 ? '99+' : totalUnread}</span>
 					{/if}
@@ -219,17 +219,19 @@
 			   visibly continuing underneath rather than stopping at a bar. That
 			   read is what sells the "glass", not transparency: the surface is
 			   fully opaque and gets its depth from elevation alone. */
-			--nav-inset: 44px;
+			--nav-inset: 30px;
 			/* Breathing room inside the rounded ends — the slots span the padded
 			   box, not the full pill, so the icons sit closer together and the
 			   curves stay empty. */
-			--nav-pad: 16px;
+			--nav-pad: 22px;
 			padding-left: var(--nav-pad);
 			padding-right: var(--nav-pad);
 			box-sizing: border-box;
-			bottom: calc(env(safe-area-inset-bottom, 0px) + 18px);
+			/* Sits just above the home indicator rather than well clear of it —
+			   max() keeps a small gap on the plain web, where there is no inset. */
+			bottom: max(6px, env(safe-area-inset-bottom, 0px));
 			left: var(--nav-inset); right: var(--nav-inset);
-			height: 58px;
+			height: 76px;
 			padding-bottom: 0;
 			border-radius: 999px;
 			/* Reuse the sidebar tokens so the mobile bottom nav reads
@@ -259,10 +261,10 @@
 			/* Vertically centred in the 58px bar and fully rounded, matching the
 			   bar's own ends. Starts after the bar's inner padding, which the
 			   slot maths above also subtracts. */
-			top: 6px;
+			top: 8px;
 			left: var(--nav-pad, 0px);
-			width: 52px;
-			height: 44px;
+			width: 74px;
+			height: 60px;
 			border-radius: 999px;
 			/* Move with transform (compositor / GPU) instead of `left` (which forced a
 			   layout reflow every scroll frame → framey). The nav is full-viewport
@@ -288,7 +290,8 @@
 			flex-direction: column;
 			align-items: center;
 			justify-content: center;
-			gap: 0.2rem;
+			/* Glyph and label read as one unit rather than two stacked things. */
+			gap: 0.05rem;
 			color: var(--sidebar-fg-muted);
 			text-decoration: none;
 			transition: color 0.15s;
@@ -296,7 +299,7 @@
 			/* reset button defaults */
 			background: none;
 			border: none;
-			padding: 0;
+			padding: 0 0.4rem;
 			font-family: inherit;
 			cursor: pointer;
 		}

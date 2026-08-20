@@ -1,15 +1,18 @@
-// Lazy-loads emoji names from the existing emoji-data.json (browser-cached).
+// Lazy-loads emoji names from the shared emoji-data.json index.
 // Module-level so the map is shared across all importers.
+import { loadEmojiData, buildNames } from '$lib/emoji-data.js';
+
 let map = null;
 let promise = null;
 
 export function loadEmojiNames() {
 	if (map) return Promise.resolve(map);
-	if (!promise) promise = fetch('/emoji-data.json', { cache: 'force-cache' })
-		.then(r => r.json())
+	if (!promise) promise = loadEmojiData()
 		.then(data => {
-			map = {};
-			for (const g of data.groups) for (const item of g.items) map[item.e] = item.n;
+			// buildNames is memoised in the shared module, so the glyph -> name
+			// walk happens once per page no matter who asks. Copy before adding
+			// the ZWJ composites below so we don't mutate the shared index.
+			map = { ...buildNames(data) };
 			// Register ZWJ composites whose skin-toned variants use different codepoints
 			map['\u{1FAF1}\u200D\u{1FAF2}'] = 'handshake';
 			map['\u{1F9D1}\u200D\u{1F91D}\u200D\u{1F9D1}'] = 'people holding hands';

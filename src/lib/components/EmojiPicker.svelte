@@ -1,11 +1,10 @@
 <script module>
-	let emojiData = null;
-	let loadPromise = null;
-	async function loadEmojiData() {
-		if (emojiData) return emojiData;
-		if (!loadPromise) loadPromise = fetch('/emoji-data.json', { cache: 'no-store' }).then(r => r.json()).then(d => { emojiData = d; return d; });
-		return loadPromise;
-	}
+	// The 546 KB dataset is owned by $lib/emoji-data.js and shared with the
+	// Kitchen / Telegram / names surfaces — one fetch, one parse per page.
+	import { loadEmojiData, getCachedEmojiData } from '$lib/emoji-data.js';
+
+	// cp → name index, memoised for the page (see applyEmojiData below).
+	let _cpToName = null;
 </script>
 
 <script>
@@ -240,6 +239,8 @@
 	}
 
 	// cp → name lookup built from grid items at load time
+	// cp → name. Built once per page from the shared dataset (see
+	// applyEmojiData) rather than re-walking ~3800 items on every mount.
 	let cpToName = {};
 
 	// Best-effort display name for a variant (used in popover hover preview)
@@ -417,6 +418,17 @@
 		return null;
 	}
 
+	function applyEmojiData(d) {
+		data = d;
+		if (!_cpToName) {
+			const m = {};
+			for (const g of d.groups) for (const item of g.items) m[item.cp] = item.n;
+			_cpToName = m;
+		}
+		cpToName = _cpToName;
+		loading = false;
+	}
+
 	onMount(async () => {
 		try { recent = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]'); } catch {}
 		try { fontStyle = localStorage.getItem(FONT_KEY) ?? 'noto'; } catch {}
@@ -424,11 +436,16 @@
 		try { gender    = localStorage.getItem(GENDER_KEY) ?? ''; } catch {}
 		try { const raw = localStorage.getItem(DUAL_SELECTIONS_KEY); if (raw) dualSelections = JSON.parse(raw); } catch {}
 		try { const raw = localStorage.getItem(DIR_SELECTIONS_KEY);  if (raw) dirSelections  = JSON.parse(raw); } catch {}
-		data = await loadEmojiData();
-		for (const g of data.groups) {
-			for (const item of g.items) cpToName[item.cp] = item.n;
+		// Warm path: the dataset is already parsed (another surface loaded it,
+		// or the page prewarmed it), so bind it synchronously. Awaiting an
+		// already-resolved promise still costs a microtask, which is a full
+		// frame of "Loading…" every time the picker opens.
+		const cached = getCachedEmojiData();
+		if (cached) applyEmojiData(cached);
+		else {
+			const d = await loadEmojiData();
+			applyEmojiData(d);
 		}
-		loading = false;
 		// Auto-focus the search ONLY on desktop (fine pointer). On touch /
 		// native the focus pops the on-screen keyboard the instant the picker
 		// opens — search must stay un-activated until the user taps it.

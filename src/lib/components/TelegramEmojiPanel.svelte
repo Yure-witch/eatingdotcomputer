@@ -17,6 +17,7 @@
 	import LottieSticker from './SpriteSticker.svelte';
 	import PickerStickyBtn from './PickerStickyBtn.svelte';
 	import { prewarm as prewarmSprites } from '$lib/lottie-spritesheet.js';
+	import { loadEmojiData, buildByCp } from '$lib/emoji-data.js';
 	import { hiddenEmoteKeys, emoteKey, hideEmote, unhideEmote } from '$lib/hidden-emotes.js';
 	import {
 		setHost as setSkottieHostMain,
@@ -176,16 +177,12 @@
 
 		// Walk emoji-data.json once: build canonical order AND a cp -> {name, kw}
 		// lookup so custom emoji inherit the underlying emoji's name + keywords.
-		const orderMap = {};
-		const metaByCp = {};
+		let orderMap = {};
+		let metaByCp = {};
 		try {
-			const d = await fetch('/emoji-data.json', { cache: 'force-cache' }).then(r => r.json());
-			let i = 0;
-			for (const g of d.groups || []) for (const it of g.items || []) {
-				const key = cpKey(it.cp);
-				orderMap[key] = i++;
-				metaByCp[key] = { name: it.n || '', kw: it.kw || [] };
-			}
+			// Shared, memoised index — see $lib/emoji-data.js. Previously this
+			// walked all ~3800 items itself, on top of its own 546 KB parse.
+			({ orderMap, metaByCp } = buildByCp(await loadEmojiData()));
 		} catch { /* fall back to manifest order, empty meta */ }
 		const ord = (it) => orderMap[cpKey(it.cp)] ?? 1e9;
 		const metaForAlt = (alt) => metaByCp[cpKey(cpFromChar(alt))] || null;

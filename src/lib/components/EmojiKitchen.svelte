@@ -1,5 +1,6 @@
 <script module>
 	import { loadEmojiNames } from '$lib/emoji-names.js';
+	import { loadEmojiData, buildCldr } from '$lib/emoji-data.js';
 
 	// Module-level cache — shared across all instances, survives unmount/remount
 	let _kitchen = null;
@@ -27,19 +28,8 @@
 		// emoji picker's group order) + per-emoji keyword text for search.
 		// Kitchen cps are lowercase and may carry -fe0f; emoji-data cps are
 		// uppercase without it — normalise both sides.
-		if (!_cldrP) _cldrP = fetch('/emoji-data.json', { cache: 'force-cache' })
-			.then(r => r.ok ? r.json() : Promise.reject('Failed'))
-			.then(d => {
-				const order = new Map(), terms = new Map();
-				let i = 0;
-				for (const g of d.groups || []) for (const it of g.items || []) {
-					const k = it.cp.toLowerCase().replace(/-fe0f/g, '');
-					order.set(k, i++);
-					terms.set(k, [it.n || '', ...(it.kw || []), ...(it.st || [])].join(' ').toLowerCase());
-				}
-				_cldr = { order, terms };
-				return _cldr;
-			})
+		if (!_cldrP) _cldrP = loadEmojiData()
+			.then(d => { _cldr = buildCldr(d); return _cldr; })
 			.catch(() => null);
 	}
 </script>

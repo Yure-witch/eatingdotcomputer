@@ -27,6 +27,7 @@
 		tgThumbUrl, tgcThumbUrl, tgFlagUrl, tgEntry,
 		loadTelegramEmoji, loadCustomPacks, getCachedTgEmoji, getCachedCustomPacks
 	} from '$lib/telegram-emoji-store.js';
+	import { prewarmEmojiData } from '$lib/emoji-data.js';
 	import { getCustomEmojiMap, getCachedCustomEmojiMap } from '$lib/custom-emoji-store.js';
 
 	let { data, children } = $props();
@@ -1449,6 +1450,12 @@
 		loadTelegramEmoji().then(() => _prevVer++).catch(() => {});
 		loadCustomPacks().then(() => _prevVer++).catch(() => {});
 		getCustomEmojiMap().then(() => _prevVer++).catch(() => {});
+
+		// Pull the 546 KB emoji dataset during idle time. Every expression
+		// surface reads it, so paying for it here means the first tap on the
+		// picker button never waits on the network — the difference between an
+		// instant open and a spinner on a slow phone.
+		prewarmEmojiData();
 
 		// Restore a locally-cached member ordering ONLY if the server hasn't
 		// supplied one yet (first drag before it round-trips, or offline).
