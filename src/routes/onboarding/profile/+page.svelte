@@ -11,6 +11,7 @@
 	import { page } from '$app/stores';
 	import { fly } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
+	import { PRESETS, setPreset, themeStore } from '$lib/theme-store.js';
 	import AvatarPicker from '$lib/components/AvatarPicker.svelte';
 	import FormattedInput from '$lib/components/FormattedInput.svelte';
 	let { data, form } = $props();
@@ -28,7 +29,11 @@
 		{ id: 'Engineering', icon: '⚙️', label: 'Engineering', full: 'Albert Nerken School of Engineering' }
 	];
 
-	const steps = [{ id: 'who', label: 'You' }, { id: 'share', label: 'About you' }];
+	const steps = [
+		{ id: 'who', label: 'You' },
+		{ id: 'share', label: 'About you' },
+		{ id: 'style', label: 'Style' }
+	];
 	let stepIdx = $state(0);
 	// +1 forward, -1 back — the step slides in from the side you're travelling.
 	let dir = $state(1);
@@ -160,7 +165,7 @@
 				</label>
 			{/if}
 
-		{:else}
+		{:else if step === 'share'}
 			<h1>Share about yourself</h1>
 			<p class="sub">Totally optional — but a little personality helps your classmates (and Gemma) get to know you. You can always add more later on your profile.</p>
 
@@ -180,6 +185,24 @@
 				<span>Website / portfolio <span class="opt">(optional)</span></span>
 				<input type="url" bind:value={website} placeholder="https://yoursite.com" />
 			</label>
+
+		{:else}
+			<h1>Pick a colour</h1>
+			<p class="sub">This is yours alone — it changes how the app looks for you, and you can swap it any time from your avatar menu.</p>
+
+			<!-- Applies immediately: the whole page recolours as you tap, so the
+			     swatch grid IS the preview. Theme lives in localStorage, so
+			     there's nothing to submit with the form. -->
+			<div class="theme-grid">
+				{#each PRESETS as p (p.id)}
+					<button type="button" class="theme-swatch" class:selected={$themeStore.presetId === p.id}
+						onclick={() => setPreset(p.id)} title={p.name} aria-label={p.name}
+						style="--sw: {p.seed}">
+						<span class="sw-dot" aria-hidden="true"></span>
+						<span class="sw-name">{p.name}</span>
+					</button>
+				{/each}
+			</div>
 		{/if}
 		</div>
 		{/key}
@@ -257,6 +280,31 @@
 	/* The pane owns the per-step layout so the transition moves one element
 	   rather than every field independently. */
 	.step-pane { display: flex; flex-direction: column; gap: 0.9rem; }
+
+	.theme-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+		gap: 0.6rem;
+	}
+	.theme-swatch {
+		display: flex; flex-direction: column; align-items: center; gap: 0.45rem;
+		min-height: 92px; padding: 0.8rem 0.4rem;
+		border: 1.5px solid var(--border); border-radius: 12px;
+		background: var(--paper); color: var(--ink);
+		font: inherit; font-size: 0.78rem; cursor: pointer;
+		transition: border-color 0.15s, transform 0.12s, box-shadow 0.15s;
+	}
+	.theme-swatch:active { transform: scale(0.97); }
+	.theme-swatch.selected {
+		border-color: var(--md-sys-color-primary, var(--ink));
+		box-shadow: inset 0 0 0 1px var(--md-sys-color-primary, var(--ink));
+	}
+	.sw-dot {
+		width: 34px; height: 34px; border-radius: 50%;
+		background: var(--sw);
+		box-shadow: inset 0 0 0 1px rgba(0,0,0,0.12);
+	}
+	.sw-name { text-align: center; line-height: 1.2; }
 	@media (prefers-reduced-motion: reduce) {
 		.step-pane { transition: none !important; animation: none !important; }
 	}

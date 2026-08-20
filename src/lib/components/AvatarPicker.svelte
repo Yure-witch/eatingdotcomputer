@@ -54,11 +54,31 @@
 		avatarValue = URL.createObjectURL(f);
 	}
 
+	// Tapping an expression PREVIEWS it; it isn't committed until you confirm
+	// with the tick. Committing on first tap meant you couldn't compare options
+	// or browse another tab without the picker closing on you.
+	let pendingExpr = $state(null);
+	// What the circle shows: the pending choice while the picker is open,
+	// otherwise the saved avatar.
+	const previewKind = $derived(pendingExpr ? 'expr' : avatarKind);
+	const previewValue = $derived(pendingExpr ?? avatarValue);
+
 	function setExprToken(token) {
 		if (!token) return;
+		pendingExpr = token;
+	}
+
+	function confirmExpr() {
+		if (!pendingExpr) { showExpr = false; return; }
 		avatarKind = 'expr';
-		avatarValue = token;
+		avatarValue = pendingExpr;
 		photoFile = null;
+		pendingExpr = null;
+		showExpr = false;
+	}
+
+	function cancelExpr() {
+		pendingExpr = null;
 		showExpr = false;
 	}
 
@@ -79,7 +99,19 @@
 <div class="ap-wrap">
 	<!-- Live preview reflects whichever kind is currently picked. -->
 	<div class="ap-preview">
-		<Avatar {name} {uid} {avatarKind} {avatarValue} size={96} />
+		<Avatar {name} {uid} avatarKind={previewKind} avatarValue={previewValue} size={96} />
+		<!-- Confirm sits beside the preview, and only while the picker is open:
+		     it's the thing you look at to decide, so the tick belongs next to it
+		     rather than buried in the panel below. -->
+		{#if showExpr}
+			<button type="button" class="ap-confirm" onclick={confirmExpr}
+				disabled={!pendingExpr}
+				aria-label={pendingExpr ? 'Use this expression' : 'Pick an expression first'}
+				title={pendingExpr ? 'Use this expression' : 'Pick an expression first'}>
+				<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor"
+					stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+			</button>
+		{/if}
 	</div>
 
 	<div class="ap-actions">
@@ -115,7 +147,7 @@
 		<!-- inline=true hides GIFs + Reactions tabs — we only want
 		     inline tokens that render natively in an Avatar chip. -->
 		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-		<div class="ap-expr-backdrop" onclick={() => (showExpr = false)}></div>
+		<div class="ap-expr-backdrop" onclick={cancelExpr}></div>
 		<div class="ap-expr-popover" use:popoverPos={{ anchor: exprBtnEl, side: 'bottom' }}>
 			<ExpressionPicker
 				inline={true}
@@ -206,6 +238,29 @@
 		height: min(48vh, 420px);
 		max-height: min(48vh, 420px);
 	}
+	/* The preview row centres the circle and hangs the tick off its right, so
+	   the circle stays optically centred whether or not the tick is showing. */
+	.ap-preview { position: relative; display: inline-flex; align-items: center; }
+	.ap-confirm {
+		position: absolute; left: calc(100% + 0.75rem);
+		display: inline-flex; align-items: center; justify-content: center;
+		width: 48px; height: 48px; flex-shrink: 0;
+		border: none; border-radius: 50%;
+		background: var(--md-sys-color-primary, var(--ink));
+		color: var(--md-sys-color-on-primary, var(--paper));
+		cursor: pointer;
+		animation: ap-confirm-in 0.22s cubic-bezier(0.33, 1, 0.68, 1) both;
+		transition: opacity 0.15s ease, transform 0.12s ease;
+	}
+	.ap-confirm:active { transform: scale(0.94); }
+	.ap-confirm:disabled {
+		opacity: 0.4; cursor: default;
+		background: var(--md-sys-color-surface-container-high, rgba(0,0,0,0.08));
+		color: var(--md-sys-color-on-surface-variant, var(--muted-fg));
+	}
+	@keyframes ap-confirm-in { from { opacity: 0; transform: scale(0.8); } to { opacity: 1; transform: none; } }
+	@media (prefers-reduced-motion: reduce) { .ap-confirm { animation: none; } }
+
 	.ap-hint {
 		font-size: 0.74rem;
 		color: var(--md-sys-color-on-surface-variant, var(--muted-fg));
