@@ -236,7 +236,7 @@
 			/* Enough that the surface stays VISIBLE to the left and right of the
 			   selected pill at the end slots — at 3px the pill ran into the bar's
 			   own curve and read as sitting on the page rather than on the bar. */
-			--nav-pad: 6px;
+			--nav-pad: 5px;
 			padding-left: var(--nav-pad);
 			padding-right: var(--nav-pad);
 			box-sizing: border-box;
@@ -275,8 +275,8 @@
 			   its curve to run parallel to the bar's its radius must be the bar's
 			   MINUS that inset. A fully-rounded pill's radius IS half its height,
 			   so height and gap are locked together — the bar and pill heights
-			   have to move together to hold a 3px gap: 60px bar (radius 30) with
-			   a 54px pill (radius 27), since 30 − 3 = 27. Note `top` is measured from the PADDING box,
+			   have to move together to hold the gap: 60px bar (radius 30) with a
+			   56px pill (radius 28), since 30 − 2 = 28. Note `top` is measured from the PADDING box,
 			   inside the 1px border, so top:3 lands 4px in from the outer edge and
 			   the remaining 3px + border matches it at the bottom.
 
@@ -287,10 +287,10 @@
 
 			   Starts after the bar's inner padding, which the slot maths above
 			   also subtracts. */
-			top: 2px;
+			top: 1px;
 			left: var(--nav-pad, 0px);
 			width: 78px;
-			height: 54px;
+			height: 56px;
 			border-radius: 999px;
 			/* Move with transform (compositor / GPU) instead of `left` (which forced a
 			   layout reflow every scroll frame → framey). The nav is full-viewport
@@ -307,6 +307,14 @@
 			border-radius: 999px;
 			pointer-events: none;
 			z-index: 0;
+		}
+		/* Tapping an icon jumps --nav-frac straight to the new slot; this lets the
+		   pill glide there rather than teleport. Deliberately scoped to the
+		   transient `nav-animating` class (set by the layout) — during a swipe the
+		   fraction is rewritten every frame, and a transition there would make the
+		   pill trail the finger. */
+		:global(html.nav-animating) .nav-indicator {
+			transition: transform 0.2s cubic-bezier(0.33, 1, 0.68, 1);
 		}
 		/* Set locally — .msi only defines 18/20/24, so a size class here would be
 		   inventing one that doesn't exist. */

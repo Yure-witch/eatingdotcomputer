@@ -627,6 +627,9 @@
 		// RIGHT NOW (drives the discrete selected tab), before navigation
 		// commits, so the bottom bar follows your finger.
 		_pagerFraction = pagerEl.scrollLeft / w;
+		// A finger on the track supersedes any glide in flight — from here the pill
+		// tracks the scroll frame by frame.
+		if (_navAnimOn && !_pagerProg) { clearTimeout(_navAnimT); _setNavAnim(false); }
 		// Drive the bottom-nav pill IMPERATIVELY (write the CSS var straight to the
 		// DOM, bypassing Svelte's per-frame reactivity flush) so it tracks the swipe
 		// at 60fps. The pill's transform reads --nav-frac. (A settle/nav effect sets
@@ -651,6 +654,22 @@
 		if (typeof document === 'undefined') return;
 		document.documentElement.style.setProperty('--nav-frac', String(Math.max(0, frac)));
 	}
+	// A tap on a nav icon (and any route change that isn't a swipe) jumps the
+	// fraction straight to the new slot, so the pill teleported. Turn its
+	// transition on for the length of that move and it glides instead. It has to
+	// stay OFF during a swipe: the fraction is rewritten every frame there, and a
+	// transition would make the pill lag the finger instead of tracking it.
+	let _navAnimT, _navAnimOn = false;
+	function _setNavAnim(on) {
+		if (on === _navAnimOn || typeof document === 'undefined') return;
+		_navAnimOn = on;
+		document.documentElement.classList.toggle('nav-animating', on);
+	}
+	function _glideNavPill(ms = 240) {
+		_setNavAnim(true);
+		clearTimeout(_navAnimT);
+		_navAnimT = setTimeout(() => _setNavAnim(false), ms);
+	}
 	// Discrete slot for a committed route — for settle, nav-icon taps, and off-pager
 	// routes (conversations, where the live scroll handler isn't running: they park
 	// the pill on Chat).
@@ -665,6 +684,7 @@
 	$effect(() => {
 		const path = $page.url.pathname; // fires on navigation (settle), not per scroll frame
 		if (typeof document === 'undefined') return;
+		untrack(() => _glideNavPill());
 		document.documentElement.style.setProperty('--nav-frac', String(_navSlotForPath(path)));
 	});
 
@@ -941,6 +961,9 @@
 			// snapped back to the tapped tab). The jump + suppression + re-pin cancel
 			// are enough to land cleanly without anything to fight a later gesture.
 			_suppressCommits(600);
+			// The panels jump instantly (no scroll through the ones between), so the
+			// pill is the only thing that animates the move.
+			_glideNavPill();
 			_pagerProg = true;
 			const prevSnap = pagerEl.style.scrollSnapType;
 			pagerEl.style.scrollSnapType = 'none';
