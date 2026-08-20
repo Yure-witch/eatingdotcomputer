@@ -529,8 +529,13 @@
 			// The chat surface's own data belongs to the conversation, not to the
 			// panel the pager is parked on — never file it under that panel's route.
 			if (panels[idx].route && !onChat) {
-				panelData = { ...panelData, [panels[idx].route]: pdata };
-				if (!panelSeen.has(panels[idx].route)) { const s = new Set(panelSeen); s.add(panels[idx].route); panelSeen = s; }
+				const route = panels[idx].route;
+				// The panel is usually ALREADY rendered from its preload, so swapping
+				// in a fresh-but-equivalent object would re-render the whole section
+				// in the same frame the conversation is being torn down. Only take the
+				// new data when something actually changed.
+				if (!_sameData(panelData[route], pdata)) panelData = { ...panelData, [route]: pdata };
+				if (!panelSeen.has(route)) { const s = new Set(panelSeen); s.add(route); panelSeen = s; }
 			}
 			for (const j of [idx - 1, idx + 1]) {
 				if (j < 0 || j >= panels.length) continue;
@@ -569,6 +574,34 @@
 			else clearTimeout(idle);
 		};
 	});
+	// Shallow identity over the load result's top-level keys. SvelteKit reuses
+	// unchanged load results, so a preloaded panel and the same route's live
+	// `$page.data` normally share every value by reference.
+	function _sameData(a, b) {
+		if (a === b) return true;
+		if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return false;
+		const ka = Object.keys(a);
+		if (ka.length !== Object.keys(b).length) return false;
+		for (const k of ka) if (a[k] !== b[k]) return false;
+		return true;
+	}
+	// Landing on a section widens the mount window by one, which renders a whole
+	// new neighbour — in the exact frame the conversation is being destroyed.
+	// Hold the window where it was across the commit and let the newcomer in once
+	// the browser is idle: same end state, none of it in the frame that matters.
+	let _mountsHeld = $state(false);
+	let _mountsHeldT, _mountsHeldIC;
+	function _holdMounts() {
+		_mountsHeld = true;
+		const release = () => { _mountsHeld = false; };
+		clearTimeout(_mountsHeldT);
+		if (typeof requestIdleCallback === 'function') {
+			if (_mountsHeldIC !== undefined) cancelIdleCallback(_mountsHeldIC);
+			_mountsHeldIC = requestIdleCallback(release, { timeout: 800 });
+		} else {
+			_mountsHeldT = setTimeout(release, 400);
+		}
+	}
 	function panelShouldMount(i) {
 		// Mount panels adjacent to the COMMITTED route AND to the LIVE scroll
 		// position — during a deferred-commit multi-swipe the route lags, so without
@@ -576,8 +609,12 @@
 		const liveIdx = Math.round(_pagerFraction);
 		// While a chat surface covers the pager the committed route isn't a panel at
 		// all, so anchor on the chat menu instead: both of its neighbours must be
-		// mounted BEFORE the exit gesture uncovers one of them.
-		if (_onChatSurfaceMobile && Math.abs(i - _chatMenuIdx) <= 1) return true;
+		// mounted BEFORE the exit gesture uncovers one of them. The same window is
+		// held briefly across the exit commit (see _holdMounts) — every panel that
+		// was mounted stays mounted, nothing new joins yet.
+		if (_onChatSurfaceMobile || _mountsHeld) {
+			return Math.abs(i - _chatMenuIdx) <= 1 || panelSeen.has(PANELS[i].route);
+		}
 		return Math.abs(i - pagerIndex) <= 1 || Math.abs(i - liveIdx) <= 1 || panelSeen.has(PANELS[i].route);
 	}
 
@@ -845,9 +882,18 @@
 			_convExitT = setTimeout(() => {
 				// Clear any chat title so the header is already the standard one.
 				pageTitle.set(null); pageTitleHref.set(null);
-				goto(route, { noScroll: true, keepFocus: true }).then(() => {
-					_endConvSlide();
-					_repinPager(idx, 0);
+				// Tearing down a conversation is the single heaviest thing in this
+				// gesture — hundreds of message components, their emote canvases and
+				// their listeners, all destroyed synchronously. Hold the mount window
+				// so nothing new renders alongside it, and let the settled frame
+				// actually paint first, so the freeze lands on a still screen instead
+				// of eating the last frames of the slide.
+				_holdMounts();
+				requestAnimationFrame(() => {
+					goto(route, { noScroll: true, keepFocus: true }).then(() => {
+						_endConvSlide();
+						_repinPager(idx, 0);
+					});
 				});
 				// Safety: never leave the layer parked off-screen if the nav stalls.
 				_convExitT = setTimeout(() => { if (!_onChatSurfaceMobile) _endConvSlide(); }, 800);
