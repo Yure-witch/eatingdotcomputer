@@ -8,7 +8,8 @@ export async function POST({ request, locals }) {
 	const session = await locals.auth();
 	await requireClassAccess(session);
 
-	const { messageId, conversationId, authorId } = await request.json();
+	const { messageId, conversationId, authorId, type: kind, parentId } = await request.json();
+	const isThread = kind === 'thread';
 	if (!messageId || !conversationId) error(400, 'Missing fields');
 
 	const userId = session.user.id;
@@ -23,7 +24,12 @@ export async function POST({ request, locals }) {
 	// Build Firebase path
 	let msgPath;
 	let reactionPath;
-	if (turso) {
+	if (isThread) {
+		if (!parentId) error(400, 'Missing parentId');
+		const base = `threads/${conversationId}/${parentId}`;
+		msgPath = `${base}/messages/${messageId}`;
+		reactionPath = `${base}/reactions/${messageId}`;
+	} else if (turso) {
 		const conv = await turso.execute({ sql: 'SELECT type FROM conversations WHERE id = ?', args: [conversationId] });
 		// DM conversations only reach the `conversations` table on the daily
 		// archive sync — a FRESH dm has no row yet, and defaulting to
@@ -63,7 +69,7 @@ export async function POST({ request, locals }) {
 	if (turso) {
 		try {
 			const archived = await turso.execute({
-				sql: 'SELECT attachment_url FROM chat_messages WHERE id = ?',
+				sql: `SELECT attachment_url FROM ${isThread ? 'thread_messages' : 'chat_messages'} WHERE id = ?`,
 				args: [messageId]
 			});
 			const archivedUrl = archived.rows[0]?.attachment_url;
@@ -110,10 +116,16 @@ export async function POST({ request, locals }) {
 	// We clear chat_messages (+ its reactions and any stars), and also sweep
 	// the legacy table so an old row can't linger.
 	if (turso) {
-		await turso.execute({ sql: 'DELETE FROM message_reactions WHERE message_id = ?', args: [messageId] }).catch(() => {});
+		// Stars are keyed by message id alone, so they're swept the same either way.
 		await turso.execute({ sql: 'DELETE FROM starred_messages WHERE message_id = ?', args: [messageId] }).catch(() => {});
-		await turso.execute({ sql: 'DELETE FROM chat_messages WHERE id = ?', args: [messageId] }).catch(() => {});
-		await turso.execute({ sql: 'DELETE FROM messages WHERE id = ?', args: [messageId] }).catch(() => {});
+		if (isThread) {
+			await turso.execute({ sql: 'DELETE FROM thread_message_reactions WHERE message_id = ?', args: [messageId] }).catch(() => {});
+			await turso.execute({ sql: 'DELETE FROM thread_messages WHERE id = ?', args: [messageId] }).catch(() => {});
+		} else {
+			await turso.execute({ sql: 'DELETE FROM message_reactions WHERE message_id = ?', args: [messageId] }).catch(() => {});
+			await turso.execute({ sql: 'DELETE FROM chat_messages WHERE id = ?', args: [messageId] }).catch(() => {});
+			await turso.execute({ sql: 'DELETE FROM messages WHERE id = ?', args: [messageId] }).catch(() => {});
+		}
 	}
 
 	return json({ ok: true });

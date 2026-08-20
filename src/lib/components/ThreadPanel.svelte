@@ -272,6 +272,46 @@
 		pickerPos = { x, y };
 		pickerMsgId = msgId;
 	}
+	// Star / edit / delete, against the same endpoints chat uses. They each take a
+	// `type: 'thread'` + parentId now, because a reply lives under its parent and
+	// in its own table — the only thing that differs is the path.
+	let starred = $state(new Set());
+	async function toggleStar(m) {
+		const next = new Set(starred);
+		next.has(m.id) ? next.delete(m.id) : next.add(m.id);
+		starred = next; // optimistic — the chip is the feedback
+		await fetch('/api/chat/star', {
+			method: 'POST', headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				messageId: m.id, conversationId: convId,
+				snapshot: { convName: chatName, content: m.content, authorName: m.userName, authorId: m.userId, attachment: m.attachment ?? null }
+			})
+		}).catch(() => {});
+	}
+
+	let editingId = $state(null);
+	let editDraft = $state('');
+	function startEdit(m) { editingId = m.id; editDraft = m.content ?? ''; }
+	async function saveEdit() {
+		const id = editingId, content = editDraft.trim();
+		editingId = null;
+		if (!id || !content) return;
+		await fetch('/api/chat/edit', {
+			method: 'POST', headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ messageId: id, conversationId: convId, content, type: 'thread', parentId })
+		}).catch(() => {});
+		replies = replies.map((r) => (r.id === id ? { ...r, content, edited: true } : r));
+	}
+	async function deleteReply(m) {
+		if (!confirm('Delete this reply?')) return;
+		replies = replies.filter((r) => r.id !== m.id);
+		onCountChange?.(parentId, replies.length);
+		await fetch('/api/chat/delete', {
+			method: 'POST', headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ messageId: m.id, conversationId: convId, authorId: m.userId, type: 'thread', parentId })
+		}).catch(() => {});
+	}
+
 	async function toggleReaction(msgId, emoji) {
 		if (!msgId || !emoji) return;
 		await fetch('/api/chat/react', {
@@ -342,8 +382,17 @@
 	</div>
 	<div class="bubble-row">
 		<!-- emoji/emote-only messages go jumbo, exactly like chat bubbles -->
-		{#if m.content}
-			<div class="thread-msg-body" class:jumbo={jumboEmojiCountM(m.content) > 0} style:font-size={bubbleFontSize(m.content, 1)}>{@html contentHtml(m.content)}</div>
+		{#if editingId === m.id}
+			<div class="thread-edit">
+				<textarea class="thread-edit-ta" bind:value={editDraft} rows="2"
+					onkeydown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveEdit(); } if (e.key === 'Escape') editingId = null; }}></textarea>
+				<div class="thread-edit-controls">
+					<button onclick={() => (editingId = null)}>Cancel</button>
+					<button class="thread-edit-save" onclick={saveEdit}>Save</button>
+				</div>
+			</div>
+		{:else if m.content}
+			<div class="thread-msg-body" class:jumbo={jumboEmojiCountM(m.content) > 0} style:font-size={bubbleFontSize(m.content, 1)}>{@html contentHtml(m.content)}{#if m.edited}<span class="thread-edited"> (edited)</span>{/if}</div>
 		{/if}
 		{#if m.attachment}
 			<div class="thread-att"><MessageAttachment attachment={m.attachment} mine={!isParent && m.userId === currentUser?.id} /></div>
@@ -355,6 +404,19 @@
 			<button class="action-btn" onclick={(e) => { e.stopPropagation(); openPicker(m.id, e); }} title="Add reaction" aria-label="Add reaction">
 				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
 			</button>
+			<button class="action-btn" class:action-btn-starred={starred.has(m.id)} onclick={(e) => { e.stopPropagation(); toggleStar(m); }} title={starred.has(m.id) ? 'Unstar' : 'Star message'}>
+				<svg width="16" height="16" viewBox="0 0 24 24" fill={starred.has(m.id) ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+			</button>
+			{#if !isParent && m.userId === currentUser?.id}
+				<button class="action-btn" onclick={(e) => { e.stopPropagation(); startEdit(m); }} title="Edit message">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+				</button>
+			{/if}
+			{#if !isParent && (m.userId === currentUser?.id || currentUser?.role === 'instructor')}
+				<button class="action-btn action-btn-delete" onclick={(e) => { e.stopPropagation(); deleteReply(m); }} title="Delete">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+				</button>
+			{/if}
 		</div>
 	</div>
 	{@render reactionRow(m.id)}
@@ -638,6 +700,28 @@
 		flex-shrink: 0;
 	}
 	.action-btn:hover { color: var(--ink); background: rgba(0,0,0,0.06); }
+	.action-btn-delete:hover { color: var(--danger); background: rgba(192,57,43,0.08); }
+	.action-btn-starred { color: #e6a817; }
+	.action-btn-starred:hover { color: #c8900f; background: rgba(230,168,23,0.1); }
+	.thread-edited { color: var(--muted-fg); font-size: 0.72rem; }
+	.thread-edit { display: flex; flex-direction: column; gap: 0.35rem; }
+	.thread-edit-ta {
+		width: 100%; box-sizing: border-box; resize: vertical;
+		font: inherit; font-size: 0.9rem; color: var(--ink);
+		padding: 0.5rem 0.6rem; border: 1.5px solid var(--border); border-radius: 8px;
+		background: var(--paper);
+	}
+	.thread-edit-controls { display: flex; gap: 0.4rem; justify-content: flex-end; }
+	.thread-edit-controls button {
+		font: inherit; font-size: 0.78rem; padding: 0.3rem 0.7rem; cursor: pointer;
+		border: 1.5px solid var(--border); border-radius: 8px;
+		background: var(--paper); color: var(--ink);
+	}
+	.thread-edit-save {
+		background: var(--md-sys-color-primary, var(--ink));
+		color: var(--md-sys-color-on-primary, var(--paper));
+		border-color: transparent;
+	}
 	.thread-msg-body {
 		/* Same stack as chat bubbles — Google Sans Flex carries a REAL
 		   italic; the inherited Space Grotesk faux-obliqued it. */
@@ -748,6 +832,12 @@
 			padding-bottom: max(0.5rem, env(safe-area-inset-bottom, 0.5rem));
 			gap: 0.4rem;
 		}
+		/* Chat sets --compose-dock-gap when the keyboard or a picker is docked, so
+		   the bar sits flush against it rather than floating above the safe-area
+		   inset it no longer needs. Same treatment here or the two disagree the
+		   moment you start typing. */
+		:global(html.kb-open) .thread-compose,
+		:global(body.expr-picker-open) .thread-compose { padding-bottom: 0.5rem; }
 
 		/* chat: .compose-ce { font-size: 1rem }. Not cosmetic — iOS zooms the
 		   whole page when you focus an input under 16px, and FormattedInput's
