@@ -115,21 +115,6 @@
 		<link rel="stylesheet"
 			href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=block" />
 		%sveltekit.head%
-	</head>
-	<body data-sveltekit-preload-data="hover">
-		<!-- Boot loader: the mark with an indeterminate ring around it, covering
-		     the gap between the native splash handing over and the app painting.
-		     Removed by the app on mount (see the root layout), and self-clears on
-		     window load so a failure here can never leave a stuck overlay. -->
-		<div id="boot-loader" aria-hidden="true">
-			<div class="bl-mark">
-				<svg viewBox="0 0 100 100" width="44" height="44" aria-hidden="true">
-					<path fill="#00ff00" transform="translate(22.000 78.000) scale(0.100000 -0.100000)"
-						d="M320 560 440 520 520 400 480 320 160 240 200 80 320 40 400 80 480 160 520 120 440 40 360 0H240L120 40L40 200V360L120 520L240 560ZM200 480 160 280 360 360V480L280 520Z"/>
-				</svg>
-				<span class="bl-ring"></span>
-			</div>
-		</div>
 		<style>
 			#boot-loader {
 				position: fixed; inset: 0; z-index: 99999;
@@ -150,6 +135,22 @@
 			@keyframes bl-spin { to { transform: rotate(360deg); } }
 			@media (prefers-reduced-motion: reduce) { .bl-ring { animation-duration: 2.6s; } }
 		</style>
+
+	</head>
+	<body data-sveltekit-preload-data="hover">
+		<!-- Boot loader: the mark with an indeterminate ring around it, covering
+		     the gap between the native splash handing over and the app painting.
+		     Removed by the app on mount (see the root layout), and self-clears on
+		     window load so a failure here can never leave a stuck overlay. -->
+		<div id="boot-loader" aria-hidden="true">
+			<div class="bl-mark">
+				<svg viewBox="0 0 100 100" width="44" height="44" aria-hidden="true">
+					<path fill="#00ff00" transform="translate(22.000 78.000) scale(0.100000 -0.100000)"
+						d="M320 560 440 520 520 400 480 320 160 240 200 80 320 40 400 80 480 160 520 120 440 40 360 0H240L120 40L40 200V360L120 520L240 560ZM200 480 160 280 360 360V480L280 520Z"/>
+				</svg>
+				<span class="bl-ring"></span>
+			</div>
+		</div>
 		<script>
 			// Safety net: never let the overlay outlive the page load, even if the
 			// app never gets far enough to remove it itself.
