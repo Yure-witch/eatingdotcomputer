@@ -43,7 +43,13 @@
 		clearSkottieWorker();
 	}
 
-	let { onInsert, packFilter = 'all', onClose = null, canModerate = false } = $props();
+	let {
+		onInsert, packFilter = 'all', onClose = null, canModerate = false,
+		// Snippet rendered in the tabs bar, right of the ✕ — lets a host put
+		// its own controls in this panel's scrollable bar rather than stacking
+		// another row above it.
+		leading = null
+	} = $props();
 	// Instructor moderation: when `moderating` is on (instructor only), the
 	// library shows hidden emotes (dimmed) and clicking one toggles its hidden
 	// state instead of inserting it. When off, hidden emotes are filtered out
@@ -610,6 +616,10 @@
 				<span class="msi msi-20">close</span>
 			</PickerStickyBtn>
 		{/if}
+		<!-- Host's own controls, riding this bar instead of taking a row of
+		     their own above the panel. The Emotes tab uses it for its
+		     Uploaded / Library switch. -->
+		{@render leading?.()}
 		<PickerStickyBtn square active={searchOpen} onclick={toggleSearch}
 			title="Search emotes" label="Search emotes">
 			<span class="msi msi-20">search</span>

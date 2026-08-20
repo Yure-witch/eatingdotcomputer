@@ -392,6 +392,18 @@
 	});
 </script>
 
+{#snippet sourceTabs()}
+	<!-- Uploaded / Library used to be a nav row of their own, stacked above the
+	     panel and costing a full row in a sheet only ~330px tall. They ride the
+	     panel's own scrolling bar now, beside its ✕ and search — same row, no
+	     extra height. Defined once and passed to whichever source is showing so
+	     the pair stays identical across the switch. -->
+	<button class="expr-srctab" class:active={emotesSub === 'uploaded'}
+		onclick={() => (emotesSub = 'uploaded')}>Uploaded</button>
+	<button class="expr-srctab" class:active={emotesSub === 'library'}
+		onclick={() => (emotesSub = 'library')}>Library</button>
+{/snippet}
+
 <div class="expr-panel" class:expr-panel-react={mode === 'react'} class:expr-dragging={dragging}
      bind:this={panelEl} style:transform={dragY ? `translate3d(0,${dragY}px,0)` : null}>
 	{#if mode === 'react'}
@@ -493,24 +505,11 @@
 						     (CrazyEmoji / MadEmoji2 / HeartEmoji) which don't
 						     animate, so they belong here next to the rest of the
 						     non-animated emotes rather than under Animated. -->
-						{#if !tgHidden}
-							<nav class="expr-subtabs" aria-label="Emote source">
-								{#if onClose}
-									<!-- close rides the sub-tab row at the LEFT — the same
-									     PickerStickyBtn tile every other tab pins top-left -->
-									<PickerStickyBtn square onclick={onClose} title="Close" label="Close picker">
-										<span class="msi msi-20">close</span>
-									</PickerStickyBtn>
-								{/if}
-								<button class="expr-subtab" class:active={emotesSub === 'uploaded'} onclick={() => (emotesSub = 'uploaded')}>Uploaded</button>
-								<button class="expr-subtab" class:active={emotesSub === 'library'} onclick={() => (emotesSub = 'library')}>Library</button>
-							</nav>
-						{/if}
 						{#if emotesSub === 'uploaded'}
-							<!-- inner panels skip their own ✕ when the sub-tab row carries it -->
-							<CustomEmojiPanel mode="emoji" onInsertEmoji={fireCe} onInsertReaction={_noop} {isInstructor} onClose={tgHidden ? onClose : null} />
+							<CustomEmojiPanel mode="emoji" onInsertEmoji={fireCe} onInsertReaction={_noop}
+								{isInstructor} {onClose} leading={tgHidden ? null : sourceTabs} />
 						{:else}
-							<TelegramEmojiPanel onInsert={fireTg} packFilter="static" onClose={null} />
+							<TelegramEmojiPanel onInsert={fireTg} packFilter="static" {onClose} leading={sourceTabs} />
 						{/if}
 					{:else if t === 'animated'}
 						<!-- Animated stickers only — static packs live in the
@@ -700,6 +699,31 @@
 		overflow: hidden;
 		scroll-snap-align: start;
 		scroll-snap-stop: always;
+	}
+
+	/* Source switch (Uploaded / Library) rendered INTO the inner panel's own
+	   bar via the `leading` snippet, so it has to read as part of that bar
+	   rather than as the old standalone nav row. */
+	.expr-srctab {
+		flex: 0 0 auto;
+		padding: 0.3rem 0.65rem;
+		border: 1px solid transparent;
+		border-radius: 999px;
+		background: transparent;
+		color: var(--ink);
+		font: inherit;
+		font-size: 0.74rem;
+		font-weight: 600;
+		white-space: nowrap;
+		cursor: pointer;
+	}
+	.expr-srctab.active {
+		background: var(--md-sys-color-secondary-container, var(--paper));
+		color: var(--md-sys-color-on-secondary-container, var(--ink));
+		border-color: var(--md-sys-color-secondary, var(--border));
+	}
+	.expr-srctab:hover:not(.active) {
+		background: color-mix(in srgb, var(--md-sys-color-on-surface, var(--ink)) 7%, transparent);
 	}
 
 	.expr-subtabs {

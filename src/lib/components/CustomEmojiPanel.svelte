@@ -33,7 +33,12 @@
 		gridWR = reactionsGridWrapEl.clientWidth;
 	}
 
-	let { onInsertEmoji, onInsertReaction, isInstructor = false, mode = 'both', onClose = null } = $props();
+	let {
+		onInsertEmoji, onInsertReaction, isInstructor = false, mode = 'both', onClose = null,
+		// Snippet rendered in the tabs bar, right of the ✕ — see the same prop
+		// on TelegramEmojiPanel.
+		leading = null
+	} = $props();
 
 	// `mode` constrains which side of the panel the parent wants:
 	//   'emoji'     — only uploaded class emotes (no reactions UI, no tab bar)
@@ -243,13 +248,15 @@
 </script>
 
 <div class="ce-panel">
-	{#if onClose || mode === 'both'}
+	{#if onClose || leading || mode === 'both'}
 		<div class="ce-tabs">
 			{#if onClose}
 				<PickerStickyBtn square onclick={onClose} title="Close" label="Close picker">
 					<span class="msi msi-20">close</span>
 				</PickerStickyBtn>
 			{/if}
+			<!-- Host controls ride this bar rather than a row above the panel. -->
+			{@render leading?.()}
 			{#if mode === 'both'}
 				<button class="ce-tab" class:active={tab === 'emoji'} onclick={() => tab = 'emoji'}>Custom Emotes</button>
 				<button class="ce-tab" class:active={tab === 'reactions'} onclick={() => tab = 'reactions'}>Reaction Images</button>
