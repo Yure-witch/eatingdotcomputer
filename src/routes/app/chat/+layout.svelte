@@ -294,25 +294,21 @@
 	}
 
 	@media (max-width: 640px) {
-		/* iOS alignment. Safari does not shrink the LAYOUT viewport for the
-		   on-screen keyboard, so `100dvh` still measures the whole screen and
-		   the compose bar ends up behind the keyboard. --kb-h is the real
-		   keyboard height measured off visualViewport (see
-		   $lib/keyboard-metrics.js); every height below subtracts it through
-		   this one variable rather than each rule growing its own copy.
-		   The native shell zeroes it: that web view is resize:'none' and
-		   already compensates with its own transform + message-list spacer
-		   (app.css, body.native-app.kb-native-open), so subtracting here as
-		   well would lift the compose twice. */
-		.chat-wrap { --kb-sub: var(--kb-h, 0px); }
-		:global(body.native-app) .chat-wrap { --kb-sub: 0px; }
+		/* NOTE: the chat heights deliberately do NOT subtract --kb-h.
+		   Whether the keyboard already shrinks the viewport is browser- and
+		   flag-dependent (Android Chrome's interactive-widget setting, iOS
+		   Safari, the PWA and the resize:'none' native shell all differ), so
+		   subtracting it unconditionally double-counts on every platform that
+		   does shrink — which reads as the whole chat lurching. --kb-h is still
+		   published for things that need the number rather than a layout change
+		   (the picker sizes itself to it). Fixing the iOS case properly needs a
+		   real device to measure against. */
 
 		.chat-wrap {
 			/* Subtract the AppHeader (52px on mobile too — its mobile
 			   media query keeps the same height) AND the bottom nav
 			   (56 px) AND any safe-area inset. */
-			height: calc(100dvh - 52px - var(--native-top-inset, 0px) - 56px
-			             - env(safe-area-inset-bottom, 0px) - var(--kb-sub, 0px));
+			height: calc(100dvh - 52px - var(--native-top-inset, 0px) - 56px - env(safe-area-inset-bottom, 0px));
 			margin-top: 52px;
 		}
 		/* When the bottom nav hides for the on-screen keyboard
@@ -320,27 +316,27 @@
 		   it was occupying so the compose docks right above the
 		   keyboard instead of leaving 56 px of empty space. */
 		:global(html.kb-open) .chat-wrap {
-			height: calc(100dvh - 52px - var(--native-top-inset, 0px) - var(--kb-sub, 0px));
+			height: calc(100dvh - 52px - var(--native-top-inset, 0px));
 		}
 		/* Same reclaim when the expression picker is open: the bottom nav is
 		   hidden (body.expr-picker-open), so without this the chat keeps a
 		   56 px reservation for it and the picker ends up with a big strip of
 		   empty space below the docked sheet. */
 		:global(body.expr-picker-open) .chat-wrap {
-			height: calc(100dvh - 52px - var(--native-top-inset, 0px) - var(--kb-sub, 0px));
+			height: calc(100dvh - 52px - var(--native-top-inset, 0px));
 		}
 		/* In an individual conversation the bottom nav is hidden, so reclaim the
 		   FULL bottom strip (the input bar owns the safe-area via its own
 		   padding-bottom). Same height as the kb-open / picker-open cases so
 		   there's never a conflicting safe-area gap when those engage. */
 		:global(html.in-conversation) .chat-wrap {
-			height: calc(100dvh - 52px - var(--native-top-inset, 0px) - var(--kb-sub, 0px));
+			height: calc(100dvh - 52px - var(--native-top-inset, 0px));
 		}
 	}
 
 	@media (min-width: 641px) {
 		.chat-wrap {
-			height: calc(100dvh - 52px - var(--native-top-inset, 0px) - var(--kb-sub, 0px));
+			height: calc(100dvh - 52px - var(--native-top-inset, 0px));
 		}
 	}
 

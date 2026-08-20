@@ -16,7 +16,6 @@
 	import TelegramEmojiPanel from '$lib/components/TelegramEmojiPanel.svelte';
 	import GifPicker from '$lib/components/GifPicker.svelte';
 	import ExpressionPicker from '$lib/components/ExpressionPicker.svelte';
-	import { installPickerDismiss, keepScrollAnchored } from '$lib/picker-dismiss.js';
 	import MediaPicker from '$lib/components/MediaPicker.svelte';
 	import { haptic } from '$lib/native.js';
 	import { decodeReactionKey } from '$lib/reaction-key.js';
@@ -234,28 +233,34 @@
 	function closeComposePicker() { showComposePicker = false; _clearHtmlCache(); }
 	function closeMediaPicker() { showMediaPicker = false; }
 
-	// While either compose picker is open, an outside tap or the first
-	// scroll gesture in the chat dismisses it. The message list stays live
-	// underneath (there is no blocking backdrop any more), so "start
-	// scrolling the chat" is a real gesture that can be observed.
+	// Dismissal rides the backdrop (see the markup): a tap closes the picker,
+	// and so does the first scroll gesture aimed at the chat behind it — after
+	// which the list is live again and scrolls normally. The backdrop has to
+	// exist. Besides catching the tap it keeps the picker MODAL, and the whole
+	// compose stack's z-index ordering assumes messages underneath aren't
+	// being hovered or raised.
+	//
+	// There is deliberately no ResizeObserver holding the list's scroll
+	// position any more. It fired on every height change, so it fought
+	// native.js (which already adds the keyboard height to scrollTop on
+	// keyboardWillShow) and re-ran throughout the keyboard's open animation —
+	// two scroll writes per frame, which is what made this feel jumpy. The
+	// picker's own open is compensated once, explicitly, below.
+	let _prevPickerOpen = false;
 	$effect(() => {
-		if (!_anyComposePicker) return;
-		return installPickerDismiss({
-			listEl,
-			close: () => { closeComposePicker(); closeMediaPicker(); },
-			// The toggle buttons live in .compose-picker-wrap alongside the
-			// panel; without them an outside-tap close would race the button's
-			// own toggle and the picker would never open.
-			inside: ['.compose-picker-wrap', '.expr-panel', '.media-panel']
+		const open = _anyComposePicker;
+		const was = _prevPickerOpen;
+		_prevPickerOpen = open;
+		if (open === was || !listEl) return;
+		const el = listEl;
+		// One shot, after the layout settles: opening shrinks the list by the
+		// sheet's height, so shift by the delta to leave the bottom-most
+		// message exactly where it was.
+		const before = el.clientHeight;
+		requestAnimationFrame(() => {
+			const delta = before - el.clientHeight;
+			if (delta) el.scrollTop = Math.max(0, el.scrollTop + delta);
 		});
-	});
-
-	// Opening the picker shrinks the message list by the sheet's height.
-	// Hold the content that was at the bottom edge in place instead of
-	// letting it slide away behind the sheet.
-	$effect(() => {
-		if (!listEl) return;
-		return keepScrollAnchored(listEl);
 	});
 	let showKitchen = $state(false);
 	let showCustomEmoji = $state(false);
@@ -4297,6 +4302,11 @@
 						<span class="msi msi-18" class:msi-fill={showComposePicker}>mood</span>
 					</button>
 					{#if showComposePicker}
+						<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+						<div class="compose-picker-backdrop"
+							onclick={closeComposePicker}
+							onwheel={closeComposePicker}
+							ontouchmove={closeComposePicker}></div>
 						<div class="compose-picker-pop">
 							<ExpressionPicker
 								onSelectEmoji={insertEmoji}
@@ -4316,6 +4326,11 @@
 						<span class="msi msi-18" class:msi-fill={showMediaPicker}>gif_box</span>
 					</button>
 					{#if showMediaPicker}
+						<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+						<div class="compose-picker-backdrop"
+							onclick={closeMediaPicker}
+							onwheel={closeMediaPicker}
+							ontouchmove={closeMediaPicker}></div>
 						<div class="compose-picker-pop">
 							<MediaPicker
 								onSelectGif={onGifSelect}
@@ -5234,21 +5249,17 @@
 		   the 22rem fallback is the old fixed height. */
 		.input-area { --picker-h: clamp(15rem, var(--kb-h-last, 22rem), 58vh); }
 		.input-area.picker-open { margin-bottom: calc(var(--picker-h) + env(safe-area-inset-bottom, 0px)); }
-		/* Animate the RISE, not the layout. The margin above is applied in one
-		   shot (so the flex column resolves once, not on every frame — animating
-		   margin would relayout the whole message list 60 times a second); the
-		   bar is then drawn starting from where it used to be and translated
-		   home. Transform only, so the motion runs on the compositor. */
-		.input-area.picker-open:not(.from-kb) {
-			animation: compose-rise 0.24s cubic-bezier(0.32, 0.72, 0, 1);
-		}
-		@keyframes compose-rise {
-			from { transform: translate3d(0, calc(var(--picker-h) + env(safe-area-inset-bottom, 0px)), 0); }
-			to   { transform: translate3d(0, 0, 0); }
-		}
-		/* Coming FROM the keyboard there is nothing to animate: the picker is
-		   the keyboard's height, so the bar is already exactly where it belongs
-		   and any rise would be a bounce the user never asked for. */
+		/* The input area must NEVER be transformed while the picker is open.
+		   The picker sheet is `position: fixed` but lives INSIDE .input-area,
+		   and a transform on an ancestor (a) makes that ancestor the containing
+		   block for fixed descendants, so the sheet anchors to the compose bar
+		   instead of the viewport and lurches around, and (b) creates a stacking
+		   context, trapping the sheet's z-index so message bubbles paint over
+		   it. An earlier `compose-rise` keyframe here did exactly that. app.css
+		   carries the same warning for the native keyboard transform.
+		   So the bar's move stays a plain one-shot layout change, and only the
+		   sheet — which is the fixed element itself, not an ancestor of one —
+		   animates. */
 		.compose-picker-pop { animation: sheet-rise 0.24s cubic-bezier(0.32, 0.72, 0, 1); }
 		@keyframes sheet-rise {
 			from { transform: translate3d(0, 100%, 0); }
@@ -5262,7 +5273,6 @@
 		}
 		@keyframes sheet-fade { from { opacity: 0; } to { opacity: 1; } }
 		@media (prefers-reduced-motion: reduce) {
-			.input-area.picker-open:not(.from-kb),
 			.compose-picker-pop,
 			.input-area.from-kb .compose-picker-pop { animation: none; }
 		}
