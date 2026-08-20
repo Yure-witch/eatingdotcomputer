@@ -46,7 +46,15 @@ await page.evaluateOnNewDocument(() => {
 			/* margin, not padding — padding inflates the compose box's own border
 			   and leaves dead space inside it. The strip below is the home
 			   indicator area, which should show the page background. */
-			.input-area, .compose-wrap { margin-bottom: 34px !important; }
+			/* NOT when a picker is open: .input-area.picker-open sets its own
+			   margin-bottom to lift the bar above the picker, and an !important
+			   here would override that and make the picker look like it covers
+			   the compose bar. */
+			/* ONLY the input-area, and only when no picker is open. Applying this
+			   to .compose-wrap inflated the compose bar so the stretched send /
+			   effects buttons rendered taller than the message box — an artefact
+			   of the capture, not of the app. */
+			.input-area:not(.picker-open) { margin-bottom: 34px !important; }
 		`;
 		document.head?.appendChild(st);
 	};
