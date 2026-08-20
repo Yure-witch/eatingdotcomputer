@@ -107,13 +107,17 @@
 	// 'reactions' falls back to emoji.
 	// The App Store review account (users.hide_tg_emoji) drops the third-party
 	// surfaces — Telegram animated emotes AND Emoji Kitchen (Google mashups).
-	const VALID_TABS = new Set(['recent', 'emoji', 'emotes', ...(tgHidden ? [] : ['animated', 'kitchen'])]);
+	// 'animated' and 'emotes' used to be separate tabs — animated Telegram packs
+	// in one, uploads + static packs in the other. They're one 'emotes' tab now
+	// (every pack, animated and static, plus the class's uploads, in a single
+	// ordered flow), so a saved 'animated' migrates onto it.
+	const VALID_TABS = new Set(['recent', 'emoji', 'emotes', ...(tgHidden ? [] : ['kitchen'])]);
 	// `rememberTab` false (the avatar picker) always opens on plain emoji: the
 	// saved tab is shared with the chat picker, so picking an avatar would drop
 	// you into whatever surface you last used mid-conversation — usually the
 	// animated emotes — which is a strange place to start choosing a face.
 	const _saved = rememberTab && typeof localStorage !== 'undefined' ? localStorage.getItem(TAB_KEY) : null;
-	let tab = $state(VALID_TABS.has(_saved) ? _saved : 'emoji');
+	let tab = $state(_saved === 'animated' ? 'emotes' : (VALID_TABS.has(_saved) ? _saved : 'emoji'));
 	// Debounced: a swipe walks `tab` through every category it crosses, and a
 	// synchronous localStorage write per crossing is main-thread work landing
 	// squarely inside the gesture.
@@ -144,8 +148,8 @@
 	const TABS = $derived([
 		...(hasRecents ? ['recent'] : []),
 		'emoji',
-		...(tgHidden ? [] : ['animated', 'kitchen']),
-		'emotes'
+		'emotes',
+		...(tgHidden ? [] : ['kitchen'])
 	]);
 	const tabIndex = $derived(Math.max(0, TABS.indexOf(tab)));
 
@@ -498,19 +502,14 @@
 		<button class="expr-tab" class:active={tab === 'emoji'} onclick={() => goTo('emoji')} title="Emoji">
 			<span class="msi msi-20" class:msi-fill={tab === 'emoji'}>mood</span>
 		</button>
-		{#if !tgHidden}
-			<button class="expr-tab" class:active={tab === 'animated'} onclick={() => goTo('animated')} title="Animated emotes">
-				<span class="msi msi-20" class:msi-fill={tab === 'animated'}>animated_images</span>
-			</button>
-		{/if}
+		<button class="expr-tab" class:active={tab === 'emotes'} onclick={() => goTo('emotes')} title="Custom emotes">
+			<span class="msi msi-20" class:msi-fill={tab === 'emotes'}>sentiment_very_satisfied</span>
+		</button>
 		{#if !tgHidden}
 			<button class="expr-tab" class:active={tab === 'kitchen'} onclick={() => goTo('kitchen')} title="Emoji Kitchen">
 				<span class="msi msi-20" class:msi-fill={tab === 'kitchen'}>blender</span>
 			</button>
 		{/if}
-		<button class="expr-tab" class:active={tab === 'emotes'} onclick={() => goTo('emotes')} title="Custom emotes">
-			<span class="msi msi-20" class:msi-fill={tab === 'emotes'}>sentiment_very_satisfied</span>
-		</button>
 		{#if onBackspace}
 			<!-- Backspace lives at the right end of the (bottom) category
 			     strip — bottom-right corner of the picker, like a native
@@ -577,26 +576,19 @@
 					{:else if t === 'kitchen'}
 						<EmojiKitchen onInsert={fireKitchen} onClose={null} />
 					{:else if t === 'emotes'}
-						<!-- Two sources, two sub-tabs. Uploaded = class custom
-						     emotes (R2). Library = the static Telegram packs
-						     (CrazyEmoji / MadEmoji2 / HeartEmoji) which don't
-						     animate, so they belong here next to the rest of the
-						     non-animated emotes rather than under Animated. -->
-						<!-- One scroll: the class's uploads lead, the static library
-						     packs follow, and the pack rail jumps between them. -->
+						<!-- Every Telegram pack (animated AND static) plus the
+						     class's uploads, in one ordered flow — see
+						     TelegramEmojiPanel's flowingCats for the order. -->
 						<TelegramEmojiPanel
 							onInsert={fireTg}
-							packFilter="static"
+							packFilter="all"
+							canModerate={isInstructor}
 							onClose={null}
 							{uploads}
 							onInsertUpload={(u) => fireCe({ shortcode: u.shortcode, url: u.url })}
 							onDeleteUpload={isInstructor ? deleteUpload : null}
 							onUpload={() => (showUpload = true)} />
 						{#if showUpload}
-							<!-- The upload form, reused from CustomEmojiPanel in its
-							     form-only mode so the working upload logic isn't
-							     duplicated. Refreshes the section on close, which is
-							     when a new emote should appear in it. -->
 							<div class="expr-upload">
 								<div class="expr-upload-bar">
 									<button class="expr-upload-close"
@@ -606,10 +598,6 @@
 								<CustomEmojiPanel mode="upload" onInsertEmoji={_noop} onInsertReaction={_noop} {isInstructor} />
 							</div>
 						{/if}
-					{:else if t === 'animated'}
-						<!-- Animated stickers only — static packs live in the
-						     Emotes tab's Library sub-tab. -->
-						<TelegramEmojiPanel onInsert={fireTg} packFilter="animated" canModerate={isInstructor} onClose={null} />
 					{/if}
 				{/if}
 			</section>

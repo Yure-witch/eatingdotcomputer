@@ -364,12 +364,37 @@
 	// Click on a head/pack tab snaps the scroller to that section's
 	// top; user scroll inside the scroller updates the highlighted tab
 	// to whichever section is currently nearest the top edge.
-	const flowingCats = $derived([
-		// Uploads lead — they're the class's own, and far fewer than the packs.
-		...(_uploadItems.length ? [{ key: UPLOADS_KEY, label: uploadsLabel, icon: '📤' }] : []),
-		...headCats.filter((c) => !isStandalone(c.key)),
-		...packCats.map((c) => ({ key: c.key, label: c.label, icon: null, pack: c.pack }))
-	]);
+	// Section order, hand-tuned rather than manifest order:
+	//   1. CreepyEmoji — titled "Cursed Emoji", the pack people actually open
+	//      the picker for, so it leads.
+	//   2. the static packs, right behind their animated counterpart.
+	//   3. the class's own uploads — placed just above Special Effects because
+	//      it's a short section and reads well as a lead-in rather than buried
+	//      among the packs.
+	//   4. everything else, in manifest order.
+	const LEAD_PACKS = ['CreepyEmoji'];
+	const AFTER_LEAD_PACKS = ['MadEmoji', 'MadEmoji2', 'HeartEmoji'];
+	const EFFECTS_KEY = 'Effects';
+	const flowingCats = $derived.by(() => {
+		const rest = packCats.map((c) => ({ key: c.key, label: c.label, icon: null, pack: c.pack }));
+		const take = (short) => {
+			const i = rest.findIndex((c) => c.pack?.short === short);
+			return i >= 0 ? rest.splice(i, 1)[0] : null;
+		};
+		const lead = LEAD_PACKS.map(take).filter(Boolean);
+		const statics = AFTER_LEAD_PACKS.map(take).filter(Boolean);
+
+		const heads = headCats.filter((c) => !isStandalone(c.key));
+		const uploadsCat = _uploadItems.length
+			? [{ key: UPLOADS_KEY, label: uploadsLabel, icon: null }]
+			: [];
+		const fx = heads.findIndex((c) => c.key === EFFECTS_KEY);
+		const headsWithUploads = fx >= 0
+			? [...heads.slice(0, fx), ...uploadsCat, ...heads.slice(fx)]
+			: [...uploadsCat, ...heads];
+
+		return [...lead, ...statics, ...headsWithUploads, ...rest];
+	});
 	const flowingSections = $derived(
 		flowingCats.map((c) => ({
 			key: c.key,
