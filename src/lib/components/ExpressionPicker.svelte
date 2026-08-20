@@ -565,21 +565,18 @@
 				<span class="msi msi-20" class:msi-fill={tab === 'kitchen'}>blender</span>
 			</button>
 		{/if}
+		{#if onBackspace}
+			<!-- Same container as the categories now, pushed to the right end by
+			     margin-left:auto. Being a child means it dims and scales with the
+			     rail for free, instead of mirroring its states from outside. -->
+			<button type="button" class="expr-tab expr-tab-del"
+				title="Delete" aria-label="Delete"
+				onmousedown={(e) => { e.preventDefault(); onBackspace(); }}>
+				<span class="msi msi-20">backspace</span>
+			</button>
+		{/if}
 	</nav>
 
-	{#if onBackspace}
-		<!-- Delete sits apart from the category icons on purpose: those switch
-		     what you're looking at, this edits what you've typed. Sharing a row
-		     put a destructive action one slip away from navigation. Its own
-		     surface in the bottom-right corner, dimming with the rest of the
-		     chrome. -->
-		<button type="button" class="expr-del"
-			class:chrome-dim={chrome === 'dim'} class:chrome-page={chrome === 'page'}
-			title="Delete" aria-label="Delete"
-			onmousedown={(e) => { e.preventDefault(); onBackspace(); }}>
-			<span class="msi msi-20">backspace</span>
-		</button>
-	{/if}
 	<!-- One pane per category in a native horizontal scroll-snap track:
 	     swiping sideways pages between expression types exactly like the
 	     app shell's section pager. Every pane is always present so the
@@ -637,7 +634,7 @@
 												id={it.v.custom ? it.v.id : null}
 												size={34} loop={true} mode="visible"
 												root={recentGridEl} forceEngine={recentEngine}
-												title={it.v.alt || ''} />
+												maxFps={24} title={it.v.alt || ''} />
 										{/if}
 									</button>
 								{/each}
@@ -688,6 +685,7 @@
 		   are literally the same height rather than two numbers kept in sync
 		   by hand. */
 		--expr-rail-h: calc(var(--expr-tab-h) + 8px);
+		--expr-slot-w: 3rem;
 		/* Shared bottom offset — these used to differ (6px vs 8px), so the two
 		   surfaces sat on different baselines. */
 		--expr-rail-bottom: 8px;
@@ -782,7 +780,10 @@
 		/* Same glyph size as the bottom nav (25px) — the icons match, there's
 		   just no label under them here. */
 		.expr-tab .msi { font-size: 25px; }
-		.expr-tab.active { border-bottom-color: transparent; }
+		/* Pushed to the far end, away from the navigation slots. */
+	.expr-tab-del { margin-left: auto; color: var(--muted-fg); }
+	.expr-tab-del:hover { color: var(--ink); }
+	.expr-tab.active { border-bottom-color: transparent; }
 		.expr-tab-back { padding: 0 0.6rem; min-height: 3.7rem; border-radius: 16px; }
 	}
 
@@ -853,45 +854,14 @@
 		height: var(--expr-tab-h, 2.4rem);
 	}
 
-	/* Delete key — its own floating surface, same recipe as the island. */
-	/* Bottom-RIGHT corner, and deliberately outside the island rather than a
-	   member of it: the island holds categories, this closes the picker, and
-	   mixing the two put an action in a row of navigation. The island's right
-	   margin is widened to leave this its own corner. */
-	.expr-del {
-		position: absolute;
-		bottom: var(--expr-rail-bottom); right: 6px;
-		z-index: 5;
-		/* Bigger than the rail it sits beside — it reads as a distinct control
-		   rather than a tab that wandered out of the row — while sharing the
-		   rail's bottom edge so the two sit on one baseline. Width stays
-		   narrower than the height: the rail is inset --nav-inset (56px) and
-		   anything wider than ~48px overlaps it. */
-		width: 3rem; height: calc(var(--expr-rail-h) + 4px);
-		box-sizing: border-box;
-		display: inline-flex; align-items: center; justify-content: center;
-		padding: 0;
-		border-radius: 12px;
-		background: var(--sidebar-bg, var(--paper));
-		border: 1px solid var(--sidebar-border, var(--border));
-		box-shadow:
-			0 6px 16px rgba(0, 0, 0, 0.13),
-			0 1px 4px rgba(0, 0, 0, 0.06),
-			inset 0 1px 0 rgba(255, 255, 255, 0.4);
-		color: var(--ink);
-		cursor: pointer;
-		transform-origin: bottom right;
-		transition: opacity 0.11s ease, transform 0.11s cubic-bezier(0.33, 1, 0.68, 1);
-		will-change: transform, opacity;
-	}
-	.expr-del :global(.msi) { font-variation-settings: 'wght' 700; font-size: 25px; }
-	.expr-del.chrome-dim { opacity: 0.5; transform: scale(0.88); transition-duration: 0.08s; }
-	.expr-del.chrome-page { opacity: 1; transform: scale(1.12); }
 	@media (prefers-reduced-motion: reduce) {
-		.expr-tabs, .expr-del { transition: none; }
+		.expr-tabs { transition: none; }
 	}
 	.expr-tab {
-		flex: 1;
+		/* Fixed slots, NOT flex:1 — stretching spread four icons across the
+		   whole rail and centred them. Sized slots keep them grouped at the
+		   left, with the delete key off at the right. */
+		flex: 0 0 var(--expr-slot-w, 3rem);
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
@@ -914,7 +884,9 @@
 		top: 3px;
 		bottom: 3px;
 		left: 3px;
-		width: calc((100% - 6px) / var(--expr-slots, 4));
+		/* One slot wide. Was a fraction of the container, which is wrong now
+		   that the container also holds the delete key. */
+		width: var(--expr-slot-w, 3rem);
 		border-radius: 999px;
 		background: var(--sidebar-active, var(--md-sys-color-secondary-container, var(--paper)));
 		transform: translate3d(calc(var(--expr-frac, 0) * 100%), 0, 0);
@@ -928,8 +900,6 @@
 		color: var(--sidebar-active-fg, var(--md-sys-color-on-secondary-container, var(--ink)));
 		border-bottom-color: transparent;
 	}
-	.expr-tab-back { flex: 0 0 auto; color: var(--muted-fg); padding: 0.5rem 0.85rem; }
-	.expr-tab-back:hover { color: var(--ink); }
 	.expr-tab:hover:not(.active) {
 		background: color-mix(in srgb, var(--md-sys-color-on-surface, var(--ink)) 7%, transparent);
 	}
