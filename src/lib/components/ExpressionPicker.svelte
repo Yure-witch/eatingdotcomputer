@@ -16,7 +16,8 @@
 	import { onMount, untrack } from 'svelte';
 	import { isTgHidden } from '$lib/tg-visibility.js';
 	import {
-		loadTelegramEmoji, loadCustomPacks, getCachedTgEmoji, getCachedCustomPacks
+		loadTelegramEmoji, loadCustomPacks, getCachedTgEmoji, getCachedCustomPacks,
+		engineMode, setEngineManual, rasterEngineFor
 	} from '$lib/telegram-emoji-store.js';
 	import { getExprRecents, addExprRecent, exprRecentKey } from '$lib/expr-recents.js';
 	import { ekTokenToUrl } from '$lib/message-render.js';
@@ -474,9 +475,23 @@
 		return m ? ekTokenToUrl(m[1], m[2], m[3]) : tok;
 	}
 	let recents = $state([]);
+	let recentGridEl = $state(null);
 	$effect(() => {
 		if (tab === 'recent') recents = getExprRecents().filter((it) => it.t !== 'tg' || !tgHidden);
 	});
+	// Recent is a mixed grid of up to 40 cells that you drop into for a second
+	// and leave — the worst possible shape for a LIVE engine, which would spin
+	// up a render context per emote on arrival. It always renders on a
+	// RASTERIZED engine (baked atlas, still moving): the selected one if that's
+	// already rasterized, otherwise this device's rasterized default.
+	const recentEngine = $derived(rasterEngineFor($engineMode));
+	// Same control as the Emotes tab's, but it only offers the two rasterized
+	// engines — so what the bar reports is always what Recent is actually
+	// rendering on, and cycling from here can't drop the app onto a live
+	// engine it would then ignore.
+	function cycleRecentEngine() {
+		setEngineManual(recentEngine === 'webgpu-rasterized' ? 'cpu-rasterized' : 'webgpu-rasterized');
+	}
 	// A saved 'recent' tab with nothing in it would leave no tab highlighted.
 	$effect(() => {
 		if (tab === 'recent' && !hasRecents) tab = 'emoji';
@@ -551,10 +566,29 @@
 			<section class="expr-pane" aria-hidden={t !== tab}>
 				{#if mounted[t]}
 					{#if t === 'recent'}
+						<!-- Recent's own top bar, matching the Emoji / Emotes tabs':
+						     close on the left, then the render-engine readout so the
+						     engine this grid is on is visible (and switchable) from
+						     the tab it matters most on. -->
+						<div class="expr-recent-bar">
+							{#if onClose}
+								<PickerStickyBtn square onclick={onClose} title="Close" label="Close picker">
+									<span class="msi msi-20">close</span>
+								</PickerStickyBtn>
+							{/if}
+							<span class="expr-recent-title">Recently used</span>
+							{#if !tgHidden}
+								<PickerStickyBtn square onclick={cycleRecentEngine}
+									title="Render engine: {recentEngine} — tap to cycle"
+									label="Cycle render engine">
+									<span class="expr-engine-abbr">{recentEngine === 'cpu-rasterized' ? 'RC' : 'R'}</span>
+								</PickerStickyBtn>
+							{/if}
+						</div>
 						{#if !recents.length}
 							<p class="expr-recent-empty">Emoji, emotes, mixes and stickers you use will show up here.</p>
 						{:else}
-							<div class="expr-recent-grid">
+							<div class="expr-recent-grid" bind:this={recentGridEl}>
 								{#each recents as it (exprRecentKey(it))}
 									<button class="expr-recent-cell" onclick={() => fireRecent(it)}>
 										{#if it.t === 'emoji'}
@@ -564,15 +598,21 @@
 										{:else if it.t === 'ce'}
 											<img src={it.v.url} alt={it.v.shortcode} loading="lazy" />
 										{:else if it.t === 'tg'}
-											<!-- live cell on the inline-canvas Skottie pipeline (each
+											<!-- Inline-canvas cell on the RASTERIZED pipeline (each
 											     cell owns its own canvas — no stage host needed, so
 											     it animates here just like in the TG panel; static
-											     packs auto-rest on their thumb frame) -->
+											     packs auto-rest on their thumb frame). Scroll-gated
+											     off the grid like the Emotes grid's cells rather than
+											     `eager`: eager loaded all 40 at once the instant the
+											     tab was opened, which is what made landing on Recent
+											     stutter. -->
 											<SpriteSticker
 												cp={it.v.custom ? null : it.v.cp}
 												short={it.v.custom ? it.v.short : null}
 												id={it.v.custom ? it.v.id : null}
-												size={34} loop={true} eager={true} title={it.v.alt || ''} />
+												size={34} loop={true} mode="visible"
+												root={recentGridEl} forceEngine={recentEngine}
+												title={it.v.alt || ''} />
 										{/if}
 									</button>
 								{/each}
@@ -618,6 +658,14 @@
 		/* Matches the bottom nav's inset so the two islands line up. */
 		--nav-inset: 56px;
 		--expr-tab-h: 2.75rem;
+		/* Outer height of the rail: the tab row plus its 3px padding and 1px
+		   border on each side. The delete key reads the same value so the two
+		   are literally the same height rather than two numbers kept in sync
+		   by hand. */
+		--expr-rail-h: calc(var(--expr-tab-h) + 8px);
+		/* Shared bottom offset — these used to differ (6px vs 8px), so the two
+		   surfaces sat on different baselines. */
+		--expr-rail-bottom: 8px;
 		display: flex;
 		flex-direction: column;
 		width: 340px;
@@ -690,10 +738,11 @@
 		/* Island on mobile too — it sits just above the home indicator the way
 		   the bottom nav does, rather than running its background to the very
 		   bottom of the screen as the old full-bleed strip did. */
+		.expr-panel { --expr-rail-bottom: calc(6px + env(safe-area-inset-bottom, 0px)); }
 		.expr-tabs {
 			gap: 0.2rem;
 			padding: 3px;
-			margin: 4px var(--nav-inset, 56px) calc(6px + env(safe-area-inset-bottom, 0px));
+			margin: 4px var(--nav-inset, 56px) var(--expr-rail-bottom);
 			align-items: stretch;
 		}
 		/* --expr-tab-h is the single source for this height: the close button
@@ -734,7 +783,9 @@
 		/* Same island geometry as the app's bottom nav: inset --nav-inset (56px)
 		   from each edge. The delete key lives in the band that inset leaves,
 		   so it needs no extra margin carved out of the rail. */
-		margin: 4px var(--nav-inset, 56px) 8px;
+		height: var(--expr-rail-h);
+		box-sizing: border-box;
+		margin: 4px var(--nav-inset, 56px) var(--expr-rail-bottom);
 		padding: 3px;
 		border-radius: 999px;
 		background: var(--sidebar-bg, var(--md-sys-color-surface-container, var(--surface-2)));
@@ -783,9 +834,14 @@
 	   margin is widened to leave this its own corner. */
 	.expr-del {
 		position: absolute;
-		bottom: calc(8px + env(safe-area-inset-bottom, 0px)); right: 10px;
+		bottom: var(--expr-rail-bottom); right: 6px;
 		z-index: 5;
-		width: var(--expr-tab-h, 2.4rem); height: var(--expr-tab-h, 2.4rem);
+		/* Height matches the rail exactly; width is narrower because the rail is
+		   inset --nav-inset (56px) and a square 52px key wouldn't fit in that
+		   band without overlapping it. Taller than wide keeps the rounded-square
+		   read while staying clear. */
+		width: var(--expr-tab-h); height: var(--expr-rail-h);
+		box-sizing: border-box;
 		display: inline-flex; align-items: center; justify-content: center;
 		padding: 0;
 		border-radius: 12px;
@@ -801,7 +857,7 @@
 		transition: opacity 0.18s ease, transform 0.18s cubic-bezier(0.33, 1, 0.68, 1);
 		will-change: transform, opacity;
 	}
-	.expr-del :global(.msi) { font-variation-settings: 'wght' 700; }
+	.expr-del :global(.msi) { font-variation-settings: 'wght' 700; font-size: 25px; }
 	.expr-del.chrome-dim { opacity: 0.5; transform: scale(0.88); transition-duration: 0.08s; }
 	.expr-del.chrome-page { opacity: 1; transform: scale(1.12); }
 	@media (prefers-reduced-motion: reduce) {
@@ -1007,6 +1063,22 @@
 		padding-bottom: 68px;
 	}
 	.expr-recent-grid { padding-bottom: 68px; }
+
+	/* Recent's top bar — same recipe as the Emoji / Emotes tabs' so the three
+	   read as one picker, not three panels with different heads. */
+	.expr-recent-bar {
+		display: flex; align-items: center; gap: 0.4rem;
+		padding: 0.35rem 0.5rem;
+		border-bottom: 1.5px solid var(--border);
+		background: var(--surface-2);
+		flex-shrink: 0;
+	}
+	.expr-recent-title {
+		flex: 1; min-width: 0;
+		font-size: 0.78rem; font-weight: 600; color: var(--muted-fg);
+		white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+	}
+	.expr-engine-abbr { font-size: 0.62rem; font-weight: 800; letter-spacing: 0.02em; line-height: 1; }
 
 	/* Recently used — one flat grid mixing every expression type */
 	.expr-recent-grid {
