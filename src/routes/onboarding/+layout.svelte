@@ -49,6 +49,7 @@
 
 	.shell {
 		min-height: 100vh;
+		min-height: 100dvh;
 		display: flex;
 		flex-direction: column;
 		background: var(--paper, var(--paper));
@@ -139,5 +140,19 @@
 		align-items: center;
 		justify-content: center;
 		padding: 2rem 1rem;
+	}
+
+	/* The native shell runs the keyboard with resize:'none', so the web view
+	   never shrinks and the keyboard simply covers whatever is underneath —
+	   including the Continue button. Pad by the live keyboard height so the
+	   form can scroll clear of it, and stop centring (a centred flex child
+	   can't scroll above its container's top edge). */
+	:global(body.kb-native-open) main {
+		align-items: flex-start;
+		padding-bottom: calc(2rem + var(--kb-height, 0px));
+	}
+	/* Same on the plain web/PWA, where the visual viewport shrinks instead. */
+	@media (max-width: 640px) {
+		main { padding: 1.25rem 1rem; align-items: flex-start; }
 	}
 </style>

@@ -9,6 +9,8 @@
 	// server action stays a single POST.
 	import { enhance } from '$app/forms';
 	import { page } from '$app/stores';
+	import { fly } from 'svelte/transition';
+	import { cubicOut } from 'svelte/easing';
 	import AvatarPicker from '$lib/components/AvatarPicker.svelte';
 	import FormattedInput from '$lib/components/FormattedInput.svelte';
 	let { data, form } = $props();
@@ -28,6 +30,8 @@
 
 	const steps = [{ id: 'who', label: 'You' }, { id: 'share', label: 'About you' }];
 	let stepIdx = $state(0);
+	// +1 forward, -1 back — the step slides in from the side you're travelling.
+	let dir = $state(1);
 	const step = $derived(steps[stepIdx].id);
 
 	// Field state (mirrored into hidden inputs for the single POST)
@@ -44,7 +48,14 @@
 	let photoFile = $state(null);
 
 	let stepError = $state(null);
+	// Blur before switching steps: leaving a focused field mounted while it is
+	// removed leaves the keyboard up over the next step's inputs.
+	function blurActive() {
+		try { document.activeElement?.blur?.(); } catch { /* not fatal */ }
+	}
 	function next() {
+		blurActive();
+		dir = 1;
 		stepError = null;
 		if (step === 'who') {
 			if (!name.trim()) { stepError = 'Your name, at least!'; return; }
@@ -52,7 +63,12 @@
 		}
 		if (stepIdx < steps.length - 1) stepIdx += 1;
 	}
-	function back() { stepError = null; if (stepIdx > 0) stepIdx -= 1; }
+	function back() {
+		blurActive();
+		dir = -1;
+		stepError = null;
+		if (stepIdx > 0) stepIdx -= 1;
+	}
 </script>
 
 <svelte:head><title>Welcome — eating.computer</title></svelte:head>
@@ -97,6 +113,9 @@
 		<input type="hidden" name="avatar_kind" value={avatarKind} />
 		<input type="hidden" name="avatar_value" value={avatarKind === 'expr' ? (avatarValue ?? '') : ''} />
 
+		{#key stepIdx}
+		<div class="step-pane"
+			in:fly={{ x: dir * 28, duration: 260, easing: cubicOut, opacity: 0 }}>
 		{#if step === 'who'}
 			<h1>Hi! Who are you?</h1>
 			<p class="sub">This is how your classmates will see you.</p>
@@ -162,6 +181,8 @@
 				<input type="url" bind:value={website} placeholder="https://yoursite.com" />
 			</label>
 		{/if}
+		</div>
+		{/key}
 
 		<div class="nav-row">
 			{#if stepIdx > 0}
@@ -233,17 +254,26 @@
 	}
 
 	form { display: flex; flex-direction: column; gap: 0.9rem; }
+	/* The pane owns the per-step layout so the transition moves one element
+	   rather than every field independently. */
+	.step-pane { display: flex; flex-direction: column; gap: 0.9rem; }
+	@media (prefers-reduced-motion: reduce) {
+		.step-pane { transition: none !important; animation: none !important; }
+	}
 	label { display: flex; flex-direction: column; gap: 0.35rem; }
 	label span, .field-title { font-size: 0.82rem; font-weight: 600; color: var(--ink); }
 	.req { color: #e53935; }
 	.opt { font-weight: 400; color: var(--muted-fg); }
 
 	input, textarea {
-		padding: 0.6rem 0.85rem;
+		padding: 0.85rem 0.95rem;
 		border: 1.5px solid var(--border);
-		border-radius: 8px;
+		border-radius: 10px;
 		font-family: inherit;
-		font-size: 0.9rem;
+		/* 16px EXACTLY — iOS auto-zooms the page when a focused field is any
+		   smaller, which yanks the layout on every tap. This is the single
+		   biggest source of the jank here, not the animations. */
+		font-size: 16px;
 		color: var(--ink);
 		background: var(--paper);
 		outline: none;
@@ -251,24 +281,33 @@
 		width: 100%;
 		box-sizing: border-box;
 	}
-	input:focus, textarea:focus { border-color: var(--ink); }
+	input:focus, textarea:focus {
+		border-color: var(--md-sys-color-primary, var(--ink));
+		box-shadow: 0 0 0 3px color-mix(in srgb, var(--md-sys-color-primary, var(--ink)) 14%, transparent);
+	}
 	textarea { resize: vertical; line-height: 1.5; }
 
 	.school-cards { display: flex; gap: 0.6rem; }
 	.school-card {
 		flex: 1; min-width: 0;
 		display: flex; flex-direction: column; align-items: center; gap: 0.3rem;
-		padding: 0.9rem 0.5rem 0.75rem;
+		padding: 1.1rem 0.5rem 0.95rem;
+		min-height: 96px; justify-content: center;
 		border: 1.5px solid var(--border); border-radius: 12px;
 		background: var(--paper); cursor: pointer;
 		font-family: inherit; color: var(--ink);
 		transition: border-color 0.15s, background 0.15s, transform 0.15s;
 	}
-	.school-card:hover { transform: translateY(-1px); border-color: var(--muted-fg); }
+	/* Hover only where hover exists — on touch it sticks after a tap and reads
+	   as a stuck button. */
+	@media (hover: hover) {
+		.school-card:hover { transform: translateY(-1px); border-color: var(--muted-fg); }
+	}
+	.school-card:active { transform: scale(0.98); }
 	.school-card.selected {
-		border-color: var(--ink);
-		background: color-mix(in srgb, var(--ink) 6%, var(--paper));
-		box-shadow: inset 0 0 0 1px var(--ink);
+		border-color: var(--md-sys-color-primary, var(--ink));
+		background: color-mix(in srgb, var(--md-sys-color-primary, var(--ink)) 8%, var(--paper));
+		box-shadow: inset 0 0 0 1px var(--md-sys-color-primary, var(--ink));
 	}
 	.school-icon { font-size: 1.5rem; line-height: 1; }
 	.school-label { font-weight: 700; font-size: 0.9rem; }
@@ -283,21 +322,22 @@
 		font-family: inherit; font-size: 0.82rem; color: var(--ink);
 		transition: all 0.15s;
 	}
-	.year-pill:hover { border-color: var(--muted-fg); }
+	@media (hover: hover) { .year-pill:hover { border-color: var(--muted-fg); } }
 	.year-pill.selected { background: var(--ink); border-color: var(--ink); color: var(--paper); font-weight: 600; }
 
 	.nav-row { display: flex; justify-content: space-between; align-items: center; margin-top: 0.25rem; }
 	.btn-primary {
-		padding: 0.7rem 1.5rem;
+		min-height: 52px;
+		padding: 0.9rem 1.75rem;
 		background: var(--ink);
 		color: var(--paper);
 		border: none;
 		border-radius: 10px;
 		font-family: inherit;
-		font-size: 0.95rem;
+		font-size: 1rem;
 		font-weight: 600;
 		cursor: pointer;
-		transition: opacity 0.15s;
+		transition: transform 0.12s ease, opacity 0.15s ease, box-shadow 0.15s ease;
 	}
 	.btn-primary:hover { opacity: 0.8; }
 	.btn-ghost {
