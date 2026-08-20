@@ -82,6 +82,7 @@
 	import MessageAttachment from './MessageAttachment.svelte';
 	import ExpressionPicker from './ExpressionPicker.svelte';
 	import { decodeReactionKey } from '$lib/reaction-key.js';
+	import { positionReactionTooltip } from '$lib/reaction-tooltip.js';
 	import { wrapEmojiInText } from '$lib/emoji-tip.js';
 
 	let {
@@ -321,10 +322,19 @@
 	<div class="thread-rx">
 		{#each rxEntries(msgId) as [emoji, users] (emoji)}
 			{@const mine = currentUser?.id in (users ?? {})}
-			<button class="thread-rx-chip" class:reacted={mine} onclick={() => toggleReaction(msgId, emoji)}
-				title={Object.keys(users).map((uid) => userMap[uid]?.name ?? 'Someone').join(', ')}>
+			<button class="reaction-chip thread-rx-chip" class:reacted={mine}
+				onclick={() => toggleReaction(msgId, emoji)}
+				onmouseenter={positionReactionTooltip}
+				onfocus={positionReactionTooltip}>
 				<span class="thread-rx-emoji">{@html contentHtml(emoji)}</span>
 				<span class="thread-rx-count">{Object.keys(users).length}</span>
+				<div class="reaction-tooltip">
+					<span class="reaction-tooltip-emoji">{@html contentHtml(emoji)}</span>
+					<div class="reaction-tooltip-text">
+						<span class="reaction-tooltip-names">{Object.keys(users).map((uid) => userMap[uid]?.name ?? 'Someone').join(', ')}</span>
+						<span class="reaction-tooltip-label">reacted</span>
+					</div>
+				</div>
 			</button>
 		{/each}
 		<button class="thread-rx-add" onclick={(e) => openPicker(msgId, e)} title="Add reaction" aria-label="Add reaction">
@@ -452,7 +462,7 @@
 	.thread-panel.tp-swiping { transition: transform 0.19s cubic-bezier(0.33, 1, 0.68, 1); }
 	.thread-panel.tp-swiping.tp-dragging { transition: none; }
 	.thread-head {
-		display: flex; align-items: center; justify-content: space-between;
+		display: flex; align-items: center; justify-content: flex-start; gap: 0.1rem;
 		padding: 0.7rem 1rem;
 		border-bottom: 1px solid var(--border);
 		background: var(--md-sys-color-surface-container, var(--surface-2));
@@ -484,6 +494,31 @@
 		transition: border-color 0.12s, background 0.12s;
 	}
 	.thread-rx-chip:hover { background: var(--surface-2); }
+	/* Same hover card as chat — positioned by the shared clamp so it can't run
+	   off either edge, which a 400px panel makes very easy. */
+	.thread-rx-chip { position: relative; }
+	.reaction-tooltip {
+		display: none;
+		position: absolute;
+		top: calc(100% + 6px);
+		left: 50%; transform: translateX(-50%);
+		min-width: max-content;
+		background: var(--paper); color: var(--ink);
+		border: 1.5px solid var(--border);
+		border-radius: 10px; padding: 0.5rem 0.75rem;
+		font-size: 0.78rem; white-space: nowrap;
+		z-index: 30; pointer-events: none;
+		flex-direction: row; align-items: center; gap: 0.55rem;
+		box-shadow: 0 4px 18px rgba(0,0,0,0.13), 0 1.5px 4px rgba(0,0,0,0.07);
+		font-family: 'Google Sans Flex', 'Space Grotesk', sans-serif;
+		text-align: left;
+	}
+	.thread-rx-chip:hover .reaction-tooltip,
+	.thread-rx-chip:focus-visible .reaction-tooltip { display: flex; }
+	.reaction-tooltip-emoji { display: inline-flex; align-items: center; font-size: 1.1rem; }
+	.reaction-tooltip-text { display: flex; flex-direction: column; }
+	.reaction-tooltip-names { font-weight: 700; }
+	.reaction-tooltip-label { color: var(--muted-fg); }
 	.thread-rx-chip.reacted { border-color: var(--md-sys-color-primary, var(--accent)); background: color-mix(in srgb, var(--md-sys-color-primary, var(--accent)) 12%, transparent); }
 	.thread-rx-emoji { display: inline-flex; align-items: center; line-height: 1; }
 	.thread-rx-count { font-weight: 700; font-variant-numeric: tabular-nums; }
@@ -546,16 +581,24 @@
 		word-break: break-word; white-space: pre-wrap;
 	}
 	.thread-empty { color: var(--muted-fg); font-size: 0.82rem; text-align: center; padding: 1rem 0; }
+	/* Matches the chat input bar: same paper ground, same generous padding, no
+	   dividing rule — a thread composes the same way a conversation does, so it
+	   shouldn't read as a different kind of surface. */
 	.thread-compose {
-		display: flex; align-items: flex-end; gap: 0.4rem;
-		padding: 0.6rem 0.75rem;
-		/* Clear the home indicator — the panel runs to bottom:0, so without this
-		   the send button sits under it. */
-		padding-bottom: calc(0.6rem + env(safe-area-inset-bottom, 0px));
-		border-top: 1px solid var(--border);
-		background: var(--md-sys-color-surface-container, var(--surface-2));
+		display: flex; align-items: flex-end; gap: 0.5rem;
+		padding: 0.75rem 1rem 1rem;
+		/* Clear the home indicator — the panel runs to bottom:0. */
+		padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+		background: var(--paper);
 		flex-shrink: 0;
 	}
+	/* The compose box carries the border, exactly like .compose-wrap in chat,
+	   rather than the bar around it. */
+	.thread-fi {
+		border: 1.5px solid var(--border); border-radius: 10px;
+		background: var(--paper); transition: border-color 0.15s;
+	}
+	.thread-fi:focus-within { border-color: var(--md-sys-color-primary, var(--ink)); }
 	.thread-fi { flex: 1; min-width: 0; }
 	.thread-attach {
 		display: flex; align-items: center; justify-content: center;
@@ -599,7 +642,10 @@
 		display: flex; align-items: center; justify-content: center;
 		width: 36px; height: 36px; flex-shrink: 0;
 		border: none; border-radius: 10px;
-		background: var(--ink); color: var(--paper);
+		/* Themed rather than flat ink, matching chat's send button: it's the one
+		   true action in the bar, so it carries the scheme's primary colour. */
+		background: var(--md-sys-color-primary, var(--ink));
+		color: var(--md-sys-color-on-primary, var(--paper));
 		cursor: pointer;
 	}
 	.thread-send:disabled { opacity: 0.35; cursor: default; }

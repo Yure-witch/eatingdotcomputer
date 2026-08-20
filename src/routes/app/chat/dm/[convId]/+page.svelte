@@ -19,6 +19,7 @@
 	import MediaPicker from '$lib/components/MediaPicker.svelte';
 	import { haptic } from '$lib/native.js';
 	import { decodeReactionKey } from '$lib/reaction-key.js';
+	import { positionReactionTooltip } from '$lib/reaction-tooltip.js';
 	import MentionAutocomplete from '$lib/components/MentionAutocomplete.svelte';
 	import lottie from 'lottie-web';
 	import { loadTelegramEmoji, getCachedTgEmoji, tgEntry, tgAnimatedUrl, tgFlagUrl, tgAnimationUrl, fetchLottie, cpToToken,
@@ -2540,31 +2541,6 @@
 	}
 
 
-	// Clamp reaction tooltip within viewport, accounting for the sidebar
-	function positionReactionTooltip(e) {
-		const chip = e.currentTarget;
-		const tooltip = chip.querySelector('.reaction-tooltip');
-		if (!tooltip) return;
-		// Reset so CSS default is active before measuring
-		tooltip.style.left = '';
-		tooltip.style.transform = '';
-		// CSS :hover is already active — tooltip is display:flex — measure it
-		const chipRect = chip.getBoundingClientRect();
-		const tooltipRect = tooltip.getBoundingClientRect();
-		const tooltipW = tooltipRect.width;
-		// Left bound: sidebar right edge + 10px margin
-		const sidebar = document.querySelector('.global-sidebar');
-		const sidebarW = sidebar ? sidebar.getBoundingClientRect().width : 0;
-		const leftBound = sidebarW + 10;
-		const rightBound = window.innerWidth - 10;
-		// Centered position in viewport coordinates
-		const centeredLeft = chipRect.left + chipRect.width / 2 - tooltipW / 2;
-		// Clamp
-		const clampedLeft = Math.max(leftBound, Math.min(centeredLeft, rightBound - tooltipW));
-		// Convert viewport-left → offset relative to chip (positioned parent)
-		tooltip.style.left = (clampedLeft - chipRect.left) + 'px';
-		tooltip.style.transform = 'none';
-	}
 
 	onMount(async () => {
 		// Publish the DM partner's name + a link to their profile to
