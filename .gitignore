@@ -60,3 +60,9 @@ vite.config.ts.timestamp-*
 
 # Account backups — contain real user messages/sessions, never commit
 artifacts/backups/
+
+# scratch verification scripts
+_verify.mjs
+_m.mjs
+_v.mjs
+_dbg.mjs
