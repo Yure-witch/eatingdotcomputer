@@ -596,11 +596,17 @@
 		     disappears as you scroll between sections is the opposite of fixed
 		     in place — and it costs nothing to show, since customMode only
 		     applies to custom emotes and the other surfaces just ignore it. -->
-		<PickerStickyBtn square active={customMode === 'animated'} onclick={toggleCustomMode}
-			title={customMode === 'animated' ? 'Sending animated — tap for static' : 'Sending static — tap for animated'}
-			label="Toggle animated or static">
-			<span class="msi msi-20" class:msi-fill={customMode === 'animated'}>
-				{customMode === 'animated' ? 'play_arrow' : 'pause'}
+		<!-- Transport control, read like a video player's: the icon is the ACTION,
+		     not the state. Animating (the default) shows `pause`, because that's
+		     what a tap does; paused shows `play_arrow`. No `active` highlight —
+		     the icon already says which state you're in, and a lit background
+		     saying "animated" next to an icon saying "pause" reads as a
+		     contradiction. -->
+		<PickerStickyBtn square onclick={toggleCustomMode}
+			title={customMode === 'animated' ? 'Pause — show and send static frames' : 'Play — show and send animated'}
+			label={customMode === 'animated' ? 'Pause emotes' : 'Play emotes'}>
+			<span class="msi msi-20 msi-fill">
+				{customMode === 'animated' ? 'pause' : 'play_arrow'}
 			</span>
 		</PickerStickyBtn>
 		{#if searchOpen}
