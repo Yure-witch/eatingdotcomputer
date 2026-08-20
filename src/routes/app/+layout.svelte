@@ -840,6 +840,7 @@
 	// full-screen composited layer alive and makes the element a containing block
 	// for its fixed descendants (the compose bar, the pickers).
 	function _endConvSlide() {
+		_convSettling = false;
 		_convSliding = false;
 		_convDragging = false;
 		_convDrag = 0;
@@ -860,15 +861,15 @@
 	const _beneathFor = (dir) => (dir > 0 ? _chatMenuIdx : _afterChatIdx);
 
 	function onSwipeStart(e) {
-		if (window.innerWidth > 640) { _swArmed = false; return; }
+		if (window.innerWidth > 640) { _disarmSwipe(); return; }
 		// Pager routes drive their own native scroll-snap gestures.
-		if (isPagerActive) { _swArmed = false; return; }
+		if (isPagerActive) { _disarmSwipe(); return; }
 		// Only chat surfaces (and a chat still painting its skeleton) swipe out.
-		if (!_onChatSurfaceMobile && !_showConvSkeleton) { _swArmed = false; return; }
+		if (!_onChatSurfaceMobile && !_showConvSkeleton) { _disarmSwipe(); return; }
 		const t = e.touches?.[0];
-		if (!t) { _swArmed = false; return; }
+		if (!t) { _disarmSwipe(); return; }
 		// Don't hijack the compose / sliders / horizontal scrollers / pickers.
-		if (e.target?.closest?.('.input-area, .send-wrap, .sz-capture, input[type="range"], .text-typo-bar, .expr-panel, .picker-popover, .compose-picker-pop')) { _swArmed = false; return; }
+		if (e.target?.closest?.('.input-area, .send-wrap, .sz-capture, input[type="range"], .text-typo-bar, .expr-panel, .picker-popover, .compose-picker-pop')) { _disarmSwipe(); return; }
 		// Deliberately NOT cancelling a pending _endConvSlide here. A touch that
 		// turns into a real drag cancels it below, once it's actually taking over;
 		// a touch that turns out to be a tap or a vertical scroll must leave the
@@ -890,10 +891,11 @@
 		_swPrevX = t.clientX; _swPrevT = e.timeStamp;
 		if (!_swDecided) {
 			if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
-			if (Math.abs(dy) >= Math.abs(dx)) { _swArmed = false; return; } // vertical → scroll
+			if (Math.abs(dy) >= Math.abs(dx)) { _disarmSwipe(); return; } // vertical → scroll
 			_swDecided = true;
 			_swDir = dx > 0 ? 1 : -1;
 			clearTimeout(_convExitT); // this drag owns the settle now
+			_convSettling = false;
 			// Put the destination behind the layer BEFORE it moves, so the very
 			// first frame of the drag already shows the real panel.
 			_parkBeneath(_beneathFor(_swDir));
@@ -907,10 +909,19 @@
 		if (dir !== _swDir && Math.abs(dx) < 24) { _swDir = dir; _parkBeneath(_beneathFor(dir)); }
 		_setConvDrag(Math.max(-1, Math.min(1, dx / W)));
 	}
-	function onSwipeEnd() {
-		if (!_swArmed) return;
-		_swArmed = false;
-		if (!_swDecided || !_convSliding) return;
+	// Land whatever the drag left on screen: commit if it got far enough, snap
+	// back otherwise. Deliberately keyed on the LAYER being mid-drag rather than
+	// on the gesture being armed — a half-dragged chat has to end up somewhere no
+	// matter how the gesture died, and it can die without a touchend. Any second
+	// contact point runs onSwipeStart again, and several of its guards disarm
+	// (a finger landing on the compose bar or a picker, most easily), after which
+	// the real touchend returned immediately and left the chat parked halfway
+	// across the screen with Orbit behind it — permanently, since nothing else
+	// resets it.
+	let _convSettling = false;
+	function _settleConvGesture() {
+		if (!_convSliding || _convSettling) return;
+		_convSettling = true;
 		_convDragging = false; // re-enable the transition so it animates to the snap
 		const dir = _convDrag !== 0 ? (_convDrag > 0 ? 1 : -1) : _swDir;
 		// Commit on a clear drag (past 30%) or a flick that agrees with it.
@@ -920,6 +931,14 @@
 		clearTimeout(_convExitT);
 		_convExitT = setTimeout(_endConvSlide, CONV_EXIT_MS + 20);
 	}
+	// Ending the gesture and landing the layer are separate concerns now: this
+	// runs on touchend/touchcancel, and on every path in onSwipeStart that turns
+	// a touch down.
+	function _disarmSwipe() {
+		_swArmed = false;
+		_settleConvGesture();
+	}
+	function onSwipeEnd() { _disarmSwipe(); }
 	// Run the layer off-screen and commit the route it uncovered. The pager is
 	// already parked on that panel and already painted, so the navigation swaps
 	// nothing visible — no mount, no skeleton, no flash. The goto waits for the
