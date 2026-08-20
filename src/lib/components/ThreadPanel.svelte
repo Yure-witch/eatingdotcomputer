@@ -603,11 +603,16 @@
 	.name:hover { text-decoration: underline; text-underline-offset: 2px; }
 	.time { font-size: 0.72rem; color: var(--muted-fg); }
 
-	/* ── Hover action bar, same as chat's ── */
-	.bubble-row { position: relative; }
+	/* ── Hover action bar, same geometry as chat's ──
+	   Anchored to the MESSAGE, not the bubble row: chat's `.message` is the
+	   position:relative box and the bar sits at top:9px translated fully up, so
+	   it overlaps the sender line above rather than the message body. Anchoring
+	   to the row instead put it a few pixels higher and hard against the right
+	   edge, which is the "not quite the same" you were seeing. */
+	.thread-parent, .thread-reply { position: relative; }
 	.msg-actions-bar {
 		position: absolute;
-		top: 2px; right: 0;
+		top: 9px; right: 2px;
 		transform: translateY(-100%);
 		display: flex; flex-direction: row; gap: 0;
 		background: var(--paper);
