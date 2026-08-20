@@ -21,6 +21,9 @@
 	let { data, form } = $props();
 
 	// Cooper year — instructor-set per student (onboarding no longer asks it).
+	// Thumbnails shown inline per member; the rest collapse into a +N whose
+	// title lists their shortcodes, so nothing is silently dropped.
+	const EMOTE_PREVIEW = 6;
 	const YEARS = ['1st year', '2nd year', '3rd year', '4th year', '5th year', 'Other'];
 
 	let activeTab = $state('assignments');
@@ -922,6 +925,22 @@
 		{#if activeTab === 'members'}
 	<section class="members-section">
 		<h2>All members <span class="member-count">({data.members.length})</span></h2>
+		{#if data.unattributedEmotes?.length}
+			<!-- Uploaded before the uploader was recorded, or by a since-deleted
+			     user. Shown so the per-member counts above reconcile with the
+			     total rather than quietly not adding up. -->
+			<p class="unattributed-emotes">
+				{data.unattributedEmotes.length} emote{data.unattributedEmotes.length === 1 ? '' : 's'} with no recorded uploader
+				<span class="emote-strip">
+					{#each data.unattributedEmotes.slice(0, EMOTE_PREVIEW) as e (e.id)}
+						<img class="emote-thumb" src={e.url} alt={':' + e.shortcode + ':'} title=":{e.shortcode}:" loading="lazy" />
+					{/each}
+					{#if data.unattributedEmotes.length > EMOTE_PREVIEW}
+						<span class="emote-more">+{data.unattributedEmotes.length - EMOTE_PREVIEW}</span>
+					{/if}
+				</span>
+			</p>
+		{/if}
 
 		<div class="onboarding-tools">
 			<span class="ot-label">Onboarding</span>
@@ -944,6 +963,7 @@
 					<th>Status</th>
 					<th>Device</th>
 					<th>Notif</th>
+					<th>Emotes</th>
 					<th>Last seen</th>
 					<th></th>
 				</tr>
@@ -974,6 +994,25 @@
 								<span class="status-online">● online</span>
 							{:else}
 								<span class="status-offline">○ offline</span>
+							{/if}
+						</td>
+						<td class="emote-cell">
+							{#if m.emotes?.length}
+								<span class="emote-count" title="{m.emotes.length} uploaded">{m.emotes.length}</span>
+								<span class="emote-strip">
+									{#each m.emotes.slice(0, EMOTE_PREVIEW) as e (e.id)}
+										<img class="emote-thumb" src={e.url} alt={':' + e.shortcode + ':'}
+											title=":{e.shortcode}:{e.at ? ' · ' + new Date(e.at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''}"
+											loading="lazy" decoding="async" />
+									{/each}
+									{#if m.emotes.length > EMOTE_PREVIEW}
+										<!-- Rest are in the title so nothing is silently dropped. -->
+										<span class="emote-more" title={m.emotes.slice(EMOTE_PREVIEW).map((e) => ':' + e.shortcode + ':').join('  ')}
+											>+{m.emotes.length - EMOTE_PREVIEW}</span>
+									{/if}
+								</span>
+							{:else}
+								<span class="muted">—</span>
 							{/if}
 						</td>
 						<td class="muted device-cell">
@@ -2070,4 +2109,18 @@
 		padding: 0.5rem 0.65rem; border: 1px solid var(--border); border-radius: 8px;
 		background: var(--paper); color: var(--ink);
 	}
+	/* Uploaded-emote column in the members table. */
+	.emote-cell { white-space: nowrap; }
+	.emote-count {
+		display: inline-block; min-width: 1.4rem;
+		padding: 0.05rem 0.3rem; margin-right: 0.35rem;
+		border-radius: 999px; text-align: center;
+		background: var(--surface-2); color: var(--ink);
+		font-size: 0.72rem; font-weight: 700;
+	}
+	.emote-strip { display: inline-flex; align-items: center; gap: 2px; vertical-align: middle; }
+	.emote-thumb { width: 20px; height: 20px; object-fit: contain; border-radius: 4px; }
+	.emote-more { font-size: 0.7rem; color: var(--muted-fg); font-weight: 600; margin-left: 2px; }
+	.unattributed-emotes { margin-top: 0.5rem; font-size: 0.78rem; color: var(--muted-fg); }
+	.unattributed-emotes .emote-strip { margin-left: 0.35rem; }
 </style>

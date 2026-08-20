@@ -484,7 +484,37 @@ export async function load({ locals, parent }) {
 		}
 	}
 
-	return { weeks, maxWeek, members, activityByUser, userDeviceActivity, deviceNotifData, pendingRequests, classId, dmConversations, enrollment };
+	// Custom emotes grouped by uploader. The API has recorded created_by_id
+	// since the table was created — it was simply never read back, so there was
+	// no way to see who contributed what.
+	let emotesByUser = {};
+	let unattributedEmotes = [];
+	if (db) {
+		try {
+			const er = await db.execute(
+				`SELECT id, shortcode, url, created_by_id, created_by_name, created_at
+				 FROM custom_emoji ORDER BY created_at ASC`
+			);
+			for (const r of er.rows) {
+				const e = {
+					id: String(r.id),
+					shortcode: String(r.shortcode ?? ''),
+					url: String(r.url ?? ''),
+					by: r.created_by_name ? String(r.created_by_name) : '',
+					at: r.created_at ? String(r.created_at) : ''
+				};
+				const uid = r.created_by_id ? String(r.created_by_id) : '';
+				// Rows predating the uploader being recorded (or from a deleted
+				// user) have no id — surfaced separately rather than dropped, so
+				// the totals still add up.
+				if (uid) (emotesByUser[uid] ??= []).push(e);
+				else unattributedEmotes.push(e);
+			}
+		} catch { /* table absent until the first upload */ }
+	}
+	for (const m of members) m.emotes = emotesByUser[m.id] ?? [];
+
+	return { weeks, maxWeek, members, activityByUser, userDeviceActivity, deviceNotifData, pendingRequests, classId, dmConversations, enrollment, unattributedEmotes };
 }
 
 const ALL_TYPES = ['link', 'image', 'video'];
