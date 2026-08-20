@@ -2,13 +2,17 @@
 	import { enhance } from '$app/forms';
 	let { data, form } = $props();
 	let selected = $state(data.classes[0]?.id ?? '');
+	// Nearly always exactly one class is open for enrollment, and asking someone
+	// to "choose" from a list of one is a decision they can't actually make.
+	// Confirm it instead; the radio list only appears when there IS a choice.
+	const only = $derived(data.classes.length === 1 ? data.classes[0] : null);
 </script>
 
 <svelte:head><title>Choose your class — eating.computer</title></svelte:head>
 
 <div class="card">
 	<a class="back" href="/onboarding/profile">← Back</a>
-	<h1>Choose your class</h1>
+	<h1>{only ? 'Is this right?' : 'Choose your class'}</h1>
 	<p class="sub">Your instructor will approve your request before you get access.</p>
 
 	{#if form?.error}
@@ -16,6 +20,18 @@
 	{/if}
 
 	<form method="POST" use:enhance>
+		{#if only}
+			<input type="hidden" name="class_id" value={only.id} />
+			<div class="confirm-card">
+				<span class="confirm-check" aria-hidden="true">
+					<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor"
+						stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+				</span>
+				<span class="class-name">{only.name}</span>
+				<span class="class-term">{only.term}</span>
+				{#if only.description}<p class="class-desc">{only.description}</p>{/if}
+			</div>
+		{:else}
 		<div class="class-list">
 			{#each data.classes as cls}
 				<label class="class-card" class:selected={selected === cls.id}>
@@ -28,13 +44,15 @@
 					<span class="check">{selected === cls.id ? '●' : '○'}</span>
 				</label>
 			{/each}
-			{#if !data.classes.length}
-				<p class="empty">No classes are available yet. Check back soon.</p>
-			{/if}
 		</div>
+		{/if}
 
-		<button type="submit" class="btn-primary" disabled={!selected || !data.classes.length}>
-			Request to join →
+		{#if !data.classes.length}
+			<p class="empty">No classes are open for enrollment yet. Check back soon.</p>
+		{/if}
+
+		<button type="submit" class="btn-primary" disabled={!data.classes.length || (!only && !selected)}>
+			{only ? "Yes, that's my class" : 'Request to join →'}
 		</button>
 	</form>
 </div>
@@ -57,6 +75,28 @@
 		margin-bottom: 1rem;
 	}
 	.back:hover { color: var(--ink, var(--ink)); }
+
+	/* Single-class confirmation: no radio, no decision — just the class and a
+	   tick, so the step reads as "confirm" rather than "pick one of one". */
+	.confirm-card {
+		display: flex; flex-direction: column; align-items: center; gap: 0.3rem;
+		padding: 1.75rem 1.25rem;
+		border: 1.5px solid var(--md-sys-color-primary, var(--ink));
+		border-radius: 14px;
+		background: color-mix(in srgb, var(--md-sys-color-primary, var(--ink)) 7%, var(--paper));
+		text-align: center;
+		margin-bottom: 1.25rem;
+		animation: confirm-in 0.32s cubic-bezier(0.33, 1, 0.68, 1) both;
+	}
+	@keyframes confirm-in { from { opacity: 0; transform: translateY(8px) scale(0.985); } to { opacity: 1; transform: none; } }
+	@media (prefers-reduced-motion: reduce) { .confirm-card { animation: none; } }
+	.confirm-check {
+		display: inline-flex; align-items: center; justify-content: center;
+		width: 46px; height: 46px; border-radius: 50%;
+		background: var(--md-sys-color-primary, var(--ink));
+		color: var(--md-sys-color-on-primary, var(--paper));
+		margin-bottom: 0.4rem;
+	}
 
 	h1 {
 		font-family: 'Avara', serif;

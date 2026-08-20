@@ -198,6 +198,14 @@
 		border-radius: 12px;
 		overflow: hidden;
 	}
+	/* Cap the picker's height here. On mobile .expr-panel is height:100% so it
+	   can fill the chat's docked sheet, but in this popover nothing bounds it
+	   and it covered the avatar you're choosing. Shorter panel = the circle
+	   above stays visible while you pick, so you can see what you're getting. */
+	.ap-expr-popover :global(.expr-panel) {
+		height: min(48vh, 420px);
+		max-height: min(48vh, 420px);
+	}
 	.ap-hint {
 		font-size: 0.74rem;
 		color: var(--md-sys-color-on-surface-variant, var(--muted-fg));

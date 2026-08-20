@@ -9,8 +9,14 @@
 	let { data, form } = $props();
 
 	let approvalRef;
+	// Quiet by default: a spinner alone, because approval is usually quick and
+	// a wall of "awaiting approval" copy makes a two-second wait feel like a
+	// dead end. Only after 30s do we explain what's being waited on.
+	let waitingLong = $state(false);
+	let longTimer;
 
 	onMount(async () => {
+		longTimer = setTimeout(() => (waitingLong = true), 30000);
 		if (!data.firebaseToken || !data.userId) return;
 		try {
 			await signInWithCustomToken(auth, data.firebaseToken);
@@ -24,6 +30,7 @@
 
 	onDestroy(() => {
 		if (approvalRef) off(approvalRef);
+		clearTimeout(longTimer);
 	});
 </script>
 
@@ -35,20 +42,18 @@
 		<h1>Request denied</h1>
 		<p class="sub">Your request to join <strong>{data.className}</strong> ({data.term}) was not approved. Contact your instructor if you think this is a mistake.</p>
 	{:else}
-		<div class="icon spin">◌</div>
-		<h1>Waiting for approval</h1>
-		<p class="sub">
-			Your request to join <strong>{data.className}</strong> ({data.term}) has been sent.
-			Your instructor will approve it shortly.
-		</p>
+		<div class="spinner" role="status" aria-live="polite"
+			aria-label={waitingLong ? 'Waiting for instructor to approve enrollment' : 'Working'}></div>
 
-		{#if form?.status === 'pending'}
-			<p class="still-pending">Still pending — check back in a bit.</p>
+		{#if waitingLong}
+			<p class="waiting-long">Waiting for instructor to approve enrollment</p>
+			{#if form?.status === 'pending'}
+				<p class="still-pending">Still pending — check back in a bit.</p>
+			{/if}
+			<form method="POST" action="?/check" use:enhance>
+				<button type="submit" class="btn-check">Check status</button>
+			</form>
 		{/if}
-
-		<form method="POST" action="?/check" use:enhance>
-			<button type="submit" class="btn-check">Check status</button>
-		</form>
 	{/if}
 </div>
 
@@ -66,6 +71,28 @@
 		align-items: center;
 		gap: 0.75rem;
 	}
+
+	/* Indeterminate — there's no progress to report, and a determinate bar
+	   would be a lie. Approval arrives over the RTDB listener above, so this
+	   usually resolves before the 30s message ever appears. */
+	.spinner {
+		width: 42px; height: 42px;
+		border-radius: 50%;
+		border: 3px solid color-mix(in srgb, var(--md-sys-color-primary, var(--ink)) 18%, transparent);
+		border-top-color: var(--md-sys-color-primary, var(--ink));
+		animation: spin 0.9s linear infinite;
+	}
+	@keyframes spin { to { transform: rotate(360deg); } }
+	@media (prefers-reduced-motion: reduce) {
+		.spinner { animation-duration: 2.4s; }
+	}
+	.waiting-long {
+		font-size: 0.95rem;
+		color: var(--md-sys-color-on-surface-variant, var(--muted-fg));
+		margin: 0.25rem 0 0;
+		animation: fade-in 0.35s ease both;
+	}
+	@keyframes fade-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 
 	.icon {
 		font-size: 2.5rem;
