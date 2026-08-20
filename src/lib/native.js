@@ -177,6 +177,11 @@ export async function initNativeShell() {
 		// Foreground resume → let the app reconnect presence / refetch.
 		App.addListener('appStateChange', ({ isActive }) => {
 			if (isActive) window.dispatchEvent(new CustomEvent('native-resume'));
+			// Backgrounding is precisely when iOS starts looking for a process
+			// to reclaim, and the emote renderer's atlases are the biggest
+			// thing we hold. Nothing is on screen to re-bake for, so hand it
+			// all back — see the 'native-background' handler in +layout.svelte.
+			else window.dispatchEvent(new CustomEvent('native-background'));
 		});
 	} catch {}
 

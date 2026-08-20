@@ -75,7 +75,28 @@
 			_resumeChecking = false;
 		};
 		window.addEventListener('native-resume', onAppResume);
-		const onVisible = () => { if (document.visibilityState === 'visible') onAppResume(); };
+
+		// Hand the emote renderer's canvas/GPU memory back whenever we go away.
+		// The Skottie worker keeps an atlas per pixel SIZE (picker cells, pack
+		// tabs, avatars, each times devicePixelRatio, plus a high-density
+		// variant), and until now none of them were ever freed — they were
+		// allocated on first use and held for the life of the worker, which is
+		// what got the iOS WebView jetsammed and the app reloaded underneath
+		// you. Backgrounded, nothing is on screen to re-bake for, so drop the
+		// lot; the disk frame cache survives, so coming back rehydrates from
+		// cached frames rather than re-rendering any Lottie.
+		const onBackground = async () => {
+			try {
+				const m = await import('$lib/skottie-stage-worker.js');
+				m.reclaimMemory?.({ all: true });
+			} catch { /* renderer never started — nothing to reclaim */ }
+		};
+		window.addEventListener('native-background', onBackground);
+
+		const onVisible = () => {
+			if (document.visibilityState === 'visible') onAppResume();
+			else onBackground();
+		};
 		document.addEventListener('visibilitychange', onVisible);
 
 		// On touch devices, drive the "emotes awake" idle signal so animated
@@ -191,6 +212,7 @@
 		return () => {
 			window.removeEventListener('native-resume', onAppResume);
 			document.removeEventListener('visibilitychange', onVisible);
+			window.removeEventListener('native-background', onBackground);
 		};
 	});
 

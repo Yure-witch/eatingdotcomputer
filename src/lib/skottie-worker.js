@@ -174,16 +174,106 @@ function getAtlas(px) {
 	addAtlasPage(a);
 	return a;
 }
+// MAX_ATLAS_PAGES caps ONE atlas. There is an atlas per pixel size, and a
+// session accumulates several — the picker cells (24), the pack tabs (22),
+// avatars (64), each multiplied by devicePixelRatio, plus a second high-density
+// size per component that oversamples. At 4MB a page on mobile, six pages
+// apiece, half a dozen sizes is ~150MB of canvas that nothing ever gave back:
+// atlases, like the GL surfaces below, were allocated on first use and held for
+// the life of the worker. On an iOS WebView that is what the OS kills you for.
+// So the real ceiling is a budget over ALL sizes, and idle sizes hand pages
+// back (see reclaimIdleSizes).
+// Pages are ATLAS_DIM² RGBA: 4MB on mobile, 16.7MB on desktop. 10 mobile
+// pages is a 40MB ceiling; 16 desktop pages is ~268MB, which is exactly what
+// MAX_ATLAS_PAGES already allowed a SINGLE size to reach — the difference is
+// that it is now the total across every size rather than a per-size limit, so
+// one live size behaves identically to before and only the accumulation is
+// capped.
+const MAX_TOTAL_PAGES = _lowMem ? 10 : 16;
+let _totalPages = 0;
+
 function addAtlasPage(a) {
 	if (a.pages.length >= MAX_ATLAS_PAGES) return false;
+	if (_totalPages >= MAX_TOTAL_PAGES) {
+		// Exclude the atlas we're growing. A size counts as idle until one of
+		// its cells has registered, and frames can be baked in that window
+		// (prewarm, or a size whose cells just re-mounted), so without this the
+		// reclaim could free `a` out from under us — leaving pages pushed into
+		// a detached atlas and _totalPages permanently overcounted.
+		if (!reclaimIdleSizes(a.px)) return false;
+		if (_totalPages >= MAX_TOTAL_PAGES) return false;
+	}
 	const canvas = new OffscreenCanvas(ATLAS_DIM, ATLAS_DIM);
 	const ctx = canvas.getContext('2d');
 	const page = a.pages.length;
 	a.pages.push({ canvas, ctx });
+	_totalPages++;
 	for (let r = 0; r < a.cols; r++)
 		for (let c = 0; c < a.cols; c++)
 			a.free.push({ page, x: c * a.slot, y: r * a.slot });
 	return true;
+}
+
+// Which pixel sizes currently have a cell on screen. Recomputed on demand
+// rather than tracked incrementally so it can't drift out of sync with the
+// cell maps, which several paths mutate.
+function liveSizes() {
+	// `w` IS the pixel-size key — it's what keys the frame cache and the disk
+	// probe (`url + '@' + msg.w`). Legacy `_cells` are deliberately not counted:
+	// they render through the shared overlay surface and own no per-size atlas.
+	const live = new Set();
+	for (const c of _canvasCells.values()) if (c.w) live.add(c.w);
+	return live;
+}
+
+// Drop everything belonging to a pixel size: atlas pages, the frame-cache
+// entries pointing into them, and the three GL scratch surfaces. The DISK
+// cache is untouched, so a size that comes back rehydrates from it instead of
+// re-rendering from the Lottie source — the same trade Telegram makes, where
+// RAM holds the visible set and disk holds everything ever rasterised.
+function freeSize(px) {
+	const a = _atlasByPx.get(px);
+	if (a) {
+		for (const [key, cache] of _frameCache) {
+			if (cache.atlas !== a) continue;
+			_frameCache.delete(key);
+		}
+		_totalPages -= a.pages.length;
+		if (_totalPages < 0) _totalPages = 0;
+		a.pages.length = 0;
+		a.free.length = 0;
+		a.lru.clear();
+		_atlasByPx.delete(px);
+	}
+	for (const pool of [_scratchByPx, _rasterSheetByPx, _prewarmSheetByPx]) {
+		const e = pool.get(px);
+		if (!e) continue;
+		try { e.surface?.delete(); } catch {}
+		pool.delete(px);
+	}
+	// Abandon queued/in-flight bakes for this size. A job that completed after
+	// the free would hold a reference to the detached atlas and write frames
+	// into a canvas nothing draws from — the cell would sit blank forever
+	// rather than re-bake.
+	for (const [key, job] of _rasterPending) {
+		if (job.px === px) _rasterPending.delete(key);
+	}
+	for (const key of [..._frameJobs]) {
+		if (key.endsWith('@' + px)) _frameJobs.delete(key);
+	}
+}
+
+// Reclaim every size with nothing on screen. Returns whether anything was
+// freed, so allocation can retry rather than fail.
+function reclaimIdleSizes(keepPx) {
+	const live = liveSizes();
+	let freed = false;
+	for (const px of [..._atlasByPx.keys()]) {
+		if (px === keepPx || live.has(px)) continue;
+		freeSize(px);
+		freed = true;
+	}
+	return freed;
 }
 // Reserve n free slots, growing the atlas or evicting the LRU emoji as needed.
 function atlasAllocSlots(a, n) {
@@ -1297,6 +1387,21 @@ self.onmessage = async (e) => {
 		}
 		case 'unregister-canvas-cell': {
 			_canvasCells.delete(msg.id);
+			break;
+		}
+		// Hand GPU/canvas memory back. `all` also drops sizes that still have
+		// cells registered — for backgrounding, where nothing is on screen to
+		// re-bake for and the OS is about to start looking for a process to
+		// kill. Without `all` it only reclaims sizes with no live cell.
+		// The disk frame cache survives either way, so coming back rehydrates
+		// from it instead of re-rendering the Lottie.
+		case 'reclaim': {
+			if (msg.all) {
+				for (const px of [..._atlasByPx.keys()]) freeSize(px);
+			} else {
+				reclaimIdleSizes();
+			}
+			self.postMessage({ type: 'reclaimed', pages: _totalPages });
 			break;
 		}
 		case 'set-canvas-visible': {

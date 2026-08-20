@@ -41,7 +41,18 @@
 		// Emote holds are refcounted globally, so one leaked by a picker that
 		// unmounted mid-gesture (swipe down to dismiss, say) would freeze every
 		// emote in the app for the rest of the session.
-		return () => { clearTimeout(_settleT); thawEmotes(); };
+		return () => {
+			clearTimeout(_settleT);
+			thawEmotes();
+			// The picker is the heaviest consumer of the emote renderer: it's
+			// the only surface that puts hundreds of distinct stickers on
+			// screen. Closing it is the best moment to give the atlases for
+			// its pixel sizes back. Only sizes with NO live cell anywhere are
+			// dropped, so emotes still on screen in the chat keep theirs.
+			import('$lib/skottie-stage-worker.js')
+				.then((m) => m.reclaimMemory?.())
+				.catch(() => {});
+		};
 	});
 
 	let {

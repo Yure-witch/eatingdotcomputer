@@ -598,6 +598,19 @@ export function unregisterCanvasCell(id) {
 // so we don't need to coordinate any DOM-level hiding here — the worker
 // processes the clear, the surface goes blank, and as new cells start
 // painting their pixels appear over the (still-visible) sprite thumbs.
+// Ask every shard to hand back canvas/GPU memory.
+//
+// `all` is for backgrounding: nothing is on screen, so there is nothing to
+// re-bake for, and this is exactly when iOS goes looking for a process to
+// reclaim. Without it, only pixel sizes with no live cell are dropped, which
+// is the safe thing to do while the user is still looking at the picker.
+//
+// Cheap to call: the disk frame cache is untouched, so a size that comes back
+// rehydrates from cached frames rather than re-rendering the Lottie.
+export function reclaimMemory({ all = false } = {}) {
+	postToAllShards({ type: 'reclaim', all });
+}
+
 export function clearCanvas() {
 	// Hide each shard's canvas the instant we post `clear`. The
 	// worker might be busy (animation build, message backlog) and not
