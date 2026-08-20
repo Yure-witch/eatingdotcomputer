@@ -900,7 +900,11 @@
 		const t = e.changedTouches?.[0] ?? e.touches?.[0];
 		if (!t) { _disarmSwipe(); return; }
 		// Don't hijack the compose / sliders / horizontal scrollers / pickers.
-		if (e.target?.closest?.('.input-area, .send-wrap, .sz-capture, input[type="range"], .text-typo-bar, .expr-panel, .picker-popover, .compose-picker-pop')) { _disarmSwipe(); return; }
+		// `.thread-panel` is in that list for a different reason than the rest: a
+		// thread is a screen ON TOP of the conversation, so swiping out of one
+		// means going back to the parent, not leaving the chat entirely. The panel
+		// owns that gesture itself.
+		if (e.target?.closest?.('.thread-panel, .input-area, .send-wrap, .sz-capture, input[type="range"], .text-typo-bar, .expr-panel, .picker-popover, .compose-picker-pop')) { _disarmSwipe(); return; }
 		// Deliberately NOT cancelling a pending _endConvSlide here. A touch that
 		// turns into a real drag cancels it below, once it's actually taking over;
 		// a touch that turns out to be a tap or a vertical scroll must leave the

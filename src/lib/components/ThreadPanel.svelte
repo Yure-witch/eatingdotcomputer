@@ -16,6 +16,68 @@
 	import { mountStaticEmotes } from '$lib/emote-mount.js';
 	import { getCachedCustomEmojiMap } from '$lib/custom-emoji-store.js';
 	import FormattedInput from './FormattedInput.svelte';
+	// ── Swipe back to the parent conversation ───────────────────────────
+	// A thread sits on top of a conversation, so a rightward swipe means "back
+	// to the parent" — the same gesture the conversation itself uses to go back
+	// to the chat list, one level in. The app shell's exit gesture explicitly
+	// stands down over `.thread-panel` so the two can't both fire.
+	const TP_COMMIT_PX = 30;   // matches the chat exit: intent, in pixels
+	const TP_EXIT_MS = 190;
+	let _tpArmed = false, _tpDecided = false;
+	let _tpStartX = 0, _tpStartY = 0, _tpLastDx = 0;
+	let _tpVelX = 0, _tpPrevX = 0, _tpPrevT = 0;
+	let _tpSwiping = $state(false);   // we're driving the transform
+	let _tpDragging = $state(false);  // finger down — no transition
+	// Set before onClose() so the fly-out runs at zero duration: the panel is
+	// already off-screen under its own power, and letting the transition start
+	// from x=0 would snap it back into view first.
+	let _tpClosing = $state(false);
+	let _tpExitT;
+	function _tpSet(px) {
+		if (panelEl) panelEl.style.transform = px ? `translate3d(${px}px, 0, 0)` : '';
+	}
+	function tpTouchStart(e) {
+		if (window.innerWidth > 640) { _tpArmed = false; return; }
+		// The compose and its pickers keep their own horizontal gestures.
+		if (e.target?.closest?.('.thread-compose, .expr-panel, .picker-popover, .compose-picker-pop, input[type="range"]')) { _tpArmed = false; return; }
+		const t = e.changedTouches?.[0] ?? e.touches?.[0];
+		if (!t) { _tpArmed = false; return; }
+		clearTimeout(_tpExitT);
+		_tpStartX = t.clientX; _tpStartY = t.clientY;
+		_tpPrevX = t.clientX; _tpPrevT = e.timeStamp; _tpVelX = 0; _tpLastDx = 0;
+		_tpArmed = true; _tpDecided = false;
+	}
+	function tpTouchMove(e) {
+		if (!_tpArmed || _tpClosing) return;
+		const t = e.touches?.[0]; if (!t) return;
+		const dx = t.clientX - _tpStartX, dy = t.clientY - _tpStartY;
+		_tpLastDx = dx;
+		const dt = e.timeStamp - _tpPrevT;
+		if (dt > 0) _tpVelX = (t.clientX - _tpPrevX) / dt;
+		_tpPrevX = t.clientX; _tpPrevT = e.timeStamp;
+		if (!_tpDecided) {
+			if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
+			// Vertical belongs to the reply list; leftward has nowhere to go.
+			if (Math.abs(dy) >= Math.abs(dx) || dx < 0) { _tpArmed = false; return; }
+			_tpDecided = true;
+			_tpSwiping = true; _tpDragging = true;
+		}
+		_tpSet(Math.max(0, dx));
+	}
+	function tpTouchEnd() {
+		if (!_tpArmed) return;
+		_tpArmed = false;
+		if (!_tpDecided) return;
+		_tpDragging = false; // let it animate to wherever it's going
+		if (_tpLastDx >= TP_COMMIT_PX || _tpVelX > 0.4) {
+			_tpClosing = true;
+			if (panelEl) panelEl.style.transform = 'translate3d(100%, 0, 0)';
+			_tpExitT = setTimeout(() => onClose?.(), TP_EXIT_MS);
+			return;
+		}
+		_tpSet(0); // not far enough — settle back against the edge
+		_tpExitT = setTimeout(() => { _tpSwiping = false; }, TP_EXIT_MS + 20);
+	}
 	import ExpressionTip from './ExpressionTip.svelte';
 	import MessageAttachment from './MessageAttachment.svelte';
 	import { wrapEmojiInText } from '$lib/emoji-tip.js';
@@ -199,7 +261,7 @@
 <!-- |global: transitions are LOCAL by default, and the {#key} wrapper the
      pages use for thread-switch remounts made the mount belong to an outer
      block — silently skipping the intro. Global plays it on every mount. -->
-<aside class="thread-panel" bind:this={panelEl} aria-label="Thread" transition:fly|global={{ x: 420, duration: 260, easing: cubicOut }} ondragenter={onDragEnter} ondragover={onDragOver} ondragleave={onDragLeave} ondrop={onDrop}>
+<aside class="thread-panel" class:tp-swiping={_tpSwiping} class:tp-dragging={_tpDragging} bind:this={panelEl} aria-label="Thread" transition:fly|global={{ x: 420, duration: _tpClosing ? 0 : 260, easing: cubicOut }} ontouchstart={tpTouchStart} ontouchmove={tpTouchMove} ontouchend={tpTouchEnd} ontouchcancel={tpTouchEnd} ondragenter={onDragEnter} ondragover={onDragOver} ondragleave={onDragLeave} ondrop={onDrop}>
 	{#if dragActive}
 		<div class="thread-drop" aria-hidden="true">
 			<div class="thread-drop-card">
@@ -287,6 +349,10 @@
 		box-shadow: -8px 0 32px rgba(0, 0, 0, 0.12);
 		z-index: 300;
 	}
+	/* Only while WE are driving the transform — never during the fly, which
+	   writes transform itself and would smear against a CSS transition. */
+	.thread-panel.tp-swiping { transition: transform 0.19s cubic-bezier(0.33, 1, 0.68, 1); }
+	.thread-panel.tp-swiping.tp-dragging { transition: none; }
 	.thread-head {
 		display: flex; align-items: center; justify-content: space-between;
 		padding: 0.7rem 1rem;
@@ -330,6 +396,9 @@
 	.thread-compose {
 		display: flex; align-items: flex-end; gap: 0.4rem;
 		padding: 0.6rem 0.75rem;
+		/* Clear the home indicator — the panel runs to bottom:0, so without this
+		   the send button sits under it. */
+		padding-bottom: calc(0.6rem + env(safe-area-inset-bottom, 0px));
 		border-top: 1px solid var(--border);
 		background: var(--md-sys-color-surface-container, var(--surface-2));
 		flex-shrink: 0;
@@ -383,6 +452,10 @@
 	.thread-send:disabled { opacity: 0.35; cursor: default; }
 
 	@media (max-width: 640px) {
-		.thread-panel { width: 100vw; border-left: none; }
+		/* left/right rather than 100vw: the viewport unit counts the scrollbar and
+		   overflows the page by its width. */
+		.thread-panel { left: 0; right: 0; width: auto; border-left: none; }
+		/* The panel covers the app header, so it owns the notch itself. */
+		.thread-head { padding-top: calc(0.7rem + var(--native-top-inset, 0px)); }
 	}
 </style>
