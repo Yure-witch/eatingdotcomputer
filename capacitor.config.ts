@@ -27,10 +27,13 @@ const config: CapacitorConfig = {
 		// an unauthenticated launch can go straight to /login instead of the
 		// marketing landing page (see src/routes/+page.server.js).
 		appendUserAgent: 'eatingcomputer-native',
-		// Shows through behind the (non-overlaying) status bar — set to the
-		// app's declared default --paper (md-sys-color-surface fallback) so
-		// the strip blends with the header on the default light theme.
-		backgroundColor: '#f7f2ea'
+		// Only used on the very first launch after install. From then on
+		// AppDelegate repaints the shell from the user's own saved surface
+		// colour (see applyShellBackground), so this is a one-time seed, not
+		// the app's actual background. Matches the current default theme's
+		// surface; the old value was a cream from a theme default that no
+		// longer exists, which is why every reload flashed cream.
+		backgroundColor: '#fff8f7'
 	},
 	plugins: {
 		Keyboard: {

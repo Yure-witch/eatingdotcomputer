@@ -6,23 +6,73 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
     var window: UIWindow?
 
-    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        // Paint the area behind the (non-overlaying) status bar with the app's
-        // paper cream (#f7f2ea) instead of the default black strip. The web
-        // view is constrained below the status bar, so this colour shows in
-        // that top inset. Set on the window and the root view (the latter once
-        // the storyboard has wired it up) so it sticks.
-        let paper = UIColor(red: 0.969, green: 0.949, blue: 0.918, alpha: 1.0)
-        window?.backgroundColor = paper
+    // Key under which we remember the user's last painted surface colour, so
+    // the SHELL can be painted in it before any web content exists.
+    private static let shellBackgroundKey = "ec_shell_bg"
+
+    // Used only until the web view has reported a real colour once (i.e. the
+    // very first launch after install). Matches the app's default theme
+    // surface rather than the old hardcoded cream, which belonged to a theme
+    // default that no longer exists.
+    private static let fallbackShellBackground = "#fff8f7"
+
+    /// The shell background is every pixel the WEB PAGE isn't currently
+    /// painting: the strip behind the non-overlaying status bar, the
+    /// overscroll area, and — the reason this exists — the whole window
+    /// during a `location.reload()`, when the old document is torn down and
+    /// the new one hasn't painted yet.
+    ///
+    /// It used to be a hardcoded cream, which flashed on every reload for
+    /// anyone not on a light cream theme (i.e. anyone who has touched the
+    /// theme picker). The web layer already persists the resolved surface
+    /// colour to localStorage on every theme apply; `cacheShellBackground()`
+    /// below copies that into UserDefaults each time the app is active, so the
+    /// NEXT launch or reload can paint it natively with no web round-trip.
+    private func applyShellBackground() {
+        let hex = UserDefaults.standard.string(forKey: AppDelegate.shellBackgroundKey)
+            ?? AppDelegate.fallbackShellBackground
+        guard let color = AppDelegate.color(fromHex: hex) else { return }
+        window?.backgroundColor = color
         DispatchQueue.main.async {
-            self.window?.rootViewController?.view.backgroundColor = paper
+            self.window?.rootViewController?.view.backgroundColor = color
+            if let webView = (self.window?.rootViewController as? CAPBridgeViewController)?.webView {
+                // Both: the web view paints during teardown, the scroll view
+                // paints the rubber-band overscroll area.
+                webView.backgroundColor = color
+                webView.scrollView.backgroundColor = color
+            }
         }
-        return true
     }
 
-    func applicationWillResignActive(_ application: UIApplication) {
-        // Sent when the application is about to move from active to inactive state. This can occur for certain types of temporary interruptions (such as an incoming phone call or SMS message) or when the user quits the application and it begins the transition to the background state.
-        // Use this method to pause ongoing tasks, disable timers, and invalidate graphics rendering callbacks. Games should use this method to pause the game.
+    /// Copy the web layer's current surface colour into UserDefaults. Reading
+    /// localStorage out of the web view avoids needing a Capacitor plugin or a
+    /// script-message bridge just to move one hex string across.
+    private func cacheShellBackground() {
+        guard let webView = (window?.rootViewController as? CAPBridgeViewController)?.webView else { return }
+        webView.evaluateJavaScript("localStorage.getItem('theme-bg')") { result, _ in
+            guard let hex = result as? String,
+                  AppDelegate.color(fromHex: hex) != nil else { return }
+            UserDefaults.standard.set(hex, forKey: AppDelegate.shellBackgroundKey)
+        }
+    }
+
+    /// #rrggbb → UIColor. Returns nil on anything unexpected so a corrupt
+    /// value leaves the current colour alone rather than painting black.
+    private static func color(fromHex hex: String) -> UIColor? {
+        var s = hex.trimmingCharacters(in: .whitespacesAndNewlines)
+        if s.hasPrefix("#") { s.removeFirst() }
+        guard s.count == 6, let v = UInt32(s, radix: 16) else { return nil }
+        return UIColor(
+            red: CGFloat((v >> 16) & 0xFF) / 255.0,
+            green: CGFloat((v >> 8) & 0xFF) / 255.0,
+            blue: CGFloat(v & 0xFF) / 255.0,
+            alpha: 1.0
+        )
+    }
+
+    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+        applyShellBackground()
+        return true
     }
 
     func applicationDidEnterBackground(_ application: UIApplication) {
@@ -34,8 +84,24 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // Called as part of the transition from the background to the active state; here you can undo many of the changes made on entering the background.
     }
 
+    func applicationWillResignActive(_ application: UIApplication) {
+        // Last chance to capture the current theme before the app goes away —
+        // covers "change theme, background the app, come back", where the next
+        // thing the user sees is painted from this cached value.
+        cacheShellBackground()
+    }
+
     func applicationDidBecomeActive(_ application: UIApplication) {
         // Restart any tasks that were paused (or not yet started) while the application was inactive. If the application was previously in the background, optionally refresh the user interface.
+
+        // Re-read the theme now that the web view is live, and repaint the
+        // shell with it. The delay lets a cold-start page get far enough to
+        // have written localStorage; the value is only needed for the NEXT
+        // teardown, so being a beat late costs nothing.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            self?.cacheShellBackground()
+            self?.applyShellBackground()
+        }
 
         // Make the Capacitor WKWebView inspectable so Safari's Web Inspector
         // (Develop → device → WebView) can attach for memory profiling. On
