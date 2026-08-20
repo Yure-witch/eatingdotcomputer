@@ -2811,6 +2811,39 @@
 	   no longer pager panels; they render as full pages via the chat +layout's
 	   own .chat-wrap sizing, driven by html.in-conversation.) */
 	.chat-menu-panel { padding: 0 0.25rem 1.5rem; }
+
+	/* ── Chat layer ──────────────────────────────────────────────────────
+	   A conversation (or Gemma / Tasks / Recommendations) on mobile: a full
+	   screen laid OVER the pager, which stays mounted and live underneath. It's
+	   opaque, so the pager is invisible until the exit drag uncovers it — and
+	   because that pager is the real, already-painted destination, leaving a
+	   chat costs nothing but a transform.
+
+	   `position: absolute`, deliberately not `fixed`: fixed creates a stacking
+	   context, which would trap the conversation's pickers and popovers under
+	   the header. Absolute with z-index:auto creates none, so they keep stacking
+	   against the page root exactly as they did before. */
+	.fwd-host.conv-layer {
+		position: absolute;
+		top: 0; left: 0;
+		width: 100%;
+		height: 100dvh;
+		background: var(--paper);
+	}
+	/* The transform is applied ONLY while sliding — a permanent transform (even
+	   translateX(0)) makes this a containing block for position:fixed
+	   descendants, which would reposition the compose bar and the pickers. While
+	   it IS sliding that's exactly what we want: they travel with the layer. */
+	.fwd-host.sliding {
+		transform: translateX(calc(var(--cd, 0) * 100%));
+		will-change: transform;
+		/* Matches CONV_EXIT_MS — the commit waits for this to finish. */
+		transition: transform 0.19s cubic-bezier(0.33, 1, 0.68, 1);
+	}
+	.fwd-host.sliding.dragging { transition: none; }
+	/* Edge shadow so the layer reads as sitting above the panel it uncovers. */
+	.fwd-host.conv-layer.sliding { box-shadow: 0 0 28px rgba(0,0,0,0.18); }
+
 	/* Skeleton shown for a panel until its section mounts. */
 	.pager-skel {
 		padding: 1.25rem;
