@@ -37,6 +37,7 @@
 	// paint. Browser-only: the module default (false) is never mutated on the
 	// server, so SSR can't leak the flag across users.
 	import { setTgHidden } from '$lib/tg-visibility.js';
+	import { emotesAwake } from '$lib/emote-idle.js';
 	if (browser) setTgHidden(data.currentUser?.hideTgEmoji);
 
 	// ── Nav items (Chat omitted — sidebar always shows channels/DMs) ──
@@ -716,9 +717,17 @@
 	let _fwdEl = $state(null);           // the chat layer element
 	let _convDrag = 0;                   // plain (non-reactive) live drag position
 	let _convExitT;
+	// Write both transforms DIRECTLY, never through a custom property. `--cd` on
+	// the layer was the single biggest cost in this gesture: custom properties
+	// INHERIT, so setting one on the conversation dirtied the style of every node
+	// inside it — hundreds of message rows, their emotes and their reaction
+	// chips, recomputed on every frame of the drag even though nothing but the
+	// root read the value. Same story for `--pg` across the pager's mounted
+	// panels. Setting `transform` on the element itself dirties one node and
+	// hands the rest to the compositor.
 	function _setConvDrag(v) {
 		_convDrag = v;
-		_fwdEl?.style.setProperty('--cd', String(v));
+		if (_fwdEl) _fwdEl.style.transform = `translate3d(${v * 100}%, 0, 0)`;
 		// The panel underneath moves WITH the layer, or the whole thing reads as
 		// "a page being uncovered" rather than swiping between pages. Forward, the
 		// destination slides in from the right in lockstep (it's parked off-screen
@@ -727,10 +736,36 @@
 		// you're returning to was always sitting just behind.
 		if (pagerEl) {
 			const dir = v !== 0 ? Math.sign(v) : _swDir;
-			pagerEl.style.setProperty('--pg', dir < 0 ? `${(1 + v) * 100}%` : `${(v - 1) * 30}%`);
+			pagerEl.style.transform = `translate3d(${dir < 0 ? (1 + v) * 100 : (v - 1) * 30}%, 0, 0)`;
 		}
 		const past = Math.abs(v) > 0.5;
 		if (past !== _convSwipedPast) _convSwipedPast = past;
+	}
+	// Animated emotes are rlottie/canvas loops that repaint the very layers we're
+	// sliding, so a chat full of them drags ~30 rAF-driven canvases along and the
+	// compositor can never reuse a raster. Park them for the length of the
+	// gesture: the layer rasters once and then only moves. (`emotesAwake` is the
+	// existing coarse-pointer idle switch — the components already know how to
+	// freeze on it, and any interaction wakes them again.)
+	let _emotesFrozen = false;
+	function _freezeEmotes(on) {
+		if (on === _emotesFrozen) return;
+		_emotesFrozen = on;
+		emotesAwake.set(!on);
+	}
+	// Tear the gesture's transient state down: inline transforms and the layer
+	// promotion both go. Both layers are back at 0 by the time this runs, so it's
+	// invisible — and it matters, because a standing transform keeps a
+	// full-screen composited layer alive and makes the element a containing block
+	// for its fixed descendants (the compose bar, the pickers).
+	function _endConvSlide() {
+		_convSliding = false;
+		_convDragging = false;
+		_convDrag = 0;
+		if (_convSwipedPast) _convSwipedPast = false;
+		if (_fwdEl) { _fwdEl.style.transform = ''; _fwdEl.style.willChange = ''; }
+		if (pagerEl) { pagerEl.style.transform = ''; pagerEl.style.willChange = ''; }
+		_freezeEmotes(false);
 	}
 	let _swVelX = 0, _swPrevX = 0, _swPrevT = 0;
 	let _swDir = 1; // +1 = left→right (back to the chat menu), -1 = right→left (on to the next section)
@@ -769,6 +804,7 @@
 			// Put the destination behind the layer BEFORE it moves, so the very
 			// first frame of the drag already shows the real panel.
 			_parkBeneath(_beneathFor(_swDir));
+			_freezeEmotes(true);
 			_convSliding = true; _convDragging = true;
 			_setConvDrag(0);
 		}
@@ -789,7 +825,7 @@
 		if (Math.abs(_convDrag) > 0.3 || flicked) { _exitChatSurface(dir); return; }
 		_setConvDrag(0); // cancelled — slide back into place
 		clearTimeout(_convExitT);
-		_convExitT = setTimeout(() => { _convSliding = false; }, CONV_EXIT_MS + 20);
+		_convExitT = setTimeout(_endConvSlide, CONV_EXIT_MS + 20);
 	}
 	// Run the layer off-screen and commit the route it uncovered. The pager is
 	// already parked on that panel and already painted, so the navigation swaps
@@ -810,15 +846,14 @@
 				// Clear any chat title so the header is already the standard one.
 				pageTitle.set(null); pageTitleHref.set(null);
 				goto(route, { noScroll: true, keepFocus: true }).then(() => {
-					_convSliding = false; _convDragging = false; _setConvDrag(0);
+					_endConvSlide();
 					_repinPager(idx, 0);
 				});
 				// Safety: never leave the layer parked off-screen if the nav stalls.
-				_convExitT = setTimeout(() => {
-					if (!_onChatSurfaceMobile) { _convSliding = false; _setConvDrag(0); }
-				}, 800);
+				_convExitT = setTimeout(() => { if (!_onChatSurfaceMobile) _endConvSlide(); }, 800);
 			}, CONV_EXIT_MS);
 		};
+		_freezeEmotes(true);
 		if (_convSliding) { _convDragging = false; run(); return; }
 		// Not dragging (the ✕ button): the transition only exists once `.sliding`
 		// is on the element, so let that class land before moving it.
@@ -1507,6 +1542,9 @@
 		window.addEventListener('touchstart', onSwipeStart, { passive: true });
 		window.addEventListener('touchmove', onSwipeMove, { passive: true });
 		window.addEventListener('touchend', onSwipeEnd, { passive: true });
+		// A system-interrupted gesture must land the same as a lift, or the layer
+		// stays parked mid-drag with its emotes still frozen.
+		window.addEventListener('touchcancel', onSwipeEnd, { passive: true });
 
 		sidebarCollapsed = localStorage.getItem('sidebar_collapsed') === '1';
 		const savedWidth = parseInt(localStorage.getItem('sidebar_width') ?? '220');
@@ -1576,6 +1614,7 @@
 		if (!fbAuthed) {
 			console.error('[ec:presence] Firebase client auth FAILED after 4 attempts — allPresenceRef subscription will not work; relying on 30s server poll only');
 		}
+
 
 		// Presence write — per-device so two simultaneous logins don't clobber each other
 		presenceRef = ref(rtdb, `presence/${data.currentUser.id}/${deviceId}`);
@@ -1981,6 +2020,7 @@
 			window.removeEventListener('touchstart', onSwipeStart);
 			window.removeEventListener('touchmove', onSwipeMove);
 			window.removeEventListener('touchend', onSwipeEnd);
+			window.removeEventListener('touchcancel', onSwipeEnd);
 		}
 		pushBroadcast?.close();
 		clearInterval(heartbeatTimer);
@@ -2777,7 +2817,6 @@
 	   same gesture (see _setConvDrag). Applied transiently — a standing transform
 	   would make the track a containing block for its panels' fixed children. */
 	.pager-track.pushed {
-		transform: translateX(var(--pg, 0px));
 		will-change: transform;
 		transition: transform 0.19s cubic-bezier(0.33, 1, 0.68, 1);
 	}
@@ -2823,6 +2862,8 @@
 	   context, which would trap the conversation's pickers and popovers under
 	   the header. Absolute with z-index:auto creates none, so they keep stacking
 	   against the page root exactly as they did before. */
+	/* Parked under an opaque layer, the track is scenery: skip hit-testing it. */
+	.app-shell.layered .pager-track { pointer-events: none; }
 	.fwd-host.conv-layer {
 		position: absolute;
 		top: 0; left: 0;
@@ -2835,7 +2876,8 @@
 	   descendants, which would reposition the compose bar and the pickers. While
 	   it IS sliding that's exactly what we want: they travel with the layer. */
 	.fwd-host.sliding {
-		transform: translateX(calc(var(--cd, 0) * 100%));
+		/* The transform itself is written inline per frame (see _setConvDrag);
+		   this class only carries the promotion and the settle easing. */
 		will-change: transform;
 		/* Matches CONV_EXIT_MS — the commit waits for this to finish. */
 		transition: transform 0.19s cubic-bezier(0.33, 1, 0.68, 1);
