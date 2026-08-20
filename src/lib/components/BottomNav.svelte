@@ -209,16 +209,20 @@
 	   sheet on mobile) is open, exactly like it hides for the compose
 	   keyboard/picker. The chat page toggles this class on <html>. */
 	:global(html.reaction-picker-open) .bottom-nav { display: none !important; }
-	/* Hidden while the conversation panel covers most of the screen (set live by
-	   the pager in /app/+layout — follows the swipe, not just the route, so the
-	   nav reveals the instant you cross halfway back toward the menu). */
-	:global(html.conv-covering) .bottom-nav { display: none !important; }
-	/* Coming back to the menu, rise up from the bottom instead of popping in. */
-	:global(html.nav-rising) .bottom-nav { animation: nav-rise 0.32s cubic-bezier(0.33, 1, 0.68, 1); }
-	@keyframes nav-rise {
-		from { transform: translateY(100%); }
-		to { transform: translateY(0); }
+	/* Parked off-screen while a chat surface covers the pager (set live by the
+	   pager in /app/+layout — it follows the swipe, not just the route, so the bar
+	   starts coming back as soon as the exit drag is underway).
+
+	   Translated rather than `display: none`: a display switch forces a relayout
+	   and can't animate from its first frame, so the bar always arrived a beat
+	   after the page. As a transform it's composited, it can start from wherever
+	   it is, and a cancelled swipe simply sends it back down. */
+	:global(html.conv-covering) .bottom-nav {
+		transform: translateY(calc(100% + env(safe-area-inset-bottom, 0px) + 12px));
+		pointer-events: none;
 	}
+	/* Matches the chat layer's own slide, so the bar lands with the page. */
+	.bottom-nav { transition: transform 0.19s cubic-bezier(0.33, 1, 0.68, 1); }
 
 	@media (max-width: 640px) {
 		.bottom-nav {
@@ -334,8 +338,11 @@
 			flex-direction: column;
 			align-items: center;
 			justify-content: center;
-			/* Glyph and label read as one unit rather than two stacked things. */
-			gap: 0.05rem;
+			/* Glyph and label read as one unit rather than two stacked things.
+			   The gap is already ~1px — the remaining space is the glyph's own
+			   line box, which is taller than its ink, so the label is pulled up
+			   into it rather than the gap being reduced further. */
+			gap: 0;
 			color: var(--sidebar-fg-muted);
 			opacity: 0.72;
 			text-decoration: none;
@@ -354,6 +361,14 @@
 		   label below stays unwrapped. Only the ICON takes the active
 		   colour — the highlight pill covers just the icon, so the
 		   label keeps its resting colour in every state. */
+		/* Pulls the label up into the glyph's empty line-box space. */
+		.nav-item .label { margin-top: -5px; }
+
+		/* Pulls the label up into the glyph's line box, which is taller than its
+		   ink — the flex gap was already ~1px, so that empty space is what was
+		   separating them. */
+		.nav-item .label { margin-top: -5px; }
+
 		.nav-item.active { opacity: 1; }
 		.nav-item.active .icon-wrap { color: var(--sidebar-active-fg); }
 		/* Darker + heavier label on the selected item, so selection doesn't rest
