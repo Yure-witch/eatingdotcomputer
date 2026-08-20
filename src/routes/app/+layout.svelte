@@ -699,6 +699,16 @@
 	function _setConvDrag(v) {
 		_convDrag = v;
 		_fwdEl?.style.setProperty('--cd', String(v));
+		// The panel underneath moves WITH the layer, or the whole thing reads as
+		// "a page being uncovered" rather than swiping between pages. Forward, the
+		// destination slides in from the right in lockstep (it's parked off-screen
+		// right at rest, so it arrives exactly as the chat leaves). Backward, it
+		// eases out of a shallow parallax offset — the iOS back idiom, where what
+		// you're returning to was always sitting just behind.
+		if (pagerEl) {
+			const dir = v !== 0 ? Math.sign(v) : _swDir;
+			pagerEl.style.setProperty('--pg', dir < 0 ? `${(1 + v) * 100}%` : `${(v - 1) * 30}%`);
+		}
 		const past = Math.abs(v) > 0.5;
 		if (past !== _convSwipedPast) _convSwipedPast = past;
 	}
@@ -766,6 +776,7 @@
 	// nothing visible — no mount, no skeleton, no flash. The goto waits for the
 	// slide to finish because landing on the route unmounts the layer.
 	function _exitChatSurface(dir) {
+		_swDir = dir;
 		const idx = _beneathFor(dir);
 		const route = PANELS[idx]?.route ?? '/app/chat';
 		_parkBeneath(idx);
@@ -2241,7 +2252,7 @@
 		     between them is compositor-smooth and the real pages are live
 		     under your finger. Panels lazy-mount (current ± 1, then cached);
 		     far panels show a skeleton until reached. -->
-		<div class="pager-track" bind:this={pagerEl} onscroll={onPagerScroll} onscrollend={onPagerScrollEnd} ontouchstart={onPagerTouchStart} ontouchmove={onPagerTouchMove} ontouchend={onPagerTouchEnd} ontouchcancel={onPagerTouchEnd}>
+		<div class="pager-track" class:pushed={_convSliding} class:dragging={_convDragging} bind:this={pagerEl} onscroll={onPagerScroll} onscrollend={onPagerScrollEnd} ontouchstart={onPagerTouchStart} ontouchmove={onPagerTouchMove} ontouchend={onPagerTouchEnd} ontouchcancel={onPagerTouchEnd}>
 			{#each PANELS as panel, i (panel.route)}
 				<section class="pager-panel" class:current={i === pagerIndex}>
 					{#if panel.chatMenu}
@@ -2739,6 +2750,15 @@
 		overflow-anchor: none;
 	}
 	.pager-track::-webkit-scrollbar { display: none; }
+	/* Only while a chat layer is being dragged off: the parked panel tracks the
+	   same gesture (see _setConvDrag). Applied transiently — a standing transform
+	   would make the track a containing block for its panels' fixed children. */
+	.pager-track.pushed {
+		transform: translateX(var(--pg, 0px));
+		will-change: transform;
+		transition: transform 0.19s cubic-bezier(0.33, 1, 0.68, 1);
+	}
+	.pager-track.pushed.dragging { transition: none; }
 	/* While an emoji / expression / reaction picker is open, LOCK the pager's
 	   horizontal scroll so a swipe on the picker (it lives inside the conversation
 	   panel, which is the pager's scroll container) can't drag the whole page to
