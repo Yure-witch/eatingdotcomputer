@@ -365,9 +365,13 @@
 
 		.nav-badge {
 			position: absolute;
-			/* Touching the glyph. */
+			/* Touching the glyph's VISIBLE edge, not its box. A negative offset
+			   pushed the badge clear of the icon entirely — the chat bubble very
+			   nearly fills its 28px box, so the badge has to sit INSIDE the box
+			   to overlap the artwork. Measured: right:-6 left a 5.5px gap to the
+			   box (~7px to the ink); +2 closes it to a slight overlap. */
 			top: -2px;
-			right: -6px;
+			right: 2px;
 			background: #e53935;
 			color: #fff;
 			font-size: 0.55rem;
