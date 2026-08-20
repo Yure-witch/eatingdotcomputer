@@ -1,6 +1,6 @@
 <script>
 	import '$lib/text-effects.css';
-	import { browser } from '$app/environment';
+	import { browser, version as buildVersion } from '$app/environment';
 	import { onMount, onDestroy, setContext, untrack, tick } from 'svelte';
 	import { mountStaticEmotes } from '$lib/emote-mount.js';
 	import { page, navigating } from '$app/stores';
@@ -1315,6 +1315,20 @@
 			hardRefresh();
 		});
 	}
+	// Report which build this device is actually running, so "did that change
+	// ship?" stops being a question anyone has to guess at. The deploy timestamp
+	// says what the server has; this says what the phone in your hand has, and
+	// the two differ for as long as a service worker is serving a cached bundle.
+	function reportBuild() {
+		try {
+			set(ref(rtdb, `dev/clients/${data.currentUser.id}/${deviceId}`), {
+				build: String(buildVersion ?? ''),
+				at: Date.now(),
+				standalone: !!(window.matchMedia?.('(display-mode: standalone)')?.matches || navigator.standalone),
+				ua: String(navigator.userAgent ?? '').slice(0, 120)
+			}).catch(() => {});
+		} catch { /* diagnostics never block the app */ }
+	}
 	// Best-effort: every step is optional and the reload happens regardless, so a
 	// browser that refuses one of them still ends up on a fresh load.
 	async function hardRefresh() {
@@ -1937,6 +1951,7 @@
 				.then((m) => m.initThemeSync(data.currentUser.id))
 				.catch(() => {});
 			watchDevRefresh();
+			reportBuild();
 		}
 
 		// Presence write — per-device so two simultaneous logins don't clobber each other
