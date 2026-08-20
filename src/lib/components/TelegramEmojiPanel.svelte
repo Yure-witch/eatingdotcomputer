@@ -707,9 +707,6 @@
 			{#each headCats as cat (cat.key)}
 				<button class="tg-tab" class:active={active === cat.key} title={cat.label} onclick={() => goToTab(cat.key)}>{cat.icon}</button>
 			{/each}
-			{#if packCats.length}
-				<span class="tg-tab-sep" aria-hidden="true">+</span>
-			{/if}
 			{#each packCats as cat (cat.key)}
 				<button class="tg-tab tg-tab-pack" class:active={active === cat.key} title={cat.label} onclick={() => goToTab(cat.key)}>
 					<!-- Tab icons live outside the grid's scroll content (the
@@ -1000,7 +997,6 @@
 	}
 	/* Pack tabs share the square box so the selection tile never changes shape. */
 	.tg-tab-pack { display: inline-flex; align-items: center; justify-content: center; padding: 0; }
-	.tg-tab-sep { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; padding: 0 0.35rem; color: #b8aea0; font-size: 0.85rem; font-weight: 700; user-select: none; }
 
 	.tg-pack-header { flex-shrink: 0; padding: 0.45rem 0.65rem 0.35rem; border-bottom: 1px solid var(--border); background: var(--paper); font-size: 0.82rem; font-weight: 600; color: var(--ink, var(--ink)); display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
 	.tg-pack-title { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
