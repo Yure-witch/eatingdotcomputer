@@ -522,21 +522,24 @@
 	.thread-rx-chip.reacted { border-color: var(--md-sys-color-primary, var(--accent)); background: color-mix(in srgb, var(--md-sys-color-primary, var(--accent)) 12%, transparent); }
 	.thread-rx-emoji { display: inline-flex; align-items: center; line-height: 1; }
 	.thread-rx-count { font-weight: 700; font-variant-numeric: tabular-nums; }
-	/* Only shows on hover on desktop; always available to a thumb. */
+	/* Hidden until the message it belongs to is hovered — and on iOS a tap
+	   produces that hover state, which is exactly how chat's message action bar
+	   behaves. No touch special-case: a row of permanently visible buttons down
+	   a thread is clutter, and this way threads and chat are the same gesture.
+	   pointer-events follows opacity so an invisible button can't eat the tap
+	   that's meant to reveal it. */
 	.thread-rx-add {
 		display: inline-flex; align-items: center; justify-content: center;
 		width: 24px; height: 24px; padding: 0;
 		border: none; border-radius: 999px;
 		background: none; color: var(--muted-fg); cursor: pointer;
-		opacity: 0; transition: opacity 0.12s, color 0.12s;
+		opacity: 0; pointer-events: none;
+		transition: opacity 0.1s, color 0.12s;
 	}
 	.thread-reply:hover .thread-rx-add,
 	.thread-parent:hover .thread-rx-add,
-	.thread-rx-add:focus-visible { opacity: 1; }
+	.thread-rx-add:focus-visible { opacity: 1; pointer-events: auto; }
 	.thread-rx-add:hover { color: var(--ink); background: var(--surface-2); }
-	@media (hover: none) {
-		.thread-rx-add { opacity: 0.55; }
-	}
 	.thread-picker-overlay { position: fixed; inset: 0; z-index: 340; }
 	.thread-picker-pop { position: fixed; z-index: 341; }
 	@media (max-width: 640px) {
