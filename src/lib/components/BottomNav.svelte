@@ -236,7 +236,7 @@
 			/* Enough that the surface stays VISIBLE to the left and right of the
 			   selected pill at the end slots — at 3px the pill ran into the bar's
 			   own curve and read as sitting on the page rather than on the bar. */
-			--nav-pad: 7px;
+			--nav-pad: 9px;
 			padding-left: var(--nav-pad);
 			/* +2px on the right: the pill's travel runs across slot CENTRES, which
 			   lands the last slot's pill closer to the edge than the first
@@ -282,7 +282,7 @@
 			   MINUS that inset. A fully-rounded pill's radius IS half its height,
 			   so height and gap are locked together — the bar and pill heights
 			   have to move together to hold the gap: 60px bar (radius 30) with a
-			   56px pill (radius 28), since 30 − 2 = 28. Note `top` is measured from the PADDING box,
+			   52px pill (radius 26), since 30 − 4 = 26. Note `top` is measured from the PADDING box,
 			   inside the 1px border, so top:3 lands 4px in from the outer edge and
 			   the remaining 3px + border matches it at the bottom.
 
@@ -293,10 +293,10 @@
 
 			   Starts after the bar's inner padding, which the slot maths above
 			   also subtracts. */
-			top: 1px;
+			top: 3px;
 			left: var(--nav-pad, 0px);
 			width: 78px;
-			height: 56px;
+			height: 52px;
 			border-radius: 999px;
 			/* Move with transform (compositor / GPU) instead of `left` (which forced a
 			   layout reflow every scroll frame → framey). The nav is full-viewport
