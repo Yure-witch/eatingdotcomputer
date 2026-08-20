@@ -327,8 +327,8 @@
 	// programmatic scroll can forge them.
 	function onAnyWheel(e) {
 		if (chrome === 'page') return;         // a swipe owns the chrome
-		if (e.deltaY > 1) setChrome('dim');
-		else if (e.deltaY < -1) setChrome('rest');
+		if (e.deltaY > 0) setChrome('dim');
+		else if (e.deltaY < 0) setChrome('rest');
 	}
 	let _touchY = 0;
 	function onAnyTouchStart(e) { _touchY = e.touches?.[0]?.clientY ?? 0; }
@@ -336,7 +336,7 @@
 		if (chrome === 'page') return;
 		const y = e.touches?.[0]?.clientY ?? 0;
 		const dy = _touchY - y;                // finger up = reading downward
-		if (Math.abs(dy) < 6) return;
+		if (Math.abs(dy) < 2) return;
 		_touchY = y;
 		setChrome(dy > 0 ? 'dim' : 'rest');
 	}
@@ -695,7 +695,7 @@
 		.expr-tabs {
 			gap: 0.2rem;
 			padding: 3px;
-			margin: 4px 10px calc(6px + env(safe-area-inset-bottom, 0px));
+			margin: 4px calc(10px + 2.5rem + 8px) calc(6px + env(safe-area-inset-bottom, 0px)) 10px;
 			align-items: stretch;
 		}
 		.expr-tab {
@@ -728,7 +728,8 @@
 		position: absolute;
 		left: 0; right: 0; bottom: 0;
 		z-index: 4;
-		margin: 4px 10px 8px;
+		/* Right margin clears the close button in its corner. */
+		margin: 4px calc(10px + 2.3rem + 8px) 8px 10px;
 		padding: 3px;
 		border-radius: 999px;
 		background: var(--sidebar-bg, var(--md-sys-color-surface-container, var(--surface-2)));
@@ -750,8 +751,12 @@
 	/* Scrolling DOWN through a category's contents — the chrome gets out of
 	   the way. Pointer-events stay on: it's dimmed, not disabled. */
 	.expr-tabs.chrome-dim {
-		opacity: 0.3;
+		opacity: 0.5;
 		transform: scale(0.88);
+		/* Getting out of the way should feel instant — the moment you start
+		   scrolling, not a fifth of a second later. Coming back can take its
+		   time, which is the slower transition on the base rule. */
+		transition-duration: 0.08s;
 	}
 	/* Swiping BETWEEN categories — the strip is what you're using. */
 	.expr-tabs.chrome-page {
@@ -760,9 +765,13 @@
 	}
 
 	/* Close button — its own floating surface, same recipe as the island. */
+	/* Bottom-RIGHT corner, and deliberately outside the island rather than a
+	   member of it: the island holds categories, this closes the picker, and
+	   mixing the two put an action in a row of navigation. The island's right
+	   margin is widened to leave this its own corner. */
 	.expr-back {
 		position: absolute;
-		top: 8px; left: 10px;
+		bottom: calc(8px + env(safe-area-inset-bottom, 0px)); right: 10px;
 		z-index: 5;
 		width: 2.3rem; height: 2.3rem;
 		display: inline-flex; align-items: center; justify-content: center;
@@ -776,12 +785,12 @@
 			inset 0 1px 0 rgba(255, 255, 255, 0.4);
 		color: var(--ink);
 		cursor: pointer;
-		transform-origin: top left;
+		transform-origin: bottom right;
 		transition: opacity 0.18s ease, transform 0.18s cubic-bezier(0.33, 1, 0.68, 1);
 		will-change: transform, opacity;
 	}
 	.expr-back :global(.msi) { font-variation-settings: 'wght' 700; }
-	.expr-back.chrome-dim { opacity: 0.3; transform: scale(0.88); }
+	.expr-back.chrome-dim { opacity: 0.5; transform: scale(0.88); transition-duration: 0.08s; }
 	.expr-back.chrome-page { opacity: 1; transform: scale(1.12); }
 	@media (prefers-reduced-motion: reduce) {
 		.expr-tabs, .expr-back { transition: none; }
@@ -974,16 +983,6 @@
 		border-radius: 0 !important;
 		box-shadow: none !important;
 		background: transparent !important;
-	}
-
-	/* Clearance for the floating close button. It's absolutely positioned over
-	   the top-left of the pane, so each inner panel's own control bar has to
-	   start to the right of it or its first button ends up underneath. */
-	.expr-pane :global(.emoji-topbar),
-	.expr-pane :global(.tg-tabs-bar),
-	.expr-pane :global(.ce-tabs),
-	.expr-pane :global(.kitchen-topbar) {
-		padding-left: 3.1rem;
 	}
 
 	/* Clearance for the floating island. Each inner panel owns its own
