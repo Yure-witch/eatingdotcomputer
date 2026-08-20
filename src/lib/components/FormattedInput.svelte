@@ -29,12 +29,18 @@
 		// keeps attach/expressions/GIFs in ONE row with the text controls; without
 		// this a caller has to add a second row underneath, which stacks two
 		// toolbars in a box that should have one.
-		tools = null
+		tools = null,
+		// Collapse the text controls behind a single toggle, the way chat's
+		// compose bar does on a phone: at that width a row of eight buttons is
+		// most of the bar, and formatting is the part you reach for least.
+		// Opt-in, so the assignment and profile fields keep showing everything.
+		collapseTools = false
 	} = $props();
 
 	let inputEl = $state(null);
 	let showTextFxBar = $state(false);
 	let showFormatPanel = $state(false);
+	let showTools = $state(false); // only meaningful when collapseTools is set
 	let showExprPicker = $state(false);
 	// Trigger refs for the smart popover positioning action.
 	let colorBtnEl = $state(null);
@@ -781,6 +787,12 @@
 			data-placeholder={placeholder}
 		></div>
 		<div class="fi-fmt-row">
+			{#if collapseTools}
+				<button class="fi-btn fi-btn-more" class:active={showTools}
+					onmousedown={(e) => { e.preventDefault(); showTools = !showTools; }}
+					title="Formatting" aria-expanded={showTools}><span class="msi msi-18">text_format</span></button>
+			{/if}
+			<div class="fi-tools" class:collapsible={collapseTools} class:open={showTools}>
 			<button class="fi-btn fi-btn-bold" onmousedown={(e) => { e.preventDefault(); applyTextFx('bold'); }} title="Bold (⌘B)"><b>B</b></button>
 			<button class="fi-btn fi-btn-italic" onmousedown={(e) => { e.preventDefault(); applyTextFx('italic'); }} title="Italic (⌘I)"><i>I</i></button>
 			<button class="fi-btn fi-btn-underline" onmousedown={(e) => { e.preventDefault(); applyTextFx('underline'); }} title="Underline (⌘U)"><u>U</u></button>
@@ -827,6 +839,7 @@
 					</div>
 				{/if}
 			</div>
+			</div><!-- /.fi-tools -->
 			{#if tools}{@render tools()}{/if}
 		</div>
 	</div>
@@ -919,6 +932,13 @@
 	.fi-fmt-row {
 		display: flex; align-items: center; gap: 0.1rem;
 		padding: 0.2rem 0.5rem 0.3rem; border-top: 1px solid #ede9e3;
+	}
+	/* `display: contents` so the buttons remain flex children of the row rather
+	   than a nested box — same technique chat's .fmt-tools uses. */
+	.fi-tools { display: contents; }
+	@media (max-width: 640px) {
+		.fi-tools.collapsible { display: none; }
+		.fi-tools.collapsible.open { display: contents; }
 	}
 	.fi-btn {
 		display: flex; align-items: center; justify-content: center;

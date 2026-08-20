@@ -539,7 +539,7 @@
 				     second row beneath it — chat's composer is one box with one tool
 				     row, and stacking two toolbars is most of why this didn't read
 				     as the same control. -->
-				<FormattedInput bind:value={draft} placeholder="Reply in thread…" tools={composeTools} />
+				<FormattedInput bind:value={draft} placeholder="Reply in thread…" tools={composeTools} collapseTools />
 			</div>
 		</div>
 		<button class="thread-send" onclick={send} disabled={!draft.trim() && !pendingAtt} title="Send reply">
