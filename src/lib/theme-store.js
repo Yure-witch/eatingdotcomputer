@@ -315,15 +315,21 @@ const NEUTRAL_VARIANT_SURFACE_ROLES = ['surfaceVariant'];
 // default neutral 12 → 24) lands at ~10 steps, matching the behaviour
 // before master chroma existed; the higher ceiling only comes into play
 // for the master slider, which can ask for far more.
-// 30 is a measured ceiling, not a round number. At 45 the light-mode
-// surface keeps darkening all the way to master chroma 80, but two
-// things break: on-surface contrast falls to 4.3 (under AA), and the hue
-// starts jumping — #dd5f80 pink at 60 to #d9541b orange at 70 — because
-// Hct's chroma setter trades hue away to stay in gamut once you ask past
-// the sRGB edge. At 30 the ramp stays hue-stable and contrast never
-// drops below 7.0. Surfaces do saturate out around master chroma 50 as a
-// result; the accents keep climbing over the rest of the range.
-const SURFACE_TONE_SHIFT_MAX = 30;
+// 45, chosen deliberately over the safer 30, so the FULL length of the
+// master-chroma slider keeps moving the light-mode surfaces instead of
+// saturating out around 50. Known and accepted costs at the very top of
+// the range (master chroma ~70+):
+//   - on-surface contrast drops to ~4.3, just under the WCAG AA 4.5
+//     threshold for body text. Everything up to ~60 stays at/above AA,
+//     and the whole range remains fine for large text.
+//   - the hue drifts as Hct's chroma setter trades hue away to stay in
+//     gamut past the sRGB edge (#dd5f80 pink at 60 → #d9541b orange at
+//     70). Nothing is broken by this; the surface just stops tracking
+//     the seed's hue exactly once you ask for more chroma than the
+//     colour space can hold.
+// Dropping this back to 30 restores a hue-stable ramp that never goes
+// below 7.0 contrast, at the cost of a dead top third on the slider.
+const SURFACE_TONE_SHIFT_MAX = 45;
 const SURFACE_TONE_SHIFT_PER_CHROMA = 0.85;
 
 const DYNAMIC_ROLE_FNS = SCHEME_ROLES.reduce((acc, role) => {
