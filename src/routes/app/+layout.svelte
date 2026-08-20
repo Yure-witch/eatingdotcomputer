@@ -1061,6 +1061,13 @@
 		clearTimeout(_pagerSnapT);
 		_suppressCommits(CONV_EXIT_MS + 400);
 		_convEntering = false;
+		// Capture the pin generation NOW, before the navigation. _repinPager
+		// corrects the track onto the panel we landed on, but by the time the goto
+		// resolves you may already have flicked on to the NEXT section — and a pin
+		// minted at call time can't tell, so it yanks you back and the swipe you
+		// just made reads as not registering. Taking the token up front means any
+		// touch in between bumps the counter and the correction stands down.
+		const rg = ++_repinGen;
 		const run = () => {
 			_setConvDrag(dir); // off-screen, in CONV_EXIT_MS
 			_convExitT = setTimeout(() => {
@@ -1076,7 +1083,7 @@
 				requestAnimationFrame(() => {
 					goto(route, { noScroll: true, keepFocus: true }).then(() => {
 						_endConvSlide();
-						_repinPager(idx, 0);
+						_repinPager(idx, 0, rg);
 					});
 				});
 				// Safety: never leave the layer parked off-screen if the nav stalls.
