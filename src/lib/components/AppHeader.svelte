@@ -29,8 +29,7 @@
 	);
 	// Gemma and Tasks aren't message threads, but they're chat-adjacent surfaces
 	// reached from the chat menu — give them the same focused chat bar (name +
-	// class + ✕ close) on mobile. They are NOT pager panels, so they never enter
-	// the swipe-away state below.
+	// class + ✕ close) on mobile, and the same swipe-away state below.
 	const _chatLikeRe = /^\/app\/chat\/gemma$|^\/app\/goals$|^\/app\/inspiration$/;
 	const _isConv = $derived(
 		_isPagerConv ||
@@ -45,15 +44,17 @@
 		mq.addEventListener?.('change', u);
 		return () => mq.removeEventListener?.('change', u);
 	});
-	// On mobile the conversation is a pager panel: while you swipe it away toward
-	// the menu (covering = false) the route is briefly still the conversation, so
-	// drop chat-mode live with the scroll. Other routes (desktop, profile, …)
-	// ignore convCovering — they aren't pager conversations.
-	// Only REAL pager conversations can be swiped away (Gemma/Tasks aren't pager
-	// panels — their convCovering is always false, which would otherwise wrongly
-	// read as "swiped away" and suppress their chat bar).
+	// On mobile a chat surface is a layer over the pager: while you swipe it away
+	// the route is briefly still the chat, so drop chat-mode live with the finger
+	// rather than at the commit. This covers Gemma / Tasks / Recommendations as
+	// well as real conversations — in chat mode the header renders ONLY the title
+	// block, so if the title clears before the route changes the bar is empty, and
+	// on those surfaces that lasted the whole navigation.
+	// `convCovering` is true whenever a chat surface owns the screen (including
+	// one being navigated into), so `=== false` here means swiped past — not
+	// merely "not a pager conversation", which is what it used to mean.
 	const _convSwipedAway = $derived(
-		_isPagerConv && _isMobile && !!pagerNav && pagerNav.convCovering === false
+		_isConv && _isMobile && !!pagerNav && pagerNav.convCovering === false
 	);
 	const _convMobile = $derived(_isConv && _isMobile && !_convSwipedAway);
 

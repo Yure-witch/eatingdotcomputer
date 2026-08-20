@@ -107,6 +107,14 @@
 	const _onChatSurfaceMobile = $derived(
 		_onConvMobile || (_isMobile && _isChatLikeRoute($page.url.pathname))
 	);
+	// Same thing, one step earlier: a chat surface we're still navigating INTO.
+	// The header keys its chat bar off this so it doesn't flicker standard→chat
+	// while the route commits.
+	const _enteringChatSurface = $derived.by(() => {
+		if (!_isMobile || !$navigating) return false;
+		const to = $navigating.to?.url?.pathname ?? '';
+		return _isConvRoute(to) || _isChatLikeRoute(to);
+	});
 	// Pager tabs, left → right: Home, Chat (menu), Orbit, Lab, [Manage]. A
 	// conversation is NOT a pager panel — it's a full-screen layer OVER the
 	// track, parked on the chat menu, dismissed with a left→right swipe (or
@@ -196,26 +204,22 @@
 	// class (consumed by BottomNav) replaces the old route-based `in-conversation`
 	// hide for nav purposes.
 	let _navHidden = false;
-	let _navRiseT;
 	$effect(() => {
 		if (typeof document === 'undefined') return;
 		// A chat surface is a layer over the pager, so the nav hides while it
-		// covers the screen — but it comes back the instant the exit drag passes
-		// halfway, riding WITH the gesture instead of popping in after the route
-		// commits. Gemma / Tasks / Recommendations count as conversations here for
+		// covers the screen — but it starts coming back as soon as the exit drag
+		// is clearly underway (_convNavBack, a much lower bar than the halfway
+		// point the header waits for), riding WITH the gesture instead of arriving
+		// after it. Gemma / Tasks / Recommendations count as conversations here for
 		// the same reason they get the chat header.
-		const covering = _onChatSurfaceMobile && !_convSwipedPast;
-		const root = document.documentElement;
+		// The bar itself animates: `conv-covering` parks it off-screen with a
+		// transform and BottomNav transitions back from that, so there's no
+		// separate rise to schedule and nothing to time out.
+		const covering = _onChatSurfaceMobile && !_convNavBack;
 		untrack(() => {
 			if (covering === _navHidden) return;
-			// Hidden → shown: animate up from the bottom.
-			if (!covering && _navHidden && _isMobile) {
-				root.classList.add('nav-rising');
-				clearTimeout(_navRiseT);
-				_navRiseT = setTimeout(() => root.classList.remove('nav-rising'), 340);
-			}
 			_navHidden = covering;
-			root.classList.toggle('conv-covering', covering);
+			document.documentElement.classList.toggle('conv-covering', covering);
 		});
 	});
 
@@ -750,7 +754,8 @@
 	const CONV_EXIT_MS = 190;
 	let _convSliding = $state(false);    // layer is transformed (dragging or settling)
 	let _convDragging = $state(false);   // finger is down → no transition, track it 1:1
-	let _convSwipedPast = $state(false); // dragged past halfway → header + nav flip NOW
+	let _convSwipedPast = $state(false); // dragged past halfway → the header flips NOW
+	let _convNavBack = $state(false);    // drag clearly underway → the bottom nav starts returning
 	let _fwdEl = $state(null);           // the chat layer element
 	let _convDrag = 0;                   // plain (non-reactive) live drag position
 	let _convExitT;
@@ -777,6 +782,11 @@
 		}
 		const past = Math.abs(v) > 0.5;
 		if (past !== _convSwipedPast) _convSwipedPast = past;
+		// The nav is chrome, not content: it can come back long before the swipe
+		// is committed, and waiting until halfway is what made it feel like it was
+		// catching up with the page rather than moving with it.
+		const navBack = Math.abs(v) > 0.1;
+		if (navBack !== _convNavBack) _convNavBack = navBack;
 	}
 	// Animated emotes are rlottie/canvas loops that repaint the very layers we're
 	// sliding, so a chat full of them drags ~30 rAF-driven canvases along and the
@@ -800,6 +810,7 @@
 		_convDragging = false;
 		_convDrag = 0;
 		if (_convSwipedPast) _convSwipedPast = false;
+		if (_convNavBack) _convNavBack = false;
 		if (_fwdEl) { _fwdEl.style.transform = ''; _fwdEl.style.willChange = ''; }
 		if (pagerEl) { pagerEl.style.transform = ''; pagerEl.style.willChange = ''; }
 		_freezeEmotes(false);
@@ -996,13 +1007,26 @@
 	// navigation to commit), and whether the chat drawer is open (so the Chat
 	// icon stays selected even with no conversation chosen).
 	setContext('pagerNav', {
-		get activeRoute() { return isPagerActive ? _pagerVisibleRoute : null; },
+		// During a chat exit the pager isn't "active" — the committed route is
+		// still the conversation — but the panel being uncovered IS where we're
+		// going, and _pagerVisibleRoute names it the moment the swipe picks a
+		// direction. Handing that to the nav lights the destination icon up with
+		// the gesture; otherwise the pill slid to the new slot while the icons
+		// stayed on Chat until the route committed, which is what read as the bar
+		// lagging behind the swipe.
+		get activeRoute() { return (isPagerActive || _convSliding) ? _pagerVisibleRoute : null; },
 		get sidebarOpen() { return sidebarOpen; },
-		// True while the conversation layer covers the screen. Goes false the
-		// instant the exit drag passes halfway — so the header switches from the
-		// chat name back to the standard wordmark live with the finger, instead of
-		// waiting for the route commit to settle.
-		get convCovering() { return _onConvMobile && !_convSwipedPast; },
+		// True while a chat surface owns the screen — any of them, not just real
+		// conversations, and including one we're still navigating into. Goes false
+		// the instant the exit drag passes halfway, so the header can switch from
+		// the chat name back to the wordmark live with the finger.
+		//
+		// It has to cover Gemma / Tasks / Recommendations too: on those the header
+		// renders ONLY the title block, so the moment pageTitle cleared (on exit,
+		// before the route committed) the whole bar went blank for the length of
+		// the navigation. With this the header leaves chat mode at the halfway
+		// point and the wordmark is already there when the title goes.
+		get convCovering() { return (_onChatSurfaceMobile || _enteringChatSurface) && !_convSwipedPast; },
 		// Fractional BOTTOM-NAV slot (0 = Chat, 1 = Home, …). The chat panels
 		// (conversation + menu, which both sit left of Home) collapse onto the
 		// single Chat slot, so the pill rides correctly across the 4 nav icons
@@ -1671,7 +1695,6 @@
 				.then((m) => m.initThemeSync(data.currentUser.id))
 				.catch(() => {});
 		}
-
 
 		// Presence write — per-device so two simultaneous logins don't clobber each other
 		presenceRef = ref(rtdb, `presence/${data.currentUser.id}/${deviceId}`);
