@@ -792,7 +792,9 @@
 		.tg-search-row { padding: 0.2rem 0.5rem 0.25rem !important; }
 	}
 	.tg-tabs-bar { display: flex; align-items: center; gap: 0.4rem; padding: 0.35rem 0.5rem; border-bottom: 1.5px solid var(--border); background: var(--surface-2); flex-shrink: 0; }
-	.tg-tabs { flex: 1; min-width: 0; display: flex; align-items: center; gap: 1px; overflow-x: auto; }
+	/* overscroll-behavior-x keeps a drag past the end of the pack strip from
+	   chaining out to the ExpressionPicker's category pager. */
+	.tg-tabs { flex: 1; min-width: 0; display: flex; align-items: center; gap: 1px; overflow-x: auto; overscroll-behavior-x: contain; }
 	.tg-tabs::-webkit-scrollbar { height: 0; }
 	/* No opacity fade on unselected tabs; hover/active mirror the
 	   ExpressionPicker strip (M3 state layer + secondary container) so

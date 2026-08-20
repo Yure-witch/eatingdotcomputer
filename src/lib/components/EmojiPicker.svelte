@@ -1356,6 +1356,10 @@
 		align-items: center;
 		gap: 0.25rem;
 		overflow-x: auto;
+		/* These strips live inside the ExpressionPicker's horizontal snap
+		   track. Contain the axis so dragging past the end of the strip
+		   doesn't chain out and page the picker to another category. */
+		overscroll-behavior-x: contain;
 		scrollbar-width: none;
 	}
 	.tabs::-webkit-scrollbar { display: none; }

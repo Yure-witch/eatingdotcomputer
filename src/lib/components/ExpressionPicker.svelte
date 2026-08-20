@@ -109,6 +109,101 @@
 		catch { hasRecents = false; }
 	});
 
+	// ── Horizontal pager ─────────────────────────────────────────────
+	// The categories are panes in ONE native scroll-snap track, the same
+	// mechanism the app shell uses for its bottom-nav sections. The
+	// compositor drives the swipe, so paging between Emoji and Animated
+	// stays smooth even while a pane is busy decoding sticker frames —
+	// which a JS-driven transition never manages on a slow phone.
+	const TABS = $derived([
+		...(hasRecents ? ['recent'] : []),
+		'emoji',
+		...(tgHidden ? [] : ['animated', 'kitchen']),
+		'emotes'
+	]);
+	const tabIndex = $derived(Math.max(0, TABS.indexOf(tab)));
+
+	let trackEl = $state(null);
+
+	// Panes mount lazily and then STAY mounted. Tearing a pane down on
+	// every tab change is what made switching categories feel slow: each
+	// return trip re-ran the panel's onMount, re-read its localStorage and
+	// rebuilt its grid from scratch. Keeping them alive trades a little
+	// memory for tab switches that cost nothing.
+	let mounted = $state({ [tab]: true });
+	function ensure(id) {
+		if (id && !mounted[id]) mounted = { ...mounted, [id]: true };
+	}
+
+	// Neighbours mount during idle time rather than up front, so opening
+	// the picker only ever pays for the ONE pane you land on. By the time
+	// a swipe starts, the pane next door is usually already there; if it
+	// isn't, the scroll handler below mounts it mid-gesture.
+	let _idleH = null;
+	function scheduleNeighbours() {
+		if (_idleH != null) return;
+		const run = () => {
+			_idleH = null;
+			ensure(TABS[tabIndex - 1]);
+			ensure(TABS[tabIndex + 1]);
+		};
+		_idleH = typeof requestIdleCallback === 'function'
+			? requestIdleCallback(run, { timeout: 600 })
+			: setTimeout(run, 200);
+	}
+
+	// Guard so our own scrollTo() doesn't feed back through onscroll and
+	// fight the user's tab choice mid-animation.
+	let _progScroll = false;
+	let _progT = null;
+	function goTo(id, smooth = true) {
+		tab = id;
+		ensure(id);
+		const el = trackEl;
+		if (!el) return;
+		const i = TABS.indexOf(id);
+		if (i < 0) return;
+		const left = i * el.clientWidth;
+		if (Math.abs(el.scrollLeft - left) < 1) return;
+		_progScroll = true;
+		clearTimeout(_progT);
+		// `smooth` only when the user tapped a tab; a silent re-align (after
+		// the tab list changes shape) must not animate.
+		el.scrollTo({ left, behavior: smooth ? 'smooth' : 'instant' });
+		_progT = setTimeout(() => { _progScroll = false; }, smooth ? 420 : 0);
+	}
+
+	// Scroll -> active tab. Read in a rAF so a fling doesn't run layout
+	// reads on every scroll event.
+	let _rafScroll = 0;
+	function onTrackScroll() {
+		if (_rafScroll) return;
+		_rafScroll = requestAnimationFrame(() => {
+			_rafScroll = 0;
+			const el = trackEl;
+			if (!el || !el.clientWidth) return;
+			const f = el.scrollLeft / el.clientWidth;
+			// Mount whatever the gesture is heading toward before it lands.
+			ensure(TABS[Math.floor(f)]);
+			ensure(TABS[Math.ceil(f)]);
+			if (_progScroll) return;
+			const id = TABS[Math.round(f)];
+			if (id && id !== tab) tab = id;
+		});
+	}
+
+	// Keep the track aligned with `tab` whenever the pane list changes
+	// shape — picking the first-ever recent inserts a pane at index 0 and
+	// would otherwise silently shift every pane one slot to the right.
+	$effect(() => {
+		const i = tabIndex, el = trackEl;
+		void TABS.length;
+		if (!el || !el.clientWidth) return;
+		if (Math.abs(el.scrollLeft - i * el.clientWidth) > 1) goTo(TABS[i], false);
+	});
+
+	$effect(() => { ensure(tab); scheduleNeighbours(); });
+
 	// Emotes tab has two sources: the class's uploaded custom emotes
 	// (R2-backed PNGs / GIFs / WebPs) and the static Telegram packs
 	// (CrazyEmoji / MadEmoji2 / HeartEmoji) — packs whose artwork
@@ -126,6 +221,55 @@
 	// Reactions tab only handles reactions; pass a no-op for emoji
 	// insertion. CustomEmojiPanel hides the unused side via `mode`.
 	const _noop = () => {};
+
+	// ── Drag-to-dismiss ──────────────────────────────────────────────
+	// On mobile the picker is a docked sheet, so it should dismiss the way
+	// every other sheet on the phone does: grab the top and throw it down.
+	// The gesture lives on the grabber strip rather than the whole panel —
+	// the surface right below it is the emoji search / category row, and a
+	// drag that started there would eat those taps.
+	//
+	// The panel translates directly (no reactive layout), so the drag stays
+	// on the compositor and tracks the finger even while a pane is busy.
+	let panelEl = $state(null);
+	let dragY = $state(0);
+	let dragging = $state(false);
+	let _dragId = null, _y0 = 0, _t0 = 0, _lastY = 0, _lastT = 0;
+	// Commit if the sheet was pulled far enough OR flicked hard enough — a
+	// short fast flick reads as "dismiss" even though it barely moved.
+	const DISMISS_PX = 64;
+	const DISMISS_VELOCITY = 0.45; // px/ms
+
+	function dragStart(e) {
+		if (!onClose) return;
+		_dragId = e.pointerId;
+		_y0 = _lastY = e.clientY;
+		_t0 = _lastT = e.timeStamp;
+		dragging = true;
+		try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
+	}
+	function dragMove(e) {
+		if (!dragging || e.pointerId !== _dragId) return;
+		_lastY = e.clientY;
+		_lastT = e.timeStamp;
+		// Downward only; dragging up shouldn't lift the sheet off its dock.
+		dragY = Math.max(0, e.clientY - _y0);
+	}
+	function dragEnd(e) {
+		if (!dragging || e.pointerId !== _dragId) return;
+		dragging = false;
+		_dragId = null;
+		const dy = Math.max(0, _lastY - _y0);
+		const v = dy / Math.max(1, _lastT - _t0);
+		if (dy > DISMISS_PX || v > DISMISS_VELOCITY) {
+			// Throw it the rest of the way out, THEN tell the parent — closing
+			// on the spot would make the sheet vanish mid-gesture.
+			dragY = panelEl?.offsetHeight || 480;
+			setTimeout(() => { onClose?.(); dragY = 0; }, 170);
+		} else {
+			dragY = 0; // transition springs it back to the dock
+		}
+	}
 
 	// ── Shared recents ───────────────────────────────────────────────
 	// Every insert routes through these wrappers so the Recent tab sees
@@ -169,7 +313,8 @@
 	});
 </script>
 
-<div class="expr-panel" class:expr-panel-react={mode === 'react'}>
+<div class="expr-panel" class:expr-panel-react={mode === 'react'} class:expr-dragging={dragging}
+     bind:this={panelEl} style:transform={dragY ? `translate3d(0,${dragY}px,0)` : null}>
 	{#if mode === 'react'}
 		<!-- Reaction mode: just the EmojiPicker, no chrome. The chat
 		     pages used to mount a bare EmojiPicker for this; routing
@@ -178,27 +323,37 @@
 		     EmojiPicker's own localStorage keys). -->
 		<EmojiPicker onSelect={fireEmoji} {onClose} />
 	{:else}
+		{#if onClose}
+			<!-- Drag handle. Mobile-only (the desktop popover isn't a sheet);
+			     `touch-action: none` so the browser hands us the vertical
+			     gesture instead of trying to scroll something with it. -->
+			<!-- svelte-ignore a11y_no_static_element_interactions -->
+			<div class="expr-grab" onpointerdown={dragStart} onpointermove={dragMove}
+			     onpointerup={dragEnd} onpointercancel={dragEnd}>
+				<span class="expr-grab-pill"></span>
+			</div>
+		{/if}
 		<nav class="expr-tabs" aria-label="Expression categories">
 		{#if hasRecents}
-		<button class="expr-tab" class:active={tab === 'recent'} onclick={() => (tab = 'recent')} title="Recently used">
+		<button class="expr-tab" class:active={tab === 'recent'} onclick={() => goTo('recent')} title="Recently used">
 			<span class="msi msi-20" class:msi-fill={tab === 'recent'}>history</span>
 		</button>
 		{/if}
 		<!-- Order: emoji, telegram (animated), emoji kitchen, custom emotes -->
-		<button class="expr-tab" class:active={tab === 'emoji'} onclick={() => (tab = 'emoji')} title="Emoji">
+		<button class="expr-tab" class:active={tab === 'emoji'} onclick={() => goTo('emoji')} title="Emoji">
 			<span class="msi msi-20" class:msi-fill={tab === 'emoji'}>mood</span>
 		</button>
 		{#if !tgHidden}
-			<button class="expr-tab" class:active={tab === 'animated'} onclick={() => (tab = 'animated')} title="Animated emotes">
+			<button class="expr-tab" class:active={tab === 'animated'} onclick={() => goTo('animated')} title="Animated emotes">
 				<span class="msi msi-20" class:msi-fill={tab === 'animated'}>animated_images</span>
 			</button>
 		{/if}
 		{#if !tgHidden}
-			<button class="expr-tab" class:active={tab === 'kitchen'} onclick={() => (tab = 'kitchen')} title="Emoji Kitchen">
+			<button class="expr-tab" class:active={tab === 'kitchen'} onclick={() => goTo('kitchen')} title="Emoji Kitchen">
 				<span class="msi msi-20" class:msi-fill={tab === 'kitchen'}>blender</span>
 			</button>
 		{/if}
-		<button class="expr-tab" class:active={tab === 'emotes'} onclick={() => (tab = 'emotes')} title="Custom emotes">
+		<button class="expr-tab" class:active={tab === 'emotes'} onclick={() => goTo('emotes')} title="Custom emotes">
 			<span class="msi msi-20" class:msi-fill={tab === 'emotes'}>sentiment_very_satisfied</span>
 		</button>
 		{#if onBackspace}
@@ -211,69 +366,79 @@
 		{/if}
 	</nav>
 
-	<div class="expr-body">
-		{#if tab === 'recent'}
-			{#if !recents.length}
-				<p class="expr-recent-empty">Emoji, emotes, mixes and stickers you use will show up here.</p>
-			{:else}
-				<div class="expr-recent-grid">
-					{#each recents as it (exprRecentKey(it))}
-						<button class="expr-recent-cell" onclick={() => fireRecent(it)}>
-							{#if it.t === 'emoji'}
-								<span class="expr-recent-emoji" class:er-noto={it.f === 'noto'} class:er-sys={it.f === 'system'}>{it.v}</span>
-							{:else if it.t === 'ek'}
-								<img src={ekThumb(it.v)} alt="" loading="lazy" />
-							{:else if it.t === 'ce'}
-								<img src={it.v.url} alt={it.v.shortcode} loading="lazy" />
-							{:else if it.t === 'tg'}
-								<!-- live cell on the inline-canvas Skottie pipeline (each
-								     cell owns its own canvas — no stage host needed, so
-								     it animates here just like in the TG panel; static
-								     packs auto-rest on their thumb frame) -->
-								<SpriteSticker
-									cp={it.v.custom ? null : it.v.cp}
-									short={it.v.custom ? it.v.short : null}
-									id={it.v.custom ? it.v.id : null}
-									size={34} loop={true} eager={true} title={it.v.alt || ''} />
-							{/if}
-						</button>
-					{/each}
-				</div>
-			{/if}
-		{:else if tab === 'emoji'}
-			<EmojiPicker onSelect={fireEmoji} {onClose} />
-		{:else if tab === 'kitchen'}
-			<EmojiKitchen onInsert={fireKitchen} {onClose} />
-		{:else if tab === 'emotes'}
-			<!-- Two sources, two sub-tabs. Uploaded = class custom
-			     emotes (R2). Library = the static Telegram packs
-			     (CrazyEmoji / MadEmoji2 / HeartEmoji) which don't
-			     animate, so they belong here next to the rest of the
-			     non-animated emotes rather than under Animated. -->
-			{#if !tgHidden}
-				<nav class="expr-subtabs" aria-label="Emote source">
-					{#if onClose}
-						<!-- close rides the sub-tab row at the LEFT — the same
-						     PickerStickyBtn tile every other tab pins top-left -->
-						<PickerStickyBtn square onclick={onClose} title="Close" label="Close picker">
-							<span class="msi msi-20">close</span>
-						</PickerStickyBtn>
+	<!-- One pane per category in a native horizontal scroll-snap track:
+	     swiping sideways pages between expression types exactly like the
+	     app shell's section pager. Every pane is always present so the
+	     track geometry is stable; only its CONTENTS mount lazily. -->
+	<div class="expr-track" bind:this={trackEl} onscroll={onTrackScroll}>
+		{#each TABS as t (t)}
+			<section class="expr-pane" aria-hidden={t !== tab}>
+				{#if mounted[t]}
+					{#if t === 'recent'}
+						{#if !recents.length}
+							<p class="expr-recent-empty">Emoji, emotes, mixes and stickers you use will show up here.</p>
+						{:else}
+							<div class="expr-recent-grid">
+								{#each recents as it (exprRecentKey(it))}
+									<button class="expr-recent-cell" onclick={() => fireRecent(it)}>
+										{#if it.t === 'emoji'}
+											<span class="expr-recent-emoji" class:er-noto={it.f === 'noto'} class:er-sys={it.f === 'system'}>{it.v}</span>
+										{:else if it.t === 'ek'}
+											<img src={ekThumb(it.v)} alt="" loading="lazy" />
+										{:else if it.t === 'ce'}
+											<img src={it.v.url} alt={it.v.shortcode} loading="lazy" />
+										{:else if it.t === 'tg'}
+											<!-- live cell on the inline-canvas Skottie pipeline (each
+											     cell owns its own canvas — no stage host needed, so
+											     it animates here just like in the TG panel; static
+											     packs auto-rest on their thumb frame) -->
+											<SpriteSticker
+												cp={it.v.custom ? null : it.v.cp}
+												short={it.v.custom ? it.v.short : null}
+												id={it.v.custom ? it.v.id : null}
+												size={34} loop={true} eager={true} title={it.v.alt || ''} />
+										{/if}
+									</button>
+								{/each}
+							</div>
+						{/if}
+					{:else if t === 'emoji'}
+						<EmojiPicker onSelect={fireEmoji} {onClose} />
+					{:else if t === 'kitchen'}
+						<EmojiKitchen onInsert={fireKitchen} {onClose} />
+					{:else if t === 'emotes'}
+						<!-- Two sources, two sub-tabs. Uploaded = class custom
+						     emotes (R2). Library = the static Telegram packs
+						     (CrazyEmoji / MadEmoji2 / HeartEmoji) which don't
+						     animate, so they belong here next to the rest of the
+						     non-animated emotes rather than under Animated. -->
+						{#if !tgHidden}
+							<nav class="expr-subtabs" aria-label="Emote source">
+								{#if onClose}
+									<!-- close rides the sub-tab row at the LEFT — the same
+									     PickerStickyBtn tile every other tab pins top-left -->
+									<PickerStickyBtn square onclick={onClose} title="Close" label="Close picker">
+										<span class="msi msi-20">close</span>
+									</PickerStickyBtn>
+								{/if}
+								<button class="expr-subtab" class:active={emotesSub === 'uploaded'} onclick={() => (emotesSub = 'uploaded')}>Uploaded</button>
+								<button class="expr-subtab" class:active={emotesSub === 'library'} onclick={() => (emotesSub = 'library')}>Library</button>
+							</nav>
+						{/if}
+						{#if emotesSub === 'uploaded'}
+							<!-- inner panels skip their own ✕ when the sub-tab row carries it -->
+							<CustomEmojiPanel mode="emoji" onInsertEmoji={fireCe} onInsertReaction={_noop} {isInstructor} onClose={tgHidden ? onClose : null} />
+						{:else}
+							<TelegramEmojiPanel onInsert={fireTg} packFilter="static" onClose={null} />
+						{/if}
+					{:else if t === 'animated'}
+						<!-- Animated stickers only — static packs live in the
+						     Emotes tab's Library sub-tab. -->
+						<TelegramEmojiPanel onInsert={fireTg} packFilter="animated" canModerate={isInstructor} {onClose} />
 					{/if}
-					<button class="expr-subtab" class:active={emotesSub === 'uploaded'} onclick={() => (emotesSub = 'uploaded')}>Uploaded</button>
-					<button class="expr-subtab" class:active={emotesSub === 'library'} onclick={() => (emotesSub = 'library')}>Library</button>
-				</nav>
-			{/if}
-			{#if emotesSub === 'uploaded'}
-				<!-- inner panels skip their own ✕ when the sub-tab row carries it -->
-				<CustomEmojiPanel mode="emoji" onInsertEmoji={fireCe} onInsertReaction={_noop} {isInstructor} onClose={tgHidden ? onClose : null} />
-			{:else}
-				<TelegramEmojiPanel onInsert={fireTg} packFilter="static" onClose={null} />
-			{/if}
-		{:else if tab === 'animated'}
-			<!-- Animated stickers only — static packs live in the
-			     Emotes tab's Library sub-tab. -->
-			<TelegramEmojiPanel onInsert={fireTg} packFilter="animated" canModerate={isInstructor} {onClose} />
-		{/if}
+				{/if}
+			</section>
+		{/each}
 	</div>
 	{/if}
 </div>
@@ -283,6 +448,10 @@
 		display: flex;
 		flex-direction: column;
 		width: 340px;
+		/* Never exceed the viewport, whatever the inner panels ask for —
+		   the Kitchen shell is 380px on its own and used to widen the whole
+		   popover past the right edge of a narrow screen. */
+		max-width: 100vw;
 		height: 440px;
 		background: var(--paper);
 		color: var(--ink);
@@ -295,9 +464,43 @@
 	}
 
 	/* Category strip docks to the bottom (native-keyboard layout); the
-	   body fills the space above it. */
-	.expr-body { order: 1; }
+	   pane track fills the space above it, grabber on top. */
+	.expr-grab { order: 0; }
+	.expr-track { order: 1; }
 	.expr-tabs { order: 2; }
+
+	/* ── Drag handle ──────────────────────────────────────────────────
+	   Desktop shows the picker as a floating popover, not a sheet, so
+	   there is nothing to drag down — the strip only exists on mobile. */
+	.expr-grab { display: none; }
+	@media (max-width: 640px) {
+		.expr-grab {
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			flex-shrink: 0;
+			height: 20px;
+			/* Claim the vertical gesture from the browser; without this the
+			   drag competes with the pane's own scrolling. */
+			touch-action: none;
+			cursor: grab;
+		}
+		.expr-grab:active { cursor: grabbing; }
+		.expr-grab-pill {
+			width: 36px;
+			height: 4px;
+			border-radius: 999px;
+			background: color-mix(in srgb, var(--md-sys-color-on-surface, var(--ink)) 26%, transparent);
+		}
+	}
+
+	/* Springs back to the dock on release. Suppressed mid-drag so the
+	   sheet sits exactly under the finger instead of lagging behind it. */
+	.expr-panel { transition: transform 0.17s cubic-bezier(0.32, 0.72, 0, 1); }
+	.expr-panel.expr-dragging { transition: none; }
+	@media (prefers-reduced-motion: reduce) {
+		.expr-panel { transition: none; }
+	}
 
 	@media (max-width: 640px) {
 		.expr-panel {
@@ -381,7 +584,42 @@
 	   icon. Variation axes (wght/FILL/etc.) inherit from .msi. */
 	.gif-glyph { font-size: 30px; line-height: 1; }
 
-	.expr-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+	/* ── Pane track ───────────────────────────────────────────────────
+	   Horizontal scroll-snap pager, one pane per category. The browser
+	   drives the swipe on the compositor, so paging stays at 60fps even
+	   while a pane is decoding sticker frames. */
+	.expr-track {
+		flex: 1;
+		min-height: 0;
+		min-width: 0;
+		display: flex;
+		overflow-x: auto;
+		overflow-y: hidden;
+		scroll-snap-type: x mandatory;
+		/* Don't let a swipe that runs off the last pane chain out to the
+		   app shell's own section pager underneath. */
+		overscroll-behavior: contain;
+		scrollbar-width: none;
+		-webkit-overflow-scrolling: touch;
+		/* A pane mounting mid-scroll must not make the browser "helpfully"
+		   re-anchor the track onto a different pane. */
+		overflow-anchor: none;
+	}
+	.expr-track::-webkit-scrollbar { display: none; }
+	.expr-pane {
+		flex: 0 0 100%;
+		width: 100%;
+		/* Without min-width:0 a wide child (the Kitchen's 380px shell, a long
+		   sticker row) stretches its flex item instead of scrolling inside it,
+		   which is what pushed the panel wider than the screen. */
+		min-width: 0;
+		height: 100%;
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
+		scroll-snap-align: start;
+		scroll-snap-stop: always;
+	}
 
 	.expr-subtabs {
 		display: flex;
@@ -422,12 +660,12 @@
 	   hard-coded 380px width inside the 340px picker shell and
 	   overflowing the right edge — adding `.kitchen-panel` to the
 	   reset list snaps it to the container. */
-	.expr-body :global(.tg-panel),
-	.expr-body :global(.emoji-picker),
-	.expr-body :global(.emoji-kitchen),
-	.expr-body :global(.kitchen-panel),
-	.expr-body :global(.gif-picker),
-	.expr-body :global(.custom-emoji-panel) {
+	.expr-pane :global(.tg-panel),
+	.expr-pane :global(.emoji-picker),
+	.expr-pane :global(.emoji-kitchen),
+	.expr-pane :global(.kitchen-panel),
+	.expr-pane :global(.gif-picker),
+	.expr-pane :global(.custom-emoji-panel) {
 		/* Reset each inner picker's standalone chrome so it reads as
 		   the body of the ExpressionPicker shell, not a card-within-
 		   a-card. width/height let the picker fill the body; the

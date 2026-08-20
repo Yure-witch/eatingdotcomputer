@@ -16,6 +16,7 @@
 	import TelegramEmojiPanel from '$lib/components/TelegramEmojiPanel.svelte';
 	import GifPicker from '$lib/components/GifPicker.svelte';
 	import ExpressionPicker from '$lib/components/ExpressionPicker.svelte';
+	import { installPickerDismiss, keepScrollAnchored } from '$lib/picker-dismiss.js';
 	import MediaPicker from '$lib/components/MediaPicker.svelte';
 	import { haptic } from '$lib/native.js';
 	import { decodeReactionKey } from '$lib/reaction-key.js';
@@ -217,6 +218,38 @@
 		if (typeof document === 'undefined') return;
 		document.body.classList.toggle('expr-picker-open', _anyComposePicker);
 		return () => document.body.classList.remove('expr-picker-open');
+	});
+
+	// ── Picker dismissal + scroll anchoring ──────────────────────────
+	// Closing routes through these so every exit path (outside tap, chat
+	// scroll, swipe-down on the sheet, the picker's own ✕) clears the same
+	// state — the rendered-HTML cache has to be dropped because emote
+	// tokens render differently once the compose loses its faux caret.
+	function closeComposePicker() { showComposePicker = false; _clearHtmlCache(); }
+	function closeMediaPicker() { showMediaPicker = false; }
+
+	// While either compose picker is open, an outside tap or the first
+	// scroll gesture in the chat dismisses it. The message list stays live
+	// underneath (there is no blocking backdrop any more), so "start
+	// scrolling the chat" is a real gesture that can be observed.
+	$effect(() => {
+		if (!_anyComposePicker) return;
+		return installPickerDismiss({
+			listEl,
+			close: () => { closeComposePicker(); closeMediaPicker(); },
+			// The toggle buttons live in .compose-picker-wrap alongside the
+			// panel; without them an outside-tap close would race the button's
+			// own toggle and the picker would never open.
+			inside: ['.compose-picker-wrap', '.expr-panel', '.media-panel']
+		});
+	});
+
+	// Opening the picker shrinks the message list by the sheet's height.
+	// Hold the content that was at the bottom edge in place instead of
+	// letting it slide away behind the sheet.
+	$effect(() => {
+		if (!listEl) return;
+		return keepScrollAnchored(listEl);
 	});
 	let showKitchen = $state(false);
 	let showCustomEmoji = $state(false);
@@ -4258,8 +4291,6 @@
 						<span class="msi msi-18" class:msi-fill={showComposePicker}>mood</span>
 					</button>
 					{#if showComposePicker}
-						<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-						<div class="compose-picker-backdrop" onclick={() => { showComposePicker = false; _clearHtmlCache(); }}></div>
 						<div class="compose-picker-pop">
 							<ExpressionPicker
 								onSelectEmoji={insertEmoji}
@@ -4267,7 +4298,7 @@
 								onInsertCustomEmoji={onCustomEmojiInsert}
 								onInsertTgEmoji={onTgEmojiInsert}
 								isInstructor={data.currentUser.role === 'instructor'}
-								onClose={() => { showComposePicker = false; _clearHtmlCache(); }}
+								onClose={closeComposePicker}
 								onBackspace={composeBackspace}
 							/>
 						</div>
@@ -4279,8 +4310,6 @@
 						<span class="msi msi-18" class:msi-fill={showMediaPicker}>gif_box</span>
 					</button>
 					{#if showMediaPicker}
-						<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-						<div class="compose-picker-backdrop" onclick={() => { showMediaPicker = false; }}></div>
 						<div class="compose-picker-pop">
 							<MediaPicker
 								onSelectGif={onGifSelect}
@@ -4960,14 +4989,14 @@
 		.picker-popover {
 			left: 0 !important; right: 0;
 			top: auto !important; bottom: 0;
-			width: 100vw;
+			/* No `width: 100vw` — left/right:0 sizes this to the page, while
+			   100vw counts the scrollbar and overflows it. */
 			height: calc(min(58vh, 22rem) + env(safe-area-inset-bottom, 0px));
 			padding-bottom: env(safe-area-inset-bottom, 0px);
-			background: var(--paper);
-			border-top-left-radius: 16px;
-			border-top-right-radius: 16px;
-			box-shadow: 0 -8px 28px rgba(0,0,0,0.18);
-			overflow: hidden;
+			/* Background / radius / shadow live on the ExpressionPicker panel
+			   inside (it already draws them on mobile). Keeping them here too
+			   would leave an identical slab behind when the panel translates
+			   down under a drag-to-dismiss, so the sheet would look stuck. */
 			z-index: 61;
 		}
 		/* Floating, brightly-lit copy of the focused message — bottom edge
@@ -5199,11 +5228,15 @@
 		.compose-picker-pop {
 			position: fixed;
 			left: 0; right: 0; bottom: 0;
-			width: 100vw;
+			/* left/right:0 already fixes the width; `100vw` used to override that
+			   with the viewport width INCLUDING any scrollbar, which is what let
+			   the sheet hang past the right edge of the page. */
 			height: calc(var(--picker-h) + env(safe-area-inset-bottom, 0px));
 			/* No padding-bottom: the picker's bottom tab strip carries the
-			   safe-area inset so its grey background runs to the screen bottom. */
-			background: var(--paper);
+			   safe-area inset so its grey background runs to the screen bottom.
+			   No background either: the ExpressionPicker panel inside carries it,
+			   so the panel can translate down out of this box during a
+			   drag-to-dismiss instead of sliding across a matching slab. */
 			z-index: 60;
 		}
 		/* Faux caret — with the iOS keyboard suppressed the compose loses its
@@ -5298,7 +5331,6 @@
 			position: fixed;
 			left: 0; right: 0;
 			bottom: calc(var(--input-area-h, 56px) + env(safe-area-inset-bottom, 0px));
-			width: 100vw;
 			z-index: 60;
 		}
 	}
