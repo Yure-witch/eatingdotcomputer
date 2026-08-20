@@ -363,6 +363,12 @@
 <!-- |global: transitions are LOCAL by default, and the {#key} wrapper the
      pages use for thread-switch remounts made the mount belong to an outer
      block — silently skipping the intro. Global plays it on every mount. -->
+{#snippet composeTools()}
+	<button class="thread-attach" onclick={() => fileEl?.click()} disabled={uploading} title="Attach a file" aria-label="Attach a file">
+		<span class="msi msi-18" class:msi-spin={uploading}>{uploading ? 'progress_activity' : 'attach_file'}</span>
+	</button>
+{/snippet}
+
 {#snippet msgRow(m, isParent)}
 	{@const u = userMap[m.userId] ?? {}}
 	{@const status = presenceStatusCtx?.value?.[m.userId]}
@@ -512,12 +518,11 @@
 		     box's full height. -->
 		<div class="thread-compose-wrap">
 			<div class="thread-fi">
-				<FormattedInput bind:value={draft} placeholder="Reply in thread…" />
-			</div>
-			<div class="thread-fmt-row">
-				<button class="thread-attach" onclick={() => fileEl?.click()} disabled={uploading} title="Attach a file" aria-label="Attach a file">
-					<span class="msi msi-20" class:msi-spin={uploading}>{uploading ? 'progress_activity' : 'attach_file'}</span>
-				</button>
+				<!-- Attach rides IN the editor's own formatting row rather than in a
+				     second row beneath it — chat's composer is one box with one tool
+				     row, and stacking two toolbars is most of why this didn't read
+				     as the same control. -->
+				<FormattedInput bind:value={draft} placeholder="Reply in thread…" tools={composeTools} />
 			</div>
 		</div>
 		<button class="thread-send" onclick={send} disabled={!draft.trim() && !pendingAtt} title="Send reply">
@@ -753,8 +758,10 @@
 		transition: border-color 0.15s;
 	}
 	.thread-compose-wrap:focus-within { border-color: var(--md-sys-color-primary, var(--ink)); }
-	/* Chat's .compose-fmt-row — tools live INSIDE the box, under the editor. */
-	.thread-fmt-row { display: flex; align-items: center; gap: 0.1rem; padding: 0.2rem 0.5rem 0.3rem; }
+	/* Attach sits in FormattedInput's own row (see the `tools` snippet), sized to
+	   match the text controls beside it. */
+	:global(.thread-fi .fi-fmt-row .thread-attach) { width: 26px; height: 26px; opacity: 0.45; }
+	:global(.thread-fi .fi-fmt-row .thread-attach:hover:not(:disabled)) { opacity: 1; }
 	.thread-fi { flex: 1; min-width: 0; }
 	/* A tool inside the box, not a bordered button beside it. */
 	.thread-attach {

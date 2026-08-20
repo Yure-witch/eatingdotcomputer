@@ -24,7 +24,12 @@
 		// weight / width all stay — only the per-span font-size axis
 		// is suppressed, since making one item in a checklist 3× its
 		// neighbours rarely makes sense.
-		disableSize = false
+		disableSize = false,
+		// Extra tools to render at the end of the formatting row. Chat's composer
+		// keeps attach/expressions/GIFs in ONE row with the text controls; without
+		// this a caller has to add a second row underneath, which stacks two
+		// toolbars in a box that should have one.
+		tools = null
 	} = $props();
 
 	let inputEl = $state(null);
@@ -822,6 +827,7 @@
 					</div>
 				{/if}
 			</div>
+			{#if tools}{@render tools()}{/if}
 		</div>
 	</div>
 
