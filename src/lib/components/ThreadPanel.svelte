@@ -7,7 +7,7 @@
 	// with push-ID timestamps — the same contract as channel/DM messages.
 	// /api/chat/sync archives them into thread_messages after 24h; this
 	// panel merges both sources and dedupes by id.
-	import { onMount, onDestroy, tick } from 'svelte';
+	import { onMount, onDestroy, tick, getContext } from 'svelte';
 	import { fly } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
 	import { db as rtdb } from '$lib/firebase.js';
@@ -81,8 +81,13 @@
 	import ExpressionTip from './ExpressionTip.svelte';
 	import MessageAttachment from './MessageAttachment.svelte';
 	import ExpressionPicker from './ExpressionPicker.svelte';
+	import Avatar from './Avatar.svelte';
+	import ProfileHover from './ProfileHover.svelte';
 	import { decodeReactionKey } from '$lib/reaction-key.js';
 	import { positionReactionTooltip } from '$lib/reaction-tooltip.js';
+	// Same presence signal the conversation reads — the app layout publishes one
+	// derivation of it so every surface agrees on who's green.
+	const presenceStatusCtx = getContext('presenceStatus');
 	import { wrapEmojiInText } from '$lib/emoji-tip.js';
 
 	let {
@@ -318,6 +323,43 @@
 <!-- |global: transitions are LOCAL by default, and the {#key} wrapper the
      pages use for thread-switch remounts made the mount belong to an outer
      block — silently skipping the intro. Global plays it on every mount. -->
+{#snippet msgRow(m, isParent)}
+	{@const u = userMap[m.userId] ?? {}}
+	{@const status = presenceStatusCtx?.value?.[m.userId]}
+	<div class="meta">
+		<ProfileHover userId={m.userId}>
+			<span class="meta-name-row">
+				<span class="meta-avatar-wrap">
+					<Avatar name={m.userName} uid={m.userId} avatarKind={u.avatarKind ?? 'gen'} avatarValue={u.avatarValue ?? null} size={22} />
+					{#if status === 'active' || status === 'idle'}
+						<span class="meta-presence-dot" class:idle={status === 'idle'}></span>
+					{/if}
+				</span>
+				<span class="name">{m.userName}</span>
+			</span>
+		</ProfileHover>
+		<span class="time">{fmtTime(m.createdAt)}</span>
+	</div>
+	<div class="bubble-row">
+		<!-- emoji/emote-only messages go jumbo, exactly like chat bubbles -->
+		{#if m.content}
+			<div class="thread-msg-body" class:jumbo={jumboEmojiCountM(m.content) > 0} style:font-size={bubbleFontSize(m.content, 1)}>{@html contentHtml(m.content)}</div>
+		{/if}
+		{#if m.attachment}
+			<div class="thread-att"><MessageAttachment attachment={m.attachment} mine={!isParent && m.userId === currentUser?.id} /></div>
+		{/if}
+		<!-- The same hover bar chat puts over a message. Only the actions that
+		     mean anything inside a thread: replying IS the composer below, and
+		     there's no thread to open from here. -->
+		<div class="msg-actions-bar">
+			<button class="action-btn" onclick={(e) => { e.stopPropagation(); openPicker(m.id, e); }} title="Add reaction" aria-label="Add reaction">
+				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
+			</button>
+		</div>
+	</div>
+	{@render reactionRow(m.id)}
+{/snippet}
+
 {#snippet reactionRow(msgId)}
 	<div class="thread-rx">
 		{#each rxEntries(msgId) as [emoji, users] (emoji)}
@@ -365,15 +407,7 @@
 
 	<div class="thread-scroll" bind:this={listEl}>
 		<div class="thread-parent">
-			<div class="thread-msg-meta"><b>{parentSnapshot.userName}</b><span class="thread-time">{fmtTime(parentSnapshot.createdAt)}</span></div>
-			<!-- emoji/emote-only messages go jumbo, exactly like chat bubbles -->
-			{#if parentSnapshot.content}
-				<div class="thread-msg-body" class:jumbo={jumboEmojiCountM(parentSnapshot.content) > 0} style:font-size={bubbleFontSize(parentSnapshot.content, 1)}>{@html contentHtml(parentSnapshot.content)}</div>
-			{/if}
-			{#if parentSnapshot.attachment}
-				<div class="thread-att"><MessageAttachment attachment={parentSnapshot.attachment} /></div>
-			{/if}
-			{@render reactionRow(parentSnapshot.id)}
+			{@render msgRow(parentSnapshot, true)}
 		</div>
 		<div class="thread-count-rule">
 			{#if loading}
@@ -384,14 +418,7 @@
 		</div>
 		{#each replies as r (r.id)}
 			<div class="thread-reply" class:mine={r.userId === currentUser?.id}>
-				<div class="thread-msg-meta"><b>{r.userName}</b><span class="thread-time">{fmtTime(r.createdAt)}</span></div>
-				{#if r.content}
-					<div class="thread-msg-body" class:jumbo={jumboEmojiCountM(r.content) > 0} style:font-size={bubbleFontSize(r.content, 1)}>{@html contentHtml(r.content)}</div>
-				{/if}
-				{#if r.attachment}
-					<div class="thread-att"><MessageAttachment attachment={r.attachment} mine={r.userId === currentUser?.id} /></div>
-				{/if}
-				{@render reactionRow(r.id)}
+				{@render msgRow(r, false)}
 			</div>
 		{/each}
 		{#if !loading && !replies.length}
@@ -552,11 +579,6 @@
 		}
 		.thread-picker-overlay { background: rgba(0,0,0,0.45); }
 	}
-	.thread-close {
-		background: none; border: none; cursor: pointer;
-		color: var(--muted-fg); font-size: 0.95rem; line-height: 1; padding: 0.25rem 0.4rem;
-	}
-	.thread-close:hover { color: var(--ink); }
 	.thread-scroll { flex: 1; overflow-y: auto; padding: 0.85rem 1rem; min-height: 0; }
 	.thread-parent {
 		padding-bottom: 0.75rem;
@@ -570,11 +592,54 @@
 		content: ''; flex: 1; height: 1px; background: var(--border);
 	}
 	.thread-reply { margin-bottom: 0.7rem; }
-	.thread-msg-meta {
-		display: flex; align-items: baseline; gap: 0.45rem;
-		font-size: 0.78rem; color: var(--ink); margin-bottom: 0.1rem;
+	/* ── Sender line: avatar, presence, name, time — the same lockup as a chat
+	   message, so a reply reads as the same kind of thing it is. ── */
+	.meta { display: flex; align-items: center; gap: 0.4rem; padding: 0 0.1rem 0.15rem; }
+	.meta-name-row { display: inline-flex; align-items: center; gap: 0.4rem; }
+	.meta-avatar-wrap { position: relative; display: inline-flex; }
+	.meta-presence-dot {
+		position: absolute;
+		bottom: -1px; right: -1px;
+		width: 8px; height: 8px;
+		border-radius: 50%;
+		background: #4caf50;
+		box-shadow: 0 0 0 2px var(--paper);
 	}
-	.thread-time { font-size: 0.66rem; color: var(--muted-fg); }
+	.meta-presence-dot.idle { background: #ffc107; }
+	.name { font-size: 0.78rem; font-weight: 600; color: var(--ink); cursor: pointer; }
+	.name:hover { text-decoration: underline; text-underline-offset: 2px; }
+	.time { font-size: 0.72rem; color: var(--muted-fg); }
+
+	/* ── Hover action bar, same as chat's ── */
+	.bubble-row { position: relative; }
+	.msg-actions-bar {
+		position: absolute;
+		top: 2px; right: 0;
+		transform: translateY(-100%);
+		display: flex; flex-direction: row; gap: 0;
+		background: var(--paper);
+		border: 1.5px solid var(--border);
+		border-radius: 10px;
+		padding: 1px;
+		box-shadow: 0 2px 10px rgba(0,0,0,0.12);
+		opacity: 0; pointer-events: none;
+		transition: opacity 0.1s;
+		z-index: 50;
+		white-space: nowrap;
+	}
+	/* Hover reveals it — and on iOS the first tap IS hover, which is how the
+	   chat bar works too. */
+	.bubble-row:hover .msg-actions-bar,
+	.msg-actions-bar:hover,
+	.msg-actions-bar:focus-within { opacity: 1; pointer-events: auto; }
+	.action-btn {
+		background: transparent; border: none; border-radius: 6px;
+		width: 30px; height: 30px; padding: 5px; cursor: pointer; color: var(--muted-fg);
+		display: flex; align-items: center; justify-content: center;
+		transition: color 0.1s, background 0.1s;
+		flex-shrink: 0;
+	}
+	.action-btn:hover { color: var(--ink); background: rgba(0,0,0,0.06); }
 	.thread-msg-body {
 		/* Same stack as chat bubbles — Google Sans Flex carries a REAL
 		   italic; the inherited Space Grotesk faux-obliqued it. */
