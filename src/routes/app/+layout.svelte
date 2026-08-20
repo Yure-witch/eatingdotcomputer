@@ -203,7 +203,6 @@
 	// ~80ms after the route commits (which felt glitchy). The `conv-covering`
 	// class (consumed by BottomNav) replaces the old route-based `in-conversation`
 	// hide for nav purposes.
-	let _navHidden = false;
 	$effect(() => {
 		if (typeof document === 'undefined') return;
 		// A chat surface is a layer over the pager, so the nav hides while it
@@ -217,9 +216,14 @@
 		// separate rise to schedule and nothing to time out.
 		const covering = _onChatSurfaceMobile && !_convNavBack;
 		untrack(() => {
-			if (covering === _navHidden) return;
-			_navHidden = covering;
-			document.documentElement.classList.toggle('conv-covering', covering);
+			// Compare against the DOM, not a local flag. The flag started false on
+			// every mount, so a `conv-covering` left behind by a previous mount (the
+			// app layout tears down without cleaning up when you leave /app — see
+			// onDestroy) matched "already correct" and was never removed: the nav
+			// stayed parked off-screen for the whole page load.
+			const root = document.documentElement;
+			if (root.classList.contains('conv-covering') === covering) return;
+			root.classList.toggle('conv-covering', covering);
 		});
 	});
 
@@ -2116,6 +2120,12 @@
 			window.removeEventListener('touchmove', onSwipeMove);
 			window.removeEventListener('touchend', onSwipeEnd);
 			window.removeEventListener('touchcancel', onSwipeEnd);
+		}
+		// These live on <html>, so they outlive this layout. Leaving /app from
+		// inside a chat (to onboarding, say) otherwise left the document dressed
+		// for a chat surface that no longer exists.
+		if (typeof document !== 'undefined') {
+			document.documentElement.classList.remove('conv-covering', 'nav-animating');
 		}
 		pushBroadcast?.close();
 		clearInterval(heartbeatTimer);
