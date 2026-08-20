@@ -159,11 +159,21 @@
 	// The pill's fractional position rides the CSS var `--nav-frac`, written
 	// straight to <html> by the pager (imperatively, per scroll frame) for 60fps —
 	// no Svelte reactivity in the hot path. We only feed it the (stable) slot count.
+	//
+	// …but the pager only writes that var once it has scrolled. On a cold load of
+	// a non-Home route it is unset, so the pill parked on slot 0 while a
+	// different item was actually selected — two things looking chosen at once.
+	// This fallback puts it on the real slot until the pager takes over.
+	const activeSlot = $derived.by(() => {
+		if (chatActive) return 1;
+		const i = items.findIndex((it) => it.active(activePath));
+		return i < 0 ? 0 : (i === 0 ? 0 : i + 1);
+	});
 </script>
 
 <!-- Mobile bottom nav only — desktop nav is in the global sidebar (app/+layout.svelte) -->
 <nav class="bottom-nav" class:hidden={keyboardOpen}>
-	<span class="nav-indicator" style:--slot-count={slotCount}></span>
+	<span class="nav-indicator" style:--slot-count={slotCount} style:--nav-slot={activeSlot}></span>
 	<!-- Order: Home, Chat, Orbit, Lab, [Manage] — Chat sits immediately right of
 	     Home so a rightward swipe out of a conversation reads as going "back". -->
 	{#each items as item, idx}
@@ -219,11 +229,13 @@
 			   visibly continuing underneath rather than stopping at a bar. That
 			   read is what sells the "glass", not transparency: the surface is
 			   fully opaque and gets its depth from elevation alone. */
-			--nav-inset: 30px;
+			--nav-inset: 56px;
 			/* Breathing room inside the rounded ends — the slots span the padded
 			   box, not the full pill, so the icons sit closer together and the
 			   curves stay empty. */
-			--nav-pad: 22px;
+			/* Minimal: the pill itself provides the visual inset now, so the bar
+			   only needs enough padding to keep it 3px clear of the ends. */
+			--nav-pad: 3px;
 			padding-left: var(--nav-pad);
 			padding-right: var(--nav-pad);
 			box-sizing: border-box;
@@ -231,7 +243,7 @@
 			   max() keeps a small gap on the plain web, where there is no inset. */
 			bottom: max(6px, env(safe-area-inset-bottom, 0px));
 			left: var(--nav-inset); right: var(--nav-inset);
-			height: 76px;
+			height: 60px;
 			padding-bottom: 0;
 			border-radius: 999px;
 			/* Reuse the sidebar tokens so the mobile bottom nav reads
@@ -261,9 +273,9 @@
 			/* Concentric with the bar: the pill is inset 3px on every side, so for
 			   its curve to run parallel to the bar's its radius must be the bar's
 			   MINUS that inset. A fully-rounded pill's radius IS half its height,
-			   so height and gap are locked together: 68px → radius 34 → a 4px gap
-			   against the bar's 38. (70px would give 3px; anything shorter opens
-			   the gap further.) Note `top` is measured from the PADDING box,
+			   so height and gap are locked together — the bar and pill heights
+			   have to move together to hold a 3px gap: 60px bar (radius 30) with
+			   a 54px pill (radius 27), since 30 − 3 = 27. Note `top` is measured from the PADDING box,
 			   inside the 1px border, so top:3 lands 4px in from the outer edge and
 			   the remaining 3px + border matches it at the bottom.
 
@@ -274,10 +286,10 @@
 
 			   Starts after the bar's inner padding, which the slot maths above
 			   also subtracts. */
-			top: 3px;
+			top: 2px;
 			left: var(--nav-pad, 0px);
-			width: 96px;
-			height: 68px;
+			width: 78px;
+			height: 54px;
 			border-radius: 999px;
 			/* Move with transform (compositor / GPU) instead of `left` (which forced a
 			   layout reflow every scroll frame → framey). The nav is full-viewport
@@ -288,13 +300,17 @@
 			/* The bar is an inset island now, so a slot is (viewport - insets) wide,
 			   NOT 100vw — using the viewport put the pill progressively further
 			   right than its icon. --nav-inset keeps the two in one place. */
-			transform: translateX(calc((var(--nav-frac, 0) + 0.5) * ((100vw - (2 * var(--nav-inset, 12px)) - (2 * var(--nav-pad, 0px))) / var(--slot-count, 5)) - 50%));
+			transform: translateX(calc((var(--nav-frac, var(--nav-slot, 0)) + 0.5) * ((100vw - (2 * var(--nav-inset, 12px)) - (2 * var(--nav-pad, 0px))) / var(--slot-count, 5)) - 50%));
 			will-change: transform;
 			background: var(--sidebar-active);
 			border-radius: 999px;
 			pointer-events: none;
 			z-index: 0;
 		}
+		/* ~15% up from 24px. .msi only defines 18/20/24, so this is set locally
+		   rather than referencing a size class that doesn't exist. */
+		.bottom-nav .msi { font-size: 28px; }
+
 		.nav-item {
 			position: relative;
 			z-index: 1;
@@ -306,8 +322,9 @@
 			/* Glyph and label read as one unit rather than two stacked things. */
 			gap: 0.05rem;
 			color: var(--sidebar-fg-muted);
+			opacity: 0.72;
 			text-decoration: none;
-			transition: color 0.15s;
+			transition: color 0.15s, opacity 0.15s;
 			-webkit-tap-highlight-color: transparent;
 			/* reset button defaults */
 			background: none;
@@ -322,7 +339,11 @@
 		   label below stays unwrapped. Only the ICON takes the active
 		   colour — the highlight pill covers just the icon, so the
 		   label keeps its resting colour in every state. */
+		.nav-item.active { opacity: 1; }
 		.nav-item.active .icon-wrap { color: var(--sidebar-active-fg); }
+		/* Darker + heavier label on the selected item, so selection doesn't rest
+		   on the fill alone. */
+		.nav-item.active .label { color: var(--sidebar-active-fg); font-weight: 700; }
 		.nav-item:not(.active):active { color: var(--sidebar-fg-muted); }
 
 		.label {
@@ -344,9 +365,9 @@
 
 		.nav-badge {
 			position: absolute;
-			/* Tucked against the glyph rather than floating off it. */
-			top: -4px;
-			right: -10px;
+			/* Touching the glyph. */
+			top: -2px;
+			right: -6px;
 			background: #e53935;
 			color: #fff;
 			font-size: 0.55rem;
