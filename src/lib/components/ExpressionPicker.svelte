@@ -44,6 +44,7 @@
 		// emote in the app for the rest of the session.
 		return () => {
 			clearTimeout(_settleT);
+			clearTimeout(_scrollThawT);
 			thawEmotes();
 			// The picker is the heaviest consumer of the emote renderer: it's
 			// the only surface that puts hundreds of distinct stickers on
@@ -329,7 +330,19 @@
 	// 400 -> 393, an upward one 93 -> 99. Reacting to that inverted the state
 	// every time. Wheel and touch deltas are what the user actually did, and no
 	// programmatic scroll can forge them.
+	// Scrolling freezes the emotes outright. A grid of looping Skottie cells
+	// and a scroll are both after the same frames, and the animation is the one
+	// nobody is looking at while the list is moving — this is what keeps a
+	// scroll through animated packs at full rate. They resume once it settles.
+	let _scrollThawT = null;
+	function holdForScroll() {
+		freezeEmotes();
+		clearTimeout(_scrollThawT);
+		_scrollThawT = setTimeout(() => thawEmotes(), 220);
+	}
+
 	function onAnyWheel(e) {
+		holdForScroll();
 		if (chrome === 'page') return;         // a swipe owns the chrome
 		if (e.deltaY > 0) setChrome('dim');
 		else if (e.deltaY < 0) setChrome('rest');
@@ -337,6 +350,7 @@
 	let _touchY = 0;
 	function onAnyTouchStart(e) { _touchY = e.touches?.[0]?.clientY ?? 0; }
 	function onAnyTouchMove(e) {
+		holdForScroll();
 		if (chrome === 'page') return;
 		const y = e.touches?.[0]?.clientY ?? 0;
 		const dy = _touchY - y;                // finger up = reading downward
@@ -469,7 +483,7 @@
 	});
 </script>
 
-<div class="expr-panel" style:--expr-tabs-mr={onBackspace ? 'calc(10px + 2.5rem + 8px)' : null}
+<div class="expr-panel"
      class:expr-panel-react={mode === 'react'} class:expr-dragging={dragging}
      onwheelcapture={onAnyWheel}
      ontouchstartcapture={onAnyTouchStart} ontouchmovecapture={onAnyTouchMove}
@@ -601,7 +615,9 @@
 
 <style>
 	.expr-panel {
-		--expr-tab-h: 2.4rem;
+		/* Matches the bottom nav's inset so the two islands line up. */
+		--nav-inset: 56px;
+		--expr-tab-h: 2.75rem;
 		display: flex;
 		flex-direction: column;
 		width: 340px;
@@ -677,7 +693,7 @@
 		.expr-tabs {
 			gap: 0.2rem;
 			padding: 3px;
-			margin: 4px var(--expr-tabs-mr, 10px) calc(6px + env(safe-area-inset-bottom, 0px)) 10px;
+			margin: 4px var(--nav-inset, 56px) calc(6px + env(safe-area-inset-bottom, 0px));
 			align-items: stretch;
 		}
 		/* --expr-tab-h is the single source for this height: the close button
@@ -689,7 +705,9 @@
 			border-radius: 999px;
 			border-bottom: none;
 		}
-		.expr-tab .msi { font-size: 21px; }
+		/* Same glyph size as the bottom nav (25px) — the icons match, there's
+		   just no label under them here. */
+		.expr-tab .msi { font-size: 25px; }
 		.expr-tab.active { border-bottom-color: transparent; }
 		.expr-tab-back { padding: 0 0.6rem; min-height: 3.7rem; border-radius: 16px; }
 	}
@@ -713,8 +731,10 @@
 		position: absolute;
 		left: 0; right: 0; bottom: 0;
 		z-index: 4;
-		/* Right margin clears the delete key's corner when one is present. */
-		margin: 4px var(--expr-tabs-mr, 10px) 8px 10px;
+		/* Same island geometry as the app's bottom nav: inset --nav-inset (56px)
+		   from each edge. The delete key lives in the band that inset leaves,
+		   so it needs no extra margin carved out of the rail. */
+		margin: 4px var(--nav-inset, 56px) 8px;
 		padding: 3px;
 		border-radius: 999px;
 		background: var(--sidebar-bg, var(--md-sys-color-surface-container, var(--surface-2)));
