@@ -731,5 +731,28 @@
 		.thread-panel { left: 0; right: 0; width: auto; border-left: none; }
 		/* The panel covers the app header, so it owns the notch itself. */
 		.thread-head { padding-top: calc(0.7rem + var(--native-top-inset, 0px)); }
+
+		/* Everything below matches chat's own mobile values. The panel had NO
+		   mobile overrides at all, so on a phone it was running desktop metrics
+		   next to a conversation that wasn't — which is most of why it read as a
+		   different surface however closely the desktop version matched. */
+
+		/* chat: .message-list { padding: 0.75rem 0.875rem } */
+		.thread-scroll { padding: 0.75rem 0.875rem; }
+
+		/* chat: .input-bar — tighter than desktop, and the safe-area inset is a
+		   max() rather than an addition, so there's no double gap on a phone
+		   without a home indicator. */
+		.thread-compose {
+			padding: 0.5rem 0.75rem;
+			padding-bottom: max(0.5rem, env(safe-area-inset-bottom, 0.5rem));
+			gap: 0.4rem;
+		}
+
+		/* chat: .compose-ce { font-size: 1rem }. Not cosmetic — iOS zooms the
+		   whole page when you focus an input under 16px, and FormattedInput's
+		   editor is 0.9rem. Replying in a thread was zooming the app; replying in
+		   the conversation never did. */
+		:global(.thread-fi .fi-ce) { font-size: 1rem; }
 	}
 </style>
