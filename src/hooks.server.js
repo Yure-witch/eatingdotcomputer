@@ -1,4 +1,34 @@
 export { handle } from './auth.js';
+import { getAdminDb } from '$lib/server/firebase-admin.js';
+
+/**
+ * Mirror server errors into RTDB at `dev/errors`, newest last, alongside the
+ * dev refresh switch.
+ *
+ * The 500 page already shows the message and stack to whoever hit it — but
+ * that only helps if the person looking at it can read it back to whoever is
+ * fixing it. Recording them makes a production 500 something that can be
+ * inspected directly instead of relayed, which matters most for the errors
+ * that only happen on a signed-in route or a real device.
+ *
+ * Strictly best-effort and deliberately swallow-everything: a diagnostic that
+ * can throw turns one failure into two, and it runs on the path where things
+ * are already going wrong.
+ */
+function recordError(status, event, err) {
+	try {
+		getAdminDb().ref('dev/errors').push({
+			at: Date.now(),
+			status: status ?? 500,
+			method: event?.request?.method ?? 'GET',
+			path: event?.url?.pathname ?? '',
+			message: String(err?.message ?? err ?? '').slice(0, 400),
+			code: err?.code ? String(err.code) : null,
+			// The first frames locate it; the rest is noise at this size.
+			frame: err?.stack ? String(err.stack).split('\n').slice(1, 4).join(' | ').slice(0, 400) : null
+		}).catch(() => {});
+	} catch { /* never let the recorder add a second failure */ }
+}
 
 /**
  * Surface real server-error details to the frontend (instead of SvelteKit's
@@ -15,6 +45,7 @@ export function handleError({ error, event, status, message }) {
 	const err = error instanceof Error ? error : null;
 	// Full detail in the server logs (terminal / hosting dashboard).
 	console.error(`\n[${status ?? 500}] ${event.request?.method ?? 'GET'} ${event.url?.pathname ?? ''}\n`, error);
+	recordError(status, event, err ?? error);
 
 	return {
 		message: err?.message || (typeof message === 'string' ? message : 'Internal Error'),
