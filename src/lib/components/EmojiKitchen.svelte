@@ -215,16 +215,22 @@
 	// Recent tab state (persisted in localStorage)
 	let recents = $state([]);
 
-	// Kitchen data (lazy loaded)
-	let kitchen = $state(null);
+	// Kitchen data (lazy loaded).
+	// $state.raw: this is the ~1.2 MB emoji-kitchen.json, assigned once and
+	// only ever read. A plain $state would deep-Proxy the whole structure, so
+	// every kitchen.data[...] / kitchen.cps lookup while building a mix would
+	// pay proxy overhead for no benefit — nothing here is ever mutated.
+	let kitchen = $state.raw(null);
 	let loading = $state(false);
 	let loadError = $state(null);
 
-	// Emoji names map (plain object: char -> name)
-	let namesObj = $state(null);
+	// Emoji names map (plain object: char -> name). Read-only, so raw.
+	let namesObj = $state.raw(null);
 
-	// CLDR index (order + keywords) from emoji-data.json — see preload()
-	let cldr = $state(null);
+	// CLDR index (order + keywords) from emoji-data.json — see preload().
+	// raw: it holds Maps, which a $state proxy handles especially poorly, and
+	// it is swapped in wholesale exactly once.
+	let cldr = $state.raw(null);
 
 	// Mode: 'popular' | 'recent' | 'mix' | 'browse' | 'search' | 'gboard' | 'emojimix' | 'funbox' | 'settings'
 	let mode = $state('popular');

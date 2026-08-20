@@ -68,6 +68,18 @@ function parseCSVRow(line) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Parse the ordering column: "1F600 ; fully-qualified # 😀 grinning face"
 // ─────────────────────────────────────────────────────────────────────────────
+// "1FAA1" / "1F1E6 1F1E8" -> the glyph those codepoints spell. Returns '' if
+// the column isn't parseable as hex codepoints.
+function codepointToGlyph(codepoint) {
+	try {
+		const cps = String(codepoint).trim().split(/\s+/).filter(Boolean).map((h) => parseInt(h, 16));
+		if (!cps.length || cps.some((n) => !Number.isFinite(n))) return '';
+		return String.fromCodePoint(...cps);
+	} catch {
+		return '';
+	}
+}
+
 function parseOrdering(s) {
 	if (!s || !s.includes(' # ')) return null;
 	const hi = s.indexOf(' # ');
@@ -86,8 +98,27 @@ function parseOrdering(s) {
 	// The emoji glyph ends at the first ASCII space; "E15.1 " version tag is optional.
 	const spaceAt = after.indexOf(' ');
 	if (spaceAt === -1) return null;
-	const emoji = after.slice(0, spaceAt);
-	const rest  = after.slice(spaceAt + 1).replace(/^E\d+\.\d+ /, '').trim();
+	let emoji = after.slice(0, spaceAt);
+	let rest  = after.slice(spaceAt + 1).replace(/^E\d+\.\d+ /, '').trim();
+
+	// Guard: the leading token is only the glyph if it actually looks like one.
+	// When a source line is missing its glyph AND its version tag, `after` is
+	// just the name, and the slice above happily takes the name's first word as
+	// the emoji — which is how U+1FAA1 shipped as {e:"sewing", n:"needle"} and
+	// broke the picker's grid (a text cell is far wider than a glyph cell).
+	// The codepoint column is authoritative, so rebuild from it and give the
+	// whole comment back to the name.
+	if (/[A-Za-z]/.test(emoji)) {
+		const rebuilt = codepointToGlyph(codepoint);
+		if (rebuilt) {
+			rest = after.replace(/^E\d+\.\d+ /, '').trim();
+			emoji = rebuilt;
+			console.warn(`WARN: no glyph in comment for ${codepoint}; rebuilt from codepoint (name: "${rest}")`);
+		} else {
+			console.warn(`WARN: no glyph and unusable codepoint for ${codepoint}; skipping`);
+			return null;
+		}
+	}
 
 	return { codepoint, qualifier, emoji, name: rest };
 }

@@ -5,6 +5,18 @@
 
 	// cp → name index, memoised for the page (see applyEmojiData below).
 	let _cpToName = null;
+
+	// Variant classification is pure per emoji and each call splits every one of
+	// the item's variant codepoints, so it's memoised by cp for the page.
+	// resolveEmoji asks for it up to twice per item, over ~1700 items.
+	const _variantKind = new Map();
+
+	// Fully-resolved group sections, cached across mounts. Resolving every
+	// group is the single most expensive thing the picker does (~30ms for 1783
+	// items) and it depends only on the dataset plus the user's tone/gender/
+	// per-emoji selections — none of which change while the picker is closed.
+	// Without this cache every single open paid the full 30ms again.
+	let _groupsCache = { key: null, data: null, value: null };
 </script>
 
 <script>
@@ -31,7 +43,13 @@
 	const DIR_SELECTIONS_KEY  = 'emoji-dir-sel';  // { [cp]: 'left' | 'right' }
 	const MAX_RECENT = 40;
 
-	let data         = $state(null);
+	// $state.raw, NOT $state: the dataset is ~1700 items deep and is only ever
+	// swapped wholesale, never mutated. A plain $state would wrap the whole
+	// thing in a deep Proxy, so every item read while resolving the grid went
+	// through a proxy trap — and because each mount got its OWN proxy over the
+	// same shared object, identity comparisons against the cached copy could
+	// never match (Svelte warns: state_proxy_equality_mismatch).
+	let data         = $state.raw(null);
 	let loading      = $state(true);
 	let query        = $state('');
 	let activeGroup  = $state(-1);  // -2 = popular, -1 = recent, 0..N-1 = group index (all flow inline)
@@ -128,6 +146,13 @@
 
 	function classifyVariants(item) {
 		if (!item?.t?.length) return 'simple';
+		const memo = _variantKind.get(item.cp);
+		if (memo !== undefined) return memo;
+		const kind = _classifyVariantsUncached(item);
+		_variantKind.set(item.cp, kind);
+		return kind;
+	}
+	function _classifyVariantsUncached(item) {
 		if (item.t.some(v => v.cp.includes('27A1'))) return 'directional';
 		// Dual-tone: at least one variant carries 2 skin-tone codepoints
 		if (item.t.some(v => v.cp.split(' ').filter(p => TONE_SET_D.has(p)).length === 2)) return 'dual';
@@ -748,20 +773,33 @@
 			sections.push({ groupIdx: -2, name: 'Popular', icon: '⭐', items, cellStart: cellOffset });
 			cellOffset += items.length;
 		}
-		for (let i = 0; i < data.groups.length; i++) {
-			const grp = data.groups[i];
-			const items = grp.items.map((item) => ({ item, e: resolveEmoji(item, t, g, ds, dirs) }));
-			sections.push({
-				groupIdx: i,
-				name: grp.name,
-				icon: grp.icon,
-				items,
-				cellStart: cellOffset
-			});
-			cellOffset += items.length;
+		// Groups come from the cross-mount cache; only their cellStart depends
+		// on what Recent/Popular contributed above, so that's the one field
+		// recomputed here. The cached `items` arrays are shared, not copied.
+		for (const gs of resolvedGroupSections(data, t, g, ds, dirs)) {
+			sections.push({ ...gs, cellStart: cellOffset });
+			cellOffset += gs.items.length;
 		}
 		return sections;
 	});
+
+	// Resolve every group's items for the current tone/gender/per-emoji
+	// selections. This is ~1700 resolveEmoji calls — the picker's single
+	// biggest cost — and the inputs only change when the user picks a new
+	// skin tone or variant, so the result is cached at module scope and
+	// survives the picker being closed and reopened.
+	function resolvedGroupSections(d, t, g, ds, dirs) {
+		const key = `${t}|${g}|${JSON.stringify(ds)}|${JSON.stringify(dirs)}`;
+		if (_groupsCache.data === d && _groupsCache.key === key) return _groupsCache.value;
+		const value = d.groups.map((grp, i) => ({
+			groupIdx: i,
+			name: grp.name,
+			icon: grp.icon,
+			items: grp.items.map((item) => ({ item, e: resolveEmoji(item, t, g, ds, dirs) }))
+		}));
+		_groupsCache = { key, data: d, value };
+		return value;
+	}
 
 	// Grid geometry — must match the CSS layout below (the grid
 	// declares `grid-template-columns: repeat(9, 36px)`). The
@@ -1422,7 +1460,15 @@
 		/* Fill the full width — 9 flexible columns (was 9 FIXED 36px ones that
 		   clustered in a centred block) with a little gap, so the emoji spread
 		   evenly edge to edge. */
-		grid-template-columns: repeat(9, 1fr);
+		/* minmax(0, 1fr), not plain 1fr: a bare `1fr` track still refuses to
+		   shrink below its content's min-content width, so ONE cell with
+		   unusually wide content stretches the whole grid past the panel and
+		   the picker starts scrolling sideways. Flooring the track at 0 keeps
+		   the 9 columns pinned to the panel width no matter what lands in a
+		   cell. (The trigger was a dataset entry whose glyph was the literal
+		   text "sewing" — fixed in emoji-data.json — but the layout should not
+		   depend on every one of ~1700 cells being exactly one glyph wide.) */
+		grid-template-columns: repeat(9, minmax(0, 1fr));
 		justify-content: stretch;
 		gap: 3px;
 		padding: 0 2px;
@@ -1453,6 +1499,10 @@
 		transition: background 0.08s;
 		padding: 0;
 		position: relative;
+		/* Belt to the grid's minmax braces: clip anything that doesn't fit a
+		   cell instead of letting it push the track wider. */
+		overflow: hidden;
+		min-width: 0;
 	}
 	.cell:hover { background: var(--surface-2); }
 	.cell:active { background: #e5dfd7; }
