@@ -38,6 +38,10 @@ export async function POST({ request, locals }) {
 	// This ensures Firebase is the authoritative source so the toggle reads and writes
 	// consistent state — without this, a Turso-only reaction looks "absent" to Firebase
 	// and gets added instead of removed, and the client merge loses other users' reactions.
+	// Firebase is the live source of truth for a reaction; Turso is the archive
+	// it lands in later. So every Turso step here is best-effort — a table that
+	// isn't there (migration 061 unapplied) must not stop the reaction itself.
+	try {
 	if (turso) {
 		const msgRow = await turso.execute({
 			sql: `SELECT id FROM ${msgTable} WHERE id = ?`,
@@ -65,6 +69,9 @@ export async function POST({ request, locals }) {
 			}
 		}
 	}
+	} catch (err) {
+		console.warn('[react] archive pre-sync skipped', err?.message ?? err);
+	}
 
 	// Toggle: check Firebase state (now authoritative after any Turso sync above)
 	const snap = await adminDb.ref(reactionPath).get();
@@ -77,6 +84,7 @@ export async function POST({ request, locals }) {
 	}
 
 	// Keep Turso in sync for archived messages
+	try {
 	if (turso) {
 		const msgRow = await turso.execute({
 			sql: `SELECT id FROM ${msgTable} WHERE id = ?`,
@@ -95,6 +103,9 @@ export async function POST({ request, locals }) {
 				});
 			}
 		}
+	}
+	} catch (err) {
+		console.warn('[react] archive write skipped', err?.message ?? err);
 	}
 
 	// Notification fan-out: only when ADDING (not removing) a reaction

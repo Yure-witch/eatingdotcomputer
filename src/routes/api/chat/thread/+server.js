@@ -56,17 +56,26 @@ export async function GET({ url, locals }) {
 	// without caring which side a given reply came from.
 	const ids = result.rows.map((r) => String(r.id));
 	const rxByMsg = {};
+	// Best-effort. RTDB is where thread reactions live and Turso is the archive
+	// behind it, so if this table isn't there yet — a database that hasn't had
+	// migration 061 applied, most likely — the thread must still open, with live
+	// reactions intact and only the archived ones missing. It used to throw here
+	// and take the whole request down with it.
 	if (ids.length) {
-		const rx = await db.execute({
-			sql: `SELECT message_id, emoji, user_id FROM thread_message_reactions
-			      WHERE message_id IN (${ids.map(() => '?').join(',')})`,
-			args: ids
-		});
-		for (const r of rx.rows) {
-			const mid = String(r.message_id);
-			const em = String(r.emoji);
-			(rxByMsg[mid] ??= {})[em] ??= {};
-			rxByMsg[mid][em][String(r.user_id)] = true;
+		try {
+			const rx = await db.execute({
+				sql: `SELECT message_id, emoji, user_id FROM thread_message_reactions
+				      WHERE message_id IN (${ids.map(() => '?').join(',')})`,
+				args: ids
+			});
+			for (const r of rx.rows) {
+				const mid = String(r.message_id);
+				const em = String(r.emoji);
+				(rxByMsg[mid] ??= {})[em] ??= {};
+				rxByMsg[mid][em][String(r.user_id)] = true;
+			}
+		} catch (err) {
+			console.warn('[thread] archived reactions unavailable', err?.message ?? err);
 		}
 	}
 
