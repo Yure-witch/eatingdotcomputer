@@ -100,7 +100,24 @@
 	// (360 px content / 44 ≈ 8), giving a clean 3×8 = 24-cell viewport
 	// with no buffer. Keeps Skottie active animations bounded to 24,
 	// which is well within iOS WebGPU's per-page GPU budget.
-	const CELL_PX = _IS_COARSE ? 44 : 36;
+	// Nine columns, like the emoji keyboard — the cell pitch follows from that
+	// rather than the other way round. It used to be a fixed 44px on touch,
+	// which divided into a 375px sheet 8 times and left an emote sized for a
+	// 36px cell floating in a 44px one: fewer, smaller-looking emotes than the
+	// emoji grid right next to it. Deriving the pitch lands at ~40.8px on a
+	// phone and ~36.9px in the 340px desktop popover (which is what the old
+	// desktop constant already was).
+	const COLS = 9;
+	const CELL_FALLBACK = _IS_COARSE ? 40 : 36;
+	// Rendered emote size inside the cell. Measured against the emoji keyboard
+	// it sits beside: an emoji there has 25x29px of ink (font-size 24.8px) in a
+	// 37.66px cell, while these were drawn at 24px in a 40px cell — visibly the
+	// smaller of the two. 28 matches the emoji's ink height closely.
+	// Deliberately a CONSTANT, not derived from the cell: `size` feeds the
+	// raster resolution (size x dpr x oversample), which keys the renderer's
+	// atlases, so a width-dependent size would spawn a new atlas per viewport
+	// width — exactly the accumulation the memory work just capped.
+	const STICKER_PX = 28;
 	const GRID_PAD_X = 4;          // 0.25rem padding on .tg-grid-wrap each side (matches regular picker)
 	// Buffer ≈ 3 rows each side. Smaller cells mean more cells/row, so a
 	// large buffer can balloon active spritesheet memory. 3 is enough to
@@ -482,9 +499,15 @@
 	// horizontal padding, but the grid inside lays out against the
 	// padding-deducted inner width. Subtract it or we overcount cells per
 	// row and unmount the leading edge of the viewport.
-	const cellsPerRow = $derived(
-		Math.max(1, Math.floor((gridW - GRID_PAD_X * 2) / CELL_PX))
+	// Pitch derived from the column count, floored so rows stay on whole pixels
+	// (the virtualization multiplies it by row index — a fractional pitch drifts
+	// the further down you scroll).
+	const CELL_PX = $derived(
+		gridW > 0
+			? Math.max(24, Math.floor((gridW - GRID_PAD_X * 2) / COLS))
+			: CELL_FALLBACK
 	);
+	const cellsPerRow = $derived(COLS);
 	function measureGrid() {
 		if (!gridWrapEl) return;
 		gridH = gridWrapEl.clientHeight;
@@ -692,7 +715,7 @@
 		{:else if isStandalone(active) || search.trim()}
 			<!-- Standalone view: Effects, Custom, or active search.
 			     Single flat grid, index-virtualized against scrollTop. -->
-			<div class="tg-grid" bind:this={gridEl}>
+			<div class="tg-grid" bind:this={gridEl} style:--tg-cell="{CELL_PX}px">
 				{#each filteredItems as it, i (it.custom ? `c:${it.id}` : it.cp + ':' + i)}
 					<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 					<div class="tg-cell" class:tg-cell-hidden={_showHidden && _isCellHidden(it)}
@@ -702,10 +725,10 @@
 						onclick={() => cellAction(it)}>
 						{#if i >= visibleStart && i < visibleEnd}
 							{#if it.custom}
-								<LottieSticker short={it.short} id={it.id} size={24} mode="visible" staticOnly={_static}
+								<LottieSticker short={it.short} id={it.id} size={STICKER_PX} mode="visible" staticOnly={_static}
 									ignoreHidden={_showHidden} root={gridWrapEl} title={it.alt} />
 							{:else}
-								<LottieSticker cp={it.cp} flag={it.flag} size={24} mode="visible" staticOnly={_static}
+								<LottieSticker cp={it.cp} flag={it.flag} size={STICKER_PX} mode="visible" staticOnly={_static}
 									ignoreHidden={_showHidden} root={gridWrapEl} title={it.e} />
 							{/if}
 						{/if}
@@ -734,7 +757,7 @@
 			{@const _cpr = Math.max(1, cellsPerRow)}
 			{@const _cellVisTop = scrollTop - CELL_PX * 2}
 			{@const _cellVisBot = scrollTop + (gridH + CELL_PX * 2) * _fillFrac}
-			<div class="tg-grid tg-grid-flow" bind:this={gridEl} style:height="{totalHeight}px">
+			<div class="tg-grid tg-grid-flow" bind:this={gridEl} style:height="{totalHeight}px" style:--tg-cell="{CELL_PX}px">
 				{#each flowingSections as section, sIdx (section.key)}
 					{@const geo = flowingGeometry[sIdx]}
 					{@const sectionVisible = geo
@@ -767,10 +790,10 @@
 										onclick={() => cellAction(it)}>
 										{#if _cellLive}
 											{#if it.custom}
-												<LottieSticker short={it.short} id={it.id} size={24} mode="visible" staticOnly={_static}
+												<LottieSticker short={it.short} id={it.id} size={STICKER_PX} mode="visible" staticOnly={_static}
 													ignoreHidden={_showHidden} root={gridWrapEl} title={it.alt} />
 											{:else}
-												<LottieSticker cp={it.cp} flag={it.flag} size={24} mode="visible" staticOnly={_static}
+												<LottieSticker cp={it.cp} flag={it.flag} size={STICKER_PX} mode="visible" staticOnly={_static}
 													ignoreHidden={_showHidden} root={gridWrapEl} title={it.e} />
 											{/if}
 										{/if}
@@ -836,12 +859,9 @@
 			border-radius: 14px 14px 0 0;
 			box-shadow: 0 -4px 24px rgba(0,0,0,0.18);
 		}
-		/* Bigger cell pitch on mobile (44 px) — keep the rendered
-		   sprite/canvas sized to match so emoji don't look squished. */
-		:global(.tg-cell) {
-			width: 44px !important;
-			height: 44px !important;
-		}
+		/* Cell size comes from --tg-cell (derived from the 9-column count) on
+		   every breakpoint now — this used to hard-pin 44px here, which is
+		   what forced 8 columns on a phone. */
 		/* Keep the footer on mobile so the render-engine toggle is
 		   reachable in the iOS PWA (no hover/devtools there) — but compact
 		   it: drop the status text and make the toggle a tappable chip so
@@ -948,7 +968,7 @@
 		flex-wrap: wrap;
 		gap: 0;
 	}
-	.tg-cell { width: 36px; height: 36px; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.12s; }
+	.tg-cell { width: var(--tg-cell, 36px); height: var(--tg-cell, 36px); border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.12s; }
 	.tg-cell:hover { background: var(--surface-2); }
 	/* Moderation: a hidden emote shown to the instructor is dimmed + struck. */
 	.tg-cell-hidden { position: relative; opacity: 0.4; }
