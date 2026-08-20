@@ -682,13 +682,13 @@
 	.expr-panel {
 		/* Matches the bottom nav's inset so the two islands line up. */
 		--nav-inset: 56px;
-		--expr-tab-h: 2.75rem;
+		--expr-tab-h: 3.6rem;   /* 1.3x */
 		/* Outer height of the rail: the tab row plus its 3px padding and 1px
 		   border on each side. The delete key reads the same value so the two
 		   are literally the same height rather than two numbers kept in sync
 		   by hand. */
 		--expr-rail-h: calc(var(--expr-tab-h) + 8px);
-		--expr-slot-w: 3rem;
+		--expr-slot-w: 3.9rem;  /* 1.3x */
 		/* Shared bottom offset — these used to differ (6px vs 8px), so the two
 		   surfaces sat on different baselines. */
 		--expr-rail-bottom: 8px;
@@ -768,7 +768,7 @@
 		.expr-tabs {
 			gap: 0.2rem;
 			padding: 3px;
-			margin: 4px var(--nav-inset, 56px) var(--expr-rail-bottom);
+			margin: 4px 0 var(--expr-rail-bottom) var(--nav-inset, 56px);
 			align-items: stretch;
 		}
 		/* --expr-tab-h is the single source for this height: the close button
@@ -782,7 +782,7 @@
 		}
 		/* Same glyph size as the bottom nav (25px) — the icons match, there's
 		   just no label under them here. */
-		.expr-tab .msi { font-size: 25px; }
+		.expr-tab .msi { font-size: 32px; }
 		.expr-del {
 		position: absolute;
 		bottom: var(--expr-rail-bottom);
@@ -790,7 +790,7 @@
 		   so this sits in that band, aligned with it rather than inside it. */
 		right: 6px;
 		z-index: 5;
-		width: 3rem;
+		width: var(--expr-slot-w);
 		height: var(--expr-rail-h);
 		box-sizing: border-box;
 		display: inline-flex;
@@ -810,7 +810,7 @@
 		transition: opacity 0.11s ease;
 		will-change: opacity;
 	}
-	.expr-del :global(.msi) { font-size: 25px; }
+	.expr-del :global(.msi) { font-size: 32px; }
 	.expr-del.chrome-dim { opacity: 0.5; }
 	.expr-tab.active { border-bottom-color: transparent; }
 		.expr-tab-back { padding: 0 0.6rem; min-height: 3.7rem; border-radius: 16px; }
@@ -834,7 +834,12 @@
 		   behind it. The panes' scrollers get matching bottom padding (below)
 		   so the last row can still be scrolled clear of it. */
 		position: absolute;
-		left: 0; right: 0; bottom: 0;
+		/* Content-width: `right: 0` stretched the pill across the whole inset
+		   span, and with the icons grouped left that trailing space was just
+		   empty pill. Anchored left at the nav inset, it now ends where the
+		   icons do. */
+		left: 0; bottom: 0;
+		width: fit-content;
 		z-index: 4;
 		/* Same island geometry as the app's bottom nav: inset --nav-inset (56px)
 		   from each edge. The delete key lives in the band that inset leaves,
