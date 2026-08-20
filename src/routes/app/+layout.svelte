@@ -788,19 +788,6 @@
 	// How long the layer takes to run off-screen on commit. The route change
 	// unmounts the layer, so we hold the goto until the slide is done — otherwise
 	// it vanishes mid-flight (which is what a "flash" on exit actually was).
-	// ── Swipe diagnostics ───────────────────────────────────────────────
-	// Off unless asked for. Two ways in, because the native iOS shell has no
-	// address bar to type a query string into:
-	//   • ?swipedbg=1 on any /app URL (sticks for the tab) — browsers
-	//   • RTDB `dev/swipeDebug` = true — everywhere, including the installed app
-	// Writes only at gesture MILESTONES, never per frame, so switching it on
-	// doesn't change the thing it's measuring.
-	let _swDbg = $state(false);
-	let _dbgLines = $state([]);
-	function _dbg(msg) {
-		if (!_swDbg) return;
-		_dbgLines = [msg, ..._dbgLines].slice(0, 7);
-	}
 	const CONV_EXIT_MS = 190;
 	// Travel that counts as "leave this chat". Inherited from the gesture this
 	// replaced, where it was the rule that felt right.
@@ -873,8 +860,6 @@
 		_freezeEmotes(false);
 	}
 	let _swLastDx = 0, _swVelX = 0, _swPrevX = 0, _swPrevT = 0, _swStartT = 0;
-	let _dbgMoveNoted = false;
-	let _mvCount = 0; // touchmoves seen this gesture, counted before any guard
 	let _swDir = 1; // +1 = left→right (back to the chat menu), -1 = right→left (on to the next section)
 	// Which panel a given direction uncovers.
 	const _beneathFor = (dir) => (dir > 0 ? _chatMenuIdx : _afterChatIdx);
@@ -897,13 +882,13 @@
 	function onSwipeStart(e) {
 		// A drag already in flight owns the gesture — later touches are noise.
 		// So does an exit that has already committed: it runs to the route change.
-		if (_swArmed) { _dbg('start: ignored (drag in flight)'); return; }
-		if (_convCommitted) { _dbg('start: ignored (exit committed)'); return; }
-		if (window.innerWidth > 640) { _dbg('start: no (wide)'); _disarmSwipe(); return; }
+		if (_swArmed) { return; }
+		if (_convCommitted) { return; }
+		if (window.innerWidth > 640) { _disarmSwipe(); return; }
 		// Pager routes drive their own native scroll-snap gestures.
-		if (isPagerActive) { _dbg('start: no (pager route)'); _disarmSwipe(); return; }
+		if (isPagerActive) { _disarmSwipe(); return; }
 		// Only chat surfaces (and a chat still painting its skeleton) swipe out.
-		if (!_onChatSurfaceMobile && !_showConvSkeleton) { _dbg('start: no (not a chat)'); _disarmSwipe(); return; }
+		if (!_onChatSurfaceMobile && !_showConvSkeleton) { _disarmSwipe(); return; }
 		// The touch that just went DOWN — `touches[0]` is whatever is first in the
 		// list, which is not the same thing if any other contact is still
 		// registered. Tracking the wrong one meant following a finger that never
@@ -914,7 +899,7 @@
 		const t = e.changedTouches?.[0] ?? e.touches?.[0];
 		if (!t) { _disarmSwipe(); return; }
 		// Don't hijack the compose / sliders / horizontal scrollers / pickers.
-		if (e.target?.closest?.('.input-area, .send-wrap, .sz-capture, input[type="range"], .text-typo-bar, .expr-panel, .picker-popover, .compose-picker-pop')) { _dbg('start: no (compose/picker)'); _disarmSwipe(); return; }
+		if (e.target?.closest?.('.input-area, .send-wrap, .sz-capture, input[type="range"], .text-typo-bar, .expr-panel, .picker-popover, .compose-picker-pop')) { _disarmSwipe(); return; }
 		// Deliberately NOT cancelling a pending _endConvSlide here. A touch that
 		// turns into a real drag cancels it below, once it's actually taking over;
 		// a touch that turns out to be a tap or a vertical scroll must leave the
@@ -925,31 +910,24 @@
 		_swStartX = t.clientX; _swStartY = t.clientY;
 		_swStartT = e.timeStamp ?? 0;
 		_swPrevX = t.clientX; _swPrevT = e.timeStamp; _swVelX = 0;
-		_swArmed = true; _swDecided = false; _dbgMoveNoted = false; _mvCount = 0;
-		_dbg('start: armed');
+		_swArmed = true; _swDecided = false;
 	}
 	function onSwipeMove(e) {
 		try { _onSwipeMoveInner(e); }
-		catch (err) { _dbg('ERR mv: ' + (err?.message ?? err)); }
+		catch (err) { console.warn('[chat swipe] move handler threw', err); }
 	}
 	function _onSwipeMoveInner(e) {
-		_mvCount++; // counted before every guard, so "did moves arrive at all?" is answerable
-		if (!_swArmed || _convCommitted) {
-			// Once per gesture — enough to see WHY moves are being ignored without
-			// flooding the readout.
-			if (!_dbgMoveNoted) { _dbgMoveNoted = true; _dbg(`move ignored: armed=${_swArmed ? 1 : 0} committed=${_convCommitted ? 1 : 0}`); }
-			return;
-		}
+		// Not our gesture, or an exit already committed and running to its route.
+		if (!_swArmed || _convCommitted) return;
 		// Only our finger drives it; another one moving is not this gesture. If the
 		// tracked id has gone missing but exactly one finger is down, that finger
 		// IS the gesture — adopt it rather than stalling forever.
 		let t = _trackedTouch(e.touches);
 		if (!t && e.touches?.length === 1) {
 			t = e.touches[0];
-			_dbg(`adopt: id ${_swTouchId} -> ${t.identifier}`);
 			_swTouchId = t.identifier;
 		}
-		if (!t) { _dbg(`move: no tracked touch (${e.touches?.length ?? 0} down)`); return; }
+		if (!t) { return; }
 		const dx = t.clientX - _swStartX, dy = t.clientY - _swStartY, W = window.innerWidth || 1;
 		_swLastDx = dx;
 		// Instantaneous horizontal velocity (px/ms) — lets a quick FLICK commit
@@ -959,7 +937,7 @@
 		_swPrevX = t.clientX; _swPrevT = e.timeStamp;
 		if (!_swDecided) {
 			if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
-			if (Math.abs(dy) >= Math.abs(dx)) { _dbg(`bail: vertical dx=${dx|0} dy=${dy|0}`); _disarmSwipe(); return; } // vertical → scroll
+			if (Math.abs(dy) >= Math.abs(dx)) { _disarmSwipe(); return; } // vertical → scroll
 			_swDecided = true;
 			_swDir = dx > 0 ? 1 : -1;
 			// State that MUST be true for the rest of the gesture goes first. It
@@ -972,16 +950,15 @@
 			_convSliding = true; _convDragging = true;
 			clearTimeout(_convExitT); // this drag owns the settle now
 			_convSettling = false;
-			_dbg(`decide: dir=${_swDir} -> panel ${_beneathFor(_swDir)}`);
 			// Preparation, not preconditions: putting the destination behind the
 			// layer and parking the emotes are both worth doing and neither is
 			// worth losing the gesture over.
 			try {
 				_parkBeneath(_beneathFor(_swDir));
-			} catch (err) { _dbg('ERR park: ' + (err?.message ?? err)); }
+			} catch (err) { console.warn('[chat swipe] parkBeneath threw', err); }
 			try {
 				_freezeEmotes(true);
-			} catch (err) { _dbg('ERR emotes: ' + (err?.message ?? err)); }
+			} catch (err) { console.warn('[chat swipe] freezeEmotes threw', err); }
 			_setConvDrag(0);
 		}
 		// Reversing mid-drag switches which side you're uncovering — re-park while
@@ -1020,7 +997,6 @@
 		// two-swipe exit — the gesture was being rejected, not dropped.
 		const flicked = Math.abs(_swVelX) > 0.4 && Math.sign(_swVelX) === dir;
 		const go = Math.abs(_swLastDx) >= COMMIT_PX || flicked;
-		_dbg(`end: dx=${_swLastDx | 0} v=${_swVelX.toFixed(2)} ${go ? 'COMMIT' : 'cancel'}`);
 		if (go) { _exitChatSurface(dir); return; }
 		_setConvDrag(0); // cancelled — slide back into place
 		clearTimeout(_convExitT);
@@ -1041,7 +1017,6 @@
 		// arrived, whether the gesture survived to the release, and what the touch
 		// lists actually looked like — the three things every silent path has been
 		// hiding.
-		_dbg(`${e?.type ?? 'end'}: mv=${_mvCount} armed=${_swArmed ? 1 : 0} dec=${_swDecided ? 1 : 0} left=${e?.touches?.length ?? 0} ch=${e?.changedTouches?.length ?? 0}`);
 		// Another finger lifting is not our release — but "no fingers left" always
 		// is, whatever the identifiers say. Without that second clause a mismatch
 		// strands the gesture armed, and the next swipe inherits its origin.
@@ -1062,7 +1037,6 @@
 				const horiz = Math.abs(dx) > Math.abs(dy);
 				const far = Math.abs(dx) >= COMMIT_PX;
 				const fast = Math.abs(v) > 0.25;
-				_dbg(`${e?.type ?? 'end'}: undecided dx=${dx | 0} dy=${dy | 0} v=${v.toFixed(2)}${horiz && (far || fast) ? ' RESCUE' : ''}`);
 				if (horiz && (far || fast)) {
 					_swArmed = false;
 					_swTouchId = null;
@@ -1082,7 +1056,6 @@
 		_swDir = dir;
 		const idx = _beneathFor(dir);
 		const route = PANELS[idx]?.route ?? '/app/chat';
-		_dbg(`exit: dir=${dir} -> ${route}`);
 		_parkBeneath(idx);
 		clearTimeout(_convExitT);
 		clearTimeout(_pagerSnapT);
@@ -1102,7 +1075,6 @@
 				_holdMounts();
 				requestAnimationFrame(() => {
 					goto(route, { noScroll: true, keepFocus: true }).then(() => {
-						_dbg(`landed: ${$page.url.pathname}`);
 						_endConvSlide();
 						_repinPager(idx, 0);
 					});
@@ -1321,18 +1293,6 @@
 			try { localStorage.setItem(KEY, now); } catch { /* private mode */ }
 			if (seen === null || seen === now) return; // first sight, or unchanged
 			hardRefresh();
-		});
-	}
-	// The debug readout, flipped from the console. Lives under the same `dev`
-	// node, which is already `.read: auth != null` with no write rule below it —
-	// so this needs no rules change and, like refreshNeeded, only the Admin SDK or
-	// the console can set it.
-	let _swipeDbgUnsub = null;
-	function watchSwipeDebug() {
-		if (typeof window === 'undefined' || _swipeDbgUnsub) return;
-		_swipeDbgUnsub = onValue(ref(rtdb, 'dev/swipeDebug'), (snap) => {
-			const on = snap.val() === true || snap.val() === 1 || snap.val() === 'true';
-			if (on !== _swDbg) { _swDbg = on; if (!on) _dbgLines = []; }
 		});
 	}
 	// Best-effort: every step is optional and the reload happens regardless, so a
@@ -1831,11 +1791,6 @@
 	afterNavigate(() => { presencePing(); });
 
 	onMount(async () => {
-		try {
-			if ($page.url.searchParams.has('swipedbg')) sessionStorage.setItem('swipedbg', '1');
-			_swDbg = sessionStorage.getItem('swipedbg') === '1';
-		} catch { /* private mode — just stays off */ }
-
 
 		// Load the emote manifests so chat-list previews can resolve emote thumb
 		// URLs (TG / custom packs / custom emoji). Bump _prevVer when each lands so
@@ -1962,7 +1917,6 @@
 				.then((m) => m.initThemeSync(data.currentUser.id))
 				.catch(() => {});
 			watchDevRefresh();
-			watchSwipeDebug();
 		}
 
 		// Presence write — per-device so two simultaneous logins don't clobber each other
@@ -2710,14 +2664,6 @@
 	<ConvSkeleton slide />
 {/if}
 
-{#if _swDbg}
-	<!-- Gesture readout (?swipedbg=1). Pointer-transparent so it can't be part
-	     of what it's reporting on. -->
-	<div class="swipe-dbg">
-		{#each _dbgLines as line, i (i + line)}<div class:latest={i === 0}>{line}</div>{/each}
-	</div>
-{/if}
-
 <!-- Global app header. Lives in the layout so it's identical on every
      /app/* page (Home, Atlas, Lab, Manage, Files, Chat, Theme, Profile)
      — wordmark + class switcher + theme switcher + user menu. Per-page
@@ -3278,21 +3224,6 @@
 		/* Default margin matches sidebar width; overridden by inline style when collapsed */
 		.app-shell { margin-left: var(--sidebar-width); transition: margin-left 0.2s ease; }
 	}
-
-	.swipe-dbg {
-		position: fixed;
-		top: calc(var(--header-h, 52px) + 6px);
-		left: 6px;
-		z-index: 3000;
-		pointer-events: none;
-		font: 600 10px/1.45 ui-monospace, monospace;
-		color: #fff;
-		background: rgba(0,0,0,0.72);
-		padding: 5px 7px;
-		border-radius: 7px;
-		max-width: 78vw;
-	}
-	.swipe-dbg .latest { color: #7dff9b; }
 
 	/* ── Toasts ── */
 	.toast-stack {
