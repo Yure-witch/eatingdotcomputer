@@ -377,7 +377,15 @@
 	const AFTER_LEAD_PACKS = ['MadEmoji', 'MadEmoji2', 'HeartEmoji'];
 	const EFFECTS_KEY = 'Effects';
 	const flowingCats = $derived.by(() => {
-		const rest = packCats.map((c) => ({ key: c.key, label: c.label, icon: null, pack: c.pack }));
+		// Static packs are labelled as such: they sit among animated ones and
+		// look identical at rest, so without it there's no way to tell which
+		// will actually move when sent.
+		const rest = packCats.map((c) => ({
+			key: c.key,
+			label: c.pack && isStaticPack(c.pack.short) ? `${c.label} (static)` : c.label,
+			icon: null,
+			pack: c.pack
+		}));
 		const take = (short) => {
 			const i = rest.findIndex((c) => c.pack?.short === short);
 			return i >= 0 ? rest.splice(i, 1)[0] : null;
@@ -755,31 +763,31 @@
 				type="search" placeholder="Search emotes…" autocomplete="off" spellcheck="false" />
 		{:else}
 		<div class="tg-tabs" bind:this={tabsEl}>
-			{#if _uploadItems.length}
-				<!-- Uploads lead the flow, so they lead the rail. Icon is the
-				     first uploaded emote itself rather than a generic glyph —
-				     it's the section's own artwork, the way pack tabs use their
-				     first sticker. Highlights via the same `active` the scroll
-				     sync drives, so it lights up when you scroll into it. -->
-				<button class="tg-tab tg-tab-upload" class:active={active === UPLOADS_KEY}
-					title={uploadsLabel} onclick={() => goToTab(UPLOADS_KEY)}>
-					<img class="tg-tab-upload-img" src={_uploadItems[0].url}
-						alt={uploadsLabel} width="22" height="22" loading="eager" decoding="async" />
-				</button>
-			{/if}
-			{#each headCats as cat (cat.key)}
-				<button class="tg-tab" class:active={active === cat.key} title={cat.label} onclick={() => goToTab(cat.key)}>{cat.icon}</button>
-			{/each}
-			{#each packCats as cat (cat.key)}
-				<button class="tg-tab tg-tab-pack" class:active={active === cat.key} title={cat.label} onclick={() => goToTab(cat.key)}>
-					<!-- Tab icons live outside the grid's scroll content (the
-					     Skottie stage host), so force them onto the rlottie
-					     engine so they animate in both engine modes. `eager`
-					     skips the 150 ms scroll-settle delay so they spring
-					     to life the moment the picker opens. -->
-					<LottieSticker short={cat.pack.short} id={cat.pack.firstId} size={22} mode="visible"
-						loop={true} root={tabsEl} title={cat.label}
-						forceEngine="rlottie" eager={true} />
+			<!-- Driven straight off `flowingCats`, the SAME list the flow is built
+			     from, so the rail can't drift out of order with the sections it
+			     scrolls to. Rendering heads and packs from separate arrays here
+			     is exactly how it drifted before. -->
+			{#each flowingCats as cat (cat.key)}
+				<button class="tg-tab"
+					class:tg-tab-pack={!!cat.pack}
+					class:tg-tab-upload={cat.key === UPLOADS_KEY}
+					class:active={active === cat.key}
+					title={cat.label} onclick={() => goToTab(cat.key)}>
+					{#if cat.key === UPLOADS_KEY}
+						<img class="tg-tab-upload-img" src={_uploadItems[0]?.url}
+							alt={uploadsLabel} width="20" height="20" loading="eager" decoding="async" />
+					{:else if cat.pack}
+						<!-- Tab icons live outside the grid's scroll content (the
+						     Skottie stage host), so force them onto the rlottie
+						     engine so they animate in both engine modes. `eager`
+						     skips the 150 ms scroll-settle delay so they spring
+						     to life the moment the picker opens. -->
+						<LottieSticker short={cat.pack.short} id={cat.pack.firstId} size={20} mode="visible"
+							loop={true} root={tabsEl} title={cat.label}
+							forceEngine="rlottie" eager={true} />
+					{:else}
+						{cat.icon}
+					{/if}
 				</button>
 			{/each}
 		</div>

@@ -601,6 +601,7 @@
 
 <style>
 	.expr-panel {
+		--expr-tab-h: 2.4rem;
 		display: flex;
 		flex-direction: column;
 		width: 340px;
@@ -679,14 +680,17 @@
 			margin: 4px var(--expr-tabs-mr, 10px) calc(6px + env(safe-area-inset-bottom, 0px)) 10px;
 			align-items: stretch;
 		}
+		/* --expr-tab-h is the single source for this height: the close button
+		   in each panel's bar reads it too, so the two stay the same size
+		   without either guessing at the other's dimensions. */
 		.expr-tab {
 			padding: 0;
-			min-height: 3.1rem;
+			min-height: var(--expr-tab-h, 2.4rem);
 			border-radius: 999px;
 			border-bottom: none;
 		}
+		.expr-tab .msi { font-size: 21px; }
 		.expr-tab.active { border-bottom-color: transparent; }
-		.expr-tab .msi { font-size: 24px; }
 		.expr-tab-back { padding: 0 0.6rem; min-height: 3.7rem; border-radius: 16px; }
 	}
 
@@ -745,6 +749,13 @@
 		transform: scale(1.12);
 	}
 
+	/* Close button in the inner panels' bars, sized off the same token as the
+	   category icons so the picker's controls share one height. */
+	.expr-pane :global(.ctl-btn.square) {
+		width: var(--expr-tab-h, 2.4rem);
+		height: var(--expr-tab-h, 2.4rem);
+	}
+
 	/* Delete key — its own floating surface, same recipe as the island. */
 	/* Bottom-RIGHT corner, and deliberately outside the island rather than a
 	   member of it: the island holds categories, this closes the picker, and
@@ -754,7 +765,7 @@
 		position: absolute;
 		bottom: calc(8px + env(safe-area-inset-bottom, 0px)); right: 10px;
 		z-index: 5;
-		width: 2.3rem; height: 2.3rem;
+		width: var(--expr-tab-h, 2.4rem); height: var(--expr-tab-h, 2.4rem);
 		display: inline-flex; align-items: center; justify-content: center;
 		padding: 0;
 		border-radius: 12px;
