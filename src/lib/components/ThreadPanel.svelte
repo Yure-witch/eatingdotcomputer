@@ -361,6 +361,11 @@
 {/snippet}
 
 {#snippet reactionRow(msgId)}
+	<!-- Chips only, and only when there ARE chips. The add-reaction button lives
+	     in the hover bar above the message like chat's does; leaving a second one
+	     down here meant an invisible button reserving a strip of empty space
+	     under every single reply. -->
+	{#if rxEntries(msgId).length}
 	<div class="thread-rx">
 		{#each rxEntries(msgId) as [emoji, users] (emoji)}
 			{@const mine = currentUser?.id in (users ?? {})}
@@ -379,10 +384,8 @@
 				</div>
 			</button>
 		{/each}
-		<button class="thread-rx-add" onclick={(e) => openPicker(msgId, e)} title="Add reaction" aria-label="Add reaction">
-			<span class="msi msi-18">add_reaction</span>
-		</button>
 	</div>
+	{/if}
 {/snippet}
 
 <aside class="thread-panel" class:tp-swiping={_tpSwiping} class:tp-dragging={_tpDragging} bind:this={panelEl} aria-label="Thread" transition:fly|global={{ x: 420, duration: _tpClosing ? 0 : 260, easing: cubicOut }} ontouchstart={tpTouchStart} ontouchmove={tpTouchMove} ontouchend={tpTouchEnd} ontouchcancel={tpTouchEnd} ondragenter={onDragEnter} ondragover={onDragOver} ondragleave={onDragLeave} ondrop={onDrop}>
@@ -436,16 +439,24 @@
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div class="thread-compose" onkeydowncapture={onComposeKeydown}>
 		<input type="file" accept="image/*,video/*,audio/*,.pdf,.zip,.heic,.heif" style="display:none" bind:this={fileEl} onchange={onFilePick} />
-		<button class="thread-attach" onclick={() => fileEl?.click()} disabled={uploading} title="Attach a file" aria-label="Attach a file">
-			<span class="msi msi-20" class:msi-spin={uploading}>{uploading ? 'progress_activity' : 'attach_file'}</span>
-		</button>
+
 		<!-- Full rich compose — the same FormattedInput the assignment fields
 		     use: bold/italic/colours, typographic sliders, text effects,
 		     emoji / kitchen / emote / sticker pickers. Serialises to the
 		     exact message markup regular chat stores, so replies render
 		     identically everywhere. Enter sends; Shift+Enter for newline. -->
-		<div class="thread-fi">
-			<FormattedInput bind:value={draft} placeholder="Reply in thread…" />
+		<!-- Same shape as chat's compose: one bordered box holding the editor with
+		     its tool row beneath, and the send button outside it, stretched to the
+		     box's full height. -->
+		<div class="thread-compose-wrap">
+			<div class="thread-fi">
+				<FormattedInput bind:value={draft} placeholder="Reply in thread…" />
+			</div>
+			<div class="thread-fmt-row">
+				<button class="thread-attach" onclick={() => fileEl?.click()} disabled={uploading} title="Attach a file" aria-label="Attach a file">
+					<span class="msi msi-20" class:msi-spin={uploading}>{uploading ? 'progress_activity' : 'attach_file'}</span>
+				</button>
+			</div>
 		</div>
 		<button class="thread-send" onclick={send} disabled={!draft.trim() && !pendingAtt} title="Send reply">
 			<span class="msi msi-20">send</span>
@@ -549,24 +560,6 @@
 	.thread-rx-chip.reacted { border-color: var(--md-sys-color-primary, var(--accent)); background: color-mix(in srgb, var(--md-sys-color-primary, var(--accent)) 12%, transparent); }
 	.thread-rx-emoji { display: inline-flex; align-items: center; line-height: 1; }
 	.thread-rx-count { font-weight: 700; font-variant-numeric: tabular-nums; }
-	/* Hidden until the message it belongs to is hovered — and on iOS a tap
-	   produces that hover state, which is exactly how chat's message action bar
-	   behaves. No touch special-case: a row of permanently visible buttons down
-	   a thread is clutter, and this way threads and chat are the same gesture.
-	   pointer-events follows opacity so an invisible button can't eat the tap
-	   that's meant to reveal it. */
-	.thread-rx-add {
-		display: inline-flex; align-items: center; justify-content: center;
-		width: 24px; height: 24px; padding: 0;
-		border: none; border-radius: 999px;
-		background: none; color: var(--muted-fg); cursor: pointer;
-		opacity: 0; pointer-events: none;
-		transition: opacity 0.1s, color 0.12s;
-	}
-	.thread-reply:hover .thread-rx-add,
-	.thread-parent:hover .thread-rx-add,
-	.thread-rx-add:focus-visible { opacity: 1; pointer-events: auto; }
-	.thread-rx-add:hover { color: var(--ink); background: var(--surface-2); }
 	.thread-picker-overlay { position: fixed; inset: 0; z-index: 340; }
 	.thread-picker-pop { position: fixed; z-index: 341; }
 	@media (max-width: 640px) {
@@ -660,22 +653,28 @@
 		background: var(--paper);
 		flex-shrink: 0;
 	}
-	/* The compose box carries the border, exactly like .compose-wrap in chat,
-	   rather than the bar around it. */
-	.thread-fi {
+	/* .compose-wrap in chat, by another name: the box carries the border, the
+	   bar around it carries none. */
+	.thread-compose-wrap {
+		flex: 1; min-width: 0;
+		display: flex; flex-direction: column;
 		border: 1.5px solid var(--border); border-radius: 10px;
-		background: var(--paper); transition: border-color 0.15s;
+		background: var(--paper);
+		transition: border-color 0.15s;
 	}
-	.thread-fi:focus-within { border-color: var(--md-sys-color-primary, var(--ink)); }
+	.thread-compose-wrap:focus-within { border-color: var(--md-sys-color-primary, var(--ink)); }
+	/* Chat's .compose-fmt-row — tools live INSIDE the box, under the editor. */
+	.thread-fmt-row { display: flex; align-items: center; gap: 0.1rem; padding: 0.2rem 0.5rem 0.3rem; }
 	.thread-fi { flex: 1; min-width: 0; }
+	/* A tool inside the box, not a bordered button beside it. */
 	.thread-attach {
 		display: flex; align-items: center; justify-content: center;
-		width: 36px; height: 36px; flex-shrink: 0;
-		border: 1.5px solid var(--border); border-radius: 10px;
-		background: var(--paper); color: var(--muted-fg); cursor: pointer;
-		transition: color 0.12s, border-color 0.12s;
+		width: 30px; height: 30px; flex-shrink: 0; padding: 0;
+		border: none; border-radius: 6px;
+		background: transparent; color: var(--muted-fg); cursor: pointer;
+		transition: color 0.12s, background 0.12s;
 	}
-	.thread-attach:hover:not(:disabled) { color: var(--ink); border-color: var(--ink); }
+	.thread-attach:hover:not(:disabled) { color: var(--ink); background: rgba(0,0,0,0.06); }
 	.thread-attach:disabled { opacity: 0.6; cursor: default; }
 	:global(.msi-spin) { animation: thread-spin 0.9s linear infinite; display: inline-block; }
 	@keyframes thread-spin { to { transform: rotate(360deg); } }
@@ -708,7 +707,10 @@
 	.thread-msg-body.jumbo { line-height: 1.2; }
 	.thread-send {
 		display: flex; align-items: center; justify-content: center;
-		width: 36px; height: 36px; flex-shrink: 0;
+		width: 40px; flex-shrink: 0;
+		/* Stretches to the compose box's height, like chat's send button, instead
+		   of sitting as a small square next to a tall box. */
+		align-self: stretch;
 		border: none; border-radius: 10px;
 		/* Themed rather than flat ink, matching chat's send button: it's the one
 		   true action in the bar, so it carries the scheme's primary colour. */
