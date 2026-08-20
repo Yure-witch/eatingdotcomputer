@@ -1,5 +1,21 @@
 <script>
+	import { onMount } from 'svelte';
 	import ThemePicker from '$lib/components/ThemePicker.svelte';
+	import MobileThemePicker from '$lib/components/MobileThemePicker.svelte';
+
+	// Phones get the stripped-down picker (mode / palette / vibrance +
+	// a live sample); desktop keeps the full Material 3 control surface.
+	// This is a form-factor split, not a touch split — a small window on
+	// a laptop wants the simple version too — so it keys off width, the
+	// same 640px breakpoint the rest of the app shell uses.
+	let mobile = $state(false);
+	onMount(() => {
+		const mq = window.matchMedia('(max-width: 640px)');
+		const u = () => (mobile = mq.matches);
+		u();
+		mq.addEventListener?.('change', u);
+		return () => mq.removeEventListener?.('change', u);
+	});
 </script>
 
 <svelte:head><title>Customize theme — eating.computer</title></svelte:head>
@@ -12,7 +28,12 @@
 -->
 <main class="theme-page">
 	<div class="picker-wrap">
-		<ThemePicker />
+		{#if mobile}
+			<h1 class="m-title">Color scheme</h1>
+			<MobileThemePicker />
+		{:else}
+			<ThemePicker />
+		{/if}
 	</div>
 </main>
 
@@ -32,6 +53,13 @@
 		width: 100%;
 		max-width: 900px;
 	}
+	.m-title {
+		font-family: 'Avara', serif;
+		font-weight: 400;
+		font-size: 1.35rem;
+		margin: 0 0 0.75rem;
+		color: var(--ink);
+	}
 
 	@media (max-width: 640px) {
 		.theme-page {
@@ -39,7 +67,7 @@
 			   (--header-h, set by AppHeader's ResizeObserver, inclusive
 			   of the notch inset on native). The previous flat 1.25rem
 			   dropped this clearance, so the top bar covered the picker. */
-			padding: calc(var(--header-h, 52px) + 1rem) 0.75rem
+			padding: calc(var(--header-h, 52px) + 1rem) 0.9rem
 			         calc(56px + env(safe-area-inset-bottom, 0px) + 1.25rem);
 		}
 	}

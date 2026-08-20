@@ -92,6 +92,12 @@
         ".read": "auth != null"
       }
     },
+    "themes": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && auth.uid === $uid"
+      }
+    },
     "threadReads": {
       "$uid": {
         ".read": "auth != null && auth.uid === $uid",

@@ -14,6 +14,7 @@
 		setSecondaryChroma,
 		setTertiaryChroma,
 		setNeutralChroma,
+		setVibrance,
 		autoChromaFor,
 		setVariant,
 		setContrast,
@@ -25,6 +26,7 @@
 		renameSavedScheme,
 		presetSnippetFor
 	} from '$lib/theme-store.js';
+	import ThemeDemo from '$lib/components/ThemeDemo.svelte';
 
 	// Live preview of the palette roles. These are the same M3 system
 	// tokens the theme store writes to :root, so the swatches update
@@ -62,6 +64,12 @@
 	const secondaryChromaValue = $derived($themeStore.secondaryChroma ?? autoS);
 	const tertiaryChromaValue  = $derived($themeStore.tertiaryChroma  ?? autoT);
 	const neutralChromaValue   = $derived($themeStore.neutralChroma   ?? autoN);
+
+	// Master saturation. Lives on mobile as the ONLY colour-strength
+	// control; kept here too so a value set on a phone is visible and
+	// resettable from the desktop picker rather than acting as an
+	// invisible multiplier under the per-family sliders.
+	const vibrance = $derived($themeStore.vibrance ?? 100);
 
 	function chromaInputHandler(setter) {
 		return (e) => setter(parseFloat(e.target.value));
@@ -288,6 +296,30 @@
 		Higher = more saturated; 0 = grayscale. The hue stays put — only the chroma axis of the HCT palette is replaced. Hit "Auto" to revert to whatever the variant derives by default.
 	</p>
 	<div class="chroma-grid">
+		<!-- Master row — scales every family below it at once. -->
+		<div class="chroma-row master">
+			<div class="chroma-label">
+				<span class="chip vib-chip"></span>
+				<span class="role">Vibrance</span>
+				<em class="auto-val">all families ×{(vibrance / 100).toFixed(2)}</em>
+			</div>
+			<input
+				class="chroma-slider"
+				type="range" min="0" max="200" step="5"
+				value={vibrance}
+				oninput={(e) => setVibrance(parseFloat(e.target.value))}
+			/>
+			<span class="chroma-val">{vibrance}%</span>
+			<button
+				type="button"
+				class="reset-btn"
+				class:dim={vibrance === 100}
+				disabled={vibrance === 100}
+				onclick={() => setVibrance(100)}
+				title="Reset to 100%"
+			>100%</button>
+		</div>
+
 		<div class="chroma-row">
 			<div class="chroma-label">
 				<span class="chip" style:background={`var(--md-sys-color-primary)`}></span>
@@ -396,6 +428,15 @@
 				</div>
 			</div>
 		{/each}
+	</div>
+
+	<!-- Roles in context ---------------------------------------------------- -->
+	<div class="row-label">In context</div>
+	<p class="hint" style="margin: 0 0 0.25rem">
+		The same tokens rendered as real components — swatches don't show what a role is <em>for</em>, and selected states in particular only reveal themselves next to their unselected twin.
+	</p>
+	<div class="demo-wrap">
+		<ThemeDemo />
 	</div>
 
 	<!-- Saved schemes ------------------------------------------------------ -->
@@ -690,6 +731,19 @@
 		cursor: pointer;
 	}
 	.reset-btn.dim { opacity: 0.45; cursor: default; }
+	/* Master vibrance row sits slightly apart from the per-family ones
+	   it multiplies. */
+	.chroma-row.master {
+		padding-bottom: 0.55rem;
+		border-bottom: 1px dashed var(--md-sys-color-outline-variant, rgba(0,0,0,0.15));
+	}
+	.chroma-label .vib-chip {
+		background: linear-gradient(
+			to right,
+			var(--md-sys-color-surface-container-highest, #ddd),
+			var(--md-sys-color-primary, var(--accent))
+		);
+	}
 	.reset-btn:not(.dim):hover {
 		background: color-mix(in srgb, var(--ink) 7%, transparent);
 	}
@@ -705,6 +759,13 @@
 		.reset-btn     { grid-area: reset; }
 		.chroma-slider { grid-area: slider; }
 		.chroma-val    { grid-area: val; }
+	}
+
+	.demo-wrap {
+		padding: 0.9rem;
+		border: 1px solid var(--md-sys-color-outline-variant, rgba(0,0,0,0.1));
+		border-radius: 12px;
+		background: var(--md-sys-color-surface, var(--paper));
 	}
 
 	.swatch-grid {

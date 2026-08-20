@@ -28,6 +28,17 @@
  *                      color, since a seed has exactly one
  *                      temperature-balanced complement — use 'custom'
  *                      on one of them if you want them distinct.
+ *   - vibrance      — 0–200% master multiplier over every family's
+ *                     chroma, neutrals included. It composes with the
+ *                     per-family chroma sliders (they set the base, this
+ *                     scales it), which is what lets the mobile picker
+ *                     ship one saturation control instead of four.
+ *
+ * Cross-device sync: `theme-sync.js` mirrors the current record + the
+ * saved-scheme list to RTDB under `themes/{uid}` so phone and desktop
+ * stay on the same palette. This module exposes the three hooks that
+ * makes possible — `sanitizeTheme`, `themeUpdatedAt`, `applyRemoteTheme`
+ * — and otherwise knows nothing about Firebase.
  *
  * Saved schemes: the user can name + save the current configuration
  * into localStorage. Each saved scheme captures every knob above plus
@@ -70,6 +81,11 @@ const SAVED_KEY = 'mdSavedSchemes';
 // is unbounded but in practice palettes top out around 130; 120 is a
 // comfortable ceiling for the slider.
 const clamp01_120 = (n) => Math.max(0, Math.min(120, n));
+
+// Vibrance is a PERCENTAGE multiplier applied on top of whatever chroma
+// each family already resolved to. 100 = untouched, 0 = fully grey,
+// 200 = double saturation.
+const clampVibrance = (n) => Math.max(0, Math.min(200, n));
 
 // ── Variant catalogue ────────────────────────────────────────────────────
 // `id` is what we store in the theme record; `label` is the menu copy;
@@ -169,35 +185,57 @@ const DEFAULTS = {
 	// (and neutralVariant 12, a 1.5 ratio), which reads as almost-grey; 12 keeps
 	// the same hue but lets the palette show in the backgrounds. The
 	// neutralVariant scales by the same ratio automatically (→ 18).
-	neutralChroma: 12
+	neutralChroma: 12,
+	// ── Vibrance ─────────────────────────────────────────────────────────
+	// One master saturation knob that multiplies the effective chroma of
+	// EVERY family — primary/secondary/tertiary AND the two neutral
+	// palettes that paint the surfaces. It composes with the per-family
+	// chroma sliders rather than replacing them: the sliders set the base
+	// chroma, vibrance scales all of them together.
+	//
+	// This is the single colour control the mobile picker exposes, so the
+	// phone UI doesn't need four separate chroma rows. Deliberately NOT
+	// reset by setPreset() — "how saturated do I like things" is a
+	// standing preference that should survive switching palettes, the same
+	// way `dark` does.
+	vibrance: 100
 };
+
+// Coerce an arbitrary object (localStorage blob, RTDB snapshot, saved
+// scheme) into a complete, valid theme record. Every field is validated
+// independently and falls back to the default, so a partial or hostile
+// payload can never produce a scheme the M3 constructors choke on.
+export function sanitizeTheme(v) {
+	if (!v || typeof v !== 'object') return { ...DEFAULTS };
+	return {
+		presetId: typeof v.presetId === 'string' ? v.presetId : null,
+		seed: typeof v.seed === 'string' ? v.seed : DEFAULTS.seed,
+		dark: !!v.dark,
+		variant: VARIANT_CTORS[v.variant] ? v.variant : DEFAULTS.variant,
+		contrastLevel: typeof v.contrastLevel === 'number'
+			? Math.max(-1, Math.min(1, v.contrastLevel))
+			: DEFAULTS.contrastLevel,
+		secondaryMode: ['auto', 'complement', 'custom'].includes(v.secondaryMode)
+			? v.secondaryMode : DEFAULTS.secondaryMode,
+		secondarySeed: typeof v.secondarySeed === 'string'
+			? v.secondarySeed : DEFAULTS.secondarySeed,
+		tertiaryMode: ['auto', 'complement', 'custom'].includes(v.tertiaryMode)
+			? v.tertiaryMode : DEFAULTS.tertiaryMode,
+		tertiarySeed: typeof v.tertiarySeed === 'string'
+			? v.tertiarySeed : DEFAULTS.tertiarySeed,
+		primaryChroma: typeof v.primaryChroma === 'number' ? clamp01_120(v.primaryChroma) : null,
+		secondaryChroma: typeof v.secondaryChroma === 'number' ? clamp01_120(v.secondaryChroma) : null,
+		tertiaryChroma: typeof v.tertiaryChroma === 'number' ? clamp01_120(v.tertiaryChroma) : null,
+		neutralChroma: typeof v.neutralChroma === 'number' ? clamp01_120(v.neutralChroma) : null,
+		vibrance: typeof v.vibrance === 'number' ? clampVibrance(v.vibrance) : DEFAULTS.vibrance
+	};
+}
 
 function readSaved() {
 	try {
 		const raw = localStorage.getItem(STORAGE_KEY);
 		if (!raw) return { ...DEFAULTS };
-		const v = JSON.parse(raw);
-		return {
-			presetId: typeof v.presetId === 'string' ? v.presetId : null,
-			seed: typeof v.seed === 'string' ? v.seed : DEFAULTS.seed,
-			dark: !!v.dark,
-			variant: VARIANT_CTORS[v.variant] ? v.variant : DEFAULTS.variant,
-			contrastLevel: typeof v.contrastLevel === 'number'
-				? Math.max(-1, Math.min(1, v.contrastLevel))
-				: DEFAULTS.contrastLevel,
-			secondaryMode: ['auto', 'complement', 'custom'].includes(v.secondaryMode)
-				? v.secondaryMode : DEFAULTS.secondaryMode,
-			secondarySeed: typeof v.secondarySeed === 'string'
-				? v.secondarySeed : DEFAULTS.secondarySeed,
-			tertiaryMode: ['auto', 'complement', 'custom'].includes(v.tertiaryMode)
-				? v.tertiaryMode : DEFAULTS.tertiaryMode,
-			tertiarySeed: typeof v.tertiarySeed === 'string'
-				? v.tertiarySeed : DEFAULTS.tertiarySeed,
-			primaryChroma: typeof v.primaryChroma === 'number' ? clamp01_120(v.primaryChroma) : null,
-			secondaryChroma: typeof v.secondaryChroma === 'number' ? clamp01_120(v.secondaryChroma) : null,
-			tertiaryChroma: typeof v.tertiaryChroma === 'number' ? clamp01_120(v.tertiaryChroma) : null,
-			neutralChroma: typeof v.neutralChroma === 'number' ? clamp01_120(v.neutralChroma) : null
-		};
+		return sanitizeTheme(JSON.parse(raw));
 	} catch {
 		return { ...DEFAULTS };
 	}
@@ -265,15 +303,26 @@ function buildSchemeRoles(seed, dark, variantId, contrastLevel, opts = {}) {
 	const base = new Ctor(seedHct, dark, contrastLevel);
 	const {
 		secondarySource, tertiarySource,
-		primaryChroma, secondaryChroma, tertiaryChroma, neutralChroma
+		primaryChroma, secondaryChroma, tertiaryChroma, neutralChroma,
+		vibrance
 	} = opts;
+
+	// Vibrance → a plain multiplier. 100 (or absent) means "leave every
+	// chroma exactly where the variant/overrides put it", so the whole
+	// vibrance feature is a no-op for anyone who never touches it.
+	const vib = typeof vibrance === 'number' && isFinite(vibrance)
+		? clampVibrance(vibrance) / 100
+		: 1;
 
 	// Helper: pick a TonalPalette derived from a family. `sourcePalette`
 	// is whichever palette we want the hue from; `overrideChroma`
-	// (number or null) overrides its chroma.
+	// (number or null) overrides its chroma. Vibrance then scales
+	// whichever of the two won, so the master knob and the per-family
+	// sliders compose instead of fighting.
 	const paletteWith = (sourcePalette, overrideChroma) => {
-		if (overrideChroma == null) return sourcePalette;
-		return TonalPalette.fromHueAndChroma(sourcePalette.hue, overrideChroma);
+		if (overrideChroma == null && vib === 1) return sourcePalette;
+		const base = overrideChroma == null ? sourcePalette.chroma : overrideChroma;
+		return TonalPalette.fromHueAndChroma(sourcePalette.hue, clamp01_120(base * vib));
 	};
 
 	// Primary family — only chroma can be overridden (the seed itself
@@ -307,16 +356,23 @@ function buildSchemeRoles(seed, dark, variantId, contrastLevel, opts = {}) {
 	// differential the variant provides between them (we scale them
 	// proportionally so neutralVariant stays slightly more chromatic
 	// than neutral, matching M3's spec ratio).
+	//
+	// This is also where vibrance earns the "affects all surfaces" claim —
+	// the neutrals are what paint background/surface/surfaceContainer, so
+	// scaling them here is what makes the whole page warm up or drain to
+	// grey as the slider moves.
 	let neutralPalette = base.neutralPalette;
 	let neutralVariantPalette = base.neutralVariantPalette;
-	if (neutralChroma != null) {
-		neutralPalette = TonalPalette.fromHueAndChroma(base.neutralPalette.hue, neutralChroma);
+	if (neutralChroma != null || vib !== 1) {
+		const nBase = neutralChroma == null ? base.neutralPalette.chroma : neutralChroma;
+		const nFinal = clamp01_120(nBase * vib);
+		neutralPalette = TonalPalette.fromHueAndChroma(base.neutralPalette.hue, nFinal);
 		// Match the variant's auto-derived ratio so neutralVariant stays
 		// a touch punchier than neutral.
 		const ratio = base.neutralVariantPalette.chroma / Math.max(0.0001, base.neutralPalette.chroma);
 		neutralVariantPalette = TonalPalette.fromHueAndChroma(
 			base.neutralVariantPalette.hue,
-			Math.min(120, neutralChroma * (isFinite(ratio) && ratio > 0 ? ratio : 1.3))
+			Math.min(120, nFinal * (isFinite(ratio) && ratio > 0 ? ratio : 1.3))
 		);
 	}
 
@@ -375,7 +431,8 @@ function applyTokens(theme) {
 			primaryChroma: theme.primaryChroma,
 			secondaryChroma: theme.secondaryChroma,
 			tertiaryChroma: theme.tertiaryChroma,
-			neutralChroma: theme.neutralChroma
+			neutralChroma: theme.neutralChroma,
+			vibrance: theme.vibrance
 		}
 	);
 	const root = document.documentElement;
@@ -409,26 +466,90 @@ export const themeStore = writable(initial);
 const initialSaved = (typeof localStorage !== 'undefined') ? readSavedSchemes() : [];
 export const savedSchemesStore = writable(initialSaved);
 
+// ── Cross-device sync support ─────────────────────────────────────────────
+// `themeUpdatedAt` is the wall-clock time of the last LOCAL, user-driven
+// change. `theme-sync.js` compares it against the timestamp on the RTDB
+// record to decide which side wins on reconnect (last write wins), and
+// `_applyingRemote` keeps a remotely-applied theme from being re-stamped
+// as a local edit — otherwise every device would keep bumping the clock
+// and ping-pong the value forever.
+const UPDATED_KEY = 'mdThemeUpdatedAt';
+let _applyingRemote = false;
+
+function readUpdatedAt() {
+	try { return Number(localStorage.getItem(UPDATED_KEY)) || 0; } catch { return 0; }
+}
+export const themeUpdatedAt = writable(
+	(typeof localStorage !== 'undefined') ? readUpdatedAt() : 0
+);
+// Exported so theme-sync can record the timestamp it published under
+// without reaching into localStorage behind this module's back.
+export function stampThemeUpdatedAt(ts) {
+	themeUpdatedAt.set(ts);
+	try { localStorage.setItem(UPDATED_KEY, String(ts)); } catch {}
+}
+const stampUpdatedAt = stampThemeUpdatedAt;
+
+// True only for the synchronous window in which applyRemoteTheme is
+// writing the stores. theme-sync reads this from inside its own store
+// subscriptions to tell "the user changed something" apart from "we just
+// installed what the other device sent" — without it, receiving an
+// update would schedule a push of that same update back out, the other
+// device would receive THAT and push it back, and the two would trade
+// the same theme forever.
+export function isApplyingRemoteTheme() {
+	return _applyingRemote;
+}
+
+// Adopt a theme + saved-scheme list that arrived from another device.
+// Applies without stamping a new local timestamp; instead it inherits the
+// remote one so the two devices agree on which revision they're holding.
+export function applyRemoteTheme(record, saved, remoteUpdatedAt) {
+	_applyingRemote = true;
+	try {
+		if (record) themeStore.set(sanitizeTheme(record));
+		if (Array.isArray(saved)) {
+			savedSchemesStore.set(
+				saved.filter((x) => x && typeof x.id === 'string' && typeof x.seed === 'string')
+			);
+		}
+	} finally {
+		_applyingRemote = false;
+	}
+	if (typeof remoteUpdatedAt === 'number' && remoteUpdatedAt > 0) stampUpdatedAt(remoteUpdatedAt);
+}
+
 let _ready = false;
 export function initTheme() {
 	if (_ready || typeof window === 'undefined') return;
 	_ready = true;
 	applyTokens(get(themeStore));
+	// `first` skips the synchronous replay Svelte fires on subscribe —
+	// booting the app is not a user edit and must not bump the clock.
+	let first = true;
 	themeStore.subscribe((v) => {
 		try { localStorage.setItem(STORAGE_KEY, JSON.stringify(v)); } catch {}
+		if (first) first = false;
+		else if (!_applyingRemote) stampUpdatedAt(Date.now());
 		applyTokens(v);
 		notifyThemeChanged();
 	});
+	let firstSaved = true;
 	savedSchemesStore.subscribe((v) => {
 		try { localStorage.setItem(SAVED_KEY, JSON.stringify(v)); } catch {}
+		if (firstSaved) firstSaved = false;
+		else if (!_applyingRemote) stampUpdatedAt(Date.now());
 	});
 }
 
 // ── Mutators (everything goes through these) ──────────────────────────────
-export function setPreset(id) {
-	const p = PRESETS.find((x) => x.id === id);
-	if (!p) return;
-	themeStore.update((s) => ({
+
+// Merge a PRESETS entry over an existing theme record. Split out of
+// setPreset so `previewRoles` below can render a preset chip using the
+// EXACT record tapping it would produce — a preview that drifts from the
+// result is worse than no preview.
+function presetRecord(p, s) {
+	return {
 		...s,
 		presetId: p.id,
 		seed: p.seed,
@@ -455,7 +576,60 @@ export function setPreset(id) {
 		// Presets may raise the surface chroma; without this, picking one would
 		// silently drop back to the variant's auto-derived (near-grey) neutrals.
 		neutralChroma: p.neutralChroma ?? null
-	}));
+		// NOTE: `vibrance` is intentionally absent — the spread keeps the
+		// user's current value. It's a standing taste preference, not part
+		// of the preset's identity.
+	};
+}
+
+export function setPreset(id) {
+	const p = PRESETS.find((x) => x.id === id);
+	if (!p) return;
+	themeStore.update((s) => presetRecord(p, s));
+}
+
+// Resolve a handful of roles for an arbitrary theme record — used by the
+// mobile picker to paint each preset chip in its own colours instead of a
+// single seed dot. Memoised on the inputs that actually move the palette,
+// since a grid of 13 presets would otherwise rebuild 13 M3 schemes on
+// every vibrance tick.
+const _previewCache = new Map();
+const PREVIEW_ROLES = ['primary', 'secondary', 'tertiary', 'surface', 'surfaceContainerHigh', 'onSurface'];
+
+export function previewRoles(theme) {
+	const t = sanitizeTheme(theme);
+	const key = [
+		t.seed, t.variant, t.dark, t.contrastLevel, t.secondaryMode, t.secondarySeed,
+		t.tertiaryMode, t.tertiarySeed, t.primaryChroma, t.secondaryChroma,
+		t.tertiaryChroma, t.neutralChroma, t.vibrance
+	].join('|');
+	const hit = _previewCache.get(key);
+	if (hit) return hit;
+
+	const roles = buildSchemeRoles(t.seed, t.dark, t.variant, t.contrastLevel ?? 0, {
+		secondarySource: resolveFamilySeed(t, 'secondary'),
+		tertiarySource: resolveFamilySeed(t, 'tertiary'),
+		primaryChroma: t.primaryChroma,
+		secondaryChroma: t.secondaryChroma,
+		tertiaryChroma: t.tertiaryChroma,
+		neutralChroma: t.neutralChroma,
+		vibrance: t.vibrance
+	});
+	const out = {};
+	for (const r of PREVIEW_ROLES) out[r] = roles[r] != null ? hexFromArgb(roles[r]) : '#888888';
+	// Cheap unbounded-growth guard — the key space is effectively the
+	// preset list times the vibrance steps, but a user dragging the
+	// slider across a custom seed could still accumulate entries.
+	if (_previewCache.size > 400) _previewCache.clear();
+	_previewCache.set(key, out);
+	return out;
+}
+
+// Same thing for a PRESETS entry: what would the page look like if you
+// tapped this chip, given the theme you're on now (dark mode + vibrance
+// carry over, since setPreset preserves them).
+export function previewRolesForPreset(p, current) {
+	return previewRoles(presetRecord(p, current));
 }
 
 export function setSeed(hex) {
@@ -503,6 +677,17 @@ export function setTertiaryChroma(v) {
 export function setNeutralChroma(v) {
 	const n = v == null ? null : clamp01_120(Number(v));
 	themeStore.update((s) => ({ ...s, presetId: null, neutralChroma: n }));
+}
+
+// Master saturation. Unlike the per-family setters this deliberately
+// does NOT clear `presetId`: vibrance rides on top of whichever palette
+// is selected (exactly like `dark`), so the preset chip stays lit while
+// the user drags the slider. Clearing it would make the mobile picker's
+// selected swatch blink off the moment anyone touched the slider.
+export function setVibrance(v) {
+	const n = clampVibrance(Number(v));
+	if (!isFinite(n)) return;
+	themeStore.update((s) => ({ ...s, vibrance: n }));
 }
 
 // Read the current AUTO chroma of a family for the active theme — the
@@ -562,6 +747,7 @@ export function saveCurrentScheme(name) {
 		secondaryChroma: t.secondaryChroma ?? null,
 		tertiaryChroma: t.tertiaryChroma ?? null,
 		neutralChroma: t.neutralChroma ?? null,
+		vibrance: t.vibrance ?? 100,
 		createdAt: Date.now()
 	};
 	savedSchemesStore.update((arr) => [...arr, entry]);
@@ -588,7 +774,8 @@ export function applySavedScheme(id) {
 		primaryChroma: typeof s.primaryChroma === 'number' ? clamp01_120(s.primaryChroma) : null,
 		secondaryChroma: typeof s.secondaryChroma === 'number' ? clamp01_120(s.secondaryChroma) : null,
 		tertiaryChroma: typeof s.tertiaryChroma === 'number' ? clamp01_120(s.tertiaryChroma) : null,
-		neutralChroma: typeof s.neutralChroma === 'number' ? clamp01_120(s.neutralChroma) : null
+		neutralChroma: typeof s.neutralChroma === 'number' ? clamp01_120(s.neutralChroma) : null,
+		vibrance: typeof s.vibrance === 'number' ? clampVibrance(s.vibrance) : 100
 	}));
 }
 
@@ -627,6 +814,7 @@ export function presetSnippetFor(saved) {
 	if (saved.secondaryChroma != null) obj.secondaryChroma = saved.secondaryChroma;
 	if (saved.tertiaryChroma  != null) obj.tertiaryChroma  = saved.tertiaryChroma;
 	if (saved.neutralChroma   != null) obj.neutralChroma   = saved.neutralChroma;
+	if (saved.vibrance != null && saved.vibrance !== 100) obj.vibrance = saved.vibrance;
 	if (saved.dark) obj.dark = true;
 	return JSON.stringify(obj, null, 2);
 }

@@ -14,6 +14,18 @@ Each entry includes:
 
 ---
 
+### 2026-08-20 — Theme: mobile picker, RTDB cross-device sync, vibrance slider
+- **Status**: `attempted` (built, pending user confirmation)
+- **What**: Four changes to the colour scheme picker.
+  1. **Vibrance** — new `vibrance` field on the theme record (0–200%, default 100). In `buildSchemeRoles` it multiplies the effective chroma of every family INCLUDING both neutral palettes, so it moves backgrounds/cards, not just accents. Composes with the per-family chroma sliders (they set the base, vibrance scales it). Deliberately does NOT clear `presetId` — like `dark`, it rides on top of the selected palette, and `setPreset` preserves it.
+  2. **Mobile picker** — `MobileThemePicker.svelte`, shown by `/app/theme` under 640px. Light/dark segmented toggle, a grid of preset tiles each painted in its OWN resolved palette (new `previewRolesForPreset` / `previewRoles` in theme-store, memoised), a Custom tile wrapping a native colour input, the vibrance slider, and the live sample. Full desktop picker stays reachable behind a "Show all controls" disclosure so nothing is lost on mobile.
+  3. **Role demo** — `ThemeDemo.svelte`: surface ladder, filled/tonal/outlined buttons, chips with a real selected state + a switch, chat bubbles, card with tertiary badge / error badge / themed link. Used by both pickers ("In context" section on desktop).
+  4. **Cross-device sync** — `theme-sync.js` mirrors the theme record + saved schemes to RTDB `themes/{uid}`; init'd from `/app/+layout.svelte` after the Firebase client authenticates. Last-write-wins on `updatedAt`; `by: <deviceId>` marks our own echo. `theme-store` gained `themeUpdatedAt`, `stampThemeUpdatedAt`, `applyRemoteTheme`, `isApplyingRemoteTheme`, `sanitizeTheme`. The applying-remote guard is load-bearing: without it, applying a received theme schedules a push of that same theme back with a newer stamp, the sender re-applies and re-pushes, and the two devices volley forever.
+- **Notes**:
+  - **`database.rules.json` gained a `themes/$uid` node (own-read/own-write) and must be deployed (`firebase deploy --only database`) before sync works in production.** Until then writes are rejected and each device just keeps its local theme.
+  - Vibrance above 100% barely moves LIGHT-mode surfaces: M3 puts surface at tone 98 / surface-variant at 90, where sRGB has almost no chroma headroom, so the extra chroma clips. Verified: light 100% vs 200% gives identical `surface`/`surface-container`/`surface-variant` while `secondary` and `outline` do move. Dark mode uses the full range (surface `#1f0f10` → `#28080c`). The 0→100 half is dramatic in both modes (0% is fully greyscale). Making the top half bite in light mode would mean shifting surface TONES down, not chroma — not attempted.
+
+
 ### 2026-07-28 — Chat: links, attachment parity, drag-drop, opt-in link chips
 - **Status**: `attempted` (built + pushed, pending user confirmation)
 - **What**: Four-phase chat upgrade after user asked for files/images to render everywhere, pasted links to be clickable, and an opt-in favicon+title link chip.

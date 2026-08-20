@@ -1661,6 +1661,17 @@
 			console.error('[ec:presence] Firebase client auth FAILED after 4 attempts — allPresenceRef subscription will not work; relying on 30s server poll only');
 		}
 
+		// Colour scheme follows the user, not the device: mirror the M3
+		// theme record to `themes/{uid}` so picking a palette on the phone
+		// repaints the desktop tab (and vice versa). Needs the Firebase
+		// client authed — the node is uid-scoped in the rules — so it
+		// hangs off the same bootstrap as presence.
+		if (fbAuthed) {
+			import('$lib/theme-sync.js')
+				.then((m) => m.initThemeSync(data.currentUser.id))
+				.catch(() => {});
+		}
+
 
 		// Presence write — per-device so two simultaneous logins don't clobber each other
 		presenceRef = ref(rtdb, `presence/${data.currentUser.id}/${deviceId}`);
