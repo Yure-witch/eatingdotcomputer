@@ -39,6 +39,12 @@
 		if (!tgHidden) {
 			if (!getCachedTgEmoji()) loadTelegramEmoji().then(() => _packVer++).catch(() => {});
 			if (!getCachedCustomPacks()) loadCustomPacks().then(() => _packVer++).catch(() => {});
+		// The class's uploaded emotes resolve [ce:…] tokens. Same story as the
+		// packs above: only /app/+layout.svelte loaded this, so a [ce:] avatar
+		// picked during onboarding had nothing to render against.
+		if (!Object.keys(getCachedCustomEmojiMap()).length) {
+			getCustomEmojiMap().then(() => _packVer++).catch(() => {});
+		}
 		}
 		// Emote holds are refcounted globally, so one leaked by a picker that
 		// unmounted mid-gesture (swipe down to dismiss, say) would freeze every

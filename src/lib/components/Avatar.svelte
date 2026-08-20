@@ -27,6 +27,7 @@
 	import { onMount, tick } from 'svelte';
 	import { createContentRenderer } from '$lib/message-render.js';
 	import { mountStaticEmotes } from '$lib/emote-mount.js';
+	import { getCustomEmojiMap, getCachedCustomEmojiMap } from '$lib/custom-emoji-store.js';
 	import { genPalette } from '$lib/avatar-gen.js';
 
 	let {
@@ -51,8 +52,19 @@
 	// produce the right `<img>` / `<span>` shape. Plain emoji chars
 	// pass straight through.
 	const exprHtml = $derived(
-		avatarKind === 'expr' && avatarValue ? contentHtml(avatarValue, false) : ''
+		(void _ceVer, avatarKind === 'expr' && avatarValue) ? contentHtml(avatarValue, false) : ''
 	);
+
+	// A [ce:…] avatar needs the class's custom-emote map to resolve. Only the app
+	// layout used to load it, so the same token rendered fine in chat and blank
+	// during onboarding, which has its own layout. Fetch it on demand and bump
+	// this to re-render once it lands.
+	let _ceVer = $state(0);
+	$effect(() => {
+		if (avatarKind !== 'expr' || !avatarValue || !String(avatarValue).includes('[ce:')) return;
+		if (Object.keys(getCachedCustomEmojiMap()).length) return;
+		getCustomEmojiMap().then(() => _ceVer++).catch(() => {});
+	});
 
 	let exprEl = $state(null);
 	$effect(() => {
