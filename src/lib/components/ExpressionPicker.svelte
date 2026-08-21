@@ -968,10 +968,19 @@
 			inset 0 1px 0 rgba(255, 255, 255, 0.4);
 		color: var(--ink);
 		cursor: pointer;
-		transition: opacity 0.11s ease;
+		/* Slow enough to read as a state ANIMATING, not flashing — the old 110ms
+		   snap was fast enough that a tap on dimmed chrome looked like a blink. */
+		transition: opacity 0.3s ease;
 	}
 	.expr-del :global(.msi) { font-size: 25px; }
-	.expr-del.chrome-dim { opacity: 0.18; }
+	/* 0.5, not 0.18. Dimming this far made the rail read as if it had fallen
+	   BEHIND the emote grid — at 18% the cells show through so strongly that the
+	   icons look stacked underneath them. Nothing about the stacking order
+	   changed (.expr-chrome-row is still position:absolute, z-index:4, above the
+	   grid); it is purely that near-transparent chrome over a busy, moving
+	   background reads as occluded. 0.5 gets out of the way and still looks like
+	   a control you could tap. */
+	.expr-del.chrome-dim { opacity: 0.5; }
 		.expr-tab-back { padding: 0 0.6rem; min-height: 3.7rem; border-radius: 16px; }
 	}
 
@@ -1035,7 +1044,9 @@
 		   drop shadow means that shadow is re-rasterised whenever any descendant
 		   restyles — which is exactly what the indicator used to trigger every
 		   frame. */
-		transition: opacity 0.11s ease;
+		/* Slow enough to read as a state ANIMATING, not flashing — the old 110ms
+		   snap was fast enough that a tap on dimmed chrome looked like a blink. */
+		transition: opacity 0.3s ease;
 	}
 
 	/* Scrolling DOWN through a category's contents — the chrome gets out of
@@ -1049,7 +1060,7 @@
 	   sitting on the content. Pointer-events stay on: it's translucent, not
 	   disabled, and any tap on the panel restores it (see the panel's
 	   pointerdown capture). */
-	.expr-tabs.chrome-dim { opacity: 0.18; }
+	.expr-tabs.chrome-dim { opacity: 0.5; }   /* see .expr-del.chrome-dim */
 	/* Swiping BETWEEN categories — the strip is what you're using. */
 
 	/* NOTE: the top bars' controls are deliberately NOT sized from
@@ -1124,9 +1135,16 @@
 		   its height below the icons. */
 		transform: translate3d(0, -50%, 0);
 		will-change: transform;
+		/* Opacity ONLY — the transform is written per-frame by setFrac and must
+		   never transition, or the circle would trail the finger. */
+		transition: opacity 0.3s ease;
 		pointer-events: none;
 		z-index: 0;
 	}
+	/* While dimmed, the selected circle fades further than the pill: own
+	   opacity 0.6 × the rail's 0.5 = 30% effective. A full-strength accent
+	   inside half-faded chrome was the one thing still shouting. */
+	.expr-tabs.chrome-dim .expr-indicator { opacity: 0.6; }
 	/* The canvas -> thumb swap that used to live here is GONE.
 	   Hiding ~70 .tg-canvas elements tore down that many composited layers and
 	   showing them again re-uploaded every texture — a hitch at the start of
