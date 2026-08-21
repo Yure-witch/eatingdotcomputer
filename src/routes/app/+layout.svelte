@@ -42,6 +42,22 @@
 	import { hardRefresh } from '$lib/hard-refresh.js';
 	if (browser) setTgHidden(data.currentUser?.hideTgEmoji);
 
+	// Server-side DEFAULT emoji face (users.emoji_font, migration 062). The
+	// live choice stays in localStorage and the picker still owns it — this
+	// only seeds a browser that has never made a choice, because localStorage
+	// is per-profile and a fresh one (new device, native shell's first launch,
+	// a screenshot capture profile) would otherwise land on Noto.
+	// The class has to be toggled here too: the root layout already ran its own
+	// onMount off the (absent) key and applied .noto-emoji.
+	if (browser && data.currentUser?.emojiFont) {
+		try {
+			if (localStorage.getItem('emoji-font') === null) {
+				localStorage.setItem('emoji-font', data.currentUser.emojiFont);
+				document.documentElement.classList.toggle('noto-emoji', data.currentUser.emojiFont === 'noto');
+			}
+		} catch { /* private mode — the client default stands */ }
+	}
+
 	// ── Nav items (Chat omitted — sidebar always shows channels/DMs) ──
 	// Icons are Material Symbols ligature names; the template renders
 	// them via <span class="msi"> + adds `msi-fill` when the row is

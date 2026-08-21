@@ -36,6 +36,73 @@ Each entry includes:
 
 ---
 
+### 2026-08-21 — App Store review class + emote/emoji defaults
+- **Status**: `attempted` (built + captured, pending user confirmation)
+- **Why**: the listing screenshots were being taken in the live `#class` channel,
+  which carries development traffic — a `192.168.86.136:5199/renderprobe` link and
+  a `rasterise 1821ms/s (30 emotes, 141 queued)` perf dump were both in frame.
+- **Review class**: new `scripts/seed-review-class.js` builds class `idc-review`
+  (channel `studio`), four invented classmates who never sign in, 4 week plans,
+  3 assignments, 6 syllabus blocks, and a 14-message conversation written to
+  exercise inline sizing, colour spans, `[wave]`, a jumbo lone emoji with a
+  `shake` bubble effect, a `[ce:laugh_cat]` custom emote, a JS code block,
+  replies and reactions. Ordered so the expressive messages are the most recent
+  — chat opens pinned to the bottom, which is all a screenshot ever sees.
+  Idempotent; rebuilds the RTDB node each run (push IDs encode their own time).
+  The two review accounts are moved OUT of `idc-fall-2026` so they land here.
+- **Channel id is the display name**: the channel page publishes
+  `'# ' + data.channelId`, ignoring `conversations.name` — hence `studio` as the
+  id rather than a prettier name column that would never be read.
+- **emoji_font** (migration 062): per-user default emoji face, plumbed through
+  `app/+layout.server.js` -> `app/+layout.svelte`, applied only when localStorage
+  has no saved choice. Review accounts set to `system` (Apple/iOS glyphs) —
+  localStorage is per-profile, so a fresh capture profile fell back to Noto.
+- **Apple sign-ups** now insert with `hide_tg_emoji = 1` (src/auth.js), so the
+  Telegram packs and Emoji Kitchen are off by default; Manage -> Members gained a
+  per-user **3rd-party** checkbox (`setThirdPartyEmotes`) to turn them back on.
+- **Code block headers** show the language's real name — `LANG_LABEL` in
+  message-render.js, so it reads "JavaScript" beside the JS mark, not "js".
+- **Capture fixes** (`_capture-session.mjs`): wait on `document.fonts.ready`
+  before every shot (a fallback face was showing where the app uses its own);
+  hide `.msg-actions-bar` (Puppeteer's touch emulation left `:hover` stuck);
+  hide `.conv-kebab`; raise `protocolTimeout` for the picker click, and RETRY
+  the picker open up to 3x (it times out intermittently and used to leave a
+  second plain chat shot standing in for the picker).
+- **Bottom nav in captures**: the override was inflating the pill to
+  `56px + 34px` with matching `padding-bottom`, leaving a slab of dead surface
+  under the icons on every shot. The app's nav is a FIXED 60px pill that floats
+  via `bottom: max(6px, env(safe-area-inset-bottom))` — it never grows — so the
+  capture now just lifts it with `bottom: 34px`.
+- **Open, not fixed**: `.conv-kebab` from the SIDEBAR renders through the chat
+  layer along the right edge at 430px — hidden in the capture, but worth a look
+  in the app itself. Also `manage/+page.svelte`'s member table has a
+  pre-existing thead/tbody column mismatch (Device/Notif vs Emotes order).
+- **Not yet deployed** — the shell loads the live site, so the reviewer only
+  sees any of this after a Vercel deploy.
+
+---
+
+### 2026-08-20 — iPhone-only + portrait lock (App Store prep)
+- **Status**: `attempted` (built + verified in the bundle, pending user confirmation)
+- **What**: `UISupportedInterfaceOrientations` in `ios/App/App/Info.plist` cut from
+  portrait + landscapeLeft + landscapeRight down to **portrait only**. The
+  `~ipad` key is untouched.
+- **Why**: the web app has no landscape layout at all — zero
+  `@media (orientation: landscape)` anywhere in `src/`. A reviewer rotating the
+  device would have seen a broken UI, which is a Guideline 2.1 rejection.
+- **Verified**: `plutil -lint` OK; Release build for `generic/platform=iOS`
+  succeeds and the compiled `App.app/Info.plist` contains only
+  `UIInterfaceOrientationPortrait`.
+- **Also**: `TARGETED_DEVICE_FAMILY` changed `"1,2"` → `1` in both Debug and
+  Release. The target no longer claims **iPad** support, which (a) drops the App
+  Store Connect requirement for a 13" iPad screenshot set we don't have, and
+  (b) keeps the app away from an iPad reviewer and that same missing landscape
+  layout. Still installable on iPad in iPhone-compatibility mode. Verified in
+  the built bundle: `UIDeviceFamily = [1]`. (`AppIcon76x76@2x~ipad.png` is still
+  emitted by the asset catalog — inert leftover, iOS ignores it.)
+
+---
+
 ### 2026-08-20 — Theme: green maxed default + onboarding swatches use resolved tokens
 - **Status**: `attempted` (built, pending user confirmation)
 - **What**: Two changes, both requested.

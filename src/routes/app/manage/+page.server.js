@@ -58,7 +58,7 @@ export async function load({ locals, parent }) {
 	// All members + online status — scoped to current class (instructors always included)
 	const db = getDb();
 	const usersResult = db ? await db.execute({
-		sql: `SELECT u.id, u.name, u.email, u.role, u.created_at, u.avatar_kind, u.avatar_value, u.gemma_digest, u.interests, u.year FROM users u
+		sql: `SELECT u.id, u.name, u.email, u.role, u.created_at, u.avatar_kind, u.avatar_value, u.gemma_digest, u.interests, u.year, u.hide_tg_emoji FROM users u
 		      WHERE u.role = 'instructor'
 		         OR EXISTS (
 		              SELECT 1 FROM class_memberships cm
@@ -122,6 +122,9 @@ export async function load({ locals, parent }) {
 			avatarKind: r.avatar_kind ? String(r.avatar_kind) : 'gen',
 			avatarValue: r.avatar_value ? String(r.avatar_value) : null,
 			gemmaDigest: Number(r.gemma_digest) === 1,
+			// Inverted on purpose: the column stores "hidden", the UI offers
+			// "enabled", which is the way round an instructor thinks about it.
+			thirdPartyEmotes: Number(r.hide_tg_emoji ?? 0) !== 1,
 			interests: r.interests ? String(r.interests) : '',
 			online: presence?.online ?? false,
 			lastSeen,
@@ -562,6 +565,24 @@ export const actions = {
 		const db = getDb();
 		if (!db) return fail(503, { error: 'Database unavailable' });
 		await db.execute({ sql: 'UPDATE users SET year = ? WHERE id = ?', args: [year || null, userId] });
+	},
+
+	// Telegram emote packs + Emoji Kitchen, per user. Apple sign-ups start with
+	// them OFF (see src/auth.js), so this is how an instructor turns them on.
+	setThirdPartyEmotes: async ({ request, locals }) => {
+		const session = await locals.auth();
+		if (!session || session.user.role !== 'instructor') return fail(403, { error: 'Forbidden' });
+		const data = await request.formData();
+		const userId = String(data.get('user_id') ?? '');
+		if (!userId) return fail(400, { error: 'Missing user_id' });
+		// Checkbox posts 'on' when ticked and is absent when not.
+		const enabled = data.get('enabled') != null;
+		const db = getDb();
+		if (!db) return fail(503, { error: 'Database unavailable' });
+		await db.execute({
+			sql: 'UPDATE users SET hide_tg_emoji = ? WHERE id = ?',
+			args: [enabled ? 0 : 1, userId]
+		});
 	},
 
 	approve: async ({ request, locals }) => {

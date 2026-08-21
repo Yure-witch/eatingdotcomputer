@@ -368,6 +368,21 @@ export function createContentRenderer({ hljs = null, codeIcons = {}, getCeMap = 
 		markdown: 'md', md: 'md', csv: 'csv', env: 'env', properties: 'env', 'env.example': 'envex'
 	};
 
+	// The header already carries the language's logo, so the text beside it
+	// should be the language's actual name — "js" next to the JS mark is the
+	// same word twice, once badly. Anything not listed falls through to the
+	// fence's own string.
+	const LANG_LABEL = {
+		js: 'JavaScript', javascript: 'JavaScript', jsx: 'JSX',
+		ts: 'TypeScript', typescript: 'TypeScript', tsx: 'TSX',
+		py: 'Python', python: 'Python',
+		html: 'HTML', css: 'CSS', json: 'JSON', sql: 'SQL', csv: 'CSV',
+		bash: 'Bash', sh: 'Bash', shell: 'Bash',
+		java: 'Java', c: 'C', cpp: 'C++', rust: 'Rust', go: 'Go', swift: 'Swift',
+		md: 'Markdown', markdown: 'Markdown', svelte: 'Svelte', vue: 'Vue',
+		yaml: 'YAML', yml: 'YAML', xml: 'XML', php: 'PHP', rb: 'Ruby', ruby: 'Ruby'
+	};
+
 	function highlightCode(code, lang) {
 		if (!hljs) return escapeHtml(code);
 		try {
@@ -468,7 +483,7 @@ export function createContentRenderer({ hljs = null, codeIcons = {}, getCeMap = 
 					const lineCount = rawCode.split('\n').length;
 					const lineNums = Array.from({ length: lineCount }, (_, i) => `<span class="code-ln">${i + 1}</span>`).join('');
 					const langIcon = p.lang ? (codeIcons[p.lang] || codeIcons[LANG_ALIAS[p.lang]] || '') : '';
-					const langLabel = p.lang ? `<span class="code-lang">${escapeHtml(p.lang)}${langIcon ? ` <img class="code-lang-icon" src="${langIcon}" alt="" />` : ''}</span>` : '';
+					const langLabel = p.lang ? `<span class="code-lang">${escapeHtml(LANG_LABEL[p.lang] ?? p.lang)}${langIcon ? ` <img class="code-lang-icon" src="${langIcon}" alt="" />` : ''}</span>` : '';
 					const copyBtn = `<button class="code-copy-btn" title="Copy"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><span class="copy-label"> Copy</span></button>`;
 					const truncated = lineCount > 20;
 					const truncAttr = truncated ? ' data-truncated="1"' : '';

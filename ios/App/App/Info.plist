@@ -49,11 +49,12 @@
 	<array>
 		<string>armv7</string>
 	</array>
+	<!-- iPhone is portrait-only. The web app has no landscape layout, so a
+	     rotated device would show a broken UI (a Guideline 2.1 rejection
+	     risk). The ~ipad key below is separate and unaffected. -->
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
-		<string>UIInterfaceOrientationLandscapeLeft</string>
-		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 	<key>UISupportedInterfaceOrientations~ipad</key>
 	<array>

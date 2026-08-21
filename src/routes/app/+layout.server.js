@@ -112,10 +112,13 @@ export async function load({ locals, cookies }) {
 	let myAvatarValue = null;
 	let myMemberOrder = [];
 	let myHideTgEmoji = false;
+	// null = the user has never been given a server-side default, so the client
+	// keeps its own ('noto'). See migration 062.
+	let myEmojiFont = null;
 	if (db) {
 		try {
 			const r = await db.execute({
-				sql: 'SELECT avatar_kind, avatar_value, member_order, hide_tg_emoji FROM users WHERE id = ?',
+				sql: 'SELECT avatar_kind, avatar_value, member_order, hide_tg_emoji, emoji_font FROM users WHERE id = ?',
 				args: [session.user.id]
 			});
 			const row = r.rows[0];
@@ -125,6 +128,7 @@ export async function load({ locals, cookies }) {
 				try { const o = JSON.parse(row.member_order); if (Array.isArray(o)) myMemberOrder = o; } catch { /* ignore bad json */ }
 			}
 			myHideTgEmoji = Number(row?.hide_tg_emoji ?? 0) === 1;
+			if (row?.emoji_font) myEmojiFont = String(row.emoji_font);
 		} catch { /* non-fatal */ }
 	}
 	const currentUser = {
@@ -134,7 +138,8 @@ export async function load({ locals, cookies }) {
 		avatarKind: myAvatarKind,
 		avatarValue: myAvatarValue,
 		memberOrder: myMemberOrder,
-		hideTgEmoji: myHideTgEmoji
+		hideTgEmoji: myHideTgEmoji,
+		emojiFont: myEmojiFont
 	};
 
 	// Fetch initial unread state from Firebase Admin (bypasses client auth/rules).

@@ -63,8 +63,13 @@ export const { handle, signIn, signOut } = SvelteKitAuth({
 					// Apple sends the display name ONCE, on the very first
 					// authorisation, and never again — so take it from the client
 					// when present or we lose it permanently.
+					// hide_tg_emoji = 1 by default for Apple sign-ups: the
+					// Telegram emote packs and Emoji Kitchen are third-party
+					// content, and an account created through Apple's flow
+					// starts without them. An instructor can turn them back on
+					// per user from Manage → Members.
 					await db.execute({
-						sql: `INSERT INTO users (id, email, name, role) VALUES (?, ?, ?, 'student')`,
+						sql: `INSERT INTO users (id, email, name, role, hide_tg_emoji) VALUES (?, ?, ?, 'student', 1)`,
 						args: [crypto.randomUUID(), email, credentials?.name ? String(credentials.name) : '']
 					});
 					result = await db.execute({

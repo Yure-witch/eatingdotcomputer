@@ -965,6 +965,7 @@
 					<th>Notif</th>
 					<th>Emotes</th>
 					<th>Last seen</th>
+					<th title="Telegram emote packs + Emoji Kitchen. Apple sign-ups start with these off.">3rd-party</th>
 					<th></th>
 				</tr>
 			</thead>
@@ -1040,6 +1041,19 @@
 							{/if}
 						</td>
 						<td class="muted">{p?.online ? 'just now' : formatLastSeen(p?.lastSeen ?? m.lastSeen ?? null)}</td>
+						<td>
+							<form method="POST" action="?/setThirdPartyEmotes" use:enhance>
+								<input type="hidden" name="user_id" value={m.id} />
+								<input
+									type="checkbox"
+									name="enabled"
+									class="tp-toggle"
+									checked={m.thirdPartyEmotes}
+									title={m.thirdPartyEmotes ? 'Telegram emotes + Emoji Kitchen ON' : 'Telegram emotes + Emoji Kitchen OFF'}
+									onchange={(e) => e.currentTarget.form.requestSubmit()}
+								/>
+							</form>
+						</td>
 						<td>
 							{#if m.role !== 'instructor'}
 								<form method="POST" action="?/resetStudent" use:enhance>
@@ -1288,6 +1302,8 @@
 		display: flex; gap: 0; margin-bottom: 1.5rem;
 		border-bottom: 1.5px solid var(--border);
 	}
+	.tp-toggle { accent-color: var(--ink); cursor: pointer; }
+
 	.manage-tab {
 		font-family: inherit; font-size: 0.88rem; font-weight: 500;
 		padding: 0.5rem 1.1rem; border: none; background: none; cursor: pointer;
