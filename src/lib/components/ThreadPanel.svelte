@@ -294,6 +294,17 @@
 	// attachment here, which is exactly what chat does with it too — no separate
 	// media path, so it rides the existing pendingAtt preview and send.
 	let showMedia = $state(false);
+	// Either sheet docks at the bottom of the viewport, so the panel gives up
+	// that much height and the composer lands on top of the sheet rather than
+	// behind it — the same trade chat makes with --picker-h.
+	let exprOpen = $state(false);
+	const sheetOpen = $derived(exprOpen || showMedia);
+	// And the newest reply should still be the thing above the composer, so the
+	// list keeps its footing as the panel shortens.
+	$effect(() => {
+		if (!sheetOpen || !listEl) return;
+		tick().then(() => listEl?.scrollTo({ top: listEl.scrollHeight }));
+	});
 	function onGifSelect(gif) {
 		pendingAtt = { url: gif.gif, filename: gif.title || 'GIF', mimetype: 'image/gif', size: 0 };
 		showMedia = false;
@@ -485,7 +496,7 @@
 	{/if}
 {/snippet}
 
-<aside class="thread-panel" class:tp-swiping={_tpSwiping} class:tp-dragging={_tpDragging} bind:this={panelEl} aria-label="Thread" transition:fly|global={{ x: 420, duration: _tpClosing ? 0 : 260, easing: cubicOut }} ontouchstart={tpTouchStart} ontouchmove={tpTouchMove} ontouchend={tpTouchEnd} ontouchcancel={tpTouchEnd} ondragenter={onDragEnter} ondragover={onDragOver} ondragleave={onDragLeave} ondrop={onDrop}>
+<aside class="thread-panel" class:sheet-open={sheetOpen} class:tp-swiping={_tpSwiping} class:tp-dragging={_tpDragging} bind:this={panelEl} aria-label="Thread" transition:fly|global={{ x: 420, duration: _tpClosing ? 0 : 260, easing: cubicOut }} ontouchstart={tpTouchStart} ontouchmove={tpTouchMove} ontouchend={tpTouchEnd} ontouchcancel={tpTouchEnd} ondragenter={onDragEnter} ondragover={onDragOver} ondragleave={onDragLeave} ondrop={onDrop}>
 	{#if dragActive}
 		<div class="thread-drop" aria-hidden="true">
 			<div class="thread-drop-card">
@@ -552,7 +563,7 @@
 				     second row beneath it — chat's composer is one box with one tool
 				     row, and stacking two toolbars is most of why this didn't read
 				     as the same control. -->
-				<FormattedInput bind:value={draft} placeholder="Reply in thread…" tools={composeTools} collapseTools />
+				<FormattedInput bind:value={draft} placeholder="Reply in thread…" tools={composeTools} collapseTools onExprToggle={(o) => (exprOpen = o)} />
 			</div>
 		</div>
 		<button class="thread-send" onclick={send} disabled={!draft.trim() && !pendingAtt} title="Send reply">
@@ -890,13 +901,27 @@
 	}
 	.thread-send:disabled { opacity: 0.35; cursor: default; }
 
+	/* A docked sheet owns the bottom of the screen: hand it that height so the
+	   composer sits ON the sheet instead of underneath it. Same expression the
+	   sheets themselves use, so the two edges meet exactly. Beats --kb-h, since
+	   opening the picker dismisses the keyboard. */
+	.thread-panel.sheet-open {
+		bottom: calc(min(var(--kb-h-last, 22rem), 58vh) + env(safe-area-inset-bottom, 0px));
+	}
 	/* Native shell: visualViewport never moves, so --kb-h stays 0 and the plugin
 	   height is the only signal. Same lift, different source. */
 	:global(body.native-app.kb-native-open) .thread-panel { bottom: var(--kb-height, 0px); }
+	/* ...unless a sheet is open. The plugin only reports the keyboard hidden
+	   ~250ms after the picker takes its place, and for those frames both rules
+	   match — this one has to win or the composer drops behind the sheet and
+	   climbs back up. */
+	:global(body.native-app.kb-native-open) .thread-panel.sheet-open {
+		bottom: calc(min(var(--kb-h-last, 22rem), 58vh) + env(safe-area-inset-bottom, 0px));
+	}
 	/* While the expression picker is docked it owns the bottom of the screen and
 	   the keyboard is on its way down — matching how chat stops transforming its
 	   input area for exactly this window. */
-	:global(body.expr-picker-open) .thread-panel { bottom: 0; transition: none; }
+
 
 	@media (max-width: 640px) {
 		/* left/right rather than 100vw: the viewport unit counts the scrollbar and

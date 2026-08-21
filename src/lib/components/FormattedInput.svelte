@@ -34,13 +34,19 @@
 		// compose bar does on a phone: at that width a row of eight buttons is
 		// most of the bar, and formatting is the part you reach for least.
 		// Opt-in, so the assignment and profile fields keep showing everything.
-		collapseTools = false
+		collapseTools = false,
+		// Told whenever the docked expression sheet opens or closes. The sheet is
+		// fixed to the bottom of the VIEWPORT, so whatever owns the surrounding
+		// layout has to move out from under it — this component can't do that for
+		// its caller, but it can say when.
+		onExprToggle = null
 	} = $props();
 
 	let inputEl = $state(null);
 	let showTextFxBar = $state(false);
 	let showFormatPanel = $state(false);
 	let showTools = $state(false); // only meaningful when collapseTools is set
+	$effect(() => { onExprToggle?.(showExprPicker); });
 	let showExprPicker = $state(false);
 	// Trigger refs for the smart popover positioning action.
 	let colorBtnEl = $state(null);
