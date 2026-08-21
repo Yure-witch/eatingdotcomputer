@@ -223,7 +223,9 @@ export function reclaimMemory({ all = false } = {}) {
  */
 export async function prewarmToDisk(urls, px, opts = {}) {
 	if (!frameCacheAvailable() || !Array.isArray(urls) || !px) return { baked: 0, skipped: 0 };
-	const { signal, onProgress } = opts;
+	// maxFps must match what the picker's cells pass, or the bake produces a
+	// different frame count than the one asked for at read time.
+	const { signal, onProgress, maxFps = 0 } = opts;
 	let baked = 0, skipped = 0, i = 0;
 	for (const url of urls) {
 		if (signal?.stop) break;
@@ -233,7 +235,7 @@ export async function prewarmToDisk(urls, px, opts = {}) {
 		if (_frameCache.has(key)) { skipped++; continue; }
 		try { if (await fcHas(diskKeyFor(key))) { skipped++; continue; } } catch { /* probe failed — just bake */ }
 		try {
-			const ok = await bakeToDisk(url, px);
+			const ok = await bakeToDisk(url, px, maxFps);
 			if (ok) baked++; else skipped++;
 		} catch { skipped++; }
 		onProgress?.(i, urls.length);
@@ -246,12 +248,12 @@ export async function prewarmToDisk(urls, px, opts = {}) {
 }
 
 /** Rasterise one emote and persist it, without touching the atlas. */
-async function bakeToDisk(url, px) {
+async function bakeToDisk(url, px, maxFps = 0) {
 	const data = await fetchLottie(url);
 	if (!data) return false;
 	const srcPx = rasterSizeFor(px);
 	let entry;
-	try { entry = await acquire(url, data, srcPx, 0); } catch { return false; }
+	try { entry = await acquire(url, data, srcPx, maxFps); } catch { return false; }
 	try {
 		try { if (entry.pending) await entry.pending; } catch {}
 		const frames = entry.frames || [];
