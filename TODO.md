@@ -6,6 +6,16 @@ Items roughly ordered by priority. See `NORTH_STAR.md` for the big picture.
 ---
 
 ## New / Recently Added
+- [ ] **Offline handling + state restore after app-switcher eviction** — the iOS
+      shell loads the live site over the network, so with no connection it has
+      nothing but the tiny `capacitor-shell` fallback page. Needs (a) a real
+      offline state: detect it (`@capacitor/network` is already a dependency),
+      show something better than a dead webview, and queue outbound sends rather
+      than dropping them; and (b) state restore — iOS evicts a backgrounded app's
+      memory, so returning from the app switcher currently reloads the site cold
+      and loses where you were. Persist the route, scroll position, draft
+      compose text and open thread/picker, then restore on resume (`appStateChange`
+      / the existing `native-resume` event) instead of booting to the top of Home.
 - [ ] **Giphy GIF search** — GIF picker with Giphy API (built — needs testing)
 - [ ] **Animated Word Art** — decorative animated text styling formatted as text with CSS animations
 - [ ] **Gamification & Achievements** — achievement system with unlockable badges, animated celebrations, progress tracking
