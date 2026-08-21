@@ -575,20 +575,26 @@
 		if (isSkottieEngine(engine) || eager) ensureLoaded();
 		observer = new IntersectionObserver((entries) => {
 			const wasVisible = visible;
+			// VIEWPORT intersection, not intersection with the inner scroller.
+			// With the scroller as root, a cell in a pane the user paged AWAY
+			// from still "intersects" — cell and root moved together, so the
+			// observer never even fired on the page-change — and every cell in
+			// every visited pane kept animating and baking behind the active
+			// one. Against the viewport, paged-away cells genuinely leave and
+			// report it, and their lanes/blits go to what is actually on
+			// screen. (This is also why the old rootBounds pane-detection below
+			// could never work: no event, no callback.)
 			visible = entries[0].isIntersecting;
-			// Is the whole SCROLLER off-screen (the picker paged to another
-			// category, or closed), as opposed to this cell having scrolled out
-			// of a scroller you can still see? `rootBounds` is the root's rect
-			// in viewport coordinates, so a pane translated out of the track
-			// reads as entirely left/right of the viewport. The two cases want
-			// opposite treatment: scrolled-past frames should go, but paging
-			// away and back is a round trip the user experiences as returning
-			// to where they were — the scroll position is preserved, so the
-			// artwork should be too.
-			const rb = entries[0].rootBounds;
-			const paneOffscreen = !!rb && typeof window !== 'undefined'
-				&& (rb.right <= 0 || rb.left >= (window.innerWidth || 0)
-					|| rb.bottom <= 0 || rb.top >= (window.innerHeight || 0));
+			// Paged away vs scrolled past — the two want opposite treatment:
+			// scrolled-past frames should be released, but paging away and back
+			// is a round trip the user experiences as returning to where they
+			// were, so the artwork is held. With the viewport as root the
+			// signal is the DIRECTION of exit: panes travel horizontally,
+			// scrolling exits vertically. boundingClientRect is viewport-space
+			// under a null root.
+			const tb = entries[0].boundingClientRect;
+			const paneOffscreen = !visible && !!tb && typeof window !== 'undefined'
+				&& (tb.right <= 0 || tb.left >= (window.innerWidth || 0));
 			// Cancel any pending off-screen frame release the moment we're back.
 			if (visible && _offscreenT) { clearTimeout(_offscreenT); _offscreenT = null; }
 			// Went off-screen → schedule freeing this cell's animation resources
@@ -648,7 +654,12 @@
 				}
 			}
 			updatePlay();
-		}, { root, rootMargin: '120px' });
+		// root:null on purpose — see the callback. `root` is still accepted as
+		// a prop so call sites don't churn, but observing against the inner
+		// scroller is what made paged-away panes invisible to this observer.
+		// The margin pre-warms ~a row before entry, and horizontally it means
+		// the NEXT pane's cells start baking mid-swipe.
+		}, { rootMargin: '120px' });
 		if (stack) observer.observe(stack);
 	});
 
