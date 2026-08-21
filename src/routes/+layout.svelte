@@ -10,7 +10,9 @@
 		tgAnimatedUrl,
 		tgcUrl,
 		isStaticPack,
-		refreshAdaptiveInk
+		refreshAdaptiveInk,
+		engineMode,
+		usesWorkerPool
 	} from '$lib/telegram-emoji-store.js';
 	import {
 		prewarm as prewarmSkottieWorker,
@@ -23,6 +25,7 @@
 	import { installChunkErrorRecovery } from '$lib/hard-refresh.js';
 	import { initKeyboardMetrics } from '$lib/keyboard-metrics.js';
 	import { initEmoteEngine } from '$lib/telegram-emoji-store.js';
+	import { get } from 'svelte/store';
 	import { dev } from '$app/environment';
 	import { initNativeShell, isNativeApp, updateStatusBarTheme } from '$lib/native.js';
 	import GetAppBanner from '$lib/components/GetAppBanner.svelte';
@@ -127,10 +130,21 @@
 		}
 
 		// Background-warm the whole emote library into the persistent frame cache
-		// during idle time, so the first picker open is instant. Desktop + in-app
-		// only (skip the landing/login pages and touch devices, where it's not
-		// worth the battery/storage); it self-gates on engine + storage budget.
-		if (location.pathname.startsWith('/app') && window.matchMedia?.('(pointer: fine)').matches) {
+		// during idle time, so the first picker open is instant.
+		//
+		// This used to be desktop-only, on the reasoning that the battery and
+		// storage cost wasn't worth it on a phone. But the phone is where the
+		// cost of NOT having it shows up: without a warm cache every picker cell
+		// rasterises on the spot, which is the 1-2s stall on first opening the
+		// Telegram and recents tabs. Reading baked frames off disk is far cheaper
+		// than baking them while the user waits.
+		//
+		// It remains heavily self-gating: it does nothing unless frames can be
+		// persisted AND the active engine is the rasteriser that reads this
+		// cache, it bakes a row per idle tick, it pauses in a background tab,
+		// and it stops for good at half the storage quota. So a device that
+		// can't afford it opts itself out.
+		if (location.pathname.startsWith('/app')) {
 			const warm = () => import('$lib/emote-prewarm.js').then((m) => m.startEmotePrewarm()).catch(() => {});
 			if (typeof requestIdleCallback === 'function') requestIdleCallback(warm, { timeout: 8000 });
 			else setTimeout(warm, 4000);
@@ -165,17 +179,25 @@
 		loadSpriteSheet();
 
 		// Prewarm the Skottie worker pool + queue every Telegram emoji
-		// animation for background building, but ONLY if (a) the user's
-		// saved engine is WorkerGPU and (b) we're inside the app shell
+		// animation for background building, but ONLY if (a) the engine
+		// renders through the worker pool and (b) we're inside the app shell
 		// (`/app/*` — public landing/login pages don't use the picker).
 		// We defer to requestIdleCallback so the first paint isn't
-		// burdened with 4 CanvasKit WASM loads. Once kicked, the worker
+		// burdened with the CanvasKit WASM loads. Once kicked, the worker
 		// pool stays alive for the rest of the session: opening the
 		// picker becomes nearly instant, and the in-viewport priority
 		// queue automatically takes over from "background building" the
 		// moment the picker mounts (see processQueue in skottie-worker.js).
+		//
+		// Read the RESOLVED engine, not raw localStorage, and test it by
+		// capability. This used to compare against the literal strings
+		// 'skottie-worker' / 'skottie-webgpu' and fall back to 'rlottie'
+		// when the key was absent — so once the rasterized engines became
+		// the default, this whole block stopped running for everybody, and
+		// every cold picker open paid for the worker pool on the critical
+		// path. That is the "laggy from 0".
 		try {
-			const engine = localStorage.getItem('tgEngine') || 'rlottie';
+			const engine = get(engineMode);
 			const inApp = location.pathname.startsWith('/app');
 			// Skip the prewarm entirely on touch devices. Each pre-built
 			// Skottie animation pins GPU memory (and on iOS WebGPU the
@@ -184,7 +206,7 @@
 			// drops to zero because no cell ever "releases" them. On
 			// phones we rely on on-demand build via the IO observer.
 			const _isCoarse = window.matchMedia?.('(pointer: coarse)').matches;
-			if ((engine === 'skottie-worker' || engine === 'skottie-webgpu') && inApp && !_isCoarse) {
+			if (usesWorkerPool(engine) && inApp && !_isCoarse) {
 				import('$lib/skottie-stage-worker.js').then((m) => {
 					m.setPreferWebGPU?.(engine === 'skottie-webgpu');
 				});
@@ -194,12 +216,30 @@
 				} else {
 					setTimeout(kick, 500);
 				}
-			} else if ((engine === 'skottie-worker' || engine === 'skottie-webgpu') && inApp && _isCoarse) {
-				// Still need to flip the WebGPU preference so cells
-				// boot the worker with the right surface backend on
-				// first mount — just skip the bulk anim queue.
+			} else if (engine === 'cpu-rasterized' && inApp) {
+				// Default engine: boot the rlottie pool at idle so the first
+				// picker open doesn't pay the worker spawn + WASM load. Same
+				// intent as the CanvasKit prewarm below it, ~25× cheaper —
+				// which is why this one runs on touch devices too.
+				import('$lib/lottie-spritesheet.js').then((m) => {
+					const boot = () => m.prewarm?.();
+					if (typeof requestIdleCallback === 'function') requestIdleCallback(boot, { timeout: 3000 });
+					else setTimeout(boot, 1000);
+				});
+			} else if (usesWorkerPool(engine) && inApp && _isCoarse) {
+				// Touch: flip the WebGPU preference AND boot the pool at idle,
+				// but skip the bulk anim queue. Booting is the expensive,
+				// unavoidable part (CanvasKit instantiation) and it is exactly
+				// what made the first picker open on a phone feel broken;
+				// paying it during an idle callback after the app has settled
+				// costs the user nothing they can see. The bulk queue stays
+				// desktop-only — THAT is what pins per-animation memory, and a
+				// phone has none to spare.
 				import('$lib/skottie-stage-worker.js').then((m) => {
 					m.setPreferWebGPU?.(engine === 'skottie-webgpu');
+					const boot = () => m.prewarm?.({ sheetUrl: TG_SPRITE_URL });
+					if (typeof requestIdleCallback === 'function') requestIdleCallback(boot, { timeout: 4000 });
+					else setTimeout(boot, 1200);
 				});
 			}
 		} catch {}
