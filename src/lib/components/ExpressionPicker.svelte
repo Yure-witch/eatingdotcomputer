@@ -17,7 +17,7 @@
 	import { isTgHidden } from '$lib/tg-visibility.js';
 	import {
 		loadTelegramEmoji, loadCustomPacks, getCachedTgEmoji, getCachedCustomPacks,
-		engineMode, setEngineManual, rasterEngineFor, emoteWebgpuOk
+		engineMode, setEngineManual, rasterEngineFor
 	} from '$lib/telegram-emoji-store.js';
 	import { getExprRecents, addExprRecent, exprRecentKey } from '$lib/expr-recents.js';
 	import { getCustomEmojiMap, getCachedCustomEmojiMap } from '$lib/custom-emoji-store.js';
@@ -509,10 +509,7 @@
 	// up a render context per emote on arrival. It always renders on a
 	// RASTERIZED engine (baked atlas, still moving): the selected one if that's
 	// already rasterized, otherwise this device's rasterized default.
-	// $emoteWebgpuOk is read so this re-resolves if the picker opened before the
-	// WebGPU probe landed — otherwise a capable phone would stay on the
-	// conservative pre-probe guess for the life of the page.
-	const recentEngine = $derived(rasterEngineFor($engineMode, $emoteWebgpuOk));
+	const recentEngine = $derived(rasterEngineFor($engineMode));
 	// Same control as the Emotes tab's, but it only offers the two rasterized
 	// engines — so what the bar reports is always what Recent is actually
 	// rendering on, and cycling from here can't drop the app onto a live
@@ -702,7 +699,13 @@
 		   fully-rounded pill curves away over its last ~half-height, so an icon
 		   flush to the end sits in the curve and reads as falling out of the
 		   container — which is exactly what the kitchen icon was doing. */
-		--expr-pad: 12px;
+		/* Generous, and deliberately so. The rail is fully rounded, so its cap
+		   radius is half its height (28px at a 56px rail) — the pill curves away
+		   across that whole span. Padding smaller than the radius leaves the end
+		   icon sitting inside the curve, which reads as falling out of the
+		   container even when the boxes technically nest. 18px keeps clear
+		   space either side of the first and last icons. */
+		--expr-pad: 18px;
 		/* Shared bottom offset — these used to differ (6px vs 8px), so the two
 		   surfaces sat on different baselines. */
 		--expr-rail-bottom: 8px;
