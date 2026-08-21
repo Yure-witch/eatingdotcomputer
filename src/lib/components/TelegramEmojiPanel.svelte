@@ -1209,10 +1209,16 @@
 	   stage's surface stays alive across the entire scroll. */
 	/* TEMPORARY — benchmark entrypoint, remove with the link above. */
 	.tg-probe-link {
+		/* Sticky, because the panel opens on a category and snaps the scroller
+		   to that section's pxStart — so anything sitting at the top of the
+		   scroll content is scrolled out of sight before you ever see it.
+		   Its containing block is the whole scroller, so top:0 pins it for the
+		   entire scroll rather than just its own 44px. */
+		position: sticky; top: 0; z-index: 4;
 		display: flex; align-items: center; gap: 0.5rem;
 		margin: 0 0 0.5rem; padding: 0.6rem 0.85rem;
 		border: 1px dashed var(--border); border-radius: 12px;
-		background: var(--surface-container, rgba(127, 127, 127, 0.08));
+		background: var(--surface-container, #eee);
 		color: var(--ink); text-decoration: none;
 		font: 600 13px/1.2 system-ui;
 	}
