@@ -18,8 +18,16 @@ Alternates: `Class chat with a pulse` · `Where the class hangs out` · `Studio,
 
 ## Promotional text  *(170 char max — editable anytime without review)*
 ```
-The class hub that doesn't feel like homework: real-time chat, wild animated stickers, assignments, and creative tools — all in one place made for how you actually work.
+Class chat, assignments, files, and a week-by-week roadmap in one place. The Lab adds kinetic type and 3D text GIF tools you can export straight into your work.
 ```
+*160/170.* Says what is in the app and stops. The previous version ("doesn't
+feel like homework… wild animated stickers… made for how you actually work")
+argued with the reader and made claims nothing backs up, spending characters
+that could name a feature instead.
+
+Alternates:
+- `Everything for a studio class in one place: real-time chat, assignments, files, and a week-by-week roadmap. Plus in-app tools for kinetic type and 3D text GIFs.`
+- `Real-time class chat with reactions, replies, and threads. Assignments and a week-by-week roadmap. A Lab for making kinetic type and 3D lettering you can export.`
 
 ## Keywords  *(100 char max, comma-separated, no spaces after commas)*
 ```
