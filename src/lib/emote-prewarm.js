@@ -27,23 +27,7 @@ let _stop = false;
 
 // Bake at most this share of the storage quota, and never past the hard cap.
 const QUOTA_SHARE = 0.5;
-const DESKTOP_CAP_BYTES = 1_400_000_000; // ~1.4 GB
-
-// A phone gets a far smaller cap than a desktop.
-//
-// This warm was desktop-only until the `pointer: fine` gate came off, and the
-// caps were never revisited for the devices that gate had been excluding.
-// 1.4 GB of IndexedDB inside a WKWebView is its own eviction-and-kill story
-// well before the picker is involved, and each bake allocates a frame buffer
-// plus a gzip stream concurrently with whatever the picker is doing. Phones
-// warm the first screenfuls; they do not bake the library.
-const _LOW_MEM = (() => {
-	if (typeof navigator === 'undefined') return false;
-	if (navigator.deviceMemory && navigator.deviceMemory <= 4) return true;
-	if ((navigator.maxTouchPoints || 0) > 1) return true;
-	try { return !window.matchMedia('(pointer: fine)').matches; } catch { return false; }
-})();
-const HARD_CAP_BYTES = _LOW_MEM ? 120_000_000 : DESKTOP_CAP_BYTES; // 120 MB / 1.4 GB
+const HARD_CAP_BYTES = 1_400_000_000; // ~1.4 GB
 const ROW = 8;                        // emotes baked per idle tick (~one picker row)
 
 const _idle = (fn) =>
@@ -94,15 +78,6 @@ export async function startEmotePrewarm() {
 	// Only meaningful when (a) we can persist frames and (b) the active engine is
 	// the WebGL worker rasteriser that reads this cache. Other engines warm on
 	// demand instead.
-	//
-	// That engine test is doing more work than it looks like, and it is worth
-	// stating plainly: `skottie-worker.js` is the ONLY reader of frame-cache.
-	// The default engine is now `cpu-rasterized`, whose frames come from the
-	// rlottie pool and are packed straight into an in-memory atlas — it never
-	// consults this cache. So on a default install this warm correctly does
-	// nothing, and removing the `pointer: fine` gate to "enable it on phones"
-	// could not have had that effect: the gate below is what stops it. Widening
-	// it would bake hundreds of MB the active engine cannot read.
 	if (!frameCacheAvailable()) return;
 	if (get(engineMode) !== 'webgpu-rasterized') return;
 	_started = true;

@@ -21,30 +21,9 @@
 import { acquire, release, rasterSizeFor, prewarm as prewarmRlottie } from './lottie-spritesheet.js';
 import { fetchLottie, isAdaptivePack, customShortFromUrl } from './telegram-emoji-store.js';
 
-// Mobile-scale atlas: native res, tiny pages. 1024² × 4 bytes = 4 MB a page.
+// Mobile-scale atlas: native res, tiny pages. 1024² × 6 ≈ 24 MB.
 const ATLAS_DIM = 1024;
-const PAGE_BYTES = ATLAS_DIM * ATLAS_DIM * 4;
-const MAX_ATLAS_PAGES = 6;          // per pixel size
-
-// A cap on pages across EVERY pixel size, not just within one.
-//
-// This is the budget skottie-worker.js grew after the iOS jetsams, and it was
-// never ported here — which stopped mattering right up until `cpu-rasterized`
-// became the default engine, at which point the renderer everyone actually
-// runs was the one with no ceiling. `_atlasByPx` is keyed by pixel size and a
-// single session legitimately asks for several: picker cells at 28×dpr, pack
-// tabs at 20×dpr, chat emotes at 2× oversample, avatars. At 24 MB per size
-// that is ~100 MB of canvas, on the main thread's own heap, that nothing ever
-// handed back — exactly the accumulation the worker comment describes.
-const _lowMem = (() => {
-	if (typeof navigator === 'undefined') return false;
-	// deviceMemory is Chromium-only — WebKit never reports it, so a bare
-	// `deviceMemory <= 4` test calls every iPhone and iPad a roomy desktop.
-	if (navigator.deviceMemory && navigator.deviceMemory <= 4) return true;
-	return isTouchDevice();
-})();
-const MAX_TOTAL_PAGES = _lowMem ? 10 : 16;   // 40 MB / 64 MB
-let _totalPages = 0;
+const MAX_ATLAS_PAGES = 6;
 
 const _cells = new Map();          // id -> cell state
 let _nextId = 1;
@@ -54,19 +33,6 @@ const _rasterPending = new Map();  // url@px -> { url, px } (visible-first queue
 let _rasterBusy = false;
 const _atlasByPx = new Map();      // px -> atlas
 let _running = false;
-
-// Real-device detection that does not lean on the UA string.
-//
-// A `/iPhone|iPad|Android/` regex misses the two cases that matter most here:
-// iPadOS Safari ships a macOS UA by default, and a Capacitor WKWebView can be
-// configured to as well — so the devices least able to absorb a 100 MB atlas
-// were the ones being handed the desktop budget. Touch points + a coarse
-// pointer is what the UA was standing in for; ask for that instead.
-function isTouchDevice() {
-	if (typeof navigator === 'undefined') return false;
-	if ((navigator.maxTouchPoints || 0) > 1) return true;
-	try { return matchMedia('(pointer: coarse)').matches; } catch { return false; }
-}
 
 // ── Atlas pages + slot allocator (2D canvases) ──────────────────────────
 function makeCanvas(dim) {
@@ -85,19 +51,10 @@ function getAtlas(px) {
 }
 function addAtlasPage(a) {
 	if (a.pages.length >= MAX_ATLAS_PAGES) return false;
-	// Over the device-wide budget: try to buy the page back from a pixel size
-	// nothing is showing before refusing. Refusing is safe (the cell keeps its
-	// thumb) but it means a visible emote never animates, so only do it once
-	// there is genuinely nothing idle left to drop.
-	if (_totalPages >= MAX_TOTAL_PAGES) {
-		reclaimIdleSizes(a.px);
-		if (_totalPages >= MAX_TOTAL_PAGES) return false;
-	}
 	const canvas = makeCanvas(ATLAS_DIM);
 	const ctx = canvas.getContext('2d');
 	const page = a.pages.length;
 	a.pages.push({ canvas, ctx });
-	_totalPages++;
 	for (let r = 0; r < a.cols; r++)
 		for (let c = 0; c < a.cols; c++)
 			a.free.push({ page, x: c * a.px, y: r * a.px });
@@ -127,79 +84,6 @@ function freeFrameCache(url) {
 		cache.atlas.lru.delete(key);
 		_frameCache.delete(key);
 	}
-}
-
-// Drop an entire pixel size: its cache entries, its slots, and — the part
-// `releaseAnimation` could never do — the page canvases themselves.
-//
-// Recycling slots keeps the atlas reusable but hands back zero bytes; the
-// canvas still owns its full 1024² backing store. Setting the dimensions to 0
-// is what actually releases it: it is the one documented way to make a canvas
-// drop its buffer, and matters far more inside a WKWebView, where that buffer
-// is counted against the same footprint the OS kills the app over.
-function freeSize(px) {
-	const a = _atlasByPx.get(px);
-	if (!a) return;
-	for (const key of a.lru.keys()) _frameCache.delete(key);
-	for (const pg of a.pages) {
-		try { pg.canvas.width = 0; pg.canvas.height = 0; } catch {}
-	}
-	_totalPages -= a.pages.length;
-	if (_totalPages < 0) _totalPages = 0;
-	a.pages.length = 0;
-	a.free.length = 0;
-	a.lru.clear();
-	_atlasByPx.delete(px);
-	// Any cell still pointing at this size must re-rasterise rather than blit
-	// from a page that no longer has a backing store.
-	for (const c of _cells.values()) if (c.w === px) c.lastFrame = -1;
-}
-
-/** Pixel sizes with at least one live cell — never reclaim these. */
-function sizesInUse() {
-	const live = new Set();
-	for (const c of _cells.values()) live.add(c.w);
-	return live;
-}
-
-/** Give back every size no cell is using. `keepPx` is spared regardless. */
-function reclaimIdleSizes(keepPx) {
-	const live = sizesInUse();
-	for (const px of [..._atlasByPx.keys()]) {
-		if (px === keepPx || live.has(px)) continue;
-		freeSize(px);
-	}
-}
-
-/**
- * Hand memory back. Mirrors `skottie-stage-worker.reclaimMemory` so callers can
- * treat the two engines the same.
- *
- * Default drops only sizes with no live cell — safe at any moment. `all: true`
- * drops everything including sizes still registered, for backgrounding, where
- * nothing is on screen to re-bake for.
- */
-export function reclaimMemory({ all = false } = {}) {
-	if (all) {
-		for (const px of [..._atlasByPx.keys()]) freeSize(px);
-		_frameCache.clear();
-		_rasterPending.clear();
-	} else {
-		reclaimIdleSizes(null);
-	}
-}
-
-/** Page/byte counts, for confirming the budget actually holds. */
-export function atlasStats() {
-	return {
-		sizes: _atlasByPx.size,
-		pages: _totalPages,
-		maxPages: MAX_TOTAL_PAGES,
-		bytes: _totalPages * PAGE_BYTES,
-		cells: _cells.size,
-		cached: _frameCache.size,
-		lowMem: _lowMem
-	};
 }
 
 // ── Visible-first rasterise pump ────────────────────────────────────────
@@ -274,10 +158,6 @@ function startLoop() {
 	_running = true;
 	const tick = (now) => {
 		if (!_running) return;
-		// Nothing registered: park the loop instead of ticking forever. It used
-		// to run for the life of the page — every frame, on the main thread,
-		// long after the picker closed and every cell had gone.
-		if (!_cells.size) { _running = false; return; }
 		renderCells(now);
 		requestAnimationFrame(tick);
 	};
@@ -338,11 +218,6 @@ export function setCanvasCellVisible(id, v) {
 }
 export function unregisterCanvasCell(id) {
 	_cells.delete(id);
-	// Last cell out drops the sizes nothing is showing any more. SpriteSticker
-	// deliberately skips releaseAnimation for built animations (it causes the
-	// flash-on-scroll it guards against), so without this the picker was a
-	// one-way allocator: open, allocate, close, free nothing, repeat.
-	if (!_cells.size) reclaimIdleSizes(null);
 }
 
 // Frees baked atlas frames for adaptive packs so they re-rasterise in the new

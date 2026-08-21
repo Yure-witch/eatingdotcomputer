@@ -97,8 +97,8 @@
 		// cached frames rather than re-rendering any Lottie.
 		const onBackground = async () => {
 			try {
-				const m = await import('$lib/emote-memory.js');
-				await m.reclaimEmoteMemory({ all: true });
+				const m = await import('$lib/skottie-stage-worker.js');
+				m.reclaimMemory?.({ all: true });
 			} catch { /* renderer never started — nothing to reclaim */ }
 		};
 		window.addEventListener('native-background', onBackground);

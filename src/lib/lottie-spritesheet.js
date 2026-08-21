@@ -46,18 +46,9 @@ const TARGET_PX = 48;
 // held as ImageBitmaps until the consumer packs them, so cost is px² × 4 ×
 // frames, and a phone has no room for a 256px loop.
 const SIZE_STEPS = [48, 64, 96, 128, 192, 256];
-// Touch points / coarse pointer rather than the UA: iPadOS Safari and a
-// Capacitor WKWebView both report a macOS UA, so the regex alone let exactly
-// the wrong devices rasterise at 256px — 4× the pixels per frame, feeding the
-// CPU atlas that is now the default engine.
 const _isMobileUA = typeof navigator !== 'undefined'
 	&& /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
-const _isTouch = (() => {
-	if (typeof navigator === 'undefined') return false;
-	if ((navigator.maxTouchPoints || 0) > 1) return true;
-	try { return !window.matchMedia('(pointer: fine)').matches; } catch { return false; }
-})();
-const MAX_RASTER_PX = (_isMobileUA || _isTouch) ? 128 : 256;
+const MAX_RASTER_PX = _isMobileUA ? 128 : 256;
 export function rasterSizeFor(px) {
 	const want = Math.max(1, Math.round(px || TARGET_PX));
 	for (const step of SIZE_STEPS) {

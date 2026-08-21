@@ -56,10 +56,8 @@
 			// screen. Closing it is the best moment to give the atlases for
 			// its pixel sizes back. Only sizes with NO live cell anywhere are
 			// dropped, so emotes still on screen in the chat keep theirs.
-			// Both engines — the CPU atlas is the default, and for a long
-			// while it was the one this hook did not reach.
-			import('$lib/emote-memory.js')
-				.then((m) => m.reclaimEmoteMemory())
+			import('$lib/skottie-stage-worker.js')
+				.then((m) => m.reclaimMemory?.())
 				.catch(() => {});
 		};
 	});
