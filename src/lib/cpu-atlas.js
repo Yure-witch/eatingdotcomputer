@@ -92,14 +92,29 @@ let _totalPages = 0;
 // 3fps" was. Frames are no longer the lever — slot SIZE is (see SLOT_PX_MAX).
 const MAX_RASTER_FRAMES = _lowMem ? 64 : 128;
 
+// Progressive fill.
+//
+// A 90-cell grid at 60 frames an emote is 5400 frames to rasterise, and the
+// pool manages roughly 240 frames a second — 22 seconds before the grid stops
+// being a wall of still images. That is the "takes forever to render", and it
+// is a THROUGHPUT problem, not a frame-rate one: the main thread is idle the
+// whole time (0 long tasks measured on device).
+//
+// Widening concurrency does not help — each rasterisation already queues its
+// whole frame set into the pool, so more lanes just pile onto the same workers.
+// Total frames is the only real lever. So bake a coarse pass first: every
+// visible cell gets FAST_FRAMES and starts moving in a few seconds, then each
+// one is re-baked at full rate once nothing is waiting.
+const FAST_FRAMES = 14;
+
 /**
  * Frames-per-second to bake at, so an emote never exceeds MAX_RASTER_FRAMES.
  * Reads the duration straight off the Lottie JSON, before any rasterising.
  */
-function fpsCapFor(data, maxFps) {
+function fpsCapFor(data, maxFps, fast = false) {
 	const dur = Math.max(0.1, ((data?.op || 60) - (data?.ip || 0)) / (data?.fr || 60));
 	const want = maxFps > 0 ? maxFps : (data?.fr || 60);
-	const byBudget = MAX_RASTER_FRAMES / dur;
+	const byBudget = (fast ? FAST_FRAMES : MAX_RASTER_FRAMES) / dur;
 	return Math.max(4, Math.min(want, byBudget));   // never below 4fps
 }
 
@@ -123,7 +138,9 @@ let _epoch = 0;
 // cache does. Measure the real path rather than a model of it.
 const _prof = { render: 0, renderN: 0, raster: 0, rasterN: 0, pack: 0, packN: 0, readback: 0, readbackN: 0, lanes: 0 };
 export function atlasProfile(reset = false) {
-	const out = { ..._prof, lanesNow: _rasterLanes, pending: _rasterPending.size, jobs: _frameJobs.size };
+	let coarse = 0, full = 0;
+	for (const e of _frameCache.values()) (e.fast ? coarse++ : full++);
+	const out = { ..._prof, lanesNow: _rasterLanes, pending: _rasterPending.size, jobs: _frameJobs.size, coarse, full };
 	if (reset) for (const k of Object.keys(_prof)) _prof[k] = 0;
 	return out;
 }
@@ -383,10 +400,13 @@ export function atlasStats() {
 }
 
 // ── Visible-first rasterise pump ────────────────────────────────────────
-function scheduleRasterize(url, px, maxFps = 0) {
+function scheduleRasterize(url, px, maxFps = 0, fast = true, upgrade = false) {
 	const key = url + '@' + px;
-	if (_frameCache.has(key) || _frameJobs.has(key) || _rasterPending.has(key)) return;
-	_rasterPending.set(key, { url, px, maxFps });
+	if (_frameJobs.has(key) || _rasterPending.has(key)) return;
+	// An upgrade deliberately replaces a cached coarse bake, so it must not be
+	// short-circuited by the entry it is replacing.
+	if (!upgrade && _frameCache.has(key)) return;
+	_rasterPending.set(key, { url, px, maxFps, fast, upgrade });
 	pumpRaster();
 }
 function visibleKeys() {
@@ -415,6 +435,20 @@ const RASTER_LANES = (() => {
 })();
 let _rasterLanes = 0;
 
+// Once nothing is waiting, upgrade the coarse bakes of cells still on screen.
+// One at a time and only while idle, so refining never competes with filling.
+function queueUpgrades() {
+	if (_rasterPending.size || _rasterLanes) return;
+	for (const c of _cells.values()) {
+		if (!c.visible) continue;
+		const key = c.url + '@' + c.w;
+		const e = _frameCache.get(key);
+		if (!e || !e.fast || _frameJobs.has(key)) continue;
+		scheduleRasterize(c.url, c.w, c.maxFps, false, true);
+		return;                           // one per drain — stay out of the way
+	}
+}
+
 function pumpRaster() {
 	while (_rasterLanes < RASTER_LANES && _rasterPending.size) {
 		// Re-check visibility on every pick, not once per batch: a fling can
@@ -433,13 +467,14 @@ function pumpRaster() {
 		// rlottie worker, which is idle waiting — that is how this reported 222%
 		// of wall time while the main thread showed zero long tasks. Count jobs
 		// here; the main-thread cost is already captured by pack and readback.
-		doRasterize(job.url, job.px, key, job.maxFps || 0)
+		doRasterize(job.url, job.px, key, job.maxFps || 0, job.fast !== false, !!job.upgrade)
 			.then(() => { _prof.rasterN++; })
 			.catch((e) => { console.warn('[cpu-atlas] rasterise failed', e); })
 			.finally(() => {
 				_frameJobs.delete(key);
 				_rasterLanes--;
 				pumpRaster();          // free lane — pull the next one in
+				queueUpgrades();       // ...and refine once there is slack
 			});
 	}
 }
@@ -490,8 +525,8 @@ function packIntoAtlas({ px, N, duration, draw }) {
 // would load at the old count and blow the slot budget they exist to protect.
 const diskKeyFor = (key) => 'cpu3|' + key;
 
-async function doRasterize(url, px, key, maxFps = 0) {
-	if (_frameCache.has(key)) return;
+async function doRasterize(url, px, key, maxFps = 0, fast = true, upgrade = false) {
+	if (!upgrade && _frameCache.has(key)) return;
 	const startedAt = _epoch;
 
 	// Disk first. This is the whole reason the cold open cost 1-2s a session:
@@ -527,7 +562,7 @@ async function doRasterize(url, px, key, maxFps = 0) {
 	// cells are crisp rather than upscaled. Same size on the release below, or
 	// the refcount lands on a different cache entry and the frames leak.
 	const srcPx = rasterSizeFor(px);
-	try { entry = await acquire(url, data, srcPx, fpsCapFor(data, maxFps)); } catch { return; }
+	try { entry = await acquire(url, data, srcPx, fpsCapFor(data, maxFps, fast)); } catch { return; }
 	// Wait for every frame to settle, then we own a full set to pack.
 	try { if (entry.pending) await entry.pending; } catch {}
 	// Did the user scroll past this while rlottie was working?
@@ -603,9 +638,17 @@ async function doRasterize(url, px, key, maxFps = 0) {
 	// _atlasByPx and its pages emptied, so caching this would hand renderCells
 	// slots into a page array of length zero.
 	if (_epoch !== startedAt || _atlasByPx.get(sl) !== atlas) return;
-	const cacheEntry = { atlas, slots, N, duration: entry.duration || 1, sl };
+	// Replacing a coarse bake: hand its slots back, or the atlas keeps paying
+	// for both copies and the budget this file exists to enforce leaks away.
+	const prev = _frameCache.get(key);
+	if (prev && prev !== undefined) {
+		for (const sp of prev.slots) prev.atlas.free.push(sp);
+		prev.atlas.lru.delete(key);
+	}
+	const cacheEntry = { atlas, slots, N, duration: entry.duration || 1, sl, fast };
 	_frameCache.set(key, cacheEntry);
 	atlas.lru.set(key, cacheEntry);
+	for (const c of _cells.values()) if (c.url === url && slotPxFor(c.w) === sl) c.lastFrame = -1;
 }
 
 // ── Single-rAF playback ─────────────────────────────────────────────────
