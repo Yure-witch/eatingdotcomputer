@@ -1,7 +1,11 @@
 # App Store listing — eating.computer
 
-Copy-paste into App Store Connect. Written to appeal to art/design students, not
-to read like a corporate LMS. Character limits noted; all fields fit.
+Copy-paste into App Store Connect. Character limits noted; all fields fit.
+
+Voice: say what the app is and what is in it, then stop. No claims about how it
+will make someone feel, no adjectives the product has to live up to, no arguing
+with the reader about what school software is normally like. Every character
+spent on attitude is a character not spent naming a feature.
 
 ---
 
@@ -12,9 +16,11 @@ eating.computer
 
 ## Subtitle  *(30 char max)*
 ```
-Your class, but it's alive
+Chat, assignments, and tools
 ```
-Alternates: `Class chat with a pulse` · `Where the class hangs out` · `Studio, chat & tools`
+*28/30.* Sits directly under the app name in search results, so it should name
+contents, not set a mood.
+Alternates: `Class chat, work, and files` · `Studio chat and coursework`
 
 ## Promotional text  *(170 char max — editable anytime without review)*
 ```
@@ -31,48 +37,42 @@ Alternates:
 
 ## Keywords  *(100 char max, comma-separated, no spaces after commas)*
 ```
-class,chat,art school,studio,assignments,stickers,gif,emoji,students,creative,critique,messaging
+class,chat,studio,art school,assignments,coursework,students,messaging,gif,emoji,emotes,critique
 ```
+*96/100.* Search terms, not adjectives — dropped "creative" (nobody searches it)
+and "stickers" in favour of "coursework" and "emotes".
 
 ## Description  *(4000 char max)*
 ```
-eating.computer is the home base for your class — a place that feels less like a
-learning portal and more like the group chat you actually want to be in.
+eating.computer is the home base for a studio class: chat, coursework, files, and a couple of tools for making things — in one app.
 
-Built for studio classes and the people in them.
+CHAT
+Channels and DMs in real time, with reactions, replies, threads, and mentions. Messages can carry inline size changes, color, animated text effects, custom emotes, and GIFs, which helps when you are talking about work and plain text is not enough.
 
-CHAT THAT ACTUALLY EXPRESSES SOMETHING
-Real-time channels and DMs with reactions, replies, threads, and mentions. Send
-animated stickers, emoji mixes, custom emotes, and text that moves — bold
-colors, kinetic effects, the works. It's messaging that matches how you think.
+COURSEWORK
+• Assignments week by week, with link, image, or video submissions
+• A roadmap of where the class is and what is coming
+• Files — everything shared in the class, in one list
+• A profile page you control
 
-EVERYTHING FOR THE CLASS, IN ONE PLACE
-• Assignments and a week-by-week roadmap, with link / image / video submissions
-• Files — everything shared in the class, easy to find
-• A profile you can actually make your own
+THE LAB
+Two tools built into the app. Kinetic Type animates a line of text. Text GIFs render 3D chrome, gold, and glass lettering. Both export a GIF you can drop into a deck, a post, or a critique.
 
-MAKE THINGS, RIGHT HERE
-The Lab has creative tools built in: Kinetic Type for mesmerizing title
-animations, and Text GIFs for 3D chrome / gold / glass lettering you can drop
-straight into a deck. Export a GIF, drag it into your slides, done.
+GEMMA
+An optional daily digest: what happened in the class chat, what is due next, and one link related to what you are working on. Off unless you turn it on.
 
-GEMMA, YOUR CLASS COMPANION
-Gemma quietly keeps you on track — a friendly recap of what happened, gentle
-reminders about what's due, and a spark of inspiration tuned to what you're into.
-No spam, no nagging.
+EVERYWHERE ELSE
+Push notifications when something needs you. The same account works in a browser, in sync.
 
-STAYS OUT OF YOUR WAY
-Push notifications when something needs you. Works on your phone and your laptop,
-in perfect sync. Fast, expressive, and made for how studio classes really run.
-
-For students in a class on eating.computer. Sign in with your class account to
-join.
+For students in a class on eating.computer. Sign in with your class account to join.
 ```
+*1153/4000.* Each heading is the thing itself (CHAT, COURSEWORK, THE LAB) rather
+than a pitch about it. "Two tools" is stated as two tools — overselling a feature
+the reviewer can open in ten seconds is how a listing loses trust.
 
 ## What's New (version notes for 1.0)
 ```
-Hello, App Store 👋 The full eating.computer experience, now native on iOS —
-with push notifications so you never miss a message, mention, or deadline.
+First release. The full eating.computer experience on iOS, with push notifications for new messages, mentions, and deadlines.
 ```
 
 ## Support URL
