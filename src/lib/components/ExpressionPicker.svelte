@@ -812,7 +812,7 @@
 		--expr-rail-bottom: 8px;
 		/* Shared side margin, so the rail and the delete key sit on matching
 		   edges instead of each picking its own. */
-		--expr-edge: 10px;
+		--expr-edge: 2px;
 		display: flex;
 		flex-direction: column;
 		width: 340px;
