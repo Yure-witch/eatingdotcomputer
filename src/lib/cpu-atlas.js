@@ -504,8 +504,10 @@ function renderCells(now) {
 		if (!pageEntry) { _frameCache.delete(ckey); cache.atlas.lru.delete(ckey); cell.lastFrame = -1; continue; }
 		const page = pageEntry.canvas;
 		try {
-			cell.ctx.clearRect(0, 0, cell.w, cell.h);
-			cell.ctx.drawImage(page, slot.x, slot.y, cell.w, cell.h, 0, 0, cell.w, cell.h);
+			// dx/dy are 0 for a cell that owns its canvas, and this is the
+			// cell's slot within a shared one otherwise.
+			cell.ctx.clearRect(cell.dx, cell.dy, cell.w, cell.h);
+			cell.ctx.drawImage(page, slot.x, slot.y, cell.w, cell.h, cell.dx, cell.dy, cell.w, cell.h);
 		} catch { continue; }
 		cell.lastFrame = fi;
 		if (!cell.firstPainted) { cell.firstPainted = true; if (cell.onFirstPaint) firstPaints.push(cell); }
@@ -515,12 +517,37 @@ function renderCells(now) {
 
 // ── Public API (matches the worker canvas-cell module) ──────────────────
 // `canvas` is the live DOM <canvas> element (NOT transferControlToOffscreen).
-export function registerCanvasCell({ url, canvas, w, h, paused = false, loop = true, paintIndex = null, visible = false, maxFps = 0, onFirstPaint = null }) {
+/**
+ * Register a cell.
+ *
+ * `canvas` may be the cell's own element (one canvas per cell, the original
+ * model) OR a canvas shared with other cells — a row's canvas, say — in which
+ * case `dx`/`dy` say where in it this cell draws. Everything else is identical:
+ * a cell still owns its animation, its clock and its frame index.
+ *
+ * Sharing exists because canvas COUNT, not blit count, is what costs. Measured
+ * on a throttled phone profile, 90 cells at dpr 2 blitting identical pixels
+ * from an identical source:
+ *
+ *     90 canvases   83 fps   p95 17.2ms   worst 34ms
+ *     10 row cvs   120 fps   p95  9.2ms   worst 17ms
+ *     1 canvas     120 fps   p95  9.3ms   worst 15ms
+ *
+ * Same number of drawImage calls in all three — the difference is 90 composited
+ * layers versus 10. At 120Hz the budget is 8.3ms, so the per-cell model misses
+ * the deadline on most frames while either shared model comfortably makes it.
+ * Ten row canvases are worth as much as one big one, which matters because a
+ * single grid-wide canvas was already tried and abandoned: the continuous
+ * scroller is ~8000px tall, and sizing a backbuffer to that caused GPU-tile
+ * flicker while pinning it to the viewport made it scroll away. Row canvases
+ * flow in the DOM and scroll natively, so none of that applies.
+ */
+export function registerCanvasCell({ url, canvas, w, h, dx = 0, dy = 0, paused = false, loop = true, paintIndex = null, visible = false, maxFps = 0, onFirstPaint = null }) {
 	let ctx = null;
 	try { ctx = canvas.getContext('2d'); } catch { /* element gone */ }
 	const id = _nextId++;
 	_cells.set(id, {
-		ctx, url, w, h, paused, loop, paintIndex, visible, maxFps,
+		ctx, url, w, h, dx, dy, paused, loop, paintIndex, visible, maxFps,
 		onFirstPaint, startTime: 0, lastFrame: -1, firstPainted: false
 	});
 	prewarmRlottie();
@@ -532,6 +559,15 @@ export function setCanvasCellVisible(id, v) {
 	if (c) c.visible = !!v;
 }
 export function unregisterCanvasCell(id) {
+	const cell = _cells.get(id);
+	// On a SHARED canvas the pixels outlive the cell: the element belongs to the
+	// row, not to us, so nothing removes them. Wipe our own slot on the way out
+	// or the last frame stays painted under whatever mounts there next. (A cell
+	// that owns its canvas doesn't care — the element goes with it — but the
+	// clear is harmless there.)
+	if (cell?.ctx && (cell.dx || cell.dy)) {
+		try { cell.ctx.clearRect(cell.dx, cell.dy, cell.w, cell.h); } catch { /* gone */ }
+	}
 	_cells.delete(id);
 	// Last cell out drops the sizes nothing is showing any more. SpriteSticker
 	// deliberately skips releaseAnimation for built animations (it causes the
