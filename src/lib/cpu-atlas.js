@@ -18,7 +18,7 @@
 // `skModule`. The only difference: the cell canvas is the live DOM element
 // (a 2D context), NOT a transferControlToOffscreen handle.
 
-import { acquire, release, rasterSizeFor, prewarm as prewarmRlottie } from './lottie-spritesheet.js';
+import { acquire, acquireSheet, release, rasterSizeFor, prewarm as prewarmRlottie } from './lottie-spritesheet.js';
 import { loadFrames as fcLoad, storeFrames as fcStore, hasFrames as fcHas, frameCacheAvailable } from './frame-cache.js';
 import { fetchLottie, isAdaptivePack, customShortFromUrl } from './telegram-emoji-store.js';
 
@@ -568,13 +568,86 @@ async function doRasterize(url, px, key, maxFps = 0, fast = true, upgrade = fals
 
 	const data = await fetchLottie(url);   // adaptive packs are tinted here
 	if (!data) return;
+	// Rasterise AT the tier's slot size, not the cell's full size. (An earlier
+	// edit claimed this and silently failed to apply — the coarse pass was
+	// rendering full-size pixels and only PACKING them smaller, which saved
+	// memory and zero raster time.) Cost is px^2 x frames; the coarse tier
+	// renders a quarter of the pixels.
+	const sl = slotPxFor(px, fast);
+	const srcPx = rasterSizeFor(sl);
+	const cap = fpsCapFor(data, maxFps);
+
+	// Sheet-first: the whole emote rendered in its worker, ONE ImageBitmap
+	// back. The per-frame path pays, for EVERY frame: a heap copy, an
+	// ImageData, a putImageData, a transferToImageBitmap, a postMessage, and a
+	// second createImageBitmap on the main thread. The WASM render is
+	// microseconds — that ceremony was the pool's real throughput ceiling
+	// (~240 frames/s on an 8-core phone). Falls back to per-frame if the
+	// sheet fails for any reason.
+	let sheet = null;
+	try { sheet = await acquireSheet(url, data, srcPx, cap); } catch { sheet = null; }
+	if (sheet) {
+		let stillWanted = false;
+		for (const c of _cells.values()) {
+			if (c.visible && c.url === url && slotPxFor(c.w) === slotPxFor(px)) { stillWanted = true; break; }
+		}
+		if (!stillWanted || _epoch !== startedAt) { try { sheet.bitmap.close(); } catch {} return; }
+
+		const N = Math.max(1, sheet.n);
+		const atlas = getAtlas(sl);
+		const slots = atlasAllocSlots(atlas, N);
+		if (!slots) { try { sheet.bitmap.close(); } catch {} return; }
+		const _p1 = performance.now();
+		for (let i = 0; i < N; i++) {
+			const slot = slots[i];
+			const ctx = atlas.pages[slot.page].ctx;
+			const sx0 = (i % sheet.cols) * sheet.fw, sy0 = ((i / sheet.cols) | 0) * sheet.fh;
+			ctx.clearRect(slot.x, slot.y, sl, sl);
+			try { ctx.drawImage(sheet.bitmap, sx0, sy0, sheet.fw, sheet.fh, slot.x, slot.y, sl, sl); } catch {}
+		}
+		_prof.pack += performance.now() - _p1; _prof.packN++;
+
+		// Persist — full tier only, quiet moments only (same policy as the
+		// per-frame path below).
+		const _quiet2 = _rasterPending.size === 0 && _rasterLanes <= 1;
+		if (frameCacheAvailable() && N >= 2 && !_encodeBusy && _quiet2 && !fast) {
+			try {
+				const cols = Math.max(1, Math.ceil(Math.sqrt(N)));
+				const rows = Math.ceil(N / cols);
+				const rw = cols * sl, rh = rows * sl;
+				const scr = scratchFor(rw, rh);
+				scr.ctx.clearRect(0, 0, rw, rh);
+				for (let i = 0; i < N; i++) {
+					const sx0 = (i % sheet.cols) * sheet.fw, sy0 = ((i / sheet.cols) | 0) * sheet.fh;
+					scr.ctx.drawImage(sheet.bitmap, sx0, sy0, sheet.fw, sheet.fh, (i % cols) * sl, ((i / cols) | 0) * sl, sl, sl);
+				}
+				const _b2 = performance.now();
+				const sheetData = scr.ctx.getImageData(0, 0, rw, rh).data;
+				_prof.readback += performance.now() - _b2; _prof.readbackN++;
+				_encodeBusy = true;
+				fcStore(diskKeyFor(key), {
+					sl, N, cols, sheetW: rw, sheetData,
+					duration: sheet.duration, totalFrames: sheet.totalFrames
+				}).finally(() => { _encodeBusy = false; });
+			} catch { _encodeBusy = false; }
+		}
+		try { sheet.bitmap.close(); } catch {}
+
+		if (_epoch !== startedAt || _atlasByPx.get(sl) !== atlas) return;
+		const prev = _frameCache.get(key);
+		if (prev) {
+			for (const sp of prev.slots) prev.atlas.free.push(sp);
+			prev.atlas.lru.delete(key);
+		}
+		const cacheEntry = { atlas, slots, N, duration: sheet.duration || 1, sl, fast };
+		_frameCache.set(key, cacheEntry);
+		atlas.lru.set(key, cacheEntry);
+		for (const c of _cells.values()) if (c.url === url) c.lastFrame = -1;
+		return;
+	}
+
 	let entry;
-	// Ask rlottie for frames at (or just above) this atlas's slot size instead
-	// of the old fixed 48px — the atlas then DOWN-scales into the slot, so big
-	// cells are crisp rather than upscaled. Same size on the release below, or
-	// the refcount lands on a different cache entry and the frames leak.
-	const srcPx = rasterSizeFor(px);
-	try { entry = await acquire(url, data, srcPx, fpsCapFor(data, maxFps)); } catch { return; }
+	try { entry = await acquire(url, data, srcPx, cap); } catch { return; }
 	// Wait for every frame to settle, then we own a full set to pack.
 	try { if (entry.pending) await entry.pending; } catch {}
 	// Did the user scroll past this while rlottie was working?
@@ -598,7 +671,8 @@ async function doRasterize(url, px, key, maxFps = 0, fast = true, upgrade = fals
 
 	const frames = entry.frames || [];
 	const N = Math.max(1, entry.totalFrames || frames.length || 1);
-	const sl = slotPxFor(px, fast);
+	// `sl` already declared at the top of this function, shared with the
+	// sheet-first path above.
 	const atlas = getAtlas(sl);
 	const slots = atlasAllocSlots(atlas, N);
 	if (!slots) { release(url, srcPx); return; } // atlas full — thumb stays up

@@ -107,6 +107,20 @@ function onMessage(m) {
 		_frameRequests.delete(key);
 		return;
 	}
+	if (m?.type === 'sheet') {
+		const req = _sheetRequests.get(m.id);
+		_sheetRequests.delete(m.id);
+		if (req) req.resolve({ bitmap: m.bitmap, cols: m.cols, n: m.n, w: m.w, h: m.h });
+		else { try { m.bitmap.close(); } catch {} }
+		return;
+	}
+	if (m?.type === 'sheet_error') {
+		const req = _sheetRequests.get(m.id);
+		_sheetRequests.delete(m.id);
+		if (req) req.resolve(null);
+		console.warn('[rlottie-pool] sheet_error', m.id, m.message);
+		return;
+	}
 	if (m?.type === 'error') {
 		console.warn('[rlottie-worker]', m.id, m.frame, m.message);
 		// Free the inflight slot the failed render was holding, drain its
@@ -192,6 +206,26 @@ export function getFrame(id, frame) {
 	if (workerIdx == null) { resolve(null); return promise; }
 	sendRender(workerIdx, { type: 'render', id, frame });
 	return promise;
+}
+
+const _sheetRequests = new Map(); // animId -> { resolve }
+
+/**
+ * Render `frames` (source frame numbers) into one packed sheet, in the anim's
+ * worker, and resolve with { bitmap, cols, n } — ONE transfer for the whole
+ * emote instead of one per frame. Resolves null on failure or timeout.
+ */
+export function renderSheet(id, frames, cols, timeoutMs = 12000) {
+	const workerIdx = _animWorker.get(id);
+	if (workerIdx == null || !_workers[workerIdx]) return Promise.resolve(null);
+	return new Promise((resolve) => {
+		const t = setTimeout(() => {
+			if (_sheetRequests.get(id)?.resolve === wrapped) { _sheetRequests.delete(id); resolve(null); }
+		}, timeoutMs);
+		const wrapped = (v) => { clearTimeout(t); resolve(v); };
+		_sheetRequests.set(id, { resolve: wrapped });
+		_workers[workerIdx].worker.postMessage({ type: 'sheet', id, frames, cols });
+	});
 }
 
 export function destroy(id) {

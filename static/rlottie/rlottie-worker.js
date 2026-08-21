@@ -64,6 +64,37 @@ function renderFrame({ id, frame }) {
 	}
 }
 
+// Render every requested frame into ONE OffscreenCanvas grid and ship ONE
+// ImageBitmap. The per-frame path above costs, per frame: a WASM-heap copy, an
+// ImageData, a putImageData, a transferToImageBitmap (GPU alloc), and a
+// postMessage — and the main thread then createImageBitmap()s the result AGAIN.
+// For a 60-frame emote that is ~360 pieces of ceremony around ~60 cheap WASM
+// renders. This does the renders in one loop, one canvas, one transfer, one
+// message: the ceremony stops scaling with frame count.
+function renderSheet({ id, frames, cols }) {
+	const slot = handles.get(id);
+	if (!slot) return;
+	const { handle, w, h } = slot;
+	const n = frames.length;
+	const rows = Math.ceil(n / cols);
+	try {
+		const sheet = new OffscreenCanvas(cols * w, rows * h);
+		const sctx = sheet.getContext('2d');
+		for (let i = 0; i < n; i++) {
+			Module._lottie_render(handle, frames[i]);
+			const bufPtr = Module._lottie_buffer(handle);
+			const pixels = new Uint8ClampedArray(Module.HEAPU8.buffer, bufPtr, w * h * 4);
+			// Copy out of the WASM heap before the next render mutates it.
+			const img = new ImageData(new Uint8ClampedArray(pixels), w, h);
+			sctx.putImageData(img, (i % cols) * w, ((i / cols) | 0) * h);
+		}
+		const bitmap = sheet.transferToImageBitmap();
+		self.postMessage({ type: 'sheet', id, bitmap, cols, n, w, h }, [bitmap]);
+	} catch (e) {
+		self.postMessage({ type: 'sheet_error', id, message: String(e && e.message || e) });
+	}
+}
+
 function destroy({ id }) {
 	const slot = handles.get(id);
 	if (!slot) return;
@@ -75,6 +106,7 @@ function handle(data) {
 	switch (data.type) {
 		case 'mount':   return mount(data);
 		case 'render':  return renderFrame(data);
+		case 'sheet':   return renderSheet(data);
 		case 'destroy': return destroy(data);
 	}
 }

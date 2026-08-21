@@ -22,6 +22,7 @@ import {
 	mount as rlottieMount,
 	getFrame as rlottieGetFrame,
 	destroy as rlottieDestroy,
+	renderSheet as rlottieRenderSheet,
 	ensureReady as rlottieEnsureReady,
 	workerCount as rlottieWorkerCount
 } from './rlottie-pool.js';
@@ -121,6 +122,53 @@ export function prewarm() {
 // Acquire (or refcount-bump) the rasterised entry for a URL. Resolves
 // once frame 0 is ready (or has timed out) — remaining frames continue
 // filling in `entry.frames` asynchronously after this resolves.
+/**
+ * Rasterise a whole animation as ONE packed sheet — one worker message, one
+ * ImageBitmap back — instead of a round trip per frame.
+ *
+ * The per-frame path costs, for every frame: a heap copy, an ImageData, a
+ * putImageData, a transferToImageBitmap, a postMessage, and then ANOTHER
+ * createImageBitmap on the main thread (acquire's fireFrame). The WASM render
+ * is microseconds; the ceremony around it is the pool's actual throughput
+ * ceiling. Here the ceremony is per EMOTE, so it stops scaling with frames.
+ *
+ * Uncached and unrefcounted on purpose: the caller copies the pixels into its
+ * own atlas and closes the bitmap. Resolves null on any failure — callers fall
+ * back to acquire().
+ *
+ * @returns {Promise<{bitmap:ImageBitmap, cols:number, n:number, fw:number, fh:number,
+ *   totalFrames:number, duration:number, fps:number}|null>}
+ */
+export async function acquireSheet(url, data, px = TARGET_PX, maxFps = 0) {
+	const sizePx = rasterSizeFor(px);
+	await rlottieEnsureReady();
+	const sourceFrames = Math.max(1, (data.op || 60) - (data.ip || 0));
+	const sourceFps = data.fr || 60;
+	const stride = maxFps > 0
+		? Math.max(1, Math.round(sourceFps / maxFps))
+		: (sourceFps >= 60 ? 2 : 1);
+	const totalFrames = Math.max(1, Math.floor(sourceFrames / stride));
+	const fps = sourceFps / stride;
+	const duration = totalFrames / fps;
+
+	let animId = null;
+	try {
+		animId = await rlottieMount(JSON.stringify(data), sizePx, sizePx);
+		const frames = Array.from({ length: totalFrames }, (_, i) => i * stride);
+		const cols = Math.max(1, Math.ceil(Math.sqrt(totalFrames)));
+		const sheet = await rlottieRenderSheet(animId, frames, cols);
+		if (!sheet?.bitmap) return null;
+		return {
+			bitmap: sheet.bitmap, cols: sheet.cols, n: sheet.n,
+			fw: sizePx, fh: sizePx, totalFrames, duration, fps
+		};
+	} catch {
+		return null;
+	} finally {
+		if (animId != null) { try { rlottieDestroy(animId); } catch {} }
+	}
+}
+
 export async function acquire(url, data, px = TARGET_PX, maxFps = 0) {
 	const sizePx = rasterSizeFor(px);
 	const key = _key(url, sizePx);
