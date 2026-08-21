@@ -20,6 +20,7 @@
 
 import { acquire, acquireSheet, release, rasterSizeFor, prewarm as prewarmRlottie } from './lottie-spritesheet.js';
 import { loadFrames as fcLoad, storeFrames as fcStore, hasFrames as fcHas, frameCacheAvailable } from './frame-cache.js';
+import { onScrollGesture } from './scroll-bus.js';
 import { fetchLottie, isAdaptivePack, customShortFromUrl } from './telegram-emoji-store.js';
 
 // Mobile-scale atlas: native res, tiny pages. 1024² × 4 bytes = 4 MB a page.
@@ -461,7 +462,41 @@ function queueUpgrades() {
 	}
 }
 
+// ── Scroll hold ─────────────────────────────────────────────────────────
+// While the user is actively flinging, starting a bake is a bet that the cell
+// will still be on screen seconds from now — during a fast scroll that bet
+// loses every time, and the lanes end up clogged with work for cells that are
+// already gone while the NEW screenful queues behind them. So: while scroll
+// input is arriving, start nothing. The moment input stops (touchend — the
+// bus emits per input event, so silence = finger up), the pump wakes and the
+// lanes go entirely to what is visible right now. Static thumbs cover the
+// gap, which is exactly what Telegram shows mid-fling.
+//
+// The queue needs no explicit clearing: pumpRaster prunes non-visible entries
+// at every pick, and cells that scrolled away re-schedule themselves when
+// they come back (renderCells re-requests on cache miss) — that is the
+// "resume later" for free.
+const SCROLL_HOLD_MS = 90;
+// -Infinity, NOT 0: performance.now() starts near zero at page load, so a 0
+// seed makes the first 90ms of the app a hold — and a pump call dropped in
+// that window stayed dropped, because scheduleRasterize early-returns once
+// the key is queued. Picker opened right after load = permanently stuck bake.
+let _lastScrollInput = -Infinity;
+let _scrollWake = null;
+if (typeof window !== 'undefined') {
+	onScrollGesture(() => {
+		_lastScrollInput = performance.now();
+		// renderCells re-pumps every frame while cells are visible, but if the
+		// grid is fully baked except the queue, nothing else would wake us.
+		clearTimeout(_scrollWake);
+		_scrollWake = setTimeout(() => pumpRaster(), SCROLL_HOLD_MS + 20);
+	});
+}
+
 function pumpRaster() {
+	// Mid-fling: hold the lanes. Everything queued keeps waiting; nothing new
+	// starts until input has been quiet for SCROLL_HOLD_MS.
+	if (performance.now() - _lastScrollInput < SCROLL_HOLD_MS) return;
 	while (_rasterLanes < RASTER_LANES && _rasterPending.size) {
 		// Re-check visibility on every pick, not once per batch: a fling can
 		// retire a whole screenful between one lane starting and the next.
@@ -750,6 +785,10 @@ function startLoop() {
 		// to run for the life of the page — every frame, on the main thread,
 		// long after the picker closed and every cell had gone.
 		if (!_cells.size) { _running = false; return; }
+		// Re-pump every frame while work is waiting. scheduleRasterize only
+		// pumps when it ENQUEUES — a key already queued early-returns — so a
+		// pump skipped during a scroll hold would otherwise never retry.
+		if (_rasterPending.size && _rasterLanes < RASTER_LANES) pumpRaster();
 		// The rAF chain must outlive any single bad frame. renderCells throwing
 		// used to take the whole loop with it — the re-arm below never ran, so
 		// one TypeError from one cell silently stopped every animation on the
