@@ -1168,7 +1168,15 @@
 	.expr-tab :global(.msi) { transition: none; }
 	.expr-tab.active {
 		color: var(--sidebar-active-fg, var(--md-sys-color-on-secondary-container, var(--ink)));
+		/* Follows the chrome fade (0.3s, matching the opacity transitions) so
+		   the colour swap below dissolves with the circle instead of cutting. */
+		transition: color 0.3s ease;
 	}
+	/* Dimmed, the circle is at 10% — effectively gone — so the active icon's
+	   on-green colour would be sitting on the dark pill, darker than its
+	   neighbours. With no visible circle to contrast against, the active icon
+	   dresses like the rest; the colour comes back with the circle. */
+	.expr-tabs.chrome-dim .expr-tab.active { color: var(--ink); }
 	.expr-tab:hover:not(.active) {
 		background: color-mix(in srgb, var(--md-sys-color-on-surface, var(--ink)) 7%, transparent);
 	}
