@@ -19,6 +19,7 @@
 // (a 2D context), NOT a transferControlToOffscreen handle.
 
 import { acquire, release, rasterSizeFor, prewarm as prewarmRlottie } from './lottie-spritesheet.js';
+import { loadFrames as fcLoad, storeFrames as fcStore, hasFrames as fcHas, frameCacheAvailable } from './frame-cache.js';
 import { fetchLottie, isAdaptivePack, customShortFromUrl } from './telegram-emoji-store.js';
 
 // Mobile-scale atlas: native res, tiny pages. 1024² × 4 bytes = 4 MB a page.
@@ -199,6 +200,84 @@ export function reclaimMemory({ all = false } = {}) {
 	}
 }
 
+/**
+ * Bake emotes to DISK ahead of time, so opening a tab is a read rather than a
+ * render.
+ *
+ * The distinction that matters: this never allocates an atlas slot. Warming
+ * into the atlas is what made the picker a monotonic allocator in the first
+ * place — hundreds of emotes' worth of pages held for a grid showing ninety of
+ * them. Here each emote is rasterised, packed into a scratch sheet, handed to
+ * frame-cache, and released. Steady-state memory is one scratch canvas.
+ *
+ * First run still pays to rasterise: something has to render 600-odd
+ * animations once, and no amount of scheduling makes that free. What it buys
+ * is that the cost is spent during idle time while the user reads the chat,
+ * instead of at the moment they tap the emoji key — and that every session
+ * afterwards skips it entirely.
+ *
+ * @param {string[]} urls
+ * @param {number} px slot size to bake at — MUST match the cell size the
+ *   picker registers, or loadFrames rejects on the sl check and it re-renders.
+ * @param {{ signal?: { stop: boolean }, onProgress?: (done:number,total:number)=>void }} [opts]
+ */
+export async function prewarmToDisk(urls, px, opts = {}) {
+	if (!frameCacheAvailable() || !Array.isArray(urls) || !px) return { baked: 0, skipped: 0 };
+	const { signal, onProgress } = opts;
+	let baked = 0, skipped = 0, i = 0;
+	for (const url of urls) {
+		if (signal?.stop) break;
+		i++;
+		const key = url + '@' + px;
+		// Already on disk, or already live in memory — nothing to do.
+		if (_frameCache.has(key)) { skipped++; continue; }
+		try { if (await fcHas(diskKeyFor(key))) { skipped++; continue; } } catch { /* probe failed — just bake */ }
+		try {
+			const ok = await bakeToDisk(url, px);
+			if (ok) baked++; else skipped++;
+		} catch { skipped++; }
+		onProgress?.(i, urls.length);
+		// Yield generously: this is background work and the chat owns the frame.
+		await new Promise((r) => (typeof requestIdleCallback === 'function'
+			? requestIdleCallback(() => r(), { timeout: 500 })
+			: setTimeout(r, 16)));
+	}
+	return { baked, skipped };
+}
+
+/** Rasterise one emote and persist it, without touching the atlas. */
+async function bakeToDisk(url, px) {
+	const data = await fetchLottie(url);
+	if (!data) return false;
+	const srcPx = rasterSizeFor(px);
+	let entry;
+	try { entry = await acquire(url, data, srcPx, 0); } catch { return false; }
+	try {
+		try { if (entry.pending) await entry.pending; } catch {}
+		const frames = entry.frames || [];
+		const N = Math.max(1, entry.totalFrames || frames.length || 1);
+		if (N < 2 || !frames.length) return false;      // static — not worth storing
+		const cols = Math.max(1, Math.ceil(Math.sqrt(N)));
+		const rows = Math.ceil(N / cols);
+		const rw = cols * px, rh = rows * px;
+		const scr = scratchFor(rw, rh);
+		scr.ctx.clearRect(0, 0, rw, rh);
+		for (let i = 0; i < N; i++) {
+			const bm = frames[i] || frames[0];
+			if (!bm) continue;
+			scr.ctx.drawImage(bm, 0, 0, bm.width, bm.height, (i % cols) * px, ((i / cols) | 0) * px, px, px);
+		}
+		const sheetData = scr.ctx.getImageData(0, 0, rw, rh).data;
+		await fcStore(diskKeyFor(url + '@' + px), {
+			sl: px, N, cols, sheetW: rw, sheetData,
+			duration: entry.duration, totalFrames: entry.totalFrames
+		});
+		return true;
+	} finally {
+		release(url, srcPx);   // always hand the rlottie bitmaps back
+	}
+}
+
 /** Page/byte counts, for confirming the budget actually holds. */
 export function atlasStats() {
 	return {
@@ -245,9 +324,74 @@ async function pumpRaster() {
 		_rasterBusy = false;
 	}
 }
+// One encode in flight at a time. During a first-open storm the render loop is
+// the priority; emotes that bake while an encode is busy simply skip
+// persistence and get cached on a calmer later bake. Mirrors skottie-worker.
+let _encodeBusy = false;
+let _scratch = null;
+function scratchFor(w, h) {
+	if (!_scratch || _scratch.canvas.width < w || _scratch.canvas.height < h) {
+		const canvas = makeCanvas(1);
+		canvas.width = w; canvas.height = h;
+		_scratch = { canvas, ctx: canvas.getContext('2d', { willReadFrequently: true }) };
+	}
+	return _scratch;
+}
+
+// Pack this animation's frames into slots and register the cache entry.
+// Shared by the disk path and the rlottie path — everything after "we have N
+// frames' worth of pixels" is identical between them.
+function packIntoAtlas({ key, px, N, duration, draw }) {
+	const atlas = getAtlas(px);
+	const slots = atlasAllocSlots(atlas, N);
+	if (!slots) return null;               // atlas full — the thumb stays up
+	for (let i = 0; i < N; i++) {
+		const slot = slots[i];
+		const ctx = atlas.pages[slot.page].ctx;
+		ctx.clearRect(slot.x, slot.y, px, px);
+		try { draw(ctx, i, slot); } catch { /* one bad frame — leave it cleared */ }
+	}
+	return { atlas, slots, N, duration };
+}
+
+// Disk keys are namespaced per engine.
+//
+// frame-cache keys on `url@px` and versions the whole store, but does NOT
+// separate engines — and the two engines store incompatible geometry under the
+// same name: skottie-worker's slot is `px * supersample`, ours is exactly `px`.
+// Sharing the key means each engine rejects the other's entry on the sl check,
+// re-bakes, and overwrites it, so a user who ever switched engines would get a
+// cache that permanently thrashes instead of one that hits.
+const diskKeyFor = (key) => 'cpu|' + key;
+
 async function doRasterize(url, px, key, maxFps = 0) {
 	if (_frameCache.has(key)) return;
 	const startedAt = _epoch;
+
+	// Disk first. This is the whole reason the cold open cost 1-2s a session:
+	// skottie-worker was the only reader of frame-cache, so on the default
+	// engine every emote was re-rasterised through rlottie from scratch, every
+	// time, even though the frames had been baked before. Slot size IS the
+	// stored slot size here, so a hit blits straight in with no rlottie at all.
+	if (frameCacheAvailable()) {
+		let disk = null;
+		try { disk = await fcLoad(diskKeyFor(key), px); } catch { disk = null; }
+		if (disk && disk.N >= 2 && _epoch === startedAt && !_frameCache.has(key)) {
+			const img = typeof ImageData !== 'undefined' ? disk.frames.map((f) => {
+				try { return new ImageData(f, px, px); } catch { return null; }
+			}) : [];
+			const entry = packIntoAtlas({
+				key, px, N: disk.N, duration: disk.duration || 1,
+				draw: (ctx, i, slot) => { const d = img[i]; if (d) ctx.putImageData(d, slot.x, slot.y); }
+			});
+			if (entry && _epoch === startedAt && _atlasByPx.get(px) === entry.atlas) {
+				_frameCache.set(key, entry);
+				entry.atlas.lru.set(key, entry);
+				return;
+			}
+		}
+	}
+
 	const data = await fetchLottie(url);   // adaptive packs are tinted here
 	if (!data) return;
 	let entry;
@@ -273,6 +417,32 @@ async function doRasterize(url, px, key, maxFps = 0) {
 			try { ctx.drawImage(bm, 0, 0, bm.width, bm.height, slot.x, slot.y, px, px); } catch {}
 		}
 	}
+	// Persist BEFORE releasing the rlottie bitmaps — they are the pixels we
+	// need to capture, and `release` frees them.
+	if (frameCacheAvailable() && N >= 2 && !_encodeBusy) {
+		try {
+			// Pack the frames into a scratch grid at SLOT size (not source
+			// size): that is the geometry the atlas blits at, so a later
+			// loadFrames can putImageData straight into a slot with no scaling.
+			const cols = Math.max(1, Math.ceil(Math.sqrt(N)));
+			const rows = Math.ceil(N / cols);
+			const rw = cols * px, rh = rows * px;
+			const scr = scratchFor(rw, rh);
+			scr.ctx.clearRect(0, 0, rw, rh);
+			for (let i = 0; i < N; i++) {
+				const bm = frames[i] || frames[0];
+				if (!bm) continue;
+				scr.ctx.drawImage(bm, 0, 0, bm.width, bm.height, (i % cols) * px, ((i / cols) | 0) * px, px, px);
+			}
+			const sheetData = scr.ctx.getImageData(0, 0, rw, rh).data;   // one readback
+			_encodeBusy = true;
+			fcStore(diskKeyFor(key), {
+				sl: px, N, cols, sheetW: rw, sheetData,
+				duration: entry.duration, totalFrames: entry.totalFrames
+			}).finally(() => { _encodeBusy = false; });
+		} catch { _encodeBusy = false; /* readback failed — skip persisting */ }
+	}
+
 	release(url, srcPx); // pixels are copied into the atlas — free the rlottie bitmaps
 	// A reclaim landed while rlottie was working: `atlas` was detached from
 	// _atlasByPx and its pages emptied, so caching this would hand renderCells
