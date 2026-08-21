@@ -527,6 +527,25 @@ async function doRasterize(url, px, key, maxFps = 0) {
 	try { entry = await acquire(url, data, srcPx, fpsCapFor(data, maxFps)); } catch { return; }
 	// Wait for every frame to settle, then we own a full set to pack.
 	try { if (entry.pending) await entry.pending; } catch {}
+	// Did the user scroll past this while rlottie was working?
+	//
+	// rlottie runs in a worker, so the wait is cheap — but everything after it
+	// is main-thread: packing N frames into atlas slots, and the disk cache's
+	// synchronous getImageData. There was no check at all, so a fling would
+	// start four lanes, scroll away, and still pay full price for all four.
+	// The queue already drops work that has not STARTED; this drops work whose
+	// cell left the screen while it was in flight.
+	//
+	// The slots are not allocated yet, so bailing here costs nothing but the
+	// rasterising already done, and frees the lane for a cell you are looking at.
+	{
+		let stillWanted = false;
+		for (const c of _cells.values()) {
+			if (c.visible && c.url === url && slotPxFor(c.w) === slotPxFor(px)) { stillWanted = true; break; }
+		}
+		if (!stillWanted) { release(url, srcPx); return; }
+	}
+
 	const frames = entry.frames || [];
 	const N = Math.max(1, entry.totalFrames || frames.length || 1);
 	const sl = slotPxFor(px);
