@@ -66,9 +66,9 @@ function onAnyScroll(e) {
 	if (!_raf) _raf = requestAnimationFrame(flush);
 }
 
-function emitGesture(dir) {
+function emitGesture(dir, dy) {
 	for (const cb of _gestureSubs) {
-		try { cb(dir); } catch { /* ignore */ }
+		try { cb(dir, dy); } catch { /* ignore */ }
 	}
 }
 
@@ -80,11 +80,15 @@ function onTouchMove(e) {
 	const dy = _touchY - y;            // finger up = reading downward
 	if (Math.abs(dy) < 2) return;
 	_touchY = y;
-	emitGesture(dy > 0 ? 'down' : 'up');
+	// Magnitude travels with the direction. A subscriber that flips state on a
+	// single 2px event has no way to tell a deliberate reversal from the jitter
+	// inside one drag — real drags are never monotonic — so it needs to be able
+	// to accumulate before committing.
+	emitGesture(dy > 0 ? 'down' : 'up', Math.abs(dy));
 }
 function onWheel(e) {
 	if (!_gestureSubs.size || !e.deltaY) return;
-	emitGesture(e.deltaY > 0 ? 'down' : 'up');
+	emitGesture(e.deltaY > 0 ? 'down' : 'up', Math.abs(e.deltaY));
 }
 
 function init() {
@@ -125,7 +129,11 @@ export function onElementScroll(el, cb) {
 
 /**
  * Observe scroll DIRECTION from real user input, anywhere in the app.
- * @param {(dir: 'up' | 'down') => void} cb
+ *
+ * The callback also receives the pixel magnitude of that individual event, so
+ * a subscriber can require N pixels in one direction before acting rather than
+ * reacting to every 2px sample.
+ * @param {(dir: 'up' | 'down', dy: number) => void} cb
  * @returns {() => void} unsubscribe
  */
 export function onScrollGesture(cb) {

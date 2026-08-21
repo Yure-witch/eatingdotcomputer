@@ -404,9 +404,19 @@
 	// just input something it should stay opaque" behaviour.
 	let chrome = $state('rest');
 	let _chromeT = null;
+	// Accumulated gesture travel — see the scroll subscription below for why
+	// the chrome commits at a threshold instead of on every sample.
+	const UP_PX = 20;    // scroll back up this far and the chrome returns
+	const DOWN_PX = 12;  // and this far down before it gets out of the way
+	let _accUp = 0;
+	let _accDown = 0;
 	function setChrome(next) {
 		clearTimeout(_chromeT);
 		chrome = next;
+		// Whoever set the state wins outright; any part-accumulated travel
+		// toward the other one is stale now.
+		_accUp = 0;
+		_accDown = 0;
 	}
 	// Paging is transient: once the swipe settles, fall back to rest.
 	function endPaging() {
@@ -433,9 +443,34 @@
 	// Direction arrives from the shared scroll bus rather than this component
 	// attaching its own wheel + touchstart + touchmove. Three listeners became
 	// one subscription — see $lib/scroll-bus.js.
-	onMount(() => onScrollGesture((dir) => {
+	// Hysteresis, because a drag is never monotonic.
+	//
+	// The bus samples every 2px, and this used to flip state on each sample:
+	// one 'down' dimmed, one 'up' restored. Dimming that way is fine — you only
+	// ever get there by deliberately scrolling down. Restoring is not, because
+	// an upward drag still emits the occasional downward sample as the finger
+	// wavers, and each one slammed the chrome back to 50% mid-gesture. The
+	// chrome therefore looked reluctant to come back precisely when it was
+	// being asked to.
+	//
+	// So accumulate in the current direction and commit at a threshold, keeping
+	// the two sides asymmetric: dimming needs a deliberate push, and coming
+	// back is the cheaper move because it is the one the user is waiting on.
+	onMount(() => onScrollGesture((dir, dy = 0) => {
 		if (chrome === 'page') return;         // a swipe owns the chrome
-		setChrome(dir === 'down' ? 'dim' : 'rest');
+		const px = Math.abs(dy) || 2;
+		if (dir === 'up') {
+			// A sample the other way doesn't cancel progress outright, it just
+			// bleeds it — otherwise a single jittery frame resets the count and
+			// the threshold is never reached during a genuine drag.
+			_accDown = Math.max(0, _accDown - px);
+			_accUp += px;
+			if (_accUp >= UP_PX && chrome !== 'rest') { setChrome('rest'); _accUp = 0; }
+		} else {
+			_accUp = Math.max(0, _accUp - px);
+			_accDown += px;
+			if (_accDown >= DOWN_PX && chrome !== 'dim') { setChrome('dim'); _accDown = 0; }
+		}
 	}));
 
 	// ── Drag-to-dismiss ──────────────────────────────────────────────
