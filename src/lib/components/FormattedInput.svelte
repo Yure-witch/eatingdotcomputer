@@ -787,6 +787,31 @@
 			data-placeholder={placeholder}
 		></div>
 		<div class="fi-fmt-row">
+
+
+				<button bind:this={exprBtnEl} class="fi-btn fi-btn-expr" class:active={showExprPicker}
+					onmousedown={(e) => { e.preventDefault(); showExprPicker = !showExprPicker; }}
+					title="Insert emoji / emote / sticker">
+					<span class="msi msi-18" class:msi-fill={showExprPicker}>mood</span>
+				</button>
+				{#if showExprPicker}
+					<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+					<div class="fi-backdrop" onclick={() => showExprPicker = false}></div>
+					<div class="fi-expr-pop" use:popoverPos={{ anchor: exprBtnEl, side: 'top' }}>
+						<ExpressionPicker
+							inline
+							onSelectEmoji={onPickerSelectEmoji}
+							onInsertKitchen={onPickerInsertKitchen}
+							onSelectGif={onPickerSelectGif}
+							onInsertCustomEmoji={onPickerInsertCustomEmoji}
+							onInsertReaction={onPickerInsertReaction}
+							onInsertTgEmoji={onPickerInsertTgEmoji}
+						/>
+					</div>
+				{/if}
+			</div>
+			
+			{#if tools}{@render tools()}{/if}
 			{#if collapseTools}
 				<button class="fi-btn fi-btn-more" class:active={showTools}
 					onmousedown={(e) => { e.preventDefault(); showTools = !showTools; }}
@@ -818,29 +843,7 @@
 			     skin tone + last-tab choice are shared via its
 			     localStorage keys. -->
 			<div class="fi-expr-wrap">
-				<button bind:this={exprBtnEl} class="fi-btn fi-btn-expr" class:active={showExprPicker}
-					onmousedown={(e) => { e.preventDefault(); showExprPicker = !showExprPicker; }}
-					title="Insert emoji / emote / sticker">
-					<span class="msi msi-18" class:msi-fill={showExprPicker}>mood</span>
-				</button>
-				{#if showExprPicker}
-					<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-					<div class="fi-backdrop" onclick={() => showExprPicker = false}></div>
-					<div class="fi-expr-pop" use:popoverPos={{ anchor: exprBtnEl, side: 'top' }}>
-						<ExpressionPicker
-							inline
-							onSelectEmoji={onPickerSelectEmoji}
-							onInsertKitchen={onPickerInsertKitchen}
-							onSelectGif={onPickerSelectGif}
-							onInsertCustomEmoji={onPickerInsertCustomEmoji}
-							onInsertReaction={onPickerInsertReaction}
-							onInsertTgEmoji={onPickerInsertTgEmoji}
-						/>
-					</div>
-				{/if}
-			</div>
 			</div><!-- /.fi-tools -->
-			{#if tools}{@render tools()}{/if}
 		</div>
 	</div>
 
