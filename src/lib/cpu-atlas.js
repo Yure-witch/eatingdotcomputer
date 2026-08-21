@@ -115,6 +115,19 @@ let _running = false;
 // than cached — see the check at the end of doRasterize.
 let _epoch = 0;
 
+// ── Live profiling ────────────────────────────────────────────────────
+// A synthetic blit benchmark said every render approach costs <1ms at 60fps
+// with zero jank, while the actual picker ran at ~1fps. That gap is the whole
+// point of these counters: the cost is NOT in drawing frames, it is in the work
+// around it — rasterising, packing, and the synchronous readbacks the disk
+// cache does. Measure the real path rather than a model of it.
+const _prof = { render: 0, renderN: 0, raster: 0, rasterN: 0, pack: 0, packN: 0, readback: 0, readbackN: 0, lanes: 0 };
+export function atlasProfile(reset = false) {
+	const out = { ..._prof, lanesNow: _rasterLanes, pending: _rasterPending.size, jobs: _frameJobs.size };
+	if (reset) for (const k of Object.keys(_prof)) _prof[k] = 0;
+	return out;
+}
+
 // Real-device detection that does not lean on the UA string.
 //
 // A `/iPhone|iPad|Android/` regex misses the two cases that matter most here:
@@ -343,7 +356,9 @@ async function bakeToDisk(url, px, maxFps = 0) {
 			if (!bm) continue;
 			scr.ctx.drawImage(bm, 0, 0, bm.width, bm.height, (i % cols) * sl, ((i / cols) | 0) * sl, sl, sl);
 		}
+		const _b1 = performance.now();
 		const sheetData = scr.ctx.getImageData(0, 0, rw, rh).data;
+		_prof.readback += performance.now() - _b1; _prof.readbackN++;
 		await fcStore(diskKeyFor(url + '@' + px), {
 			sl, N, cols, sheetW: rw, sheetData,
 			duration: entry.duration, totalFrames: entry.totalFrames
@@ -414,7 +429,9 @@ function pumpRaster() {
 		_rasterPending.delete(key);
 		_frameJobs.add(key);
 		_rasterLanes++;
+		const _j0 = performance.now();
 		doRasterize(job.url, job.px, key, job.maxFps || 0)
+			.then(() => { _prof.raster += performance.now() - _j0; _prof.rasterN++; })
 			.catch((e) => { console.warn('[cpu-atlas] rasterise failed', e); })
 			.finally(() => {
 				_frameJobs.delete(key);
@@ -441,6 +458,7 @@ function scratchFor(w, h) {
 // Shared by the disk path and the rlottie path — everything after "we have N
 // frames' worth of pixels" is identical between them.
 function packIntoAtlas({ px, N, duration, draw }) {
+	const _p0 = performance.now();
 	const sl = slotPxFor(px);
 	const atlas = getAtlas(sl);
 	const slots = atlasAllocSlots(atlas, N);
@@ -453,6 +471,7 @@ function packIntoAtlas({ px, N, duration, draw }) {
 	}
 	// `sl` travels with the entry: it is the source rect renderCells blits FROM,
 	// and it is no longer the same as the cell's size.
+	_prof.pack += performance.now() - _p0; _prof.packN++;
 	return { atlas, slots, N, duration, sl };
 }
 
@@ -540,7 +559,9 @@ async function doRasterize(url, px, key, maxFps = 0) {
 				if (!bm) continue;
 				scr.ctx.drawImage(bm, 0, 0, bm.width, bm.height, (i % cols) * sl, ((i / cols) | 0) * sl, sl, sl);
 			}
+			const _b0 = performance.now();
 			const sheetData = scr.ctx.getImageData(0, 0, rw, rh).data;   // one readback
+			_prof.readback += performance.now() - _b0; _prof.readbackN++;
 			_encodeBusy = true;
 			fcStore(diskKeyFor(key), {
 				sl, N, cols, sheetW: rw, sheetData,
@@ -573,7 +594,9 @@ function startLoop() {
 		// used to take the whole loop with it — the re-arm below never ran, so
 		// one TypeError from one cell silently stopped every animation on the
 		// page until reload. Nothing renderCells can do is worth that.
+		const _r0 = performance.now();
 		try { renderCells(now); } catch (e) { console.warn('[cpu-atlas] render frame failed', e); }
+		_prof.render += performance.now() - _r0; _prof.renderN++;
 		requestAnimationFrame(tick);
 	};
 	requestAnimationFrame(tick);

@@ -1,4 +1,6 @@
 <script>
+	// TEMPORARY — live emote profiler overlay. Remove with /renderprobe.
+	import EmoteProfiler from './EmoteProfiler.svelte';
 	/**
 	 * Unified expression picker — single popover with one tab per
 	 * inserter: Emoji, Kitchen, GIFs, Emotes, Animated, Reactions.
@@ -777,6 +779,10 @@
 	</div>
 	{/if}
 </div>
+
+
+<!-- TEMPORARY: live profiler for the picker. Delete with /renderprobe. -->
+<EmoteProfiler />
 
 <style>
 	.expr-panel {

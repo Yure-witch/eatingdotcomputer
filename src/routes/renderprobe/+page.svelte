@@ -3,8 +3,8 @@
 
 	const CSSPX = 50;      // display size
 	const FPS_RATE = 24;   // content rate
-	const MAX_FRAMES = 48; // per emote — bounds the atlas under max texture size
-	const N = 30;          // emotes on screen
+	const MAX_FRAMES = 32; // per emote — 90 rows x 32 cols must stay under 4096
+	const N = 90;          // emotes on screen — what the real picker shows
 
 	let lines = $state([]);
 	let status = $state('starting…');
@@ -38,7 +38,7 @@
 		const DPR = window.devicePixelRatio || 1;
 		// Cap the bake: 30 emotes x 48 frames must fit one texture, and phones
 		// commonly stop at 4096. 72px keeps the atlas at 3456x2160.
-		const PX = Math.min(Math.round(CSSPX * DPR), 72);
+		const PX = Math.min(Math.round(CSSPX * DPR), 44);
 
 		// Measure the display's real refresh rate — the frame budget depends on it.
 		const refresh = await new Promise((res) => {
@@ -343,14 +343,25 @@
 				else if (now - t0 > WARMUP) { gaps.push(now - last); last = now; }
 				else last = now;
 				frames++;
+				const idx = Math.floor(((now - t0) / 1000) * FPS_RATE);
 				if (inst.draw) {
-					// THE metric. Frame cadence cannot measure work when vsync is
-					// capped (Low Power Mode pins rAF at 30fps, and then every
-					// variant reports an identical 33ms p50 no matter what it
-					// costs). Time spent inside draw() is hostage to nothing.
-					const c0 = performance.now();
-					inst.draw(Math.floor(((now - t0) / 1000) * FPS_RATE));
-					if (now - t0 > WARMUP) costs.push(performance.now() - c0);
+					inst.draw(idx);
+					// Cost, measured in BATCHES.
+					//
+					// Timing one draw is useless here: Safari clamps
+					// performance.now() to 1ms as a Spectre mitigation, so every
+					// sub-millisecond variant rounds to 0.00 and the table reads
+					// as a ten-way tie. Running the draw REPS times inside one
+					// timing window puts the total comfortably above the clamp,
+					// and the per-call cost falls out of the division.
+					//
+					// Every tenth frame only — the batch itself costs real time
+					// and would otherwise distort the fps it sits next to.
+					if (now - t0 > WARMUP && frames % 10 === 0) {
+						const b0 = performance.now();
+						for (let k = 0; k < REPS; k++) inst.draw(idx + k);
+						costs.push((performance.now() - b0) / REPS);
+					}
 				}
 				if (now - t0 < DUR) requestAnimationFrame(tick);
 				else {

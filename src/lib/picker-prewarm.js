@@ -96,6 +96,11 @@ async function warmEmotesToDisk() {
 		import('svelte/store')
 	]);
 	if (get(engineMode) !== 'cpu-rasterized') return;
+	// Kill switch, for isolating this from picker jank:
+	//   localStorage.setItem('noEmoteWarm','1')
+	// This bake rasterises the whole library and does a synchronous getImageData
+	// per emote, so it is the first thing to rule out when the picker stutters.
+	try { if (localStorage.getItem('noEmoteWarm') === '1') return; } catch {}
 
 	const cpu = await import('./cpu-atlas.js');
 	if (!cpu.prewarmToDisk) return;
