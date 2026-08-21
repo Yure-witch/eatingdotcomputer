@@ -72,6 +72,7 @@
 <input class="dev-input" placeholder="tap here to raise the keyboard" />
 
 <div class="dev-dock">
+	{#if booted === ''}
 	<ExpressionPicker
 		onSelectEmoji={noop}
 		onInsertKitchen={noop}
@@ -80,6 +81,7 @@
 		onClose={noop}
 		onBackspace={noop}
 	/>
+	{/if}
 </div>
 
 <style>

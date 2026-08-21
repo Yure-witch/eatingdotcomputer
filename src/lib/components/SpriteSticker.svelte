@@ -2,6 +2,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import {
 		tgAnimatedUrl,
+		tgDataVer,
 		tgFlagUrl,
 		tgcUrl,
 		tgThumbUrl,
@@ -93,7 +94,23 @@
 	// baked in a single colour, so for these we recolour it to the live
 	// --ink via a CSS mask instead of painting the baked pixels.
 	const adaptive = $derived(!!(short && isAdaptivePack(short)));
-	const url = $derived(isCustom ? tgcUrl(short, id) : tgAnimatedUrl(cp));
+	// $tgDataVer is the manifest-arrival signal. The URL builders read module
+	// state Svelte cannot track, so without it a cell mounted before the
+	// manifest resolved — recents mount straight from localStorage — computed
+	// url '' once and NEVER repaired it. That is why recents sat on their
+	// static thumbs while the TG panel (whose grid cannot even render until
+	// the manifest exists) animated fine.
+	const url = $derived.by(() => {
+		void $tgDataVer;
+		return isCustom ? tgcUrl(short, id) : tgAnimatedUrl(cp);
+	});
+
+	// When the url flips '' -> real, run the same load the mount would have.
+	// Guarded: a cell that already registered is left alone.
+	$effect(() => {
+		if (!url || skottieCellId != null) return;
+		if (isSkottieEngine(engine) || eager) ensureLoaded();
+	});
 	const thumbUrl = $derived(isCustom ? tgcThumbUrl(short, id) : tgThumbUrl(cp));
 	const itemKey = $derived(isCustom ? spriteKeyForCustom(short, id) : spriteKeyForCp(cp));
 	// Respect the store engine — which now defaults to a RASTERIZED (baked-atlas,
@@ -216,6 +233,7 @@
 	async function ensureLoaded_rlottie() {
 		if (entry || flag || !canvas || paused) return;
 		const u = url;
+		if (!u) return; // manifest not landed — the url-arrival effect re-calls us
 		const data = await fetchLottie(u);
 		if (!data || !mounted || !canvas || activeEngine !== 'rlottie') return;
 
@@ -324,6 +342,7 @@
 	async function ensureLoaded_skottie() {
 		if (skottieCellId != null || flag) return;
 		const u = url;
+		if (!u) return; // manifest not landed — the url-arrival effect re-calls us
 		const eng = activeEngine;
 		const mod = skModule(eng);
 		skottieMod = mod;

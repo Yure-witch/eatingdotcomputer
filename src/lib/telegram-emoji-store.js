@@ -39,6 +39,7 @@ export function loadTelegramEmoji() {
 					(byCat[it.cat] ??= []).push(it);
 				}
 				_manifest = { base: d.base, emoji: d.emoji, byCp, byCat };
+				tgDataVer.update((n) => n + 1);
 				return _manifest;
 			})
 			.catch(() => {
@@ -56,6 +57,14 @@ export function getCachedTgEmoji() {
 export function tgEntry(cp) {
 	return _manifest?.byCp?.[cp] ?? null;
 }
+
+// Bumped when the manifest / custom-pack data resolves. The URL builders below
+// read module-level state that Svelte cannot see, so a $derived built on them
+// computes once and never again — a cell mounted BEFORE the manifest landed
+// (recents come straight out of localStorage, no data dependency) got url ''
+// and kept it forever. Deriving on this store as well makes those urls repair
+// themselves the moment the data arrives.
+export const tgDataVer = writable(0);
 
 // URL builders (base is read from the loaded manifest)
 export function tgAnimatedUrl(cp) {
@@ -342,6 +351,7 @@ export function loadCustomPacks() {
 					}
 				}
 				_custom = { base: d.base, packs: d.packs, byId, flatAll };
+				tgDataVer.update((n) => n + 1);
 				return _custom;
 			})
 			.catch(() => {
