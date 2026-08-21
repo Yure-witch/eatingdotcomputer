@@ -796,17 +796,16 @@
 		/* Gap between icon slots. The indicator steps by slot + gap, so this
 		   has to be ONE number both consumers read — see .expr-indicator. */
 		--expr-gap: 1px;
-		/* End padding for the rail. The circle's hug is VERTICAL — 48px circle in
-		   a 56px pill, the home nav's 4px-ring relationship — and that comes from
-		   heights, not from this. This is about the END slots: an UN-highlighted
-		   glyph near a fully-rounded cap has no circle nesting it, so with 3px of
-		   end padding the kitchen icon sat visually inside the cap's curve and
-		   read as cut off (the original 18px comment was right about exactly
-		   this; 3px was an overcorrection for the circle's sake). 12px clears the
-		   curve — glyph edge lands 23.5px from the pill's end, where the cap is
-		   already ~27px tall — while the selected circle stays concentric on its
-		   slot wherever it is. */
-		--expr-pad: 12px;
+		/* End padding for the rail — 3px, same as the vertical padding, so the
+		   selected circle is CONCENTRIC with the pill's cap at the end slots: a
+		   4px ring (3px pad + 1px border) on all four sides, the home nav's
+		   60/52 relationship. An end glyph still clears the curve geometrically
+		   (12.5px half-height vs ~24.5px of cap at its edge). This briefly went
+		   to 12px chasing a "kitchen icon cut off" report, but that turned out
+		   to be the delete-key collision — fixed structurally by
+		   .expr-chrome-row — and the wide padding just left the circle floating
+		   short of the cap it's meant to hug. */
+		--expr-pad: 3px;
 		/* Shared bottom offset — these used to differ (6px vs 8px), so the two
 		   surfaces sat on different baselines. */
 		--expr-rail-bottom: 8px;
