@@ -53,6 +53,10 @@
 		}
 		return () => {
 			clearTimeout(_settleT);
+			// The grow variable outlives this component (it lives on <html>),
+			// so a dismissed picker must hand the dock back at keyboard size.
+			cancelAnimationFrame(_growAnim);
+			try { document.documentElement.style.setProperty('--expr-grow', '0px'); } catch {}
 			// The picker is the heaviest consumer of the emote renderer: it's
 			// the only surface that puts hundreds of distinct stickers on
 			// screen. Closing it is the best moment to give the atlases for
@@ -501,11 +505,46 @@
 	const DISMISS_PX = 64;
 	const DISMISS_VELOCITY = 0.45; // px/ms
 
+	// ── Pull UP to expand ────────────────────────────────────────────
+	// The same grabber that dismisses also grows the sheet. The mechanism is
+	// one CSS variable: every dock-height rule (chat's --picker-h, the
+	// FormattedInput sheet, dev-picker) adds var(--expr-grow) to its height,
+	// and the input bar lifts by the same rules — so writing the variable
+	// moves sheet AND bar together, no per-surface wiring. Capped so the
+	// sheet never passes ~86% of the viewport.
+	const GROW_MAX_VH = 0.86;
+	let _grow = 0;          // current extra px (mirrors the CSS var)
+	let _grow0 = 0;         // grow at drag start
+	let _growMax = 0;       // computed per drag from the sheet's base height
+	let _growAnim = 0;      // rAF id for the snap animation
+	function setGrow(px) {
+		_grow = Math.max(0, px);
+		try { document.documentElement.style.setProperty('--expr-grow', `${Math.round(_grow)}px`); } catch {}
+	}
+	function snapGrow(target) {
+		cancelAnimationFrame(_growAnim);
+		const from = _grow, d = target - from;
+		if (Math.abs(d) < 1) { setGrow(target); return; }
+		const t0 = performance.now(), DUR = 170;
+		const tick = (now) => {
+			const t = Math.min(1, (now - t0) / DUR);
+			setGrow(from + d * (1 - (1 - t) * (1 - t)));   // ease-out
+			if (t < 1) _growAnim = requestAnimationFrame(tick);
+		};
+		_growAnim = requestAnimationFrame(tick);
+	}
+
 	function dragStart(e) {
 		if (!onClose) return;
 		_dragId = e.pointerId;
 		_y0 = _lastY = e.clientY;
 		_t0 = _lastT = e.timeStamp;
+		cancelAnimationFrame(_growAnim);
+		_grow0 = _grow;
+		// The sheet's base (un-grown) height, from the live panel: it fills the
+		// dock, so panel height minus current grow is the keyboard-sized base.
+		const base = (panelEl?.offsetHeight || 480) - _grow0;
+		_growMax = Math.max(0, Math.round((window.innerHeight || 800) * GROW_MAX_VH) - base);
 		dragging = true;
 		try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
 	}
@@ -513,22 +552,32 @@
 		if (!dragging || e.pointerId !== _dragId) return;
 		_lastY = e.clientY;
 		_lastT = e.timeStamp;
-		// Downward only; dragging up shouldn't lift the sheet off its dock.
-		dragY = Math.max(0, e.clientY - _y0);
+		const dy = e.clientY - _y0;             // + down, − up
+		// Up grows; down spends the grow first, and only past the dock does
+		// the dismiss translate begin — one continuous gesture through both.
+		setGrow(Math.min(_growMax, _grow0 - dy));
+		dragY = Math.max(0, dy - _grow0);
 	}
 	function dragEnd(e) {
 		if (!dragging || e.pointerId !== _dragId) return;
 		dragging = false;
 		_dragId = null;
-		const dy = Math.max(0, _lastY - _y0);
-		const v = dy / Math.max(1, _lastT - _t0);
-		if (dy > DISMISS_PX || v > DISMISS_VELOCITY) {
+		const totalDy = _lastY - _y0;
+		const dockDy = Math.max(0, totalDy - _grow0);   // travel past the dock
+		const v = dockDy / Math.max(1, _lastT - _t0);
+		if (dockDy > DISMISS_PX || (_grow0 === 0 && v > DISMISS_VELOCITY)) {
 			// Throw it the rest of the way out, THEN tell the parent — closing
-			// on the spot would make the sheet vanish mid-gesture.
+			// on the spot would make the sheet vanish mid-gesture. From an
+			// EXPANDED sheet a flick only collapses (Telegram's behaviour);
+			// dismissing needs travel past the dock line.
 			dragY = panelEl?.offsetHeight || 480;
-			setTimeout(() => { onClose?.(); dragY = 0; }, 170);
+			setTimeout(() => { onClose?.(); dragY = 0; setGrow(0); }, 170);
 		} else {
 			dragY = 0; // transition springs it back to the dock
+			// Snap the grow: a deliberate upward pull expands, otherwise
+			// nearest edge wins.
+			const target = (totalDy < -48 || _grow > _growMax * 0.5) ? _growMax : 0;
+			snapGrow(target);
 		}
 	}
 

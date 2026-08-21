@@ -5575,10 +5575,14 @@
 		   indicator. The fallback keeps the inset because 22rem is a usable
 		   height, not a screen-bottom measurement. */
 		.input-area {
+			/* --expr-grow: extra height from the grabber's pull-up gesture
+			   (ExpressionPicker writes it on <html>). It rides inside the same
+			   clamp, so the input bar's margin-bottom lift and the sheet grow
+			   together from this one number. 86dvh cap = the expanded state. */
 			--picker-h: clamp(
 				15rem,
-				var(--kb-h-last, calc(22rem + env(safe-area-inset-bottom, 0px))),
-				58vh
+				calc(var(--kb-h-last, calc(22rem + env(safe-area-inset-bottom, 0px))) + var(--expr-grow, 0px)),
+				86dvh
 			);
 		}
 		.input-area.picker-open { margin-bottom: var(--picker-h); }

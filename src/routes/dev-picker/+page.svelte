@@ -97,7 +97,7 @@
 		   natural content height, which is not the height it ever has in a chat —
 		   so the grid showed a different number of rows than the thing being
 		   profiled. */
-		height: calc(min(var(--kb-h-last, 22rem), 58vh) + env(safe-area-inset-bottom, 0px));
+		height: calc(min(calc(min(var(--kb-h-last, 22rem), 58vh) + var(--expr-grow, 0px)), 86dvh) + env(safe-area-inset-bottom, 0px));
 		padding-bottom: env(safe-area-inset-bottom, 0px);
 		background: var(--paper);
 		border-top: 1.5px solid var(--border);

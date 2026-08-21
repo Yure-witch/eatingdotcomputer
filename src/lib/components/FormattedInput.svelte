@@ -1031,7 +1031,9 @@
 		   occupied (--kb-h-last), so swapping between them doesn't move anything,
 		   and own the safe area the bar gives up. */
 		.fi-expr-pop {
-			height: calc(min(var(--kb-h-last, 22rem), 58vh) + env(safe-area-inset-bottom, 0px));
+			/* + var(--expr-grow): the grabber's pull-up gesture, same variable
+			   the chat dock consumes. Outer min caps the expanded sheet. */
+			height: calc(min(calc(min(var(--kb-h-last, 22rem), 58vh) + var(--expr-grow, 0px)), 86dvh) + env(safe-area-inset-bottom, 0px));
 			padding-bottom: env(safe-area-inset-bottom, 0px);
 			background: var(--paper);
 			border-top: 1.5px solid var(--border);
