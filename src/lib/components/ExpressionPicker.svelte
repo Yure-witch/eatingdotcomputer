@@ -165,6 +165,7 @@
 	// Slot pitch in px, measured once per layout. The indicator's transform is
 	// written in px rather than through a custom property (see setFrac).
 	let _slotPx = 0;
+	let _slotW = 48;
 	function setFrac(f) {
 		if (!indEl) return;
 		if (!_slotPx) {
@@ -175,7 +176,8 @@
 			// of the last icon.
 			const first = railEl?.querySelector('.expr-tab');
 			const gap = parseFloat(getComputedStyle(railEl).columnGap) || 0;
-			_slotPx = (first?.offsetWidth || 48) + gap;
+			_slotW = first?.offsetWidth || 48;
+			_slotPx = _slotW + gap;
 		}
 		// Written DIRECTLY as a transform, not via a --expr-frac custom property.
 		// An unregistered custom property is inherited, so setting it on the rail
@@ -187,7 +189,12 @@
 		// -50% on Y is not decoration: the CSS parks this at `top: 50%` and relies
 		// on the transform to pull it back half its own height. Writing 0 here
 		// dropped the circle a full 24px below the icons.
-		indEl.style.transform = `translate3d(${f * _slotPx}px,-50%,0)`;
+		// The X correction centres the fixed-width circle on a slot that may
+		// have SHRUNK below it (narrow containers squeeze the slots; the circle
+		// keeps its 48px so it can keep hugging the pill's height). Zero when
+		// the slot is full-size.
+		const centre = (_slotW - (indEl.offsetWidth || _slotW)) / 2;
+		indEl.style.transform = `translate3d(${f * _slotPx + centre}px,-50%,0)`;
 	}
 
 	// Panes mount lazily and then STAY mounted. Tearing a pane down on
@@ -630,6 +637,15 @@
 				<span class="expr-grab-pill"></span>
 			</div>
 		{/if}
+		<!-- One row owns the bottom chrome. The rail and the delete key used to be
+		     independently absolutely-positioned at opposite edges, which is a
+		     collision course: in any container narrower than ~300px (thread
+		     panel, popovers) the opaque key slid OVER the rail's last slot and
+		     cut the kitchen icon in half. As flex siblings they can never
+		     overlap — the rail shrinks its slots instead (min-width below), and
+		     the indicator's pitch is measured from the real laid-out slot, so it
+		     stays centred at any width. -->
+		<div class="expr-chrome-row">
 		<nav class="expr-tabs" aria-label="Expression categories"
 			bind:this={railEl}
 			style:--expr-slots={TABS.length}
@@ -672,6 +688,7 @@
 			<span class="msi msi-20">backspace</span>
 		</button>
 	{/if}
+	</div>
 	<!-- One pane per category in a native horizontal scroll-snap track:
 	     swiping sideways pages between expression types exactly like the
 	     app shell's section pager. Every pane is always present so the
@@ -841,10 +858,14 @@
 	}
 
 	/* Category strip docks to the bottom (native-keyboard layout); the
-	   pane track fills the space above it, grabber on top. */
+	   pane track fills the space above it, grabber on top. The rail itself is
+	   inside .expr-chrome-row now, so the row is what takes the strip's slot in
+	   the column — an `order` on .expr-tabs here would instead reorder it
+	   WITHIN the row, which is exactly what put the delete key on the left and
+	   handed the rail the key's share of the width. */
 	.expr-grab { order: 0; }
 	.expr-track { order: 1; }
-	.expr-tabs { order: 2; }
+	.expr-chrome-row { order: 2; }
 
 	/* ── Drag handle ──────────────────────────────────────────────────
 	   Desktop shows the picker as a floating popover, not a sheet, so
@@ -902,7 +923,9 @@
 		.expr-tabs {
 			gap: var(--expr-gap);
 			padding: 3px var(--expr-pad);
-			margin: 4px 0 var(--expr-rail-bottom) var(--expr-edge);
+			/* Offsets belong to .expr-chrome-row now — a margin here would
+			   stack on top of the row's and double-inset the rail. */
+			margin: 0;
 			align-items: stretch;
 		}
 		/* --expr-tab-h is the single source for this height: the close button
@@ -918,12 +941,10 @@
 		   just no label under them here. */
 		.expr-tab .msi { font-size: 25px; }
 		.expr-del {
-		position: absolute;
-		bottom: var(--expr-rail-bottom);
-		/* Just outside the rail's right edge — the rail is inset --nav-inset,
-		   so this sits in that band, aligned with it rather than inside it. */
-		right: var(--expr-edge);
-		z-index: 5;
+		/* In-flow at the row's right. Shrinkable with a floor, same deal as
+		   the tab slots — a key is still a key at 48px. */
+		flex: 0 1 var(--expr-del-w);
+		min-width: 3rem;
 		width: var(--expr-del-w);
 		height: var(--expr-rail-h);
 		box-sizing: border-box;
@@ -957,34 +978,41 @@
 	   matches rather than inventing a glassy variant. It keeps its row in the
 	   flex column (so the last row of emotes is never hidden behind it) and
 	   floats within that row via margins. */
+	/* The one owner of the bottom chrome's geometry. Absolutely positioned so
+	   it floats over the grid (as the rail did alone), with the rail at its
+	   left and the delete key at its right as FLEX SIBLINGS — two boxes in one
+	   row cannot overlap, at any container width, which is the bug this
+	   replaces: both were independently pinned to opposite edges, and under
+	   ~300px (thread panel, popovers) the key slid over the rail's last slot
+	   and cut the kitchen icon in half. pointer-events pass through the empty
+	   middle so the grid stays scrollable there. */
+	.expr-chrome-row {
+		position: absolute;
+		left: 0; right: 0; bottom: 0;
+		z-index: 4;
+		display: flex;
+		align-items: flex-end;
+		justify-content: space-between;
+		gap: 8px;
+		margin: 4px var(--expr-edge) var(--expr-rail-bottom);
+		pointer-events: none;
+	}
+	.expr-chrome-row > :global(*) { pointer-events: auto; }
+
 	.expr-tabs {
 		position: relative;   /* containing block for .expr-indicator */
 		display: flex;
 		gap: var(--expr-gap);
-		flex-shrink: 0;
-		/* Floats OVER the grid instead of reserving a row, so content scrolls
-		   behind it. The panes' scrollers get matching bottom padding (below)
-		   so the last row can still be scrolled clear of it. */
-		position: absolute;
-		/* Content-width: `right: 0` stretched the pill across the whole inset
-		   span, and with the icons grouped left that trailing space was just
-		   empty pill. Anchored left at the nav inset, it now ends where the
-		   icons do. */
-		left: 0; bottom: 0;
-		width: fit-content;
-		z-index: 4;
-		/* Same island geometry as the app's bottom nav: inset --nav-inset (56px)
-		   from each edge. The delete key lives in the band that inset leaves,
-		   so it needs no extra margin carved out of the rail. */
+		/* In-flow child of .expr-chrome-row — the row floats over the grid, this
+		   just sits at its left. NOT width:fit-content: fit-content refuses to
+		   shrink below content, which is exactly the overflow the row exists to
+		   prevent. Flex-auto with min-width:0 sizes to content when there's
+		   room and squeezes the slots (they carry their own min-width) when
+		   there isn't. */
+		flex: 0 1 auto;
+		min-width: 0;
 		height: var(--expr-rail-h);
 		box-sizing: border-box;
-		/* Edge-anchored, NOT inset by --nav-inset. That 56px inset was right when
-		   the rail stretched the full width like the bottom nav. Once it became
-		   content-width the same inset just shoved a ~233px pill into the
-		   middle-right of the sheet — misaligned against the delete key at the
-		   opposite edge, and on a 320px screen wide enough to run underneath
-		   it. */
-		margin: 4px var(--expr-edge) var(--expr-rail-bottom);
 		padding: 3px var(--expr-pad);
 		border-radius: 999px;
 		background: var(--sidebar-bg, var(--md-sys-color-surface-container, var(--surface-2)));
@@ -1023,10 +1051,18 @@
 		.expr-tabs { transition: none; }
 	}
 	.expr-tab {
-		/* Fixed slots, NOT flex:1 — stretching spread four icons across the
-		   whole rail and centred them. Sized slots keep them grouped at the
-		   left, with the delete key off at the right. */
-		flex: 0 0 var(--expr-slot-w, 3rem);
+		/* Sized slots, NOT flex:1 — stretching spread four icons across the
+		   whole rail and centred them. Basis is the full slot; shrink is
+		   allowed (with a floor) so a narrow container squeezes the slots
+		   instead of pushing the last one out of the pill. The indicator's
+		   pitch is measured from the laid-out slot, so it follows. */
+		flex: 0 1 var(--expr-slot-w, 3rem);
+		/* An explicit width, not just a basis. Under flex-shrink an item's
+		   intrinsic contribution clamps to its CONTENT size — a 25px glyph plus
+		   padding — so without this the rail's max-content came out at 41px a
+		   slot and the whole pill rendered squeezed even with room to spare. */
+		width: var(--expr-slot-w, 3rem);
+		min-width: 2.1rem;
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
