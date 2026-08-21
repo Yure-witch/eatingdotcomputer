@@ -17,6 +17,7 @@
 	import TelegramEmojiPanel from '$lib/components/TelegramEmojiPanel.svelte';
 	import GifPicker from '$lib/components/GifPicker.svelte';
 	import ExpressionPicker from '$lib/components/ExpressionPicker.svelte';
+	import { prewarmPicker } from '$lib/picker-prewarm.js';
 	import MediaPicker from '$lib/components/MediaPicker.svelte';
 	import { haptic } from '$lib/native.js';
 	import { decodeReactionKey } from '$lib/reaction-key.js';
@@ -131,6 +132,10 @@
 		return (threadCountsArchived[id]?.n ?? 0) + (threadCountsLive[id] ?? 0);
 	}
 	onMount(() => {
+		// Warm every expression-picker tab while the conversation is being read.
+		// Idle-scheduled and fire-once, so it never competes with the chat's own
+		// first paint — see $lib/picker-prewarm.js for what it covers.
+		prewarmPicker();
 		fetch(`/api/chat/thread?convId=${encodeURIComponent(convId)}&counts=1`)
 			.then((r) => (r.ok ? r.json() : null))
 			.then((d) => { if (d?.counts) threadCountsArchived = d.counts; })
