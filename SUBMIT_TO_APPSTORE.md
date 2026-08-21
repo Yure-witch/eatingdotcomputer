@@ -71,12 +71,12 @@ a secret):
 
 ---
 
-## 3c. Enable Sign in with Apple on the App ID — **YOU** (~1 min)
+## 3c. ✅ Sign in with Apple on the App ID — DONE (2026-08-21)
 
 Sign in with Apple is BUILT (Guideline 4.8 cover). The code, entitlement and
 button are done; the App ID needs the capability switched on:
 
-- [ ] [developer.apple.com](https://developer.apple.com/account) → **Identifiers**
+- [x] [developer.apple.com](https://developer.apple.com/account) → **Identifiers**
       → `computer.eating.app` → tick **Sign In with Apple** → **Save**
 
 Xcode's automatic signing usually adds this on the first device build, but if
