@@ -987,6 +987,26 @@
 		box-shadow: 0 4px 18px rgba(0,0,0,0.14);
 	}
 
+	@media (max-width: 640px) {
+		/* popoverPos docks this as a bottom sheet on a phone, but the rule that
+		   sizes it lived only in chat's own copy — here it arrived with no height
+		   and no background, so it rendered as a transparent, content-sized blob
+		   over the compose. Same shape chat uses: open at the height the KEYBOARD
+		   occupied (--kb-h-last), so swapping between them doesn't move anything,
+		   and own the safe area the bar gives up. */
+		.fi-expr-pop {
+			height: calc(min(var(--kb-h-last, 22rem), 58vh) + env(safe-area-inset-bottom, 0px));
+			padding-bottom: env(safe-area-inset-bottom, 0px);
+			background: var(--paper);
+			border-top: 1.5px solid var(--border);
+			border-radius: 0;
+			box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.18);
+			overflow: hidden;
+		}
+		/* The picker fills the sheet rather than sitting at its natural height. */
+		.fi-expr-pop > :global(*) { height: 100%; }
+	}
+
 	.fi-backdrop { position: fixed; inset: 0; z-index: 40; }
 	.fi-color-pop {
 		background: var(--paper); border: 1.5px solid var(--border); border-radius: 10px;
