@@ -575,6 +575,23 @@ The following major areas need to be built. None are started yet.
   - **Client**: `watchDevRefresh()` in `src/routes/app/+layout.svelte`, started once Firebase auth lands (alongside presence + theme-sync). The last-seen value is kept per device in `localStorage['dev:refreshNeeded']`, so joining the app never reloads — only a value that CHANGES while you are running does. Without that it is a boot loop.
 - **Notes**: Not a product feature and not surfaced in the UI. Setting the value again to the SAME number does nothing; it has to change.
 
+## Chat — scroll anchoring
+
+### The message list stops jumping while you read — 2026-08-20
+- **Status**: `attempted`
+- **What**: Scrolling back through a channel or DM would randomly lurch up or down. Every cause was the same shape: something ABOVE the reader changed height after the fact, and nothing put the reader back.
+  - **`src/lib/chat-scroll-anchor.js`** (new) — remembers which row is at the top of the viewport and how far into it, then restores that row's exact position after any change. Wired into both chat pages via `createScrollAnchor(listEl)` in an `$effect`.
+    - It observes the list's **children**, never the list itself. A `ResizeObserver` on the list fires on every viewport height change, so it runs all through the mobile keyboard animation and fights `native.js` — that's the observer the compose-picker code deliberately removed. Row heights are keyboard-independent.
+    - It measures **actual drift** (where is the anchor now vs. where it was) instead of predicting a delta from `scrollHeight`. That composes with Chrome's native scroll anchoring — drift reads as 0 and it no-ops — rather than double-correcting against it, which is what the old per-site patches did. Safari has no native anchoring at all, so there it does all the work.
+    - `MutationObserver` on `childList` covers height added by new rows (history prepends, the load-more spinner) that no row resize would report.
+  - **Removed the two hand-rolled compensations** it replaces: the `requestAnimationFrame` `scrollHeight`-delta fixup in `loadMoreHistory()`, and the `scrollTopBefore/scrollHeightBefore` snapshot in `toggleReaction()`. Both fought native anchoring and each corrected a frame late.
+  - **An incoming message no longer yanks you to the bottom.** `onChildAdded` called `scrollToBottom()` unconditionally, so anyone else posting while you read history hauled you down to the latest bubble. Now it only follows if you were already at the bottom.
+  - **`scrollIfNearBottom()` asks the scroller where it is** instead of trusting `userScrolledUp`, which only updates on scroll events and so was stale right after mount — a late image load could yank a reader who had already scrolled away.
+  - **`src/lib/img-dims.js`** (new) — attachments are stored without dimensions (see CHAT_STORAGE.md), so an `<img>` occupies zero height until it decodes and then snaps to size. The `reserveAspect` action learns each URL's ratio on first load, keeps it in `localStorage` (500 entries, insertion-ordered), and declares `aspect-ratio` on every later render, so the box is reserved up front. That also makes `loading="lazy"` + `decoding="async"` safe to add to attachment images.
+  - **History prefetch at 600px** from the top instead of 200 — the fetch lands while there's still something to scroll, rather than the reader hitting the top, stopping dead, and having history appear underneath them.
+  - **`.message.has-media { contain-intrinsic-size: auto 300px }`** — the mobile `content-visibility: auto` placeholder was 60px for every row, which is fine for a text bubble and ~5x too small for a photo. Closer guess, fewer and smaller corrections mid-flick.
+- **Verified**: both pages compile; the anchor module was exercised in-browser with `overflow-anchor: none` (the Safari case) — a 300px growth above the reader, a 10-row/710px prepend, a shrink above, growth below (correctly ignored), and a bottom-pinned reader all hold position exactly. Not yet confirmed by the user on a real device.
+
 ---
 
 - [ ] Authentication system (login/logout, student vs instructor roles)

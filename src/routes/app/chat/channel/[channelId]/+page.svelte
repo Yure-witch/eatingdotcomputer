@@ -2,6 +2,8 @@
 	import { onMount, onDestroy, tick, getContext, mount, unmount } from 'svelte';
 	import SpriteSticker from '$lib/components/SpriteSticker.svelte';
 	import { saveChatScroll, loadChatScroll } from '$lib/chat-scroll-store.js';
+	import { createScrollAnchor } from '$lib/chat-scroll-anchor.js';
+	import { reserveAspect } from '$lib/img-dims.js';
 	import { afterNavigate } from '$app/navigation';
 	import { pageTitle, pageTitleHref } from '$lib/page-title-store.js';
 	import { db } from '$lib/firebase.js';
@@ -2407,6 +2409,29 @@
 
 	let userScrolledUp = false;
 
+	// Scroll anchoring. Holds whatever the reader is looking at in place when
+	// content ABOVE it changes height — an attachment decoding, an emote canvas
+	// painting, a reaction row appearing, `content-visibility` un-skipping a row
+	// that was standing in at its 60px placeholder, a history prepend. Without
+	// it every one of those shoves the timeline and reads as a random jump
+	// (Chrome's native anchoring catches some; Safari has none). The module
+	// measures actual drift rather than predicting a delta, so it composes with
+	// native anchoring instead of double-correcting against it.
+	let scrollAnchor = null;
+	$effect(() => {
+		if (!listEl) return;
+		const anchor = createScrollAnchor(listEl);
+		scrollAnchor = anchor;
+		return () => { anchor.destroy(); if (scrollAnchor === anchor) scrollAnchor = null; };
+	});
+
+	// Live check, as opposed to the `userScrolledUp` flag, which only updates on
+	// scroll events and is therefore stale right after mount and after any
+	// programmatic scroll.
+	function atBottom() {
+		return !listEl || listEl.scrollHeight - listEl.scrollTop - listEl.clientHeight <= 80;
+	}
+
 	let _scrollRestored = false;
 	function scrollToBottom() {
 		// On the FIRST scroll-to-bottom of this mount, restore the saved position
@@ -2416,7 +2441,7 @@
 			_scrollRestored = true;
 			const savedDist = loadChatScroll(convId);
 			if (savedDist != null && savedDist >= 80) {
-				const restore = () => { if (listEl) { listEl.scrollTop = Math.max(0, listEl.scrollHeight - listEl.clientHeight - savedDist); userScrolledUp = true; } };
+				const restore = () => { if (listEl) { listEl.scrollTop = Math.max(0, listEl.scrollHeight - listEl.clientHeight - savedDist); userScrolledUp = true; scrollAnchor?.measure(); } };
 				tick().then(() => { restore(); requestAnimationFrame(restore); setTimeout(restore, 60); });
 				return;
 			}
@@ -2425,13 +2450,17 @@
 		// image loads) — a single scroll right after mount lands a few px short
 		// because the content is still settling. Re-pin on the next frame and once
 		// more shortly after.
-		const go = () => { if (listEl) { listEl.scrollTop = listEl.scrollHeight; userScrolledUp = false; } };
+		const go = () => { if (listEl) { listEl.scrollTop = listEl.scrollHeight; userScrolledUp = false; scrollAnchor?.setPinned(true); } };
 		tick().then(() => { go(); requestAnimationFrame(go); setTimeout(go, 60); });
 	}
 
-	// Called from image onload — scrolls only if user hasn't manually scrolled up
+	// Called from attachment load. The anchor already holds the reader's place
+	// when the media pops into its real size, so all this does is keep someone
+	// who was AT the bottom there — and it asks where the scroller actually is
+	// rather than trusting `userScrolledUp`, which was stale often enough that a
+	// late image load could yank a reader who had already scrolled away.
 	function scrollIfNearBottom() {
-		if (!userScrolledUp && listEl) listEl.scrollTop = listEl.scrollHeight;
+		if (listEl && atBottom()) listEl.scrollTop = listEl.scrollHeight;
 	}
 
 	let _saveScrollT = 0;
@@ -2441,7 +2470,10 @@
 		userScrolledUp = dist > 80;
 		if (emojiTooltip) emojiTooltip = null;
 		// Load more history when scrolled near top
-		if (listEl.scrollTop < 200 && hasMoreHistory && !loadingMore) loadMoreHistory();
+		// 600px of runway, not 200: the fetch gets to land while there's still
+		// something to scroll, instead of the reader hitting the top, stopping
+		// dead, and then having history appear underneath them.
+		if (listEl.scrollTop < 600 && hasMoreHistory && !loadingMore) loadMoreHistory();
 		// Persist position (throttled) so a reload restores it.
 		const now = Date.now();
 		if (now - _saveScrollT > 350) { _saveScrollT = now; saveChatScroll(convId, dist); }
@@ -2458,14 +2490,12 @@
 			const { messages: older, hasMore } = await r.json();
 			hasMoreHistory = hasMore;
 			if (older.length) {
-				const prevHeight = listEl.scrollHeight;
 				const existingIds = new Set(messages.map(m => m.id));
 				const newMsgs = older.filter(m => !existingIds.has(m.id));
 				messages = [...newMsgs, ...messages];
-				// Preserve scroll position after prepending
-				requestAnimationFrame(() => {
-					if (listEl) listEl.scrollTop += listEl.scrollHeight - prevHeight;
-				});
+				// No scrollTop bookkeeping here — the anchor sees the childList
+				// mutation and puts the reader's row back. Doing it here too
+				// meant compensating twice and undoing half of it a frame later.
 			}
 		} catch (e) { console.error('Load more failed', e); }
 		finally { loadingMore = false; }
@@ -2631,10 +2661,6 @@
 		const alreadyReacted = !!reactions[msgId]?.[emoji]?.[uid];
 		haptic(alreadyReacted ? 'selection' : 'light'); // native react tick
 
-		// Snapshot scroll position before the optimistic update adds/removes DOM height
-		const scrollHeightBefore = listEl?.scrollHeight ?? 0;
-		const scrollTopBefore = listEl?.scrollTop ?? 0;
-
 		// Optimistic local update so chips appear immediately
 		const curMsg = reactions[msgId] ?? {};
 		const curEmoji = curMsg[emoji] ?? {};
@@ -2643,13 +2669,8 @@
 			: { ...curEmoji, [uid]: true };
 		reactions = { ...reactions, [msgId]: { ...curMsg, [emoji]: newEmoji } };
 
-		// After Svelte renders, compensate scrollTop by the height change so the
-		// visible content doesn't jump when a new reaction row appears
-		await tick();
-		if (listEl) {
-			const delta = listEl.scrollHeight - scrollHeightBefore;
-			if (delta !== 0) listEl.scrollTop = scrollTopBefore + delta;
-		}
+		// The new chip row grows the bubble — the anchor absorbs that, so there is
+		// no scrollTop arithmetic to do here any more.
 
 		// Always route through the server API — uses firebase-admin which bypasses security rules
 		await fetch('/api/chat/react', {
@@ -2780,8 +2801,12 @@
 			if (optIdx !== -1) {
 				messages = [...messages.slice(0, optIdx), msg, ...messages.slice(optIdx + 1)];
 			} else {
+				// Only follow the new message if the reader was already at the
+				// bottom. Someone else sending while you're reading back through
+				// history used to haul you down to the latest bubble.
+				const follow = atBottom();
 				messages = [...messages, msg];
-				scrollToBottom();
+				if (follow) scrollToBottom();
 				markRead();
 			}
 			const _dur = performance.now() - _t0;
@@ -3943,7 +3968,7 @@
 		{@const isMine = msg.userId === data.currentUser.id}
 		{@const msgReactions = reactions[msg.id] ?? {}}
 		{@const hasReactions = Object.values(msgReactions).some(u => Object.keys(u).length > 0)}
-		<div class="message" class:mine={isMine} class:first={isFirst} class:starred={starredIds.has(msg.id)} class:slam-shock={slamShockSet.has(msg.id)} data-msg-id={msg.id}>
+		<div class="message" class:mine={isMine} class:first={isFirst} class:starred={starredIds.has(msg.id)} class:slam-shock={slamShockSet.has(msg.id)} class:has-media={!!msg.attachment} data-msg-id={msg.id}>
 			{#if isFirst}
 				{@const senderStatus = presenceStatusCtx?.value?.[msg.userId]}
 				<div class="meta">
@@ -3973,16 +3998,16 @@
 					{#if msg.attachment.mimetype?.startsWith('image/')}
 						{#if msg.attachment.isReaction}
 							<div class="bubble bubble-img bubble-reaction-img">
-								<img src={msg.attachment.url} alt={msg.attachment.filename} onload={scrollIfNearBottom} onerror={(e) => { const img = e.target; const r = parseInt(img.dataset.retries ?? '0'); if (r < 3) { img.dataset.retries = r + 1; setTimeout(() => { img.src = img.src; }, 1000 * (r + 1)); } else { img.replaceWith(Object.assign(document.createElement('div'), { className: 'img-removed', textContent: 'Image removed' })); } }} />
+								<img src={msg.attachment.url} alt={msg.attachment.filename} loading="lazy" decoding="async" use:reserveAspect onload={scrollIfNearBottom} onerror={(e) => { const img = e.target; const r = parseInt(img.dataset.retries ?? '0'); if (r < 3) { img.dataset.retries = r + 1; setTimeout(() => { img.src = img.src; }, 1000 * (r + 1)); } else { img.replaceWith(Object.assign(document.createElement('div'), { className: 'img-removed', textContent: 'Image removed' })); } }} />
 							</div>
 						{:else}
 							<a href={msg.attachment.url} target="_blank" rel="noopener noreferrer" class="bubble bubble-img">
-								<img src={msg.attachment.url} alt={msg.attachment.filename} onload={scrollIfNearBottom} onerror={(e) => { const img = e.target; const r = parseInt(img.dataset.retries ?? '0'); if (r < 3) { img.dataset.retries = r + 1; setTimeout(() => { img.src = img.src; }, 1000 * (r + 1)); } else { img.replaceWith(Object.assign(document.createElement('div'), { className: 'img-removed', textContent: 'Image removed' })); } }} />
+								<img src={msg.attachment.url} alt={msg.attachment.filename} loading="lazy" decoding="async" use:reserveAspect onload={scrollIfNearBottom} onerror={(e) => { const img = e.target; const r = parseInt(img.dataset.retries ?? '0'); if (r < 3) { img.dataset.retries = r + 1; setTimeout(() => { img.src = img.src; }, 1000 * (r + 1)); } else { img.replaceWith(Object.assign(document.createElement('div'), { className: 'img-removed', textContent: 'Image removed' })); } }} />
 							</a>
 						{/if}
 					{:else if msg.attachment.mimetype?.startsWith('video/')}
 						<div class="bubble bubble-video" >
-							<video src={msg.attachment.url} controls preload="metadata" class="att-video" onloadedmetadata={scrollIfNearBottom}></video>
+							<video src={msg.attachment.url} controls preload="metadata" class="att-video" use:reserveAspect onloadedmetadata={scrollIfNearBottom}></video>
 							<div class="att-info att-info-video">
 								<span class="att-name">{msg.attachment.filename}</span>
 								<span class="att-size">{formatSize(msg.attachment.size)}</span>
@@ -6140,6 +6165,12 @@
 			content-visibility: auto;
 			contain-intrinsic-size: auto 60px;
 		}
+		/* 60px is a fair guess for a text bubble and a terrible one for a photo,
+		   so a row that hasn't painted yet reserves ~5x too little and expands
+		   hard the moment you scroll up into it. The scroll anchor absorbs that,
+		   but each correction is a scrollTop write mid-flick, which on iOS costs
+		   momentum. Guessing closer means fewer, smaller corrections. */
+		.message.has-media { contain-intrinsic-size: auto 300px; }
 		.reply-bar { padding: 0.4rem 0.75rem; }
 		.input-area {
 			background: var(--paper);
