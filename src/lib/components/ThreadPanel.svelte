@@ -501,7 +501,7 @@
 			<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
 		</button>
 		<span class="thread-title">
-			Thread{#if chatName}<span class="thread-title-in"> in </span><span class="thread-title-chat">{chatName}</span>{/if}
+			Thread{#if chatName}<span class="thread-title-in">in</span><span class="thread-title-chat">{chatName}</span>{/if}
 		</span>
 	</header>
 
@@ -625,8 +625,10 @@
 		font-weight: 700; font-size: 0.95rem; color: var(--ink);
 		min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 	}
-	/* "in" stays quiet so the chat's name is what you actually read. */
-	.thread-title-in { font-weight: 400; color: var(--muted-fg); }
+	/* "in" stays quiet so the chat's name is what you actually read. Margins
+	   rather than literal spaces: whitespace at an element boundary collapses
+	   away, which rendered this as "Threadin# class". */
+	.thread-title-in { font-weight: 400; color: var(--muted-fg); margin: 0 0.3em; }
 	.thread-title-chat { font-weight: 700; }
 	.thread-back {
 		display: flex; align-items: center; justify-content: center;

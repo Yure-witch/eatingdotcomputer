@@ -786,7 +786,7 @@
 			onpaste={onCePaste}
 			data-placeholder={placeholder}
 		></div>
-		<div class="fi-fmt-row">
+		<div class="fi-fmt-row" class:flush={collapseTools}>
 
 
 				<button bind:this={exprBtnEl} class="fi-btn fi-btn-expr" class:active={showExprPicker}
@@ -809,8 +809,6 @@
 						/>
 					</div>
 				{/if}
-			</div>
-			
 			{#if tools}{@render tools()}{/if}
 			{#if collapseTools}
 				<button class="fi-btn fi-btn-more" class:active={showTools}
@@ -844,6 +842,7 @@
 			     localStorage keys. -->
 			<div class="fi-expr-wrap">
 			</div><!-- /.fi-tools -->
+		</div><!-- /.fi-fmt-row -->
 		</div>
 	</div>
 
@@ -932,10 +931,13 @@
 		content: attr(data-placeholder);
 		color: var(--muted-fg); pointer-events: none;
 	}
-	.fi-fmt-row {
-		display: flex; align-items: center; gap: 0.1rem;
-		padding: 0.2rem 0.5rem 0.3rem; border-top: 1px solid #ede9e3;
-	}
+	.fi-fmt-row { display: flex; align-items: center; gap: 0.1rem; padding: 0.2rem 0.5rem 0.3rem; border-top: 1px solid #ede9e3; }
+	/* Chat's composer has no line between the editor and its tools — the box is
+	   one control, and a rule across it reads as two stacked bars. Callers that
+	   present like chat (collapseTools) get that; a form field keeps its
+	   separator. Set here rather than overridden from outside, where it lost on
+	   specificity to this very rule. */
+	.fi-fmt-row.flush { border-top: none; }
 	/* `display: contents` so the buttons remain flex children of the row rather
 	   than a nested box — same technique chat's .fmt-tools uses. */
 	.fi-tools { display: contents; }
