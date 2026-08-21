@@ -648,17 +648,20 @@
 	     open. The chip is icon-only (Material Symbols magnifying
 	     glass) to keep it visually distinct from the word-labeled
 	     ranking tabs that follow. -->
-	<div class="kitchen-tabs-bar">
+	<div class="kitchen-tabs-bar" data-sheet-handle>
 		{#if onClose}
 			<PickerStickyBtn square onclick={onClose} title="Close" label="Close picker">
 				<span class="msi msi-20">close</span>
 			</PickerStickyBtn>
 		{/if}
+		<!-- Search matches the other panes: a sticky square button in the bar,
+		     not a chip that scrolls away with the mode tabs. -->
+		<PickerStickyBtn square active={mode === 'search'} onclick={() => setMode('search')}
+			title="Search mixes &amp; emoji" label="Search">
+			<span class="msi msi-20">search</span>
+		</PickerStickyBtn>
 		<div class="kitchen-tabs">
-		<button class="kitchen-tab icon-tab" class:active={mode === 'search'}  onclick={() => setMode('search')}  title="Search mixes &amp; emoji" aria-label="Search">
-			<span class="msi msi-18" class:msi-fill={mode === 'search'}>search</span>
-		</button>
-		<button class="kitchen-tab" class:active={mode === 'recent'}   onclick={() => setMode('recent')}   title="Recently used">🕐</button>
+		<button class="kitchen-tab" class:active={mode === 'recent'}   onclick={() => setMode('recent')}   title="Recently used"><span class="msi msi-18" class:msi-fill={mode === 'recent'}>history</span></button>
 		<button class="kitchen-tab" class:active={mode === 'popular'}  onclick={() => setMode('popular')}>Popular</button>
 		<button class="kitchen-tab" class:active={mode === 'browse'}   onclick={() => setMode('browse')}>Browse</button>
 		<button class="kitchen-tab" class:active={mode === 'mix'}      onclick={() => setMode('mix')}>Mix</button>
@@ -939,12 +942,14 @@
 	   Mix / Browse / Search / Settings chips don't get cramped when
 	   optional ranking tabs (Gboard / Emojimix / Funbox) are enabled. */
 	.kitchen-tabs-bar {
+		/* Same recipe as the other panes' top bars; vertical drags resize. */
+		touch-action: pan-x;
 		display: flex;
 		align-items: center;
 		gap: 0.4rem;
 		padding: 0.35rem 0.5rem;
-		border-bottom: 1px solid var(--border);
-		background: var(--md-sys-color-surface-container, var(--surface-2));
+		border-bottom: 1.5px solid var(--border);
+		background: var(--surface-2);
 		flex-shrink: 0;
 	}
 	.kitchen-tabs {

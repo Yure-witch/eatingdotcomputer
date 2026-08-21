@@ -742,7 +742,7 @@
 </script>
 
 <div class="tg-panel" bind:this={panelEl}>
-	<div class="tg-tabs-bar">
+	<div class="tg-tabs-bar" data-sheet-handle>
 		{#if onClose}
 			<PickerStickyBtn square onclick={onClose} title="Close" label="Close picker">
 				<span class="msi msi-20">close</span>
@@ -1109,10 +1109,13 @@
 		.tg-mode-row { padding: 0.2rem 0.5rem !important; }
 		.tg-search-row { padding: 0.2rem 0.5rem 0.25rem !important; }
 	}
-	.tg-tabs-bar { display: flex; align-items: center; gap: 0.4rem; padding: 0.35rem 0.5rem; border-bottom: 1.5px solid var(--border); background: var(--surface-2); flex-shrink: 0; }
+	/* touch-action pan-x: the pack strip scrolls sideways natively while a
+	   vertical drag on the bar resizes the sheet (see ExpressionPicker's
+	   data-sheet-handle delegation). */
+	.tg-tabs-bar { touch-action: pan-x; display: flex; align-items: center; gap: 0.4rem; padding: 0.35rem 0.5rem; border-bottom: 1.5px solid var(--border); background: var(--surface-2); flex-shrink: 0; }
 	/* overscroll-behavior-x keeps a drag past the end of the pack strip from
 	   chaining out to the ExpressionPicker's category pager. */
-	.tg-tabs { flex: 1; min-width: 0; display: flex; align-items: center; gap: 1px; overflow-x: auto; overscroll-behavior-x: contain; }
+	.tg-tabs { touch-action: pan-x; flex: 1; min-width: 0; display: flex; align-items: center; gap: 1px; overflow-x: auto; overscroll-behavior-x: contain; }
 	.tg-tabs::-webkit-scrollbar { height: 0; }
 	/* No opacity fade on unselected tabs; hover/active mirror the
 	   ExpressionPicker strip (M3 state layer + secondary container) so

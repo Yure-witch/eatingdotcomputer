@@ -994,13 +994,13 @@
 	     either the search input (when expanded) or the scrolling category
 	     buttons, with the style-settings gear pinned at the right. The category
 	     buttons scroll horizontally UNDER the sticky controls. -->
-	<div class="emoji-topbar">
+	<div class="emoji-topbar" data-sheet-handle>
 		{#if onClose}
 			<PickerStickyBtn square onclick={onClose} title="Close" label="Close picker">
 				<span class="msi msi-20">close</span>
 			</PickerStickyBtn>
 		{/if}
-		<PickerStickyBtn active={searchOpen} onclick={toggleSearch} title="Search emoji" label="Search emoji">
+		<PickerStickyBtn square active={searchOpen} onclick={toggleSearch} title="Search emoji" label="Search emoji">
 			<span class="msi msi-20">search</span>
 		</PickerStickyBtn>
 		{#if searchOpen}
@@ -1021,7 +1021,7 @@
 			<div class="tabs" role="tablist" bind:this={tabsEl}>
 				<!-- Tab order mirrors the flow: Recent, Popular, then groups -->
 				<button role="tab" class="tab tab-text" class:active={activeGroup === -1} title="Recently used"
-					onclick={() => pickTab(-1)}>🕐</button>
+					onclick={() => pickTab(-1)}><span class="msi msi-18" class:msi-fill={activeGroup === -1}>history</span></button>
 				<button role="tab" class="tab tab-text" class:active={activeGroup === -2} title="Popular"
 					onclick={() => pickTab(-2)}>#</button>
 				{#if data}
@@ -1418,12 +1418,15 @@
 
 	/* ── Top bar: fixed controls (close + search) + scrolling categories + gear ── */
 	.emoji-topbar {
+		/* Same recipe as every other pane's top bar (recents, Kitchen, TG) so
+		   the four read as one picker. Vertical drags on it resize the sheet. */
+		touch-action: pan-x;
 		display: flex;
 		align-items: center;
-		gap: 0.35rem;
-		padding: 0.45rem 0.55rem;
-		border-bottom: 1px solid var(--surface-2);
-		background: var(--paper);
+		gap: 0.4rem;
+		padding: 0.35rem 0.5rem;
+		border-bottom: 1.5px solid var(--border);
+		background: var(--surface-2);
 		flex-shrink: 0;
 	}
 	.tabs {
@@ -1474,7 +1477,6 @@
 	@media (max-width: 640px) {
 		.tab { width: 2.6rem; height: 2.6rem; font-size: 1.2rem; }
 		/* A bit taller top bar to match the roomier controls. */
-		.emoji-topbar { padding: 0.55rem 0.6rem; }
 		/* No hover on touch, so the "Hover an emoji to preview" bar is dead
 		   weight — drop it on mobile to reclaim the vertical space. */
 		.preview-bar { display: none; }

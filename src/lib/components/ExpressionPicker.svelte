@@ -560,6 +560,13 @@
 	let _railId = null, _railMode = null, _rx0 = 0, _ry0 = 0;
 	function railDown(e) {
 		if (!onClose) return;
+		// Delegated from the panel root: anything marked data-sheet-handle is
+		// a resize surface — the bottom rail, and every pane's top bar. Text
+		// inputs opt out (vertical drags there are selection gestures).
+		const t = e.target;
+		if (!(t instanceof Element)) return;
+		if (t.closest('input, textarea, select')) return;
+		if (!t.closest('[data-sheet-handle]')) return;
 		_railId = e.pointerId;
 		_railMode = null;
 		_rx0 = e.clientX; _ry0 = e.clientY;
@@ -571,7 +578,7 @@
 			if (dx < 8 && dy < 8) return;
 			_railMode = dx > dy ? 'h' : 'v';
 			if (_railMode === 'h') return;
-			beginDrag(e, railEl);
+			beginDrag(e, e.target instanceof Element ? (e.target.closest('[data-sheet-handle]') || railEl) : railEl);
 		}
 		dragMove(e);
 	}
@@ -606,10 +613,11 @@
 			setTimeout(() => { onClose?.(); dragY = 0; setGrow(0); }, 170);
 		} else {
 			dragY = 0; // transition springs it back to the dock
-			// Snap the grow: a deliberate upward pull expands, otherwise
-			// nearest edge wins.
-			const target = (totalDy < -48 || _grow > _growMax * 0.5) ? _growMax : 0;
-			snapGrow(target);
+			// FREE height: the sheet stays wherever the finger left it. Only
+			// the edges magnetize — nearly-closed settles back to keyboard
+			// size, nearly-full settles flush — so a release mid-range holds.
+			if (_grow < 24) snapGrow(0);
+			else if (_grow > _growMax - 16) snapGrow(_growMax);
 		}
 	}
 
@@ -711,6 +719,8 @@
 <div class="expr-panel"
      class:expr-panel-react={mode === 'react'} class:expr-dragging={dragging}
      onpointerdowncapture={() => { if (chrome === 'dim') setChrome('rest'); }}
+     onpointerdown={railDown} onpointermove={railMove}
+     onpointerup={railUp} onpointercancel={railUp}
      bind:this={panelEl} style:transform={dragY ? `translate3d(0,${dragY}px,0)` : null}>
 	{#if mode === 'react'}
 		<!-- Reaction mode: just the EmojiPicker, no chrome. The chat
@@ -743,8 +753,7 @@
 			bind:this={railEl}
 			style:--expr-slots={TABS.length}
 			class:chrome-dim={chrome === 'dim'}
-			onpointerdown={railDown} onpointermove={railMove}
-			onpointerup={railUp} onpointercancel={railUp}>
+			data-sheet-handle>
 			<!-- One block that GLIDES with the live scroll fraction, rather than a
 			     per-tab background snapping on and off — so it's visibly halfway
 			     between two icons when your swipe is. Copied from the bottom
@@ -797,7 +806,7 @@
 						     close on the left, then the render-engine readout so the
 						     engine this grid is on is visible (and switchable) from
 						     the tab it matters most on. -->
-						<div class="expr-recent-bar">
+						<div class="expr-recent-bar" data-sheet-handle>
 							{#if onClose}
 								<PickerStickyBtn square onclick={onClose} title="Close" label="Close picker">
 									<span class="msi msi-20">close</span>
@@ -1460,11 +1469,11 @@
 	.expr-pane :global(.kitchen-content) {
 		padding-bottom: 68px;
 	}
-	.expr-recent-grid { padding-bottom: 68px; }
 
 	/* Recent's top bar — same recipe as the Emoji / Emotes tabs' so the three
 	   read as one picker, not three panels with different heads. */
 	.expr-recent-bar {
+		touch-action: pan-x;   /* vertical is the sheet-resize gesture */
 		display: flex; align-items: center; gap: 0.4rem;
 		padding: 0.35rem 0.5rem;
 		border-bottom: 1.5px solid var(--border);
@@ -1483,7 +1492,11 @@
 		display: grid;
 		grid-template-columns: repeat(auto-fill, minmax(42px, 1fr));
 		gap: 0.2rem;
-		padding: 0.5rem;
+		/* Bottom padding clears the floating category rail — as a longhand in
+		   the SAME rule, because a `padding: 0.5rem` shorthand here silently
+		   reset the 68px clearance a separate rule set, and the last recents
+		   row sat under the rail. */
+		padding: 0.5rem 0.5rem 68px;
 		overflow-y: auto;
 		/* Shares the pane's column with the bar above it, so it takes the
 		   remaining height rather than a full 100% that would overflow. */
