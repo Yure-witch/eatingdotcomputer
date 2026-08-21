@@ -779,9 +779,11 @@
 		<!-- svelte-ignore a11y_interactive_supports_focus -->
 		<div
 			class="fi-ce"
+			class:faux-caret={showExprPicker}
 			role="textbox"
 			aria-multiline={!singleLine}
 			contenteditable="true"
+			inputmode={showExprPicker ? 'none' : null}
 			bind:this={inputEl}
 			oninput={onCeInput}
 			onkeydown={onKeydown}
@@ -796,7 +798,17 @@
 
 
 				<button bind:this={exprBtnEl} class="fi-btn fi-btn-expr" class:active={showExprPicker}
-					onmousedown={(e) => { e.preventDefault(); showExprPicker = !showExprPicker; }}
+					onmousedown={(e) => {
+						e.preventDefault();
+						const opening = !showExprPicker;
+						showExprPicker = opening;
+						// The sheet takes the keyboard's PLACE rather than sharing the
+						// screen with it: blur sends the keyboard away, and inputmode
+						// 'none' above stops it returning when focus comes back for
+						// insertion. Without both, tapping this with the keyboard up
+						// leaves two panels fighting over the bottom of the screen.
+						if (opening) inputEl?.blur();
+					}}
 					title="Insert emoji / emote / sticker">
 					<span class="msi msi-18" class:msi-fill={showExprPicker}>mood</span>
 				</button>
@@ -950,6 +962,24 @@
 	@media (max-width: 640px) {
 		.fi-tools.collapsible { display: none; }
 		.fi-tools.collapsible.open { display: contents; }
+	}
+	/* Suppressing the keyboard also takes iOS's caret, so the editor looks inert
+	   while the picker is open. Draw a blinking stand-in at the insertion point —
+	   the end, which is where the picker appends — as chat does. */
+	.fi-ce.faux-caret::after {
+		content: '';
+		display: inline-block;
+		width: 2px;
+		height: 1.15em;
+		margin-left: 1px;
+		vertical-align: text-bottom;
+		background: var(--accent, var(--ink));
+		border-radius: 1px;
+		animation: fi-faux-caret-blink 1.06s step-end infinite;
+	}
+	@keyframes fi-faux-caret-blink {
+		0%, 50% { opacity: 1; }
+		50.01%, 100% { opacity: 0; }
 	}
 	.fi-btn {
 		display: flex; align-items: center; justify-content: center;
