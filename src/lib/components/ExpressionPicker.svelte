@@ -161,6 +161,22 @@
 
 	let trackEl = $state(null);
 	let railEl = $state(null);
+	let indEl = $state(null);
+	// Slot pitch in px, measured once per layout. The indicator's transform is
+	// written in px rather than through a custom property (see setFrac).
+	let _slotPx = 0;
+	function setFrac(f) {
+		if (!indEl) return;
+		if (!_slotPx) _slotPx = railEl?.querySelector('.expr-tab')?.offsetWidth || 48;
+		// Written DIRECTLY as a transform, not via a --expr-frac custom property.
+		// An unregistered custom property is inherited, so setting it on the rail
+		// invalidated style for the rail and every descendant — four buttons and
+		// their icon spans — on every frame of a swipe. And a transform built
+		// from calc(var(…)) can never be a compositor animation; it re-resolves
+		// on the main thread each frame. A plain px transform on one element is
+		// neither.
+		indEl.style.transform = `translate3d(${f * _slotPx}px,0,0)`;
+	}
 
 	// Panes mount lazily and then STAY mounted. Tearing a pane down on
 	// every tab change is what made switching categories feel slow: each
@@ -182,15 +198,27 @@
 	let _neighbourRaf = 0;
 	function scheduleNeighbours() {
 		if (_neighbourRaf) return;
-		// Two frames: the first lets the open itself paint, the second starts
-		// the (heavier) neighbour work with the picker already on screen.
+		// EVERY pane, not just the two either side. Pre-mounting only the
+		// neighbours meant a fast swipe across two panes mounted a whole
+		// TelegramEmojiPanel synchronously mid-drag — and with
+		// `content-visibility: auto` on the panes, entering a skipped one makes
+		// the browser render that entire subtree in a single frame. There are
+		// only three or four, they're kept alive once mounted, and one per frame
+		// starting after the open has painted keeps any single frame small.
 		_neighbourRaf = requestAnimationFrame(() => {
 			requestAnimationFrame(() => {
 				_neighbourRaf = 0;
-				const prev = TABS[tabIndex - 1], next = TABS[tabIndex + 1];
-				ensure(next);
-				// Split across frames so two heavy panes never land in one.
-				if (prev) requestAnimationFrame(() => ensure(prev));
+				// Nearest-first, so the ones a swipe reaches soonest are ready
+				// soonest.
+				const order = [...TABS].sort(
+					(a, b) => Math.abs(TABS.indexOf(a) - tabIndex) - Math.abs(TABS.indexOf(b) - tabIndex)
+				);
+				const step = (i) => {
+					if (i >= order.length) return;
+					ensure(order[i]);
+					requestAnimationFrame(() => step(i + 1));
+				};
+				step(0);
 			});
 		});
 	}
@@ -224,15 +252,22 @@
 	// scroll position during a gesture and any write to it is a visible jerk.
 	let _touching = $state(false);
 	let _settleT = null;
+	// True while a scroll is in flight from ANY input — touch, wheel or
+	// trackpad. `_touching` only ever covered touch, so on a trackpad the
+	// scroll handler wrote the live fraction every frame while the tab effect
+	// wrote the snapped integer, and the indicator jumped between the two.
+	let _scrolling = false;
 	function settleSoon() {
 		clearTimeout(_settleT);
-		_settleT = setTimeout(() => { _touching = false; }, 260);
+		_settleT = setTimeout(() => { _touching = false; _scrolling = false; }, 260);
 		endPaging();
 	}
 
-	// No freeze here: this fires on ANY pointerdown inside the picker, which
-	// includes the touch that's about to scroll the grid vertically.
-	function onTrackPointerDown() { _touching = true; setChrome('page'); }
+	// Marks the touch, but does NOT enter the paging state: this fires on any
+	// pointerdown inside the picker — a vertical grid scroll, a tap to insert an
+	// emoji — and paging used to flip on all of them. Paging is entered from the
+	// scroll handler instead, so it only happens when the track actually moves.
+	function onTrackPointerDown() { _touching = true; }
 	function onTrackPointerUp() {
 		// Don't clear immediately: the fling continues after the finger lifts,
 		// and the track is still settling toward a snap point.
@@ -243,18 +278,22 @@
 	// reads on every scroll event.
 	let _rafScroll = 0;
 	function onTrackScroll() {
-		if (chrome !== 'page') setChrome('page');
-		settleSoon();
+		// Everything here is per-FRAME, not per-event. This handler fires
+		// ~100-200 times a second during a fling, and settleSoon() alone is two
+		// clearTimeout/setTimeout pairs each time.
 		if (_rafScroll) return;
 		_rafScroll = requestAnimationFrame(() => {
 			_rafScroll = 0;
+			_scrolling = true;
+			if (chrome !== 'page') setChrome('page');
+			settleSoon();
 			const el = trackEl;
 			if (!el || !el.clientWidth) return;
 			const f = el.scrollLeft / el.clientWidth;
 			// Straight to the element, NOT through $state: this runs every frame
 			// of a swipe and a Svelte flush here would make the block trail the
 			// finger. Same trick the bottom nav's --nav-frac uses.
-			railEl?.style.setProperty('--expr-frac', String(f));
+			setFrac(f);
 			// Mount whatever the gesture is heading toward before it lands, so
 			// the incoming category slides in with content rather than as a
 			// blank panel that pops once the swipe finishes.
@@ -282,7 +321,7 @@
 		if (!el || !el.clientWidth) return false;
 		const i = Math.max(0, TABS.indexOf(untrack(() => tab)));
 		el.scrollLeft = i * el.clientWidth;
-		railEl?.style.setProperty('--expr-frac', String(i));
+		setFrac(i);
 		return true;
 	}
 
@@ -326,8 +365,8 @@
 	// scroll handler owns --expr-frac and this stays out of the way.
 	$effect(() => {
 		const i = tabIndex;
-		if (_touching || _progScroll) return;
-		railEl?.style.setProperty('--expr-frac', String(i));
+		if (_touching || _scrolling || _progScroll) return;
+		setFrac(i);
 	});
 
 	// (The Emotes tab used to keep an Uploaded/Library sub-tab here. Both
@@ -523,7 +562,7 @@
 	});
 </script>
 
-<div class="expr-panel" class:paging={chrome === 'page'}
+<div class="expr-panel"
      class:expr-panel-react={mode === 'react'} class:expr-dragging={dragging}
      bind:this={panelEl} style:transform={dragY ? `translate3d(0,${dragY}px,0)` : null}>
 	{#if mode === 'react'}
@@ -553,7 +592,7 @@
 			     between two icons when your swipe is. Copied from the bottom
 			     nav's .nav-indicator. No transition: it follows --expr-frac
 			     every frame, and a transition would make it lag the finger. -->
-			<span class="expr-indicator" aria-hidden="true"></span>
+			<span class="expr-indicator" bind:this={indEl} aria-hidden="true"></span>
 		{#if hasRecents}
 		<button class="expr-tab" class:active={tab === 'recent'} onclick={() => goTo('recent')} title="Recently used">
 			<span class="msi msi-20" class:msi-fill={tab === 'recent'}>history</span>
@@ -695,6 +734,13 @@
 		   by hand. */
 		--expr-rail-h: calc(var(--expr-tab-h) + 8px);
 		--expr-slot-w: 3rem;   /* 48px slot */
+		/* Delete key width. Wider than a slot — it's a key, not an icon, and it
+		   reads as one at this size. Bounded by what's left beside the rail on a
+		   narrow phone; see the 360px block. */
+		--expr-del-w: 4rem;    /* 64px */
+		/* Gap between icon slots. The indicator steps by slot + gap, so this
+		   has to be ONE number both consumers read — see .expr-indicator. */
+		--expr-gap: 1px;
 		/* Horizontal padding, matching the bottom nav's --nav-pad. A
 		   fully-rounded pill curves away over its last ~half-height, so an icon
 		   flush to the end sits in the curve and reads as falling out of the
@@ -794,9 +840,12 @@
 		/* Island on mobile too — it sits just above the home indicator the way
 		   the bottom nav does, rather than running its background to the very
 		   bottom of the screen as the old full-bleed strip did. */
-		.expr-panel { --expr-rail-bottom: calc(6px + env(safe-area-inset-bottom, 0px)); }
+		.expr-panel {
+			--expr-rail-bottom: calc(6px + env(safe-area-inset-bottom, 0px));
+			--expr-gap: 0.2rem;
+		}
 		.expr-tabs {
-			gap: 0.2rem;
+			gap: var(--expr-gap);
 			padding: 3px var(--expr-pad);
 			margin: 4px 0 var(--expr-rail-bottom) var(--expr-edge);
 			align-items: stretch;
@@ -820,7 +869,7 @@
 		   so this sits in that band, aligned with it rather than inside it. */
 		right: var(--expr-edge);
 		z-index: 5;
-		width: var(--expr-slot-w);
+		width: var(--expr-del-w);
 		height: var(--expr-rail-h);
 		box-sizing: border-box;
 		display: inline-flex;
@@ -838,11 +887,9 @@
 		color: var(--ink);
 		cursor: pointer;
 		transition: opacity 0.11s ease;
-		will-change: opacity;
 	}
 	.expr-del :global(.msi) { font-size: 25px; }
 	.expr-del.chrome-dim { opacity: 0.5; }
-	.expr-tab.active { border-bottom-color: transparent; }
 		.expr-tab-back { padding: 0 0.6rem; min-height: 3.7rem; border-radius: 16px; }
 	}
 
@@ -858,7 +905,7 @@
 	.expr-tabs {
 		position: relative;   /* containing block for .expr-indicator */
 		display: flex;
-		gap: 1px;
+		gap: var(--expr-gap);
 		flex-shrink: 0;
 		/* Floats OVER the grid instead of reserving a row, so content scrolls
 		   behind it. The panes' scrollers get matching bottom padding (below)
@@ -894,11 +941,12 @@
 		/* Scale about the bottom edge so shrinking pulls it toward the screen
 		   edge rather than floating it into the content. */
 		transform-origin: bottom center;
+		/* No will-change. It was added when this element SCALED; it only fades
+		   now, and holding a permanent layer for a surface carrying a 30px-blur
+		   drop shadow means that shadow is re-rasterised whenever any descendant
+		   restyles — which is exactly what the indicator used to trigger every
+		   frame. */
 		transition: opacity 0.11s ease;
-		/* Own layer: the drop shadow is expensive to rasterise, and without this
-		   it was re-rasterised every frame of the scale. Promoted, the shadow is
-		   painted once and the layer is merely transformed. */
-		will-change: opacity;
 	}
 
 	/* Scrolling DOWN through a category's contents — the chrome gets out of
@@ -935,7 +983,14 @@
 		font-size: 0.78rem;
 		font-weight: 600;
 		cursor: pointer;
-		border-bottom: 2px solid transparent;
+		/* No underline border. It was transparent in EVERY state (`.expr-tab.active`
+		   only ever set border-bottom-color: transparent), a leftover from when
+		   these were underline tabs — but 2px of it still came out of the box, so
+		   the glyph sat 1px above centre and the selected square could never be
+		   concentric with the icon. The mobile block does say `border-bottom:
+		   none`, except it's declared BEFORE this rule, so at equal specificity
+		   this one won and the override never applied. Removing it here fixes both
+		   breakpoints at once. */
 	}
 	/* Concentric with the island: it pads 3px, so the block's curve runs
 	   parallel to the outer one — the same relationship the bottom nav's pill
@@ -943,42 +998,60 @@
 	   multiples of its own width, so no viewport maths is needed. */
 	.expr-indicator {
 		position: absolute;
-		top: 3px;
-		bottom: 3px;
-		/* Inset 2px inside the slot, so at the LAST slot the block's rounded end
-		   doesn't run flush into the rail's own cap — two curves meeting with no
-		   gap is what made the kitchen icon read as spilling out of the pill. */
-		left: calc(var(--expr-pad) + 2px);
-		/* Slightly narrower than a slot (see `left`). */
-		width: calc(var(--expr-slot-w, 3rem) - 4px);
-		border-radius: 999px;
+		/* A CIRCLE that hugs the pill: one slot across, one slot tall, which is
+		   exactly the rail's content box (56px rail − 3px padding − 1px border
+		   each side = 48px). So it meets the pill's inner edge top and bottom,
+		   concentric with the rail's own cap radius, and — being square before
+		   it's rounded — concentric with the icon too. It was 44×48 stretched
+		   between top:3px/bottom:3px: a vertical oval around a 25px glyph, which
+		   reads as off-centre no matter how precisely it's positioned. */
+		top: 50%;
+		height: var(--expr-slot-w, 3rem);
+		/* Flush with the slot — no inset. The old 2px inset existed to keep the
+		   block's corner off the rail's cap, but a circle that fills the rail's
+		   inner height IS concentric with that cap, so they nest rather than
+		   collide. --expr-pad (18px) still keeps the first and last circles well
+		   clear of the pill's ends. */
+		left: var(--expr-pad);
+		width: var(--expr-slot-w, 3rem);
+		border-radius: 50%;
 		background: var(--sidebar-active, var(--md-sys-color-secondary-container, var(--paper)));
-		/* Steps by the SLOT width, not by `100%` of the block's own width — now
-		   that the block is narrower than a slot, a self-relative step would
-		   drift further from the icons with every slot. */
-		transform: translate3d(calc(var(--expr-frac, 0) * var(--expr-slot-w, 3rem)), 0, 0);
+		/* Steps by the SLOT PITCH — slot width PLUS the row's gap — not by the
+		   slot width alone, and not by `100%` of the block's own width (it's
+		   narrower than a slot, so a self-relative step would drift too).
+		   Stepping by the bare slot width was off by one gap per tab, so the
+		   error grew left-ward the further along the rail you went: nothing at
+		   the first icon, a whole 7.6px at the fourth on mobile, where the gap
+		   is 0.2rem. That put the highlight visibly left of the kitchen icon,
+		   sitting over the space beside it rather than under it. */
+		transform: translate3d(
+			calc(var(--expr-frac, 0) * (var(--expr-slot-w, 3rem) + var(--expr-gap, 0px))), -50%, 0);
 		will-change: transform;
 		pointer-events: none;
 		z-index: 0;
 	}
-	/* While PAGING, swap every live emote canvas for its static thumb.
-	   The Telegram pane carries ~70 canvases; compositing that many textures
-	   across a moving scroller is what's left of the swipe cost now that the
-	   rounded-clip mask is gone. The thumbs are already rendered underneath
-	   (SpriteSticker keeps them behind the canvas), so this is a visibility
-	   swap, not a re-render — and the frame it lands on is a still frame
-	   anyway, because emotes are frozen for the duration of a gesture.
-	   The class sits on the panel, which invalidates the subtree's style — but
-	   only twice per swipe (start and end), rather than the per-frame
-	   compositing it replaces. */
-	.expr-panel.paging :global(.tg-canvas) { visibility: hidden; }
-	.expr-panel.paging :global(.tg-thumb) { opacity: 1; }
+	/* The canvas -> thumb swap that used to live here is GONE.
+	   Hiding ~70 .tg-canvas elements tore down that many composited layers and
+	   showing them again re-uploaded every texture — a hitch at the start of
+	   the gesture and another when it settled. Worse, it ran on every touch
+	   rather than every swipe, because paging was entered from pointerdown.
+	   Compositing the canvases where they are is cheaper than destroying and
+	   rebuilding their layers. */
 
 	/* Icons ride above the block. */
 	.expr-tab { position: relative; z-index: 1; }
+	/* NO font-variation-settings transition on these icons.
+	   app.css gives every .msi a 450ms FILL transition so icons morph
+	   outlined -> filled. Here the fill flips when `tab` changes, and `tab`
+	   changes as a swipe crosses the halfway point — so two glyphs would start
+	   animating a variable-font axis in the middle of the gesture. Interpolating
+	   a font axis re-shapes and re-rasterises the outline every frame with no
+	   compositor path, landing on exactly the frames the indicator needs, and
+	   running on past the settle. The fill still flips; it just doesn't
+	   animate. */
+	.expr-tab :global(.msi) { transition: none; }
 	.expr-tab.active {
 		color: var(--sidebar-active-fg, var(--md-sys-color-on-secondary-container, var(--ink)));
-		border-bottom-color: transparent;
 	}
 	.expr-tab:hover:not(.active) {
 		background: color-mix(in srgb, var(--md-sys-color-on-surface, var(--ink)) 7%, transparent);
