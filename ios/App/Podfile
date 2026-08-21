@@ -1,6 +1,9 @@
 require_relative '../../node_modules/@capacitor/ios/scripts/pods_helpers'
 
-platform :ios, '14.0'
+# 15.0, not 14.0: App Store Connect warns on upload that from Spring 2027 it
+# will reject anything below 15.0. Capacitor's pods only require 14.0, and the
+# post_install assertDeploymentTarget below raises every pod to match the app.
+platform :ios, '15.0'
 use_frameworks!
 
 # workaround to avoid Xcode caching of Pods that requires
