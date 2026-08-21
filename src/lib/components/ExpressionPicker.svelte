@@ -820,7 +820,11 @@
 		height: 440px;
 		background: var(--paper);
 		color: var(--ink);
-		border-radius: 12px;
+		/* The sheet's corner radius. A token because the panel CANNOT clip (see
+		   below), so every surface that reaches the panel's top edge has to
+		   round itself to the same value or it squares the corner off. */
+		--expr-radius: 12px;
+		border-radius: var(--expr-radius);
 		box-shadow: 0 4px 24px rgba(0,0,0,0.13), 0 1.5px 4px rgba(0,0,0,0.07);
 		/* Deliberately NOT `overflow: hidden`.
 		   This element is an ancestor of the horizontal pager, and a rounded
@@ -883,7 +887,8 @@
 			/* Fill the docked sheet exactly — its height is driven by the
 			   chat page's --picker-h so the bar above stays flush. */
 			height: 100%;
-			border-radius: 14px 14px 0 0;
+			--expr-radius: 14px;
+			border-radius: var(--expr-radius) var(--expr-radius) 0 0;
 			box-shadow: 0 -4px 24px rgba(0,0,0,0.18);
 		}
 		/* Taller bottom section strip with soft, pill-shaped buttons (no hard
@@ -1272,6 +1277,20 @@
 		border-radius: 0 !important;
 		box-shadow: none !important;
 		background: transparent !important;
+	}
+
+	/* Each pane's top bar is a solid, full-width surface that reaches the
+	   panel's top edge, and the panel deliberately does NOT clip (a rounded
+	   clipping ancestor takes the horizontal pager off iOS WebKit's compositor
+	   fast path — see .expr-panel). So an unrounded bar paints its own square
+	   corners straight over the sheet's rounded ones, which is what made the
+	   picker read as square-cornered no matter what radius the panel carried.
+	   Each bar rounds itself to the same token instead. */
+	.expr-recent-bar,
+	.expr-pane :global(.tg-tabs-bar),
+	.expr-pane :global(.emoji-topbar),
+	.expr-pane :global(.kitchen-tabs-bar) {
+		border-radius: var(--expr-radius) var(--expr-radius) 0 0;
 	}
 
 	/* Clearance for the floating island. Each inner panel owns its own
