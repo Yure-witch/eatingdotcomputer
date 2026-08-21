@@ -161,6 +161,8 @@
 	// 28px, in a grid of two dozen moving things, that's invisible; the wait
 	// was not.)
 	const STICKER_PX = PICKER_STICKER_PX;
+	// Real-mobile test for hiding the engine cycler — pointer, not width.
+	const _coarsePtr = typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)')?.matches;
 	// Tab icons bake cheaper than grid cells. They're 20px of decoration, but
 	// there are twenty of them and they mount at the same instant as the grid —
 	// so on a cold open their bakes compete with the emotes the user is actually
@@ -750,11 +752,14 @@
 		     their own above the panel. The Emotes tab uses it for its
 		     Uploaded / Library switch. -->
 		{@render leading?.()}
-		{#if !_isStaticOnly}
+		{#if !_isStaticOnly && !_coarsePtr}
 			<!-- Engine picker, moved up from its own footer row. It only means
 			     anything where something animates, so it stays out of
-			     static-only mode — and as a bar button it costs no vertical
-			     space, which the bottom island now wants for category icons. -->
+			     static-only mode. HIDDEN on coarse-pointer devices: phones
+			     always run the CPU atlas (it is the engine all of the mobile
+			     optimization landed in), so a cycler there is a foot-gun.
+			     Deliberately a pointer test, not a width test — a desktop
+			     browser at 600px keeps its chosen engine and this control. -->
 			<PickerStickyBtn square onclick={() => setEngineManual((e =>
 					e === 'rlottie' ? 'skottie'
 					: e === 'skottie' ? 'skottie-worker'
@@ -977,19 +982,6 @@
 			{@const _bandPad = Math.max(CELL_PX * 3, gridH || 600)}
 			{@const _cellVisTop = scrollTop - _bandPad}
 			{@const _cellVisBot = scrollTop + (gridH + _bandPad) * _fillFrac}
-			<!-- TEMPORARY: render-approach benchmark entrypoint. Sits as a sibling
-			     ABOVE .tg-grid-flow rather than inside it — the sections in there
-			     are absolutely positioned at computed offsets, so anything added
-			     among them would need the geometry recomputed. As a preceding
-			     sibling it just pushes the whole grid down and scrolls with the
-			     emotes, touching no layout maths. The ~44px it adds does shift
-			     scrollTop out of step with geo.pxStart, which is harmless: the
-			     windowing band is at least 600px, so the error cannot reach the
-			     edge of it. DELETE THIS (and /renderprobe) once an approach is
-			     chosen. -->
-			<a class="tg-probe-link" href="/renderprobe">
-				⏱ Run render benchmark <span>30 emotes · 50px · 24fps · 10 approaches</span>
-			</a>
 			<div class="tg-grid tg-grid-flow" bind:this={gridEl} style:height="{totalHeight}px">
 				{#each flowingSections as section, sIdx (section.key)}
 					{@const geo = flowingGeometry[sIdx]}
@@ -1207,22 +1199,6 @@
 	   `flowingGeometry`'s last pxEnd, so the ResizeObserver on
 	   `gridEl` never fires from section virtualization. The Skottie
 	   stage's surface stays alive across the entire scroll. */
-	/* TEMPORARY — benchmark entrypoint, remove with the link above. */
-	.tg-probe-link {
-		/* Sticky, because the panel opens on a category and snaps the scroller
-		   to that section's pxStart — so anything sitting at the top of the
-		   scroll content is scrolled out of sight before you ever see it.
-		   Its containing block is the whole scroller, so top:0 pins it for the
-		   entire scroll rather than just its own 44px. */
-		position: sticky; top: 0; z-index: 4;
-		display: flex; align-items: center; gap: 0.5rem;
-		margin: 0 0 0.5rem; padding: 0.6rem 0.85rem;
-		border: 1px dashed var(--border); border-radius: 12px;
-		background: var(--surface-container, #eee);
-		color: var(--ink); text-decoration: none;
-		font: 600 13px/1.2 system-ui;
-	}
-	.tg-probe-link span { font-weight: 400; opacity: 0.6; font-size: 11px; }
 
 	.tg-grid-flow {
 		display: block;

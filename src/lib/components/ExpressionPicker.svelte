@@ -608,6 +608,10 @@
 	// RASTERIZED engine (baked atlas, still moving): the selected one if that's
 	// already rasterized, otherwise this device's rasterized default.
 	const recentEngine = $derived(rasterEngineFor($engineMode));
+	// Engine cycler is desktop-only — phones are pinned to the CPU atlas
+	// (see initEmoteEngine). Pointer test, not width: a 600px desktop window
+	// keeps the control.
+	const _coarsePtr = typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)')?.matches;
 	// Same control as the Emotes tab's, but it only offers the two rasterized
 	// engines — so what the bar reports is always what Recent is actually
 	// rendering on, and cycling from here can't drop the app onto a live
@@ -717,7 +721,7 @@
 								</PickerStickyBtn>
 							{/if}
 							<span class="expr-recent-title">Recently used</span>
-							{#if !tgHidden}
+							{#if !tgHidden && !_coarsePtr}
 								<PickerStickyBtn square onclick={cycleRecentEngine}
 									title="Render engine: {recentEngine} — tap to cycle"
 									label="Cycle render engine">

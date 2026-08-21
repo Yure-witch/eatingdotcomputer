@@ -231,6 +231,15 @@ export async function initEmoteEngine() {
 	emoteHiTier.set(!coarse || webgpu || (mem >= 6 && cores >= 6));
 	emoteWebgpuOk.set(webgpu);
 
+	// Coarse-pointer devices are pinned to the CPU atlas, MANUAL CHOICE OR
+	// NOT: it is the engine every piece of the mobile optimization work landed
+	// in (sheet pipeline, progressive fill, scroll hold, budget/reclaim), the
+	// cycler is hidden there now, and a stale manual pick from when it wasn't
+	// would strand a phone on an engine nothing tunes any more. Fine-pointer
+	// machines keep their explicit choice — including narrow desktop windows;
+	// this is a pointer test, not a width test.
+	if (coarse) { engineMode.set('cpu-rasterized'); return; }
+
 	let manual = false;
 	try { manual = localStorage.getItem(MANUAL_KEY) === '1'; } catch { /* private mode */ }
 	if (manual) return;
