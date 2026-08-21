@@ -25,7 +25,16 @@ import { fetchLottie, isAdaptivePack, customShortFromUrl } from './telegram-emoj
 // Mobile-scale atlas: native res, tiny pages. 1024² × 4 bytes = 4 MB a page.
 const ATLAS_DIM = 1024;
 const PAGE_BYTES = ATLAS_DIM * ATLAS_DIM * 4;
-const MAX_ATLAS_PAGES = 6;          // per pixel size
+// Per pixel size. Sized so the picker's ON-SCREEN grid fits entirely:
+//
+//     18x18 slots/page x 10 pages = 3240 slots
+//     3240 / 30 frames per emote  = 108 emotes
+//
+// against the ~90 cells a 9-column grid shows. At six pages and an uncapped
+// 60-frame bake only 32 of those 90 fitted, so two thirds of the grid sat
+// frozen on its thumb — which read as "the animations don't animate", because
+// for most cells they genuinely didn't.
+const MAX_ATLAS_PAGES = 10;
 
 // A cap on pages across EVERY pixel size, not just within one.
 //
@@ -44,8 +53,35 @@ const _lowMem = (() => {
 	if (navigator.deviceMemory && navigator.deviceMemory <= 4) return true;
 	return isTouchDevice();
 })();
-const MAX_TOTAL_PAGES = _lowMem ? 10 : 16;   // 40 MB / 64 MB
+// Device-wide. One size claiming its full 10 pages must still leave room for
+// the others live at the same time — chiefly the tab icons above the grid.
+// 48MB bounded and released on close, against the 120MB-and-climbing that was
+// jetsamming the app.
+const MAX_TOTAL_PAGES = _lowMem ? 12 : 18;   // 48 MB / 72 MB
 let _totalPages = 0;
+
+// Slots are the scarce resource, and an emote costs one per frame — so an
+// uncapped bake lets a handful of long animations eat the budget the whole
+// grid has to share. skottie-worker has had MAX_RASTER_FRAMES for exactly this
+// reason; cpu-atlas never got it.
+//
+// Capping frames rather than fps is the right knob: it spends the budget where
+// it is perceptible. A 1s emote keeps the full 20fps the picker asks for, and
+// only a long one degrades — and a 3s animation is slow-moving by nature, so
+// fewer samples across it costs far less than freezing it outright, which is
+// what the shortfall was doing to two thirds of the grid.
+const MAX_RASTER_FRAMES = _lowMem ? 30 : 60;
+
+/**
+ * Frames-per-second to bake at, so an emote never exceeds MAX_RASTER_FRAMES.
+ * Reads the duration straight off the Lottie JSON, before any rasterising.
+ */
+function fpsCapFor(data, maxFps) {
+	const dur = Math.max(0.1, ((data?.op || 60) - (data?.ip || 0)) / (data?.fr || 60));
+	const want = maxFps > 0 ? maxFps : (data?.fr || 60);
+	const byBudget = MAX_RASTER_FRAMES / dur;
+	return Math.max(4, Math.min(want, byBudget));   // never below 4fps
+}
 
 const _cells = new Map();          // id -> cell state
 let _nextId = 1;
@@ -253,7 +289,7 @@ async function bakeToDisk(url, px, maxFps = 0) {
 	if (!data) return false;
 	const srcPx = rasterSizeFor(px);
 	let entry;
-	try { entry = await acquire(url, data, srcPx, maxFps); } catch { return false; }
+	try { entry = await acquire(url, data, srcPx, fpsCapFor(data, maxFps)); } catch { return false; }
 	try {
 		try { if (entry.pending) await entry.pending; } catch {}
 		const frames = entry.frames || [];
@@ -364,7 +400,9 @@ function packIntoAtlas({ key, px, N, duration, draw }) {
 // Sharing the key means each engine rejects the other's entry on the sl check,
 // re-bakes, and overwrites it, so a user who ever switched engines would get a
 // cache that permanently thrashes instead of one that hits.
-const diskKeyFor = (key) => 'cpu|' + key;
+// v2: the frame cap changed how many frames an entry holds, so v1 records
+// would load at the old count and blow the slot budget they exist to protect.
+const diskKeyFor = (key) => 'cpu2|' + key;
 
 async function doRasterize(url, px, key, maxFps = 0) {
 	if (_frameCache.has(key)) return;
@@ -402,7 +440,7 @@ async function doRasterize(url, px, key, maxFps = 0) {
 	// cells are crisp rather than upscaled. Same size on the release below, or
 	// the refcount lands on a different cache entry and the frames leak.
 	const srcPx = rasterSizeFor(px);
-	try { entry = await acquire(url, data, srcPx, maxFps); } catch { return; }
+	try { entry = await acquire(url, data, srcPx, fpsCapFor(data, maxFps)); } catch { return; }
 	// Wait for every frame to settle, then we own a full set to pack.
 	try { if (entry.pending) await entry.pending; } catch {}
 	const frames = entry.frames || [];
