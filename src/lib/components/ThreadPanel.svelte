@@ -303,6 +303,18 @@
 		showMedia = false;
 	}
 
+	// A tap on the replies puts the keyboard away, the way tapping the message
+	// list does in a conversation. Without it the tap lands on a message and
+	// triggers its hover bar instead — on iOS the first touch IS hover, so
+	// "tap outside to dismiss" reads as "tap outside to reveal the icons".
+	// pointerdown rather than click: it fires before focus moves, so the
+	// keyboard starts closing on contact instead of after the gesture resolves.
+	function dismissKeyboard(e) {
+		if (e.target?.closest?.('.thread-compose, .fi-wrap, .msg-actions-bar, .thread-rx, button, a')) return;
+		const ae = document.activeElement;
+		if (ae && (ae.isContentEditable || /^(INPUT|TEXTAREA)$/.test(ae.tagName))) ae.blur();
+	}
+
 	let editingId = $state(null);
 	let editDraft = $state('');
 	function startEdit(m) { editingId = m.id; editDraft = m.content ?? ''; }
@@ -493,7 +505,8 @@
 		</span>
 	</header>
 
-	<div class="thread-scroll" bind:this={listEl}>
+	<!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
+	<div class="thread-scroll" bind:this={listEl} onpointerdown={dismissKeyboard}>
 		<div class="thread-parent">
 			{@render msgRow(parentSnapshot, true)}
 		</div>
@@ -806,6 +819,20 @@
 	   match the text controls beside it. */
 	:global(.thread-fi .fi-fmt-row .thread-attach) { width: 26px; height: 26px; opacity: 0.45; }
 	:global(.thread-fi .fi-fmt-row .thread-attach:hover:not(:disabled)) { opacity: 1; }
+	/* No separator between the editor and its tool row — chat dropped that rule
+	   from its own composer and FormattedInput still draws one, which reads as
+	   two stacked bars inside a single box. Scoped here so the assignment and
+	   profile fields keep theirs. */
+	:global(.thread-fi .fi-fmt-row) { border-top: none; }
+	/* One row, always. Wrapping is what stacks the icons: the moment the buttons
+	   exceed the width they drop to a second line inside the box. Keep them on
+	   one line and let the row scroll if it ever needs to. */
+	:global(.thread-fi .fi-fmt-row) {
+		flex-wrap: nowrap;
+		overflow-x: auto;
+		scrollbar-width: none;
+	}
+	:global(.thread-fi .fi-fmt-row::-webkit-scrollbar) { display: none; }
 	.thread-fi { flex: 1; min-width: 0; }
 	/* A tool inside the box, not a bordered button beside it. */
 	.thread-attach {
