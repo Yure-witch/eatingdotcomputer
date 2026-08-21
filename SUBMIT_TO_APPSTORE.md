@@ -40,15 +40,15 @@ them verbatim. This is the single most likely reason for a first rejection.
 
 ---
 
-## 3. Set Vercel env vars — **YOU** (~2 min)
+## 3. ✅ Set Vercel env vars — DONE (2026-08-21, verified by you)
 
 Vercel → project → **Settings → Environment Variables** (Production):
 
-- [ ] `APNS_KEY` — the whole `.p8` contents, including BEGIN/END lines
-- [ ] `APNS_KEY_ID` — `89L54FU472`  *(key "eatingdotcomputer push", created 2026-08-18)*
-- [ ] `APNS_TEAM_ID` — `2DA4GWZYAS`
-- [ ] `APNS_BUNDLE_ID` — `computer.eating.app`
-- [ ] **Redeploy** so the env goes live
+- [x] `APNS_KEY` — the whole `.p8` contents, including BEGIN/END lines
+- [x] `APNS_KEY_ID` — `89L54FU472`  *(key "eatingdotcomputer push", created 2026-08-18)*
+- [x] `APNS_TEAM_ID` — `2DA4GWZYAS`
+- [x] `APNS_BUNDLE_ID` — `computer.eating.app`
+- [x] **Redeploy** so the env goes live
 
 > For testing from Xcode onto your own phone, also add
 > `APNS_HOST` = `https://api.sandbox.push.apple.com`.
@@ -57,12 +57,12 @@ Vercel → project → **Settings → Environment Variables** (Production):
 
 ---
 
-## 3b. Add the Google iOS client ID to Vercel — **YOU**
+## 3b. ✅ Google iOS client ID on Vercel — DONE (2026-08-21)
 
 Native Google sign-in needs this in **Production** (it's a public client ID, not
 a secret):
 
-- [ ] `PUBLIC_GOOGLE_IOS_CLIENT_ID` =
+- [x] `PUBLIC_GOOGLE_IOS_CLIENT_ID` =
       `442315561548-coa0c20jk7vh6e75arof838u9ve4msgp.apps.googleusercontent.com`
 
 > ⚠️ **The web changes must be DEPLOYED for native Google sign-in to work.**
@@ -118,9 +118,16 @@ you submit.
 
 ## 6. Pre-archive checklist — **CLAUDE can verify**
 
-- [ ] `capacitor.config.ts` `server.url` is `https://www.eating.computer`
-      (NOT a local `192.168.x.x` — that ships a broken app)
-- [ ] `APNS_HOST` sandbox override removed from Vercel
+- [x] ✅ `server.url` is `https://www.eating.computer` in BOTH
+      `capacitor.config.ts` and the synced native `ios/App/App/capacitor.config.json`
+      (the synced copy is the one that actually ships)
+- [x] ✅ Release build for `generic/platform=iOS` succeeds and passes Xcode's
+      `-validate-for-store`; `PrivacyInfo.xcprivacy` confirmed present inside
+      the built `App.app`
+- [x] ✅ iPhone-only (`TARGETED_DEVICE_FAMILY = 1`) and portrait-only. The web
+      app has no landscape layout at all, and claiming iPad support would
+      require a 13" iPad screenshot set that does not exist.
+- [x] ✅ Vercel env verified (2026-08-21) — incl. `APNS_HOST` handling
 - [x] ✅ `isInspectable` in `AppDelegate.swift` now wrapped in `#if DEBUG`
       (2026-08-18) — the shipping build no longer exposes the web view to
       Safari's Web Inspector. Both Debug and Release verified building.
@@ -144,8 +151,16 @@ you submit.
 Everything you need is written in `APP_STORE_LISTING.md` — copy/paste it.
 
 - [ ] Name, subtitle, promo text, keywords, description
-- [ ] **Screenshots** — `artifacts/appstore-screenshots/real-01..07-*.png`,
-      already at the required 1290×2796. Upload 3–6, strongest first.
+- [ ] **Screenshots** — `artifacts/appstore-screenshots/real-0*.png`, all at the
+      required 1290×2796. Captured in the **App Store review class**, not the
+      live teaching class (that channel carries development traffic — a
+      renderprobe link and a perf dump were in the previous set).
+      Upload 4–6 in this order: `real-02-chat` → `real-06-picker` →
+      `real-01-home` → `real-04-orbit` → `real-05-weeks`.
+      **Skip `real-07-gemma`** — the review account has digests off, so it is
+      the empty "Say hi" state.
+      Regenerate with `node artifacts/appstore-screenshots/_capture-session.mjs`
+      (dev server on :5175; signs in from a saved browser profile).
 - [ ] Category: Education (primary), Social Networking (secondary)
 - [ ] Age rating questionnaire — answer honestly, expect 12+ (user-generated content)
 - [ ] **App Privacy** — must match `PrivacyInfo.xcprivacy`: Email, Name, Photos/Videos,
@@ -156,10 +171,17 @@ Everything you need is written in `APP_STORE_LISTING.md` — copy/paste it.
 
 ## 9. App Review information — **YOU** — don't rush this
 
-- [ ] **Demo account** — username + password for an account already approved into
-      a class, so the reviewer lands straight in the app. Without this they hit
-      the enrollment gate and reject for incomplete functionality. Verify it
-      works in a private window before submitting.
+- [ ] **Demo account** — `appstore-review`, already approved into the
+      self-contained review class `idc-review` (channel `# studio`). Reset the
+      password any time with
+      `node scripts/create-reviewer.js appstore-review <password>` — that script
+      now pins the account to `idc-review` and clears any other membership, so
+      re-running it cannot drag the reviewer into the real class.
+      **Verify it in a private window before submitting.**
+- [x] ✅ **Apple sign-in is covered too** — App Review often exercises "Sign in
+      with Apple" instead of the demo credentials. An Apple sign-in holding no
+      class membership is auto-approved into `idc-review` (src/auth.js), so they
+      land inside the app either way rather than on the enrollment gate.
 - [ ] **Notes** — paste the review notes from `APP_STORE_LISTING.md`. This is
       your Guideline 4.2 defence. Do not leave it blank.
 
