@@ -2324,7 +2324,25 @@
 		if (!listEl) return;
 		const anchor = createScrollAnchor(listEl);
 		scrollAnchor = anchor;
+		// Initial placement happens HERE, the moment the list binds — not in
+		// onMount, where it sat behind a Firebase get() and let the reader watch
+		// the list parked at the top until the network came back. loadChatScroll
+		// is a sync localStorage read; there is nothing to wait for.
+		scrollToBottom();
 		return () => { anchor.destroy(); if (scrollAnchor === anchor) scrollAnchor = null; };
+	});
+
+	// The list's bottom padding is the input area's measured height, which
+	// starts at 0 and lands a frame or two after mount (bind:clientHeight), and
+	// moves again whenever the compose grows — multi-line drafts, the reply bar.
+	// Padding is not a child, so the anchor cannot see it grow; a pinned reader
+	// was left exactly one input-bar above the bottom. Re-pin through it.
+	$effect(() => {
+		void inputAreaHeight;
+		if (!listEl || !scrollAnchor?.pinned) return;
+		requestAnimationFrame(() => {
+			if (listEl && scrollAnchor?.pinned) listEl.scrollTop = listEl.scrollHeight;
+		});
 	});
 
 	// Live check, as opposed to the `userScrolledUp` flag, which only updates on
@@ -2374,7 +2392,11 @@
 		// something to scroll, instead of the reader hitting the top, stopping
 		// dead, and then having history appear underneath them.
 		if (listEl.scrollTop < 600 && hasMoreHistory && !loadingMore) loadMoreHistory();
-		// Persist position (throttled) so a reload restores it.
+		// Persist position (throttled) so a reload restores it — but never one
+		// measured while the compose picker is open: the sheet shrinks the list's
+		// clientHeight, which inflates dist by the sheet's height, and the next
+		// load would "restore" you that far above the bottom.
+		if (_anyComposePicker) return;
 		const now = Date.now();
 		if (now - _saveScrollT > 350) { _saveScrollT = now; saveChatScroll(data.convId, dist); }
 	}
@@ -2610,7 +2632,6 @@
 			_lastReadAtMount = snap.exists() ? Number(snap.val()) || 0 : 0;
 		} catch { _lastReadAtMount = 0; }
 		markRead();
-		scrollToBottom();
 		if (listEl) listEl.addEventListener('error', (e) => {
 			const img = e.target;
 			if (img.tagName === 'IMG' && (img.classList.contains('ce-img') || img.classList.contains('ek-img'))) {
