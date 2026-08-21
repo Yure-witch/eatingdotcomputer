@@ -78,7 +78,12 @@ const _lowMem = (() => {
 // the others live at the same time — chiefly the tab icons above the grid.
 // 48MB bounded and released on close, against the 120MB-and-climbing that was
 // jetsamming the app.
-const MAX_TOTAL_PAGES = _lowMem ? 12 : 18;   // 48 MB / 72 MB
+// Sized for the two-tier reality: a full 42px grid is 10 pages and the coarse
+// 21px tier ~3 more while it still holds entries — 13 of demand. 12 forced an
+// eviction for every allocation once a session had scrolled enough, and the
+// upgrade pass then re-baked and re-evicted forever. Still bounded, still
+// released on close.
+const MAX_TOTAL_PAGES = _lowMem ? 14 : 20;   // 56 MB / 80 MB
 let _totalPages = 0;
 
 // Slots are the scarce resource, and an emote costs one per frame — so an
@@ -293,7 +298,17 @@ function sizesInUse() {
 function reclaimIdleSizes(keepPx) {
 	const live = sizesInUse();
 	for (const px of [..._atlasByPx.keys()]) {
-		if (px === keepPx || live.has(px)) continue;
+		if (px === keepPx) continue;
+		const a = _atlasByPx.get(px);
+		// An atlas with no cached entries left is pure dead weight even if
+		// cells nominally "use" its size — the coarse tier ends up exactly
+		// here once every entry has been upgraded to full quality: slots all
+		// free, pages still allocated, budget still charged. Under the
+		// two-tier scheme that stranded ~3 pages permanently, which is what
+		// tipped a long scrolling session from cache-hits into eviction
+		// thrash (13 pages of demand against a 12-page budget).
+		if (a && a.lru.size === 0 && a.pages.length) { freeSize(px); continue; }
+		if (live.has(px)) continue;
 		freeSize(px);
 	}
 }
@@ -444,7 +459,11 @@ function visibleKeys() {
 // anything past its width, so more lanes than this buys nothing.
 const RASTER_LANES = (() => {
 	const hw = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 4;
-	return Math.max(2, Math.min(4, Math.ceil(hw / 2)));
+	// min(6, ...): the 4-lane cap dated from the per-frame pipeline, where each
+	// lane fanned ~90 messages into the pool and wider only piled up. A lane is
+	// ONE worker message now (the sheet path), so lanes ≈ busy workers, and the
+	// pool spawns up to 10.
+	return Math.max(2, Math.min(6, Math.ceil(hw / 2)));
 })();
 let _rasterLanes = 0;
 
