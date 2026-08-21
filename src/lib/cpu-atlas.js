@@ -46,6 +46,22 @@ const MAX_ATLAS_PAGES = 10;
 // tabs at 20×dpr, chat emotes at 2× oversample, avatars. At 24 MB per size
 // that is ~100 MB of canvas, on the main thread's own heap, that nothing ever
 // handed back — exactly the accumulation the worker comment describes.
+// Atlas slots are the scarce resource, and their cost is AREA. A picker cell is
+// 28 CSS px, and baking at full dpr (56px on a retina phone) spends 4x the
+// slots of baking at 1x for detail nobody can see at that size.
+//
+//     90 emotes x 60 frames = 5400 slots for a full grid at 20fps
+//     at 56px: 324/page -> 17 pages -> 68MB
+//     at 42px: 576/page -> 10 pages -> 40MB
+//
+// So cap the slot at 1.5x CSS and let the blit scale the last stretch. 1.5 is
+// already what this codebase treats as the sensible ceiling — skottie-worker's
+// supersampleFor uses it, noting the anti-aliasing gain past that is invisible
+// at emote sizes. Only picker/tab-sized cells are capped; anything larger is
+// rare enough not to pressure the budget and keeps its full resolution.
+const SLOT_PX_MAX = 42;
+const slotPxFor = (px) => (px > SLOT_PX_MAX && px <= 64 ? SLOT_PX_MAX : px);
+
 const _lowMem = (() => {
 	if (typeof navigator === 'undefined') return false;
 	// deviceMemory is Chromium-only — WebKit never reports it, so a bare
@@ -70,7 +86,11 @@ let _totalPages = 0;
 // only a long one degrades — and a 3s animation is slow-moving by nature, so
 // fewer samples across it costs far less than freezing it outright, which is
 // what the shortfall was doing to two thirds of the grid.
-const MAX_RASTER_FRAMES = _lowMem ? 30 : 60;
+// Headroom for a full-length emote at the rate the picker asks for. The
+// median Telegram emote is exactly 3.00s, so 20fps needs 60 frames; a cap of
+// 30 quietly halved every one of them to 10fps, which is what "animating at
+// 3fps" was. Frames are no longer the lever — slot SIZE is (see SLOT_PX_MAX).
+const MAX_RASTER_FRAMES = _lowMem ? 64 : 128;
 
 /**
  * Frames-per-second to bake at, so an emote never exceeds MAX_RASTER_FRAMES.
@@ -144,14 +164,32 @@ function addAtlasPage(a) {
 	return true;
 }
 function atlasAllocSlots(a, n) {
+	// Never evict an emote a VISIBLE cell is using.
+	//
+	// Plain LRU is wrong once demand exceeds the atlas. Every cell on screen is
+	// touched every frame, so "least recently used" degenerates into "painted
+	// earliest this frame" — a live, on-screen emote. Evicting it makes its cell
+	// re-request immediately, which evicts another, and the grid spends all its
+	// time re-baking what it just threw away. That is the "updates each emote
+	// one by one in a row, ugly and slow" symptom: not a slow frame rate, a
+	// cache thrashing against itself.
+	//
+	// Failing the allocation instead leaves the thumb up for cells that don't
+	// fit. A stable grid where some cells are still beats a churning one where
+	// every cell flickers, and it stops the wasted rasterising from crowding out
+	// the cells that DID fit.
+	let protectedKeys = null;
 	while (a.free.length < n) {
 		if (addAtlasPage(a)) continue;
-		const oldest = a.lru.keys().next();
-		if (oldest.done) break;
-		const oldKey = oldest.value;
-		const old = a.lru.get(oldKey);
-		a.lru.delete(oldKey);
-		_frameCache.delete(oldKey);
+		if (!protectedKeys) protectedKeys = visibleKeys();
+		let victim = null;
+		for (const k of a.lru.keys()) {
+			if (!protectedKeys.has(k)) { victim = k; break; }
+		}
+		if (victim === null) break;          // nothing evictable — keep what's shown
+		const old = a.lru.get(victim);
+		a.lru.delete(victim);
+		_frameCache.delete(victim);
 		for (const s of old.slots) a.free.push(s);
 	}
 	if (a.free.length < n) return null;
@@ -195,7 +233,7 @@ function freeSize(px) {
 	for (const k of [..._rasterPending.keys()]) if (k.endsWith(suffix)) _rasterPending.delete(k);
 	// Any cell still pointing at this size must re-rasterise rather than blit
 	// from a page that no longer has a backing store.
-	for (const c of _cells.values()) if (c.w === px) c.lastFrame = -1;
+	for (const c of _cells.values()) if (slotPxFor(c.w) === px) c.lastFrame = -1;
 	// Bakes already in flight cannot be cancelled — they are awaiting rlottie —
 	// so mark their results stale instead.
 	_epoch++;
@@ -204,7 +242,7 @@ function freeSize(px) {
 /** Pixel sizes with at least one live cell — never reclaim these. */
 function sizesInUse() {
 	const live = new Set();
-	for (const c of _cells.values()) live.add(c.w);
+	for (const c of _cells.values()) live.add(slotPxFor(c.w));
 	return live;
 }
 
@@ -294,19 +332,20 @@ async function bakeToDisk(url, px, maxFps = 0) {
 		const frames = entry.frames || [];
 		const N = Math.max(1, entry.totalFrames || frames.length || 1);
 		if (N < 2 || !frames.length) return false;      // static — not worth storing
+		const sl = slotPxFor(px);
 		const cols = Math.max(1, Math.ceil(Math.sqrt(N)));
 		const rows = Math.ceil(N / cols);
-		const rw = cols * px, rh = rows * px;
+		const rw = cols * sl, rh = rows * sl;
 		const scr = scratchFor(rw, rh);
 		scr.ctx.clearRect(0, 0, rw, rh);
 		for (let i = 0; i < N; i++) {
 			const bm = frames[i] || frames[0];
 			if (!bm) continue;
-			scr.ctx.drawImage(bm, 0, 0, bm.width, bm.height, (i % cols) * px, ((i / cols) | 0) * px, px, px);
+			scr.ctx.drawImage(bm, 0, 0, bm.width, bm.height, (i % cols) * sl, ((i / cols) | 0) * sl, sl, sl);
 		}
 		const sheetData = scr.ctx.getImageData(0, 0, rw, rh).data;
 		await fcStore(diskKeyFor(url + '@' + px), {
-			sl: px, N, cols, sheetW: rw, sheetData,
+			sl, N, cols, sheetW: rw, sheetData,
 			duration: entry.duration, totalFrames: entry.totalFrames
 		});
 		return true;
@@ -401,17 +440,20 @@ function scratchFor(w, h) {
 // Pack this animation's frames into slots and register the cache entry.
 // Shared by the disk path and the rlottie path — everything after "we have N
 // frames' worth of pixels" is identical between them.
-function packIntoAtlas({ key, px, N, duration, draw }) {
-	const atlas = getAtlas(px);
+function packIntoAtlas({ px, N, duration, draw }) {
+	const sl = slotPxFor(px);
+	const atlas = getAtlas(sl);
 	const slots = atlasAllocSlots(atlas, N);
 	if (!slots) return null;               // atlas full — the thumb stays up
 	for (let i = 0; i < N; i++) {
 		const slot = slots[i];
 		const ctx = atlas.pages[slot.page].ctx;
-		ctx.clearRect(slot.x, slot.y, px, px);
-		try { draw(ctx, i, slot); } catch { /* one bad frame — leave it cleared */ }
+		ctx.clearRect(slot.x, slot.y, sl, sl);
+		try { draw(ctx, i, slot, sl); } catch { /* one bad frame — leave it cleared */ }
 	}
-	return { atlas, slots, N, duration };
+	// `sl` travels with the entry: it is the source rect renderCells blits FROM,
+	// and it is no longer the same as the cell's size.
+	return { atlas, slots, N, duration, sl };
 }
 
 // Disk keys are namespaced per engine.
@@ -424,7 +466,7 @@ function packIntoAtlas({ key, px, N, duration, draw }) {
 // cache that permanently thrashes instead of one that hits.
 // v2: the frame cap changed how many frames an entry holds, so v1 records
 // would load at the old count and blow the slot budget they exist to protect.
-const diskKeyFor = (key) => 'cpu2|' + key;
+const diskKeyFor = (key) => 'cpu3|' + key;
 
 async function doRasterize(url, px, key, maxFps = 0) {
 	if (_frameCache.has(key)) return;
@@ -437,16 +479,17 @@ async function doRasterize(url, px, key, maxFps = 0) {
 	// stored slot size here, so a hit blits straight in with no rlottie at all.
 	if (frameCacheAvailable()) {
 		let disk = null;
-		try { disk = await fcLoad(diskKeyFor(key), px); } catch { disk = null; }
+		try { disk = await fcLoad(diskKeyFor(key), slotPxFor(px)); } catch { disk = null; }
 		if (disk && disk.N >= 2 && _epoch === startedAt && !_frameCache.has(key)) {
+			const dsl = slotPxFor(px);
 			const img = typeof ImageData !== 'undefined' ? disk.frames.map((f) => {
-				try { return new ImageData(f, px, px); } catch { return null; }
+				try { return new ImageData(f, dsl, dsl); } catch { return null; }
 			}) : [];
 			const entry = packIntoAtlas({
-				key, px, N: disk.N, duration: disk.duration || 1,
+				px, N: disk.N, duration: disk.duration || 1,
 				draw: (ctx, i, slot) => { const d = img[i]; if (d) ctx.putImageData(d, slot.x, slot.y); }
 			});
-			if (entry && _epoch === startedAt && _atlasByPx.get(px) === entry.atlas) {
+			if (entry && _epoch === startedAt && _atlasByPx.get(dsl) === entry.atlas) {
 				_frameCache.set(key, entry);
 				entry.atlas.lru.set(key, entry);
 				return;
@@ -467,16 +510,17 @@ async function doRasterize(url, px, key, maxFps = 0) {
 	try { if (entry.pending) await entry.pending; } catch {}
 	const frames = entry.frames || [];
 	const N = Math.max(1, entry.totalFrames || frames.length || 1);
-	const atlas = getAtlas(px);
+	const sl = slotPxFor(px);
+	const atlas = getAtlas(sl);
 	const slots = atlasAllocSlots(atlas, N);
 	if (!slots) { release(url, srcPx); return; } // atlas full — thumb stays up
 	for (let i = 0; i < N; i++) {
 		const bm = frames[i] || frames[0];
 		const slot = slots[i];
 		const ctx = atlas.pages[slot.page].ctx;
-		ctx.clearRect(slot.x, slot.y, px, px);
+		ctx.clearRect(slot.x, slot.y, sl, sl);
 		if (bm) {
-			try { ctx.drawImage(bm, 0, 0, bm.width, bm.height, slot.x, slot.y, px, px); } catch {}
+			try { ctx.drawImage(bm, 0, 0, bm.width, bm.height, slot.x, slot.y, sl, sl); } catch {}
 		}
 	}
 	// Persist BEFORE releasing the rlottie bitmaps — they are the pixels we
@@ -488,18 +532,18 @@ async function doRasterize(url, px, key, maxFps = 0) {
 			// loadFrames can putImageData straight into a slot with no scaling.
 			const cols = Math.max(1, Math.ceil(Math.sqrt(N)));
 			const rows = Math.ceil(N / cols);
-			const rw = cols * px, rh = rows * px;
+			const rw = cols * sl, rh = rows * sl;
 			const scr = scratchFor(rw, rh);
 			scr.ctx.clearRect(0, 0, rw, rh);
 			for (let i = 0; i < N; i++) {
 				const bm = frames[i] || frames[0];
 				if (!bm) continue;
-				scr.ctx.drawImage(bm, 0, 0, bm.width, bm.height, (i % cols) * px, ((i / cols) | 0) * px, px, px);
+				scr.ctx.drawImage(bm, 0, 0, bm.width, bm.height, (i % cols) * sl, ((i / cols) | 0) * sl, sl, sl);
 			}
 			const sheetData = scr.ctx.getImageData(0, 0, rw, rh).data;   // one readback
 			_encodeBusy = true;
 			fcStore(diskKeyFor(key), {
-				sl: px, N, cols, sheetW: rw, sheetData,
+				sl, N, cols, sheetW: rw, sheetData,
 				duration: entry.duration, totalFrames: entry.totalFrames
 			}).finally(() => { _encodeBusy = false; });
 		} catch { _encodeBusy = false; /* readback failed — skip persisting */ }
@@ -509,8 +553,8 @@ async function doRasterize(url, px, key, maxFps = 0) {
 	// A reclaim landed while rlottie was working: `atlas` was detached from
 	// _atlasByPx and its pages emptied, so caching this would hand renderCells
 	// slots into a page array of length zero.
-	if (_epoch !== startedAt || _atlasByPx.get(px) !== atlas) return;
-	const cacheEntry = { atlas, slots, N, duration: entry.duration || 1 };
+	if (_epoch !== startedAt || _atlasByPx.get(sl) !== atlas) return;
+	const cacheEntry = { atlas, slots, N, duration: entry.duration || 1, sl };
 	_frameCache.set(key, cacheEntry);
 	atlas.lru.set(key, cacheEntry);
 }
@@ -566,8 +610,12 @@ function renderCells(now) {
 		try {
 			// dx/dy are 0 for a cell that owns its canvas, and this is the
 			// cell's slot within a shared one otherwise.
+			// Source rect is the SLOT (which may be smaller than the cell —
+			// see SLOT_PX_MAX); destination is the cell. The browser scales the
+			// difference, which is the 1.5x-instead-of-2x trade.
+			const sl = cache.sl || cell.w;
 			cell.ctx.clearRect(cell.dx, cell.dy, cell.w, cell.h);
-			cell.ctx.drawImage(page, slot.x, slot.y, cell.w, cell.h, cell.dx, cell.dy, cell.w, cell.h);
+			cell.ctx.drawImage(page, slot.x, slot.y, sl, sl, cell.dx, cell.dy, cell.w, cell.h);
 		} catch { continue; }
 		cell.lastFrame = fi;
 		if (!cell.firstPainted) { cell.firstPainted = true; if (cell.onFirstPaint) firstPaints.push(cell); }
