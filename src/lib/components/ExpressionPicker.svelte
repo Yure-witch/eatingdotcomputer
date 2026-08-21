@@ -137,22 +137,19 @@
 		}, 250);
 	});
 
-	// The Recent tab is meaningless until something has been picked — an empty
-	// tab as the first thing in the row reads as broken.
-	let hasRecents = $state(false);
-	$effect(() => {
-		try { hasRecents = getExprRecents().filter((it) => it.t !== 'tg' || !tgHidden).length > 0; }
-		catch { hasRecents = false; }
-	});
-
 	// ── Horizontal pager ─────────────────────────────────────────────
 	// The categories are panes in ONE native scroll-snap track, the same
 	// mechanism the app shell uses for its bottom-nav sections. The
 	// compositor drives the swipe, so paging between Emoji and Animated
 	// stays smooth even while a pane is busy decoding sticker frames —
 	// which a JS-driven transition never manages on a slow phone.
+	// Recent is ALWAYS present, empty or not. It used to hide itself until
+	// something had been picked, which had two costs: a fresh install (or a
+	// cleared WebView) silently loses a tab people expect to be there, and
+	// TABS changing length mid-session shifts every pane in the track. The
+	// empty state explains itself — that's what it's for.
 	const TABS = $derived([
-		...(hasRecents ? ['recent'] : []),
+		'recent',
 		'emoji',
 		'emotes',
 		...(tgHidden ? [] : ['kitchen'])
@@ -610,10 +607,6 @@
 	function cycleRecentEngine() {
 		setEngineManual(recentEngine === 'webgpu-rasterized' ? 'cpu-rasterized' : 'webgpu-rasterized');
 	}
-	// A saved 'recent' tab with nothing in it would leave no tab highlighted.
-	$effect(() => {
-		if (tab === 'recent' && !hasRecents) tab = 'emoji';
-	});
 </script>
 
 <div class="expr-panel"
@@ -656,11 +649,9 @@
 			     nav's .nav-indicator. No transition: it follows --expr-frac
 			     every frame, and a transition would make it lag the finger. -->
 			<span class="expr-indicator" bind:this={indEl} aria-hidden="true"></span>
-		{#if hasRecents}
 		<button class="expr-tab" class:active={tab === 'recent'} onclick={() => goTo('recent')} title="Recently used">
 			<span class="msi msi-20" class:msi-fill={tab === 'recent'}>history</span>
 		</button>
-		{/if}
 		<!-- Order: emoji, telegram (animated), emoji kitchen, custom emotes -->
 		<button class="expr-tab" class:active={tab === 'emoji'} onclick={() => goTo('emoji')} title="Emoji">
 			<span class="msi msi-20" class:msi-fill={tab === 'emoji'}>mood</span>
