@@ -61,7 +61,13 @@ const MAX_ATLAS_PAGES = 10;
 // at emote sizes. Only picker/tab-sized cells are capped; anything larger is
 // rare enough not to pressure the budget and keeps its full resolution.
 const SLOT_PX_MAX = 42;
-const baseSlotFor = (px) => (px > SLOT_PX_MAX && px <= 64 ? SLOT_PX_MAX : px);
+// ≤96, not ≤64: recents cells are 34 CSS px, which at dpr 2 is a 68px cell —
+// and 68 escaped the old cap, so recents baked into 68px slots. At 60 frames
+// per emote that is ~11 pages for one recents grid, most of the device
+// budget, and the pressure it caused is what kept tipping the reclaimer into
+// freeing atlases out from under in-flight bakes. 42/34 ≈ 1.24x under-render
+// for those cells, the same trade the 28px grid already makes at 1.5x.
+const baseSlotFor = (px) => (px > SLOT_PX_MAX && px <= 96 ? SLOT_PX_MAX : px);
 const slotPxFor = (px, fast = false) => {
 	const s = baseSlotFor(px);
 	return fast ? Math.max(16, Math.round(s / FAST_DIV)) : s;
@@ -184,8 +190,8 @@ function makeCanvas(dim) {
 }
 function getAtlas(px) {
 	let a = _atlasByPx.get(px);
-	if (a) return a;
-	a = { px, cols: Math.max(1, Math.floor(ATLAS_DIM / px)), pages: [], free: [], lru: new Map() };
+	if (a) { a.touched = performance.now(); return a; }
+	a = { px, cols: Math.max(1, Math.floor(ATLAS_DIM / px)), pages: [], free: [], lru: new Map(), touched: performance.now() };
 	_atlasByPx.set(px, a);
 	addAtlasPage(a);
 	return a;
@@ -240,6 +246,7 @@ function atlasAllocSlots(a, n) {
 		for (const s of old.slots) a.free.push(s);
 	}
 	if (a.free.length < n) return null;
+	a.touched = performance.now();
 	const slots = [];
 	for (let i = 0; i < n; i++) slots.push(a.free.pop());
 	return slots;
@@ -300,14 +307,17 @@ function reclaimIdleSizes(keepPx) {
 	for (const px of [..._atlasByPx.keys()]) {
 		if (px === keepPx) continue;
 		const a = _atlasByPx.get(px);
-		// An atlas with no cached entries left is pure dead weight even if
-		// cells nominally "use" its size — the coarse tier ends up exactly
-		// here once every entry has been upgraded to full quality: slots all
-		// free, pages still allocated, budget still charged. Under the
-		// two-tier scheme that stranded ~3 pages permanently, which is what
-		// tipped a long scrolling session from cache-hits into eviction
-		// thrash (13 pages of demand against a 12-page budget).
-		if (a && a.lru.size === 0 && a.pages.length) { freeSize(px); continue; }
+		// An atlas with no cached entries left is dead weight — the upgraded-
+		// away coarse tier ends up exactly here — BUT an empty lru is also the
+		// state of a fresh atlas whose first bake is still in flight: slots
+		// allocated, entry not yet landed. Freeing that one detaches it under
+		// the bake, the epoch guard drops the result, the retry recreates it,
+		// and another size's pressure frees it again — a livelock that showed
+		// up as recents never animating. `touched` is stamped at creation and
+		// at every slot allocation, so requiring quiet time distinguishes
+		// genuinely-abandoned from merely-young.
+		if (a && a.lru.size === 0 && a.pages.length
+			&& performance.now() - (a.touched || 0) > 4000) { freeSize(px); continue; }
 		if (live.has(px)) continue;
 		freeSize(px);
 	}
