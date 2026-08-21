@@ -61,12 +61,12 @@ const MAX_ATLAS_PAGES = 10;
 // at emote sizes. Only picker/tab-sized cells are capped; anything larger is
 // rare enough not to pressure the budget and keeps its full resolution.
 const SLOT_PX_MAX = 42;
-// ≤96, not ≤64: recents cells are 34 CSS px, which at dpr 2 is a 68px cell —
-// and 68 escaped the old cap, so recents baked into 68px slots. At 60 frames
-// per emote that is ~11 pages for one recents grid, most of the device
-// budget, and the pressure it caused is what kept tipping the reclaimer into
-// freeing atlases out from under in-flight bakes. 42/34 ≈ 1.24x under-render
-// for those cells, the same trade the 28px grid already makes at 1.5x.
+// ≤96 so recents cells (34 CSS px = 68 at dpr 2) bake at the SAME resolution
+// as the picker grid — one shared 42px atlas for both surfaces. Full-res 68px
+// recents were tried and reverted twice: the slots are 2.6x the area, the
+// budget maths stops closing, and the crispness reads as marginal at 34 CSS
+// px anyway. One shared size also means a tab switch shares warm entries
+// instead of evicting across atlases.
 const baseSlotFor = (px) => (px > SLOT_PX_MAX && px <= 96 ? SLOT_PX_MAX : px);
 const slotPxFor = (px, fast = false) => {
 	const s = baseSlotFor(px);
@@ -84,12 +84,14 @@ const _lowMem = (() => {
 // the others live at the same time — chiefly the tab icons above the grid.
 // 48MB bounded and released on close, against the 120MB-and-climbing that was
 // jetsamming the app.
-// Sized for the two-tier reality: a full 42px grid is 10 pages and the coarse
-// 21px tier ~3 more while it still holds entries — 13 of demand. 12 forced an
-// eviction for every allocation once a session had scrolled enough, and the
-// upgrade pass then re-baked and re-evicted forever. Still bounded, still
-// released on close.
-const MAX_TOTAL_PAGES = _lowMem ? 14 : 20;   // 56 MB / 80 MB
+// Sized for the LARGEST single surface plus headroom, since the viewport-
+// visibility fix means only one pane's cells are live at a time. The picker
+// grid wants 13 pages (10 full-tier + ~3 coarse); full-resolution recents
+// want ~14 (11 at 68px + 3 coarse) — so 16, with the tab icons' small sizes
+// riding in the slack. Switching tabs evicts the other tab's entries and
+// re-bakes on return; that is the price of full-res recents, softened by the
+// disk cache. Still bounded, still released on close.
+const MAX_TOTAL_PAGES = _lowMem ? 16 : 22;   // 64 MB / 88 MB
 let _totalPages = 0;
 
 // Slots are the scarce resource, and an emote costs one per frame — so an
@@ -203,7 +205,10 @@ function addAtlasPage(a) {
 	// thumb) but it means a visible emote never animates, so only do it once
 	// there is genuinely nothing idle left to drop.
 	if (_totalPages >= MAX_TOTAL_PAGES) {
-		reclaimIdleSizes(a.px);
+		// Pressure: paged-away surfaces yield to the visible one. Their
+		// entries rebake on return (the disk cache softens it); the
+		// alternative was the cross-size page deadlock described above.
+		reclaimIdleSizes(a.px, { visibleOnly: true });
 		if (_totalPages >= MAX_TOTAL_PAGES) return false;
 	}
 	const canvas = makeCanvas(ATLAS_DIM);
@@ -293,17 +298,29 @@ function freeSize(px) {
 	_epoch++;
 }
 
-/** Pixel sizes with at least one live cell — never reclaim these. */
-function sizesInUse() {
+/**
+ * Pixel sizes with at least one live cell — never reclaim these.
+ * `visibleOnly` narrows "live" to cells actually on screen: the budget-
+ * pressure path uses it so paged-away surfaces can yield their PAGES to the
+ * one being looked at. Without that, sizes could never transfer pages at all —
+ * a tab switch left the old tab's atlas holding most of the budget (its cells
+ * still registered, merely invisible), the new tab's bakes failed allocation
+ * every time, and the retry loop span forever. Deadlock, presenting as
+ * "switched tabs and nothing ever animates again."
+ */
+function sizesInUse(visibleOnly = false) {
 	const live = new Set();
 	// Either tier may be live for a cell, so both sizes are protected.
-	for (const c of _cells.values()) { live.add(slotPxFor(c.w, false)); live.add(slotPxFor(c.w, true)); }
+	for (const c of _cells.values()) {
+		if (visibleOnly && !c.visible) continue;
+		live.add(slotPxFor(c.w, false)); live.add(slotPxFor(c.w, true));
+	}
 	return live;
 }
 
 /** Give back every size no cell is using. `keepPx` is spared regardless. */
-function reclaimIdleSizes(keepPx) {
-	const live = sizesInUse();
+function reclaimIdleSizes(keepPx, { visibleOnly = false } = {}) {
+	const live = sizesInUse(visibleOnly);
 	for (const px of [..._atlasByPx.keys()]) {
 		if (px === keepPx) continue;
 		const a = _atlasByPx.get(px);
