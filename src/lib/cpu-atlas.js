@@ -60,7 +60,11 @@ const MAX_ATLAS_PAGES = 10;
 // at emote sizes. Only picker/tab-sized cells are capped; anything larger is
 // rare enough not to pressure the budget and keeps its full resolution.
 const SLOT_PX_MAX = 42;
-const slotPxFor = (px) => (px > SLOT_PX_MAX && px <= 64 ? SLOT_PX_MAX : px);
+const baseSlotFor = (px) => (px > SLOT_PX_MAX && px <= 64 ? SLOT_PX_MAX : px);
+const slotPxFor = (px, fast = false) => {
+	const s = baseSlotFor(px);
+	return fast ? Math.max(16, Math.round(s / FAST_DIV)) : s;
+};
 
 const _lowMem = (() => {
 	if (typeof navigator === 'undefined') return false;
@@ -105,16 +109,23 @@ const MAX_RASTER_FRAMES = _lowMem ? 64 : 128;
 // Total frames is the only real lever. So bake a coarse pass first: every
 // visible cell gets FAST_FRAMES and starts moving in a few seconds, then each
 // one is re-baked at full rate once nothing is waiting.
-const FAST_FRAMES = 14;
+// Half resolution, full frame rate.
+//
+// Rasterise cost is px^2 x frames, so halving the slot is 4x less work per
+// frame — a bigger saving than cutting frames, and it degrades far more
+// gracefully. A slightly soft emote that moves properly reads as finished; a
+// sharp one at 5fps reads as broken. The refine pass swaps in full resolution
+// a few seconds later.
+const FAST_DIV = 2;
 
 /**
  * Frames-per-second to bake at, so an emote never exceeds MAX_RASTER_FRAMES.
  * Reads the duration straight off the Lottie JSON, before any rasterising.
  */
-function fpsCapFor(data, maxFps, fast = false) {
+function fpsCapFor(data, maxFps) {
 	const dur = Math.max(0.1, ((data?.op || 60) - (data?.ip || 0)) / (data?.fr || 60));
 	const want = maxFps > 0 ? maxFps : (data?.fr || 60);
-	const byBudget = (fast ? FAST_FRAMES : MAX_RASTER_FRAMES) / dur;
+	const byBudget = MAX_RASTER_FRAMES / dur;
 	return Math.max(4, Math.min(want, byBudget));   // never below 4fps
 }
 
@@ -272,7 +283,8 @@ function freeSize(px) {
 /** Pixel sizes with at least one live cell — never reclaim these. */
 function sizesInUse() {
 	const live = new Set();
-	for (const c of _cells.values()) live.add(slotPxFor(c.w));
+	// Either tier may be live for a cell, so both sizes are protected.
+	for (const c of _cells.values()) { live.add(slotPxFor(c.w, false)); live.add(slotPxFor(c.w, true)); }
 	return live;
 }
 
@@ -362,7 +374,7 @@ async function bakeToDisk(url, px, maxFps = 0) {
 		const frames = entry.frames || [];
 		const N = Math.max(1, entry.totalFrames || frames.length || 1);
 		if (N < 2 || !frames.length) return false;      // static — not worth storing
-		const sl = slotPxFor(px);
+		const sl = slotPxFor(px, false);   // warm to disk at FULL quality only
 		const cols = Math.max(1, Math.ceil(Math.sqrt(N)));
 		const rows = Math.ceil(N / cols);
 		const rw = cols * sl, rh = rows * sl;
@@ -495,9 +507,9 @@ function scratchFor(w, h) {
 // Pack this animation's frames into slots and register the cache entry.
 // Shared by the disk path and the rlottie path — everything after "we have N
 // frames' worth of pixels" is identical between them.
-function packIntoAtlas({ px, N, duration, draw }) {
+function packIntoAtlas({ px, N, duration, draw, fast = false }) {
 	const _p0 = performance.now();
-	const sl = slotPxFor(px);
+	const sl = slotPxFor(px, fast);
 	const atlas = getAtlas(sl);
 	const slots = atlasAllocSlots(atlas, N);
 	if (!slots) return null;               // atlas full — the thumb stays up
@@ -510,7 +522,7 @@ function packIntoAtlas({ px, N, duration, draw }) {
 	// `sl` travels with the entry: it is the source rect renderCells blits FROM,
 	// and it is no longer the same as the cell's size.
 	_prof.pack += performance.now() - _p0; _prof.packN++;
-	return { atlas, slots, N, duration, sl };
+	return { atlas, slots, N, duration, sl, fast };
 }
 
 // Disk keys are namespaced per engine.
@@ -536,14 +548,14 @@ async function doRasterize(url, px, key, maxFps = 0, fast = true, upgrade = fals
 	// stored slot size here, so a hit blits straight in with no rlottie at all.
 	if (frameCacheAvailable()) {
 		let disk = null;
-		try { disk = await fcLoad(diskKeyFor(key), slotPxFor(px)); } catch { disk = null; }
+		try { disk = await fcLoad(diskKeyFor(key), slotPxFor(px, false)); } catch { disk = null; }
 		if (disk && disk.N >= 2 && _epoch === startedAt && !_frameCache.has(key)) {
-			const dsl = slotPxFor(px);
+			const dsl = slotPxFor(px, false);
 			const img = typeof ImageData !== 'undefined' ? disk.frames.map((f) => {
 				try { return new ImageData(f, dsl, dsl); } catch { return null; }
 			}) : [];
 			const entry = packIntoAtlas({
-				px, N: disk.N, duration: disk.duration || 1,
+				px, fast: false, N: disk.N, duration: disk.duration || 1,
 				draw: (ctx, i, slot) => { const d = img[i]; if (d) ctx.putImageData(d, slot.x, slot.y); }
 			});
 			if (entry && _epoch === startedAt && _atlasByPx.get(dsl) === entry.atlas) {
@@ -562,7 +574,7 @@ async function doRasterize(url, px, key, maxFps = 0, fast = true, upgrade = fals
 	// cells are crisp rather than upscaled. Same size on the release below, or
 	// the refcount lands on a different cache entry and the frames leak.
 	const srcPx = rasterSizeFor(px);
-	try { entry = await acquire(url, data, srcPx, fpsCapFor(data, maxFps, fast)); } catch { return; }
+	try { entry = await acquire(url, data, srcPx, fpsCapFor(data, maxFps)); } catch { return; }
 	// Wait for every frame to settle, then we own a full set to pack.
 	try { if (entry.pending) await entry.pending; } catch {}
 	// Did the user scroll past this while rlottie was working?
@@ -586,7 +598,7 @@ async function doRasterize(url, px, key, maxFps = 0, fast = true, upgrade = fals
 
 	const frames = entry.frames || [];
 	const N = Math.max(1, entry.totalFrames || frames.length || 1);
-	const sl = slotPxFor(px);
+	const sl = slotPxFor(px, fast);
 	const atlas = getAtlas(sl);
 	const slots = atlasAllocSlots(atlas, N);
 	if (!slots) { release(url, srcPx); return; } // atlas full — thumb stays up
@@ -607,7 +619,10 @@ async function doRasterize(url, px, key, maxFps = 0, fast = true, upgrade = fals
 	// competing with the frames the user is looking at. Nothing needs it now;
 	// it only has to happen before the NEXT session.
 	const _quiet = _rasterPending.size === 0 && _rasterLanes <= 1;
-	if (frameCacheAvailable() && N >= 2 && !_encodeBusy && _quiet) {
+	// Never persist the coarse pass: it is a half-resolution stand-in, and
+	// storing it would have every later session load blurry frames from disk
+	// and never refine, since a disk hit skips the upgrade path entirely.
+	if (frameCacheAvailable() && N >= 2 && !_encodeBusy && _quiet && !fast) {
 		try {
 			// Pack the frames into a scratch grid at SLOT size (not source
 			// size): that is the geometry the atlas blits at, so a later
@@ -648,7 +663,7 @@ async function doRasterize(url, px, key, maxFps = 0, fast = true, upgrade = fals
 	const cacheEntry = { atlas, slots, N, duration: entry.duration || 1, sl, fast };
 	_frameCache.set(key, cacheEntry);
 	atlas.lru.set(key, cacheEntry);
-	for (const c of _cells.values()) if (c.url === url && slotPxFor(c.w) === sl) c.lastFrame = -1;
+	for (const c of _cells.values()) if (c.url === url) c.lastFrame = -1;
 }
 
 // ── Single-rAF playback ─────────────────────────────────────────────────
