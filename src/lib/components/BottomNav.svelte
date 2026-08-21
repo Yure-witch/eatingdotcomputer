@@ -172,7 +172,7 @@
 </script>
 
 <!-- Mobile bottom nav only — desktop nav is in the global sidebar (app/+layout.svelte) -->
-<nav class="bottom-nav" class:hidden={keyboardOpen}>
+<nav class="bottom-nav" class:hidden={keyboardOpen} class:five-up={slotCount >= 5}>
 	<span class="nav-indicator" style:--slot-count={slotCount} style:--nav-slot={activeSlot}></span>
 	<!-- Order: Home, Chat, Orbit, Lab, [Manage] — Chat sits immediately right of
 	     Home so a rightward swipe out of a conversation reads as going "back". -->
@@ -224,6 +224,18 @@
 	/* Matches the chat layer's own slide, so the bar lands with the page. */
 	.bottom-nav { transition: transform 0.19s cubic-bezier(0.33, 1, 0.68, 1); }
 
+	/* An instructor gets a fifth slot (Manage). At the 56px-a-side inset that
+	   leaves ~50px per slot on a 390px phone, so icons and labels collide. Give
+	   the pill more of the screen instead of shrinking the targets. The
+	   indicator transform already derives from --nav-inset and --slot-count, so
+	   the sliding highlight tracks this with no extra maths. */
+	@media (max-width: 640px) {
+		.bottom-nav.five-up { --nav-inset: 16px; }
+	}
+	@media (max-width: 380px) {
+		.bottom-nav.five-up { --nav-inset: 8px; --nav-pad: 5px; }
+	}
+
 	@media (max-width: 640px) {
 		.bottom-nav {
 			display: flex;
@@ -252,7 +264,12 @@
 			box-sizing: border-box;
 			/* Sits just above the home indicator rather than well clear of it —
 			   max() keeps a small gap on the plain web, where there is no inset. */
-			bottom: max(6px, env(safe-area-inset-bottom, 0px));
+			/* --browser-chrome-h is the slice of the layout viewport the browser's
+			   own bottom chrome covers (see lib/keyboard-metrics.js). Without it
+			   Safari's bottom address bar sits on top of this pill. It is 0 in
+			   the native shell and 0 while the keyboard is open, so neither of
+			   those cases moves. */
+			bottom: calc(max(6px, env(safe-area-inset-bottom, 0px)) + var(--browser-chrome-h, 0px));
 			left: var(--nav-inset); right: var(--nav-inset);
 			height: 60px;
 			padding-bottom: 0;

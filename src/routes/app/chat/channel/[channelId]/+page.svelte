@@ -5388,7 +5388,13 @@
 	}
 	.att-img-close:hover { background: rgba(0,0,0,0.7); }
 
-	.input-area { flex-shrink: 0; position: relative; }
+	/* padding-bottom, not margin: the picker docks against this element's own
+	   box, so margin would open a gap between the compose bar and the picker.
+	   --browser-chrome-h is the slice the browser's bottom toolbar covers (see
+	   lib/keyboard-metrics.js); it is 0 in the native shell and 0 while the
+	   keyboard is open, so neither of those moves. Without it the send button
+	   and the expression picker sit under Chrome's toolbar, out of reach. */
+	.input-area { flex-shrink: 0; position: relative; padding-bottom: var(--browser-chrome-h, 0px); }
 	.typing-indicator {
 		font-size: 0.75rem; color: var(--muted-fg); padding: 0 1.5rem 0.25rem;
 		margin: 0; min-height: 1.2rem;

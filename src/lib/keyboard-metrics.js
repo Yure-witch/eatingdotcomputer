@@ -71,6 +71,7 @@ export function initKeyboardMetrics() {
 		}
 	} catch { /* private mode — fall back to the CSS default */ }
 	r?.style.setProperty('--kb-h', '0px');
+	r?.style.setProperty('--browser-chrome-h', '0px');
 
 	const vv = window.visualViewport;
 	if (!vv) return; // native feeds us through noteKeyboardHeight instead
@@ -83,7 +84,20 @@ export function initKeyboardMetrics() {
 		const hidden = window.innerHeight - vv.height - vv.offsetTop;
 		// Browser chrome sliding in/out produces small deltas that aren't a
 		// keyboard; treat only a substantial bite as one.
-		noteKeyboardHeight(hidden > 120 ? hidden : 0);
+		const isKeyboard = hidden > 120;
+		noteKeyboardHeight(isKeyboard ? hidden : 0);
+		// …but that sub-120px slice is not nothing: it is the browser's own
+		// chrome (Safari's bottom address bar, Chrome's toolbar). `position:
+		// fixed; bottom: 0` resolves against the LAYOUT viewport, so anything
+		// pinned to the bottom — the nav pill, the compose bar — sits behind
+		// that chrome and becomes unreachable. Publish it so those elements can
+		// lift by exactly the amount that is covered.
+		//
+		// Zero in the native shell (no browser chrome, so `hidden` is 0), which
+		// is why the shell already looks right and must not move. Also zero
+		// while the keyboard is open, because the keyboard path owns the offset
+		// then and adding both would double-count.
+		r?.style.setProperty('--browser-chrome-h', isKeyboard ? '0px' : `${Math.max(0, Math.round(hidden))}px`);
 	};
 	const onChange = () => {
 		if (raf) return;

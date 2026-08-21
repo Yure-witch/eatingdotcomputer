@@ -5126,7 +5126,8 @@
 	}
 	.att-img-close:hover { background: rgba(0,0,0,0.7); }
 
-	.input-area { flex-shrink: 0; position: relative; }
+	/* Same lift as the channel page — see the note there. 0 in the native shell. */
+	.input-area { flex-shrink: 0; position: relative; padding-bottom: var(--browser-chrome-h, 0px); }
 	.typing-indicator {
 		font-size: 0.75rem; color: var(--muted-fg); padding: 0 1.5rem 0.25rem;
 		margin: 0; min-height: 1.2rem;
