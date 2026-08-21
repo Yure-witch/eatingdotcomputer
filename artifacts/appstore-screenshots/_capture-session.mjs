@@ -12,8 +12,15 @@ import { homedir } from 'os';
 import { join } from 'path';
 
 const BASE = process.env.CAPTURE_BASE || 'http://localhost:5175';
-const OUT = 'artifacts/appstore-screenshots';
+const OUT = process.env.CAPTURE_OUT || 'artifacts/appstore-screenshots';
 const PROFILE = process.env.CAPTURE_PROFILE || join(homedir(), '.eatingdotcomputer-capture-profile');
+// Device size. Default is iPhone 6.9" (430x932 @3x = 1290x2796), the only
+// iPhone size App Store Connect actually requires. Override for the 6.5" slot:
+//   CAPTURE_W=428 CAPTURE_H=926 CAPTURE_OUT=artifacts/appstore-screenshots/65
+// which yields 1284x2778. Re-CAPTURING at the target size keeps text crisp;
+// rescaling 6.9" art to 6.5" would resample every glyph and shift the aspect.
+const VW = Number(process.env.CAPTURE_W || 430);
+const VH = Number(process.env.CAPTURE_H || 932);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const browser = await puppeteer.launch({
@@ -28,7 +35,7 @@ const browser = await puppeteer.launch({
 });
 const page = (await browser.pages())[0] ?? (await browser.newPage());
 // iPhone 6.9" logical size × dpr 3 → 1290 × 2796 device pixels
-await page.setViewport({ width: 430, height: 932, deviceScaleFactor: 3, isMobile: true, hasTouch: true });
+await page.setViewport({ width: VW, height: VH, deviceScaleFactor: 3, isMobile: true, hasTouch: true });
 
 // Render like the NATIVE app, not a desktop browser: the shell adds
 // body.native-app (which pads the header by the notch inset) and the device
