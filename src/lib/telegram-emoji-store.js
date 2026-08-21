@@ -164,19 +164,22 @@ function isIOS() {
 const RASTER_ENGINES = new Set(['webgpu-rasterized', 'cpu-rasterized']);
 const MANUAL_KEY = 'tgEngineManual';
 
-// Synchronous default: the GPU rasterizer on EVERY platform, iOS included.
-// It used to start iOS on the CPU atlas and upgrade once the async WebGPU
-// probe confirmed a capable GPU — which meant every iPhone spent its first
-// moments baking frames on the CPU and then threw that work away on the
-// engine swap, on the one platform least able to afford either. Modern iOS
-// runs the GPU path fine, so it's the optimistic default and
-// initEmoteEngine() DEMOTES the minority that fails the probe.
+// Default: `cpu-rasterized` — rlottie, the renderer Telegram itself ships,
+// baking into a 2D atlas. Not a fallback any more; the default on every
+// platform, because the thing it does NOT do is instantiate 7.7 MB of
+// CanvasKit per worker before the first emote can register. rlottie's WASM is
+// 310 KB. Same rasterize-then-blit playback either way — this is purely a
+// question of which library draws the frames, and one of them costs 25× more
+// to start. The Skia engines stay available from the picker's engine button.
+//
+// The WebGPU probe still runs, but only to set the device tier now; it no
+// longer picks the engine.
 const _initialEngine = (() => {
-	if (typeof localStorage === 'undefined') return 'webgpu-rasterized';
+	if (typeof localStorage === 'undefined') return 'cpu-rasterized';
 	const v = localStorage.getItem(ENGINE_KEY);
 	// Honour an explicit, user-chosen engine (any valid one, incl. live modes).
 	if (v && VALID_ENGINES.has(v) && localStorage.getItem(MANUAL_KEY) === '1') return v;
-	return 'webgpu-rasterized';
+	return 'cpu-rasterized';
 })();
 export const engineMode = writable(_initialEngine);
 if (typeof window !== 'undefined') {
@@ -222,13 +225,39 @@ export async function initEmoteEngine() {
 	let manual = false;
 	try { manual = localStorage.getItem(MANUAL_KEY) === '1'; } catch { /* private mode */ }
 	if (manual) return;
-	// Demote ONLY the case that's actually broken: iOS without WebGPU, i.e. a
-	// WebKit old enough for the OffscreenCanvas+WebGL bug. Everything else
-	// stays on the GPU rasterizer it already booted with, so there's no
-	// engine swap at all on the common path.
-	engineMode.set(!webgpu && isIOS() ? 'cpu-rasterized' : 'webgpu-rasterized');
+	// Nothing to refine: the CPU atlas is the default everywhere and it has no
+	// device prerequisites (no WebGL, no OffscreenCanvas, no WebGPU), so there
+	// is no probe result that would change the choice. Kept as a no-op set so
+	// the store still settles on the same value the sync default picked.
+	engineMode.set('cpu-rasterized');
 }
 export { RASTER_ENGINES };
+
+// Engines that render through the shared worker pool. Anything gating on
+// "should the pool be booted / warmed" must test THIS, not a list of engine
+// names written before the rasterized engines existed — that drift is what
+// silently switched the boot-time prewarm off for every default user.
+const WORKER_POOL_ENGINES = new Set(['skottie-worker', 'skottie-webgpu', 'webgpu-rasterized']);
+export const usesWorkerPool = (engine) => WORKER_POOL_ENGINES.has(engine);
+
+// The picker's emote cell, in CSS px, and the playback rate its frames are
+// baked for. Exported because the background warm has to bake at EXACTLY the
+// size the picker asks for — frames are cached under `url@px`, so a warm at a
+// different size is a cache that can never be hit. It was baking at 24 while
+// the grid rendered at 28, which is why the "first open is instant" warm never
+// made a single open instant.
+export const PICKER_STICKER_PX = 28;
+// 20. The worker advances a cell's frame off the rAF tick, so the
+// playback rate has to DIVIDE the display's refresh or the frame index lands
+// on an uneven cadence: at 24 fps on a 60 Hz screen each frame holds for 2.5
+// ticks, i.e. 3-2-3-2 — textbook pulldown judder, which reads as skipping
+// rather than as "lower framerate". 20 divides both 60 and 120 evenly (3 and 6
+// ticks), so every frame holds for exactly the same number — which 24 does not,
+// and that's what read as skipping. At 28px in a grid this is indistinguishable
+// from 30 and bakes a third fewer frames: a 2 s emote is 40 frames, against 60
+// at 30 fps and 121 under the old frame budget. Fewer frames is directly less
+// time behind the thumb, since a cell doesn't reveal until its loop is whole.
+export const PICKER_FPS = 20;
 
 // Coerce an engine choice to a RASTERIZED one. Surfaces that mount a lot of
 // cells at once and are visited briefly (the picker's Recent grid) can't
@@ -246,9 +275,9 @@ export { RASTER_ENGINES };
 // guess corrects itself the moment the probe lands, instead of everyone
 // paying for the rare device up front. Same rule as initEmoteEngine()'s —
 // the two must not drift apart.
-export function rasterEngineFor(engine, webgpuOk = get(emoteWebgpuOk)) {
+export function rasterEngineFor(engine) {
 	if (RASTER_ENGINES.has(engine)) return engine;
-	return webgpuOk === false && isIOS() ? 'cpu-rasterized' : 'webgpu-rasterized';
+	return 'cpu-rasterized';
 }
 
 export function tgAnimationUrl(cp, i) {

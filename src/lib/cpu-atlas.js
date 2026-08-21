@@ -18,7 +18,7 @@
 // `skModule`. The only difference: the cell canvas is the live DOM element
 // (a 2D context), NOT a transferControlToOffscreen handle.
 
-import { acquire, release, prewarm as prewarmRlottie } from './lottie-spritesheet.js';
+import { acquire, release, rasterSizeFor, prewarm as prewarmRlottie } from './lottie-spritesheet.js';
 import { fetchLottie, isAdaptivePack, customShortFromUrl } from './telegram-emoji-store.js';
 
 // Mobile-scale atlas: native res, tiny pages. 1024² × 6 ≈ 24 MB.
@@ -87,10 +87,10 @@ function freeFrameCache(url) {
 }
 
 // ── Visible-first rasterise pump ────────────────────────────────────────
-function scheduleRasterize(url, px) {
+function scheduleRasterize(url, px, maxFps = 0) {
 	const key = url + '@' + px;
 	if (_frameCache.has(key) || _frameJobs.has(key) || _rasterPending.has(key)) return;
-	_rasterPending.set(key, { url, px });
+	_rasterPending.set(key, { url, px, maxFps });
 	pumpRaster();
 }
 function visibleKeys() {
@@ -111,7 +111,7 @@ async function pumpRaster() {
 			const [key, job] = _rasterPending.entries().next().value;
 			_rasterPending.delete(key);
 			_frameJobs.add(key);
-			try { await doRasterize(job.url, job.px, key); }
+			try { await doRasterize(job.url, job.px, key, job.maxFps || 0); }
 			catch (e) { console.warn('[cpu-atlas] rasterise failed', e); }
 			_frameJobs.delete(key);
 		}
@@ -119,19 +119,24 @@ async function pumpRaster() {
 		_rasterBusy = false;
 	}
 }
-async function doRasterize(url, px, key) {
+async function doRasterize(url, px, key, maxFps = 0) {
 	if (_frameCache.has(key)) return;
 	const data = await fetchLottie(url);   // adaptive packs are tinted here
 	if (!data) return;
 	let entry;
-	try { entry = await acquire(url, data); } catch { return; }
+	// Ask rlottie for frames at (or just above) this atlas's slot size instead
+	// of the old fixed 48px — the atlas then DOWN-scales into the slot, so big
+	// cells are crisp rather than upscaled. Same size on the release below, or
+	// the refcount lands on a different cache entry and the frames leak.
+	const srcPx = rasterSizeFor(px);
+	try { entry = await acquire(url, data, srcPx, maxFps); } catch { return; }
 	// Wait for every frame to settle, then we own a full set to pack.
 	try { if (entry.pending) await entry.pending; } catch {}
 	const frames = entry.frames || [];
 	const N = Math.max(1, entry.totalFrames || frames.length || 1);
 	const atlas = getAtlas(px);
 	const slots = atlasAllocSlots(atlas, N);
-	if (!slots) { release(url); return; } // atlas full — thumb stays up
+	if (!slots) { release(url, srcPx); return; } // atlas full — thumb stays up
 	for (let i = 0; i < N; i++) {
 		const bm = frames[i] || frames[0];
 		const slot = slots[i];
@@ -141,7 +146,7 @@ async function doRasterize(url, px, key) {
 			try { ctx.drawImage(bm, 0, 0, bm.width, bm.height, slot.x, slot.y, px, px); } catch {}
 		}
 	}
-	release(url); // pixels are copied into the atlas — free the rlottie bitmaps
+	release(url, srcPx); // pixels are copied into the atlas — free the rlottie bitmaps
 	const cacheEntry = { atlas, slots, N, duration: entry.duration || 1 };
 	_frameCache.set(key, cacheEntry);
 	atlas.lru.set(key, cacheEntry);
@@ -164,7 +169,7 @@ function renderCells(now) {
 		if (!cell.visible || !cell.ctx) continue;
 		const ckey = cell.url + '@' + cell.w;
 		const cache = _frameCache.get(ckey);
-		if (!cache) { scheduleRasterize(cell.url, cell.w); continue; }
+		if (!cache) { scheduleRasterize(cell.url, cell.w, cell.maxFps); continue; }
 		// Touch LRU so on-screen emojis are never evicted.
 		cache.atlas.lru.delete(ckey);
 		cache.atlas.lru.set(ckey, cache);
@@ -195,12 +200,12 @@ function renderCells(now) {
 
 // ── Public API (matches the worker canvas-cell module) ──────────────────
 // `canvas` is the live DOM <canvas> element (NOT transferControlToOffscreen).
-export function registerCanvasCell({ url, canvas, w, h, paused = false, loop = true, paintIndex = null, visible = false, onFirstPaint = null }) {
+export function registerCanvasCell({ url, canvas, w, h, paused = false, loop = true, paintIndex = null, visible = false, maxFps = 0, onFirstPaint = null }) {
 	let ctx = null;
 	try { ctx = canvas.getContext('2d'); } catch { /* element gone */ }
 	const id = _nextId++;
 	_cells.set(id, {
-		ctx, url, w, h, paused, loop, paintIndex, visible,
+		ctx, url, w, h, paused, loop, paintIndex, visible, maxFps,
 		onFirstPaint, startTime: 0, lastFrame: -1, firstPainted: false
 	});
 	prewarmRlottie();
@@ -234,7 +239,28 @@ export function dropAdaptiveFrames() {
 // ── API parity no-ops (the worker module needs these; here they're free) ─
 export function ensureStage() { return Promise.resolve(); }
 export function loadAnimation() { /* rasterised on demand by renderCells */ }
-export function releaseAnimation() { /* refcount handled inside doRasterize */ }
+// Free this url's baked frames. The rlottie ImageBitmaps are already gone
+// (doRasterize releases them the moment they're packed) — what's held here is
+// atlas slots, and those were never given back on this engine: the export was
+// a no-op, so SpriteSticker's off-screen release called into nothing and every
+// emote you had ever scrolled past kept its slots for the whole session.
+//
+// Sizes still wanted by a VISIBLE cell are kept. The cell doing the releasing
+// is off-screen by definition, so its own key is not protected — but a
+// different cell showing the same emote (the same sticker in the grid and in
+// a chat bubble, at different sizes) doesn't lose its frames.
+export function releaseAnimation(url) {
+	if (!url) return;
+	const keep = new Set();
+	for (const c of _cells.values()) if (c.visible) keep.add(c.url + '@' + c.w);
+	const prefix = url + '@';
+	for (const [key, cache] of _frameCache) {
+		if (!key.startsWith(prefix) || keep.has(key)) continue;
+		for (const s of cache.slots) cache.atlas.free.push(s);
+		cache.atlas.lru.delete(key);
+		_frameCache.delete(key);
+	}
+}
 export function isAnimationLoaded(url) {
 	const suffix = url + '@';
 	for (const key of _frameCache.keys()) if (key.startsWith(suffix)) return true;

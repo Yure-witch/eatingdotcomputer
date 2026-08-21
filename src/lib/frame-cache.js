@@ -25,7 +25,7 @@ const DB_VERSION = 1;
 // then keyed under a different version prefix and never read (and pruned out).
 // v2: invalidates entries written by the pre-warm before it got its own render
 // sheet (a live bake could interleave and cross-contaminate frames).
-const CACHE_VERSION = 2;
+const CACHE_VERSION = 3; // 3: picker entries baked to a 24 fps frame count
 const MAX_ENTRIES = 500;          // LRU cap on the number of stored emotes
 const PRUNE_SLACK = 60;           // prune down to MAX-SLACK so it's not every write
 

@@ -16,7 +16,7 @@
 
 import {
 	loadTelegramEmoji, loadCustomPacks, tgAnimatedUrl, tgcUrl, isStaticPack,
-	TG_SPRITE_URL, engineMode
+	TG_SPRITE_URL, engineMode, PICKER_STICKER_PX, PICKER_FPS
 } from './telegram-emoji-store.js';
 import { get } from 'svelte/store';
 import { prewarm as bootWorkerPool, prewarmBakeToDisk } from './skottie-stage-worker.js';
@@ -83,7 +83,11 @@ export async function startEmotePrewarm() {
 	_started = true;
 
 	const dpr = window.devicePixelRatio || 1;
-	const px = Math.round(24 * dpr); // picker grid cell = 24 CSS px, oversample 1
+	// EXACTLY what a picker cell registers: SpriteSticker bakes at
+	// size × dpr × oversample, and the picker's oversample is 1. This read 24
+	// against a grid that renders at 28, so every entry this warm has ever
+	// written was filed under a key no cell would ever ask for.
+	const px = Math.round(PICKER_STICKER_PX * dpr);
 
 	// Boot the worker pool + hand it the sprite sheet before we ask it to bake.
 	try { await bootWorkerPool({ sheetUrl: TG_SPRITE_URL }); } catch { _started = false; return; }
@@ -99,7 +103,11 @@ export async function startEmotePrewarm() {
 		const batch = urls.slice(i, i + ROW);
 		if (!batch.length) return;                           // whole library warmed
 		i += ROW;
-		try { await prewarmBakeToDisk(batch, px, 1); } catch { /* keep going */ }
+		// Bake at the PICKER's frame count (24 fps target), not the budget's —
+		// these entries exist to be hydrated by picker cells, and a disk entry
+		// baked at a different N is used as-is, which would hand the picker back
+		// the 121-frame loops the cap exists to avoid.
+		try { await prewarmBakeToDisk(batch, px, 1, PICKER_FPS); } catch { /* keep going */ }
 		_idle(step);
 	};
 	_idle(step);

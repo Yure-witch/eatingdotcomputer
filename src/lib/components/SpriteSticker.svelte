@@ -13,10 +13,11 @@
 		spriteKeyForCustom,
 		engineMode,
 		RASTER_ENGINES,
+		rasterEngineFor,
 		emoteHiTier,
 		isAdaptivePack
 	} from '$lib/telegram-emoji-store.js';
-	import { acquire, release } from '$lib/lottie-spritesheet.js';
+	import { acquire, release, rasterSizeFor } from '$lib/lottie-spritesheet.js';
 	import { hiddenEmoteKeys, emoteKey } from '$lib/hidden-emotes.js';
 	import { emotesAwake } from '$lib/emote-idle.js';
 	import * as SkMain from '$lib/skottie-stage.js';
@@ -68,7 +69,11 @@
 		// mode: if that's what a tap will insert, the grid should show it.
 		// Cheapest possible cell — see `paused` below for why it needs no new
 		// machinery.
-		staticOnly = false
+		staticOnly = false,
+		// Target PLAYBACK fps for the rasterized bake. 0 = derive it from the
+		// cell's display size (see `_maxFps`), which is what almost everything
+		// should do; pass a number only to override that ladder.
+		maxFps = 0
 	} = $props();
 
 	const isCustom = $derived(!!(short && id));
@@ -96,13 +101,17 @@
 	// context, so they don't accumulate GPU surfaces and jetsam a phone's tiny
 	// WebView budget the way the old live engines did. Only if a LIVE engine has
 	// been explicitly selected AND we're on a touch device do we coerce to a safe
-	// rasterized fallback (WebGL-free CPU atlas). An explicit forceEngine wins.
+	// rasterized fallback. WHICH rasterized one is rasterEngineFor's call, off
+	// the WebGPU probe — a capable phone gets the GPU atlas, not the CPU one;
+	// this used to hardcode `cpu-rasterized` and so downgraded every touch
+	// device, including ones that run the GPU path fine. An explicit
+	// forceEngine wins.
 	const _coarse = typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)')?.matches;
 	const engine = $derived.by(() => {
 		if (forceEngine) return forceEngine;
 		const e = $engineMode;
 		if (RASTER_ENGINES.has(e)) return e;
-		return _coarse ? 'cpu-rasterized' : e;
+		return _coarse ? rasterEngineFor(e) : e;
 	});
 
 	const sprite = $derived($spriteSheet);
@@ -115,13 +124,22 @@
 	let visible = $state(false);
 	let hovering = $state(false);
 	let mounted = true;
-	// Free an rlottie cell's rasterised frames (GPU-backed ImageBitmaps) after it's
-	// been off-screen this long; they're re-acquired automatically when it scrolls
-	// back. Bounds GPU memory to ~the visible set instead of every emote ever shown
-	// — on iOS's tight WebView budget that runaway is what got the app jetsammed.
-	// Touch/native only; desktop has the headroom and skips the re-decode churn.
-	const _RELEASE_OFFSCREEN = typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)')?.matches;
-	const OFFSCREEN_RELEASE_MS = 3000;
+	// Free a cell's rendering resources after it's been off-screen this long;
+	// they're re-acquired automatically when it scrolls back. Bounds memory to
+	// ~the visible set instead of every emote ever shown — on iOS's tight
+	// WebView budget that runaway is what got the app jetsammed.
+	//
+	// This used to be touch-only AND rlottie-only, which meant the engines
+	// everyone actually runs never released anything: an off-screen cell kept
+	// its parsed animation and its whole atlas frame set, forever, on the
+	// theory that re-entry had to be instant. The persistent frame cache is
+	// what makes that theory obsolete — a released emote comes back via
+	// diskHydrate, no Lottie fetch and no re-parse — so releasing is cheap
+	// enough to do on EVERY engine, on every device, half a second after the
+	// cell leaves the (120px-margined) viewport. Scrolling back within that
+	// half second cancels it, so a fling never thrashes.
+	const _RELEASE_OFFSCREEN = true;
+	const OFFSCREEN_RELEASE_MS = 500;
 	let _offscreenT = null;
 	// Flips true after the worker has drawn 3 confirmed frames into
 	// the canvas tile — at that point we know the canvas has visibly
@@ -133,6 +151,7 @@
 	// ── rlottie engine state ────────────────────────────────────────────
 	let entry = null;
 	let registeredUrl = null;
+	let registeredPx = 0;      // size `registeredUrl` was acquired at — release needs both
 	let rafHandle = null;
 	let startTime = 0;
 	let running = false;
@@ -167,6 +186,20 @@
 	// density and only reaches full via the 3s crossfade overlay (if it ever
 	// qualifies, which on low-mem it does not — emoteHiTier is false there).
 	const px = $derived(Math.round(size * _dpr * ($emoteHiTier ? _targetOS : Math.min(1, _targetOS))));
+	// Frame rate by display size, matching the resolution ladder in the worker:
+	// the bigger and more detailed the emote is on screen, the more of both it
+	// gets. A 20px tab icon at 60fps is 60 baked frames nobody can perceive; a
+	// chat-sent emote at 30 reads as choppy because it's big enough to see the
+	// steps. Every rung divides 60 and 120 evenly — an uneven rate lands the
+	// frame index on a 3-2-3-2 cadence, which looks like skipping (see
+	// PICKER_FPS). Callers can still override by passing `maxFps`.
+	const _maxFps = $derived(
+		maxFps > 0 ? maxFps
+		: size <= 24 ? 15      // tab icons
+		: size <= 44 ? 20      // picker cells, recents, chat-sent emotes
+		: size <= 64 ? 30      // enlarged / focused
+		: 60                   // hero sizes, where the steps would show
+	);
 	const _hiPx = $derived(Math.round(size * _dpr * _targetOS));              // overlay (crisp)
 	let _lodTimer = null;
 	let hiActive = $state(false);   // the high-res overlay canvas is mounted
@@ -196,12 +229,19 @@
 			return;
 		}
 
+		// Rasterise at this cell's real pixel size (snapped up to the shared
+		// ladder), not the old fixed 48. `registeredPx` has to travel with the
+		// url to every release: the cache is keyed url@px now, and releasing
+		// against the wrong size decrements a different entry and leaks this
+		// one's frames.
+		const srcPx = rasterSizeFor(px);
 		let result;
-		try { result = await acquire(u, data); }
+		try { result = await acquire(u, data, srcPx); }
 		catch (e) { console.warn('[sprite] rasterise failed', e); return; }
-		if (!mounted || activeEngine !== 'rlottie') { release(u); return; }
+		if (!mounted || activeEngine !== 'rlottie') { release(u, srcPx); return; }
 		entry = result;
 		registeredUrl = u;
+		registeredPx = srcPx;
 		paintFrame_rlottie(entry.totalFrames - 1);
 		updatePlay_rlottie();
 	}
@@ -263,11 +303,13 @@
 	// React to the awake signal flipping (idle ↔ active) so loops start/stop.
 	$effect(() => { void $emotesAwake; updatePlay_rlottie(); });
 	function teardown_rlottie() {
+		painted = false; // same contract as the skottie path — thumb, never blank
 		stopLoop_rlottie();
 		if (settleTimer) { clearTimeout(settleTimer); settleTimer = null; }
-		if (registeredUrl) release(registeredUrl);
+		if (registeredUrl) release(registeredUrl, registeredPx);
 		entry = null;
 		registeredUrl = null;
+		registeredPx = 0;
 		lastBitmap = null;
 		// Wipe the canvas so the thumb can show through again.
 		if (canvas) {
@@ -345,6 +387,7 @@
 				// High-mem tier bakes the primary at full quality AND 1.5× fps up
 				// front (no overlay stage); low-mem stays at base fps.
 				fpsScale: $emoteHiTier ? 1.5 : 1,
+				maxFps: _maxFps,
 				// Fires after the confirmed paints of this cell — the canvas now
 				// holds the animation, so the CSS thumb backdrop can drop out.
 				onFirstPaint: () => { if (mounted) painted = true; }
@@ -429,8 +472,37 @@
 		skottieUrl = u;
 	}
 
+	// Free this cell's animation resources now that it's been off-screen a
+	// while — unless the grid is still being scrolled, in which case re-arm and
+	// wait. A cell 130px above the viewport mid-drag is off-screen by the IO's
+	// reckoning but is about to be needed again, and tearing it down there buys
+	// a full re-bake on re-entry: the emotes visibly stopping and restarting as
+	// you scroll.
+	function releaseOffscreen() {
+		_offscreenT = null;
+		if (visible || !mounted) return;
+		if (SkWorker.isScrolling?.()) {
+			_offscreenT = setTimeout(releaseOffscreen, OFFSCREEN_RELEASE_MS);
+			return;
+		}
+		if (activeEngine === 'rlottie') teardown_rlottie();
+		// Skottie/raster: drop the refcount. At zero the worker deletes the
+		// parsed animation AND frees its atlas slots (freeFrameCache), which is
+		// the memory that used to accumulate for the whole session. The canvas
+		// keeps its last drawn frame — off-screen, so nothing flashes, and
+		// re-entry re-queues from the disk cache.
+		else if (isSkottieEngine(activeEngine)) releaseSkottieAnimation();
+	}
+
 	function releaseSkottieAnimation() {
 		if (!skottieUrl) return;
+		// Bring the thumb back. `painted` hides it and hands the cell over to
+		// the canvas — but the frames that canvas was drawing are about to be
+		// freed, so leaving it hidden is what leaves an EMPTY cell behind. The
+		// thumb is pixel-aligned with the canvas, so re-covering is invisible;
+		// the cell just goes still until it re-bakes. A cell should never be
+		// blank, only ever stopped.
+		painted = false;
 		// Removes from pending queue if not yet loaded; decrements
 		// refcount (and possibly deletes) if already loaded.
 		(skottieMod || SkMain).releaseAnimation(skottieUrl);
@@ -504,16 +576,37 @@
 		observer = new IntersectionObserver((entries) => {
 			const wasVisible = visible;
 			visible = entries[0].isIntersecting;
+			// Is the whole SCROLLER off-screen (the picker paged to another
+			// category, or closed), as opposed to this cell having scrolled out
+			// of a scroller you can still see? `rootBounds` is the root's rect
+			// in viewport coordinates, so a pane translated out of the track
+			// reads as entirely left/right of the viewport. The two cases want
+			// opposite treatment: scrolled-past frames should go, but paging
+			// away and back is a round trip the user experiences as returning
+			// to where they were — the scroll position is preserved, so the
+			// artwork should be too.
+			const rb = entries[0].rootBounds;
+			const paneOffscreen = !!rb && typeof window !== 'undefined'
+				&& (rb.right <= 0 || rb.left >= (window.innerWidth || 0)
+					|| rb.bottom <= 0 || rb.top >= (window.innerHeight || 0));
 			// Cancel any pending off-screen frame release the moment we're back.
 			if (visible && _offscreenT) { clearTimeout(_offscreenT); _offscreenT = null; }
-			// Went off-screen → schedule freeing the rasterised frames (re-acquired by
-			// the `visible && !wasVisible` branch above when it scrolls back).
-			if (!visible && wasVisible && _RELEASE_OFFSCREEN && activeEngine === 'rlottie' && !eager) {
+			// Went off-screen → schedule freeing this cell's animation resources
+			// (re-acquired by the `visible && !wasVisible` branch below when it
+			// scrolls back). `eager` cells — the picker's tab icons — are exempt:
+			// they're permanently on screen as far as the user is concerned and
+			// only read as off-screen because they live outside the grid's root.
+			if (paneOffscreen) {
+				// Paged away: hold everything. Nothing is accumulating while the
+				// picker isn't on screen, and closing it reclaims the atlases
+				// wholesale anyway (see ExpressionPicker's onDestroy), so this
+				// can't grow unbounded — it just makes swiping back instant
+				// instead of a re-bake of everything you were looking at.
 				clearTimeout(_offscreenT);
-				_offscreenT = setTimeout(() => {
-					_offscreenT = null;
-					if (!visible && mounted && activeEngine === 'rlottie') teardown_rlottie();
-				}, OFFSCREEN_RELEASE_MS);
+				_offscreenT = null;
+			} else if (!visible && wasVisible && _RELEASE_OFFSCREEN && !eager) {
+				clearTimeout(_offscreenT);
+				_offscreenT = setTimeout(releaseOffscreen, OFFSCREEN_RELEASE_MS);
 			}
 			// Left the viewport → cancel any pending high-res upgrade.
 			if (!visible && wasVisible) { clearTimeout(_lodTimer); _lodTimer = null; }

@@ -88,6 +88,11 @@ function markScrolling() {
 		_lastScrollTime = 0;
 	}, SCROLL_SETTLE_MS);
 }
+// True while the host grid is being scrolled (reset SCROLL_SETTLE_MS after the
+// last scroll event). Cells consult this before freeing anything: a release
+// during a scroll is a release of something about to be needed again.
+export function isScrolling() { return _isScrolling; }
+
 function attachScrollListenerTo(el) {
 	if (_attachedScrollEl === el) return;
 	if (_attachedScrollEl) _attachedScrollEl.removeEventListener('scroll', markScrolling);
@@ -118,7 +123,6 @@ const _shardOfUrl = new Map(); // url -> shard idx (cache)
 // just keeps the first-paint callback so it can fade the CSS thumb out.
 const _canvasCells = new Map();
 let _nextCanvasCellId = 1;
-let _lastCanvasTick = 0; // throttle the worker tick to TARGET_FPS_INTERVAL_MS
 
 let _ready = null;
 let _running = false;
@@ -189,6 +193,14 @@ function postToShard(shardIdx, msg, transfers) {
 
 function postToAllShards(msg) {
 	for (let i = 0; i < shards.length; i++) postToShard(i, msg);
+}
+
+// Per-FRAME messages (tick, render). These are only meaningful for the frame
+// they describe, so they must never sit in a booting shard's pendingMsgs —
+// a shard that takes two seconds to instantiate its 8 MB of CanvasKit would
+// come up to a backlog of ~120 stale ticks and replay every one of them.
+function postToReadyShards(msg) {
+	for (const sh of shards) if (sh.ready) sh.worker.postMessage(msg);
 }
 
 // ── Canvas host management ──────────────────────────────────────────────
@@ -331,7 +343,7 @@ export function ensureStage() {
 
 		// Spin up workers in parallel — they boot independently. We
 		// transferControlToOffscreen each canvas to its own worker.
-		await Promise.all(shards.map(async (sh, i) => {
+		const boots = shards.map(async (sh, i) => {
 			const offscreen = sh.canvas.transferControlToOffscreen();
 			sh.worker = new Worker(
 				new URL('./skottie-worker.js', import.meta.url),
@@ -357,12 +369,34 @@ export function ensureStage() {
 			sh.ready = true;
 			for (const [m, t] of sh.pendingMsgs) sh.worker.postMessage(m, t);
 			sh.pendingMsgs.length = 0;
-		}));
+			// This shard's canvas needs its real dimensions before it can
+			// draw. resizeCanvases() walks every shard and skips the ones
+			// whose size hasn't changed, so calling it per shard is cheap.
+			sh.lastSentW = 0; sh.lastSentH = 0;
+			resizeCanvases();
+		});
 
-		// All workers ready — force an initial resize so each gets the
-		// real canvas dimensions in case nothing has changed since init.
-		for (const sh of shards) { sh.lastSentW = 0; sh.lastSentH = 0; }
-		resizeCanvases();
+		// Resolve on the FIRST shard, not the last. Each worker instantiates
+		// its own ~8 MB CanvasKit, and this promise is what every cell awaits
+		// before it can register — so awaiting all of them meant the first
+		// emote in the picker waited on the SLOWEST of up to twelve WASM
+		// boots. Nothing needed that: postToShard already queues into a
+		// per-shard pendingMsgs until its worker is up, so cells routed to a
+		// still-booting shard simply start a moment later, on their own.
+		// A shard that fails to boot leaves its cells on their sprite thumb
+		// (static but correct) instead of taking every other cell down with
+		// it; only an all-shards failure rejects, as before.
+		await new Promise((resolve, reject) => {
+			let up = false;
+			for (const b of boots) {
+				b.then(() => { if (!up) { up = true; resolve(); } }, () => {});
+			}
+			Promise.allSettled(boots).then((rs) => {
+				if (up) return;
+				const why = rs.map((r) => r.reason?.message || 'failed').join('; ');
+				reject(new Error(`skottie: no shard booted (${why})`));
+			});
+		});
 		startLoop();
 		// Push the adaptive-pack list + ink color as soon as the
 		// manifest resolves. We may already have it from a prewarm
@@ -463,7 +497,7 @@ let _prewarmBatchSeq = 0;
 // shard that owns each URL so the pool warms in parallel. Resolves once every
 // shard that received work reports done. The driver calls this one row at a
 // time during idle. Booting the pool first (prewarm) is the caller's job.
-export async function prewarmBakeToDisk(urls, px, fpsScale = 1) {
+export async function prewarmBakeToDisk(urls, px, fpsScale = 1, maxFps = 0) {
 	await ensureStage();
 	const byShard = new Map();
 	for (const url of urls) {
@@ -476,7 +510,7 @@ export async function prewarmBakeToDisk(urls, px, fpsScale = 1) {
 	return new Promise((resolve) => {
 		_prewarmWaiters.set(batchId, { remaining: byShard.size, warmed: 0, cached: 0, resolve });
 		for (const [shardIdx, shardUrls] of byShard) {
-			postToShard(shardIdx, { type: 'prewarm-bake', urls: shardUrls, px, fpsScale, batchId });
+			postToShard(shardIdx, { type: 'prewarm-bake', urls: shardUrls, px, fpsScale, maxFps, batchId });
 		}
 	});
 }
@@ -565,7 +599,8 @@ export function unregisterCell(id) {
 // overlay path's _cells ids when first-paint acks come back.
 export function registerCanvasCell({
 	url, canvas, w, h, paused = false, paintIndex = null,
-	loop = true, visible = false, rasterized = false, fpsScale = 1, onFirstPaint = null
+	loop = true, visible = false, rasterized = false, fpsScale = 1, maxFps = 0,
+	onFirstPaint = null
 }) {
 	const id = 1_000_000_000 + (_nextCanvasCellId++);
 	// Route to the shard that owns this URL — same shard builds AND renders
@@ -575,7 +610,7 @@ export function registerCanvasCell({
 	_canvasCells.set(id, { onFirstPaint, url, shardIdx });
 	postToShard(shardIdx, {
 		type: 'register-canvas-cell',
-		id, url, w, h, paused, paintIndex, loop, visible, rasterized, fpsScale, canvas
+		id, url, w, h, paused, paintIndex, loop, visible, rasterized, fpsScale, maxFps, canvas
 	}, [canvas]);
 	return id;
 }
@@ -666,7 +701,7 @@ function startLoop() {
 		if (_canvasCells.size) {
 			// Each shard renders only the canvas-cells it owns (no-op if it
 			// owns none), so a broadcast tick is correct and cheap.
-			postToAllShards({ type: 'tick', now });
+			postToReadyShards({ type: 'tick', now });
 		}
 		requestAnimationFrame(tick);
 	};

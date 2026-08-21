@@ -26,10 +26,38 @@ import {
 	workerCount as rlottieWorkerCount
 } from './rlottie-pool.js';
 
-const TARGET_PX = 48; // covers size=22 on 2x DPR (44px) with margin.
-// Halving the raster size from 96 → 48 cuts per-frame rasterisation work
-// 4× and per-frame memory 4× (~37 KB → ~9 KB at 4 bpp). That headroom is
-// what lets every visible emoji loop continuously without falling behind.
+// Default when a caller doesn't say what size it needs. Everything that
+// cares passes one — see rasterSizeFor.
+const TARGET_PX = 48;
+
+// Rasterise at (or just above) the size the caller will DISPLAY at.
+//
+// This module used to mount every animation at a hardcoded 48×48 and hand
+// those frames to every consumer, so anything bigger got an upscale: a
+// chat-sent emote at 112 device px was being blown up from 48, which is
+// most of why the CPU engine looked soft next to the Skia one. rlottie will
+// render at whatever size it's asked for — 48 was a memory budget, not a
+// limit.
+//
+// Sizes snap UP to a small ladder rather than tracking px exactly. Snapping
+// up means the atlas always DOWN-scales (crisp, and a free bit of
+// supersampling); the ladder means a session holds a handful of distinct
+// caches instead of one per unique cell size. The cap matters: frames are
+// held as ImageBitmaps until the consumer packs them, so cost is px² × 4 ×
+// frames, and a phone has no room for a 256px loop.
+const SIZE_STEPS = [48, 64, 96, 128, 192, 256];
+const _isMobileUA = typeof navigator !== 'undefined'
+	&& /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
+const MAX_RASTER_PX = _isMobileUA ? 128 : 256;
+export function rasterSizeFor(px) {
+	const want = Math.max(1, Math.round(px || TARGET_PX));
+	for (const step of SIZE_STEPS) {
+		if (step > MAX_RASTER_PX) break;
+		if (want <= step) return step;
+	}
+	return Math.min(MAX_RASTER_PX, SIZE_STEPS[SIZE_STEPS.length - 1]);
+}
+const _key = (url, px) => url + '@' + px;
 // 2× worker count means each worker tends to be juggling two animations'
 // frames at once — plenty to keep the worker busy while still giving
 // frame 0 of new acquires a fair queue slot. Set lazily after the pool
@@ -38,7 +66,7 @@ let MAX_CONCURRENT = 8;
 let _concurrencyTuned = false;
 const FRAME_TIMEOUT_MS = 15000;
 
-const _cache = new Map(); // url -> entry
+const _cache = new Map(); // `url@px` -> entry
 const _queue = [];
 let _active = 0;
 
@@ -93,8 +121,10 @@ export function prewarm() {
 // Acquire (or refcount-bump) the rasterised entry for a URL. Resolves
 // once frame 0 is ready (or has timed out) — remaining frames continue
 // filling in `entry.frames` asynchronously after this resolves.
-export async function acquire(url, data) {
-	let entry = _cache.get(url);
+export async function acquire(url, data, px = TARGET_PX, maxFps = 0) {
+	const sizePx = rasterSizeFor(px);
+	const key = _key(url, sizePx);
+	let entry = _cache.get(key);
 	if (entry) {
 		entry.refcount++;
 		await entry.frame0Ready;
@@ -110,19 +140,23 @@ export async function acquire(url, data) {
 		totalFrames: 0,
 		fps: 60,
 		duration: 1,
-		sizePx: TARGET_PX,
+		sizePx,
 		pending: null,
 		frame0Ready
 	};
-	_cache.set(url, entry);
+	_cache.set(key, entry);
 
 	entry.pending = withSlot(async () => {
 		const sourceFrames = Math.max(1, (data.op || 60) - (data.ip || 0));
 		const sourceFps = data.fr || 60;
-		// 60 fps TGS look identical to humans at 30 fps and Telegram's own
-		// web client also renders at 30 fps. Skipping every other source
-		// frame halves both rasterisation work and cached bitmap memory.
-		const stride = sourceFps >= 60 ? 2 : 1;
+		// Stride to the caller's target rate — Telegram's `framesPerUpdates`
+		// (their `shouldLimitFps` halves the rate for keyboard-sized stickers).
+		// Without a target this keeps the old behaviour: 60 fps TGS look
+		// identical to humans at 30, and Telegram's own web client renders at
+		// 30 too. Striding halves both rasterisation work and bitmap memory.
+		const stride = maxFps > 0
+			? Math.max(1, Math.round(sourceFps / maxFps))
+			: (sourceFps >= 60 ? 2 : 1);
 		const totalFrames = Math.max(1, Math.floor(sourceFrames / stride));
 		const fps = sourceFps / stride;
 		const duration = totalFrames / fps;
@@ -137,7 +171,7 @@ export async function acquire(url, data) {
 
 		let animId;
 		try {
-			animId = await rlottieMount(JSON.stringify(data), TARGET_PX, TARGET_PX);
+			animId = await rlottieMount(JSON.stringify(data), sizePx, sizePx);
 		} catch (e) {
 			console.warn(`[sprite] mount failed for ${shortUrl}:`, e.message || e);
 			resolveFrame0();
@@ -191,15 +225,16 @@ export async function acquire(url, data) {
 	}).catch((e) => {
 		console.warn('[sprite] rasterise error', e);
 		resolveFrame0();
-		_cache.delete(url);
+		_cache.delete(key);
 	});
 
 	await entry.frame0Ready;
 	return entry;
 }
 
-export function release(url) {
-	const entry = _cache.get(url);
+export function release(url, px = TARGET_PX) {
+	const key = _key(url, rasterSizeFor(px));
+	const entry = _cache.get(key);
 	if (!entry) return;
 	entry.refcount--;
 	if (entry.refcount > 0) return;
@@ -208,12 +243,12 @@ export function release(url) {
 			try { bm?.close?.(); } catch {}
 		}
 	}
-	_cache.delete(url);
+	_cache.delete(key);
 }
 
 // Peek at the cached entry (frames + metadata) without bumping the refcount.
 // Returns null if not yet acquired / still rasterising.
-export function peek(url) {
-	const entry = _cache.get(url);
+export function peek(url, px = TARGET_PX) {
+	const entry = _cache.get(_key(url, rasterSizeFor(px)));
 	return entry && entry.frames ? entry : null;
 }

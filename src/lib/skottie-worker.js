@@ -129,16 +129,45 @@ const _lowMem = _isMobileUA || _deviceMem <= 4;
 
 // SUPERSAMPLE: render each frame at this multiple of the cell's device px,
 // then downscale on blit → crisper edges than native 1:1. Most expensive
-// knob — cost scales with SUPERSAMPLE² (and so does first-bake render time).
+// knob — cost scales with the square of it (and so does first-bake time).
 // Desktop/high-mem uses 1.5: past that the anti-aliasing gain is invisible at
 // emote sizes, but the render cost keeps climbing. The crisp look comes from
 // the 2× DISPLAY density (oversample) on sent emotes, not from supersampling.
 // Mobile/low-mem renders 1:1 (native) to keep atlases tiny.
-const SUPERSAMPLE = _lowMem ? 1 : 1.5;
+// Per-SIZE, not one global constant. A flat 1.5 charged a 28px picker cell
+// 2.25× the render cost for detail that is not resolvable at 28px, while a
+// chat-sent emote four times the area got the same 1.5 and looked soft. The
+// ladder spends the pixels where they show: picker cells rasterise native,
+// big emotes get true 2× supersampling.
+function supersampleFor(px) {
+	if (_lowMem) return px >= 96 ? 1.5 : 1;
+	if (px >= 96) return 2;      // chat-sent emotes, focus previews
+	if (px >= 64) return 1.25;   // picker on a 3× display
+	return 1;                    // picker / tab icons at 1-2× dpr
+}
 // Frame cap. Frames are sampled across the whole loop, so true 60fps needs
 // duration*60 frames; 120 gives a full 60fps for loops up to 2s. Mobile
 // targets ~40fps to keep its atlas small.
 const MAX_RASTER_FRAMES = _lowMem ? 40 : 120;
+
+// How many frames one loop bakes. Three ceilings, lowest wins:
+//   • the source's own frame count — never invent detail it doesn't have
+//   • the sheet/atlas budget (MAX_RASTER_FRAMES × fpsScale, ≤ the 11×11 grid)
+//   • `maxFps`, a target PLAYBACK rate the calling surface asks for
+// The third is what the picker uses. A cell does NOT reveal until its whole
+// loop is baked (see the fullyBaked handoff in renderCanvasCells), so N is
+// directly how long an emote sits behind its thumb — and a 24 fps bake of a
+// 2 s emote is 48 frames where the budget alone would have baked 121. At
+// emote size that's invisible in motion and 2.5× faster to appear, on top of
+// 2.5× less atlas. maxFps <= 0 means "no target", i.e. budget-capped as before
+// (what chat bubbles use — few on screen, large, worth the frames).
+function frameCountFor(duration, totalFrames, fpsScale = 1, maxFps = 0) {
+	const budget = Math.min(Math.round(MAX_RASTER_FRAMES * (fpsScale || 1)), RASTER_COLS * RASTER_COLS);
+	// Floor of 2: a one-frame "loop" would be indistinguishable from a static
+	// emote, and the bake path treats N === 1 as exactly that.
+	const byFps = maxFps > 0 ? Math.max(2, Math.ceil(duration * maxFps)) : Infinity;
+	return Math.max(1, Math.min(totalFrames, budget, byFps));
+}
 const RASTER_COLS = 11;               // 11×11 grid holds up to 121 frames
 // Atlas page size + count. Mobile: 1024² × 6 pages ≈ 24 MB (≥ the picker's
 // ~24 visible cap at any dpr). Desktop/high-mem: 2048² × 16 ≈ 256 MB — enough
@@ -147,7 +176,7 @@ const RASTER_COLS = 11;               // 11×11 grid holds up to 121 frames
 const ATLAS_DIM = _lowMem ? 1024 : 2048;
 const MAX_ATLAS_PAGES = _lowMem ? 6 : 16;
 
-// `slot` = rendered/stored pixel size = px * SUPERSAMPLE (the cell displays
+// `slot` = rendered/stored pixel size = px * supersampleFor(px) (the cell displays
 // at px, so this is supersampled and downscaled on blit).
 function ensureRasterSheetForPx(px) { return _ensureSheet(px, _rasterSheetByPx); }
 // Dedicated pre-warm sheet — never the live one (see _prewarmSheetByPx comment).
@@ -156,7 +185,7 @@ function _ensureSheet(px, pool) {
 	let s = pool.get(px);
 	if (s) return s;
 	if (!_kit) return null;
-	const slot = Math.round(px * SUPERSAMPLE);
+	const slot = Math.round(px * supersampleFor(px));
 	const canvas = new OffscreenCanvas(RASTER_COLS * slot, RASTER_COLS * slot);
 	const surface = _kit.MakeWebGLCanvasSurface(canvas, undefined, _surfaceOpts);
 	if (!surface) return null;
@@ -168,7 +197,7 @@ function _ensureSheet(px, pool) {
 function getAtlas(px) {
 	let a = _atlasByPx.get(px);
 	if (a) return a;
-	const slot = Math.round(px * SUPERSAMPLE);
+	const slot = Math.round(px * supersampleFor(px));
 	a = { px, slot, cols: Math.floor(ATLAS_DIM / slot), pages: [], free: [], lru: new Map() };
 	_atlasByPx.set(px, a);
 	addAtlasPage(a);
@@ -300,17 +329,17 @@ function atlasAllocSlots(a, n) {
 // whose cells are currently on screen, and (2) drop jobs whose cells have
 // all scrolled off (they re-queue instantly if scrolled back). Net effect:
 // whatever is on screen bakes first; off-screen work is abandoned.
-const _rasterPending = new Map(); // key -> { url, px }
+const _rasterPending = new Map(); // key -> { url, px, fpsScale, maxFps }
 let _rasterBusy = false;
 // Monotonic "scrolled-in" sequence — a cell's visibleAt is stamped each time it
 // enters the viewport, so the rasteriser can bake whatever the user scrolled to
 // MOST RECENTLY first (freshest-visible-first), not just any visible cell.
 let _visSeq = 0;
 
-function scheduleRasterize(url, px, fpsScale = 1) {
+function scheduleRasterize(url, px, fpsScale = 1, maxFps = 0) {
 	const key = url + '@' + px;
 	if (_frameCache.has(key) || _frameJobs.has(key) || _rasterPending.has(key)) return;
-	_rasterPending.set(key, { url, px, fpsScale });
+	_rasterPending.set(key, { url, px, fpsScale, maxFps });
 	pumpRaster();
 }
 
@@ -353,7 +382,7 @@ async function pumpRaster() {
 			const job = _rasterPending.get(key);
 			_rasterPending.delete(key);
 			_frameJobs.add(key);
-			try { await doRasterize(job.url, job.px, key, job.fpsScale || 1); }
+			try { await doRasterize(job.url, job.px, key, job.fpsScale || 1, job.maxFps || 0); }
 			catch (e) {
 				_frameJobs.delete(key);
 				diag('warn', '[skottie-worker] rasterize failed', key, String(e?.message || e));
@@ -430,13 +459,13 @@ function requestAnimUpgrade(url, entry) {
 // atlas or the shared _anims map — for the background pre-warm. Builds a
 // throwaway animation, renders to the raster sheet, encodes to disk, then frees
 // everything. Returns a short status for progress reporting.
-async function prewarmBake(url, px, fpsScale = 1) {
+async function prewarmBake(url, px, fpsScale = 1, maxFps = 0) {
 	if (!frameCacheAvailable()) return 'unavailable';
 	if (await fcHas(url + '@' + px)) return 'cached';
 	if (!_kit) return 'skip';
 	// Compute the slot size directly — a disk-only bake never allocates atlas
 	// slots, so don't spin up an atlas page (16 MB) just to read `.slot`.
-	const sl = Math.round(px * SUPERSAMPLE);
+	const sl = Math.round(px * supersampleFor(px));
 	let data = null;
 	try { data = await fetchLottieWorker(url); } catch { return 'err'; }
 	if (!data) return 'err';
@@ -451,8 +480,10 @@ async function prewarmBake(url, px, fpsScale = 1) {
 		const duration = animation.duration() || 1;
 		const fps = animation.fps() || 60;
 		const totalFrames = Math.max(1, Math.round(duration * fps));
-		const _frameCap = Math.min(Math.round(MAX_RASTER_FRAMES * fpsScale), RASTER_COLS * RASTER_COLS);
-		const N = Math.min(totalFrames, _frameCap);
+		// SAME N the live bake would choose for this surface — a disk entry
+		// baked at a different frame count than the picker asks for would be
+		// hydrated as-is, silently undoing the cap it was warmed for.
+		const N = frameCountFor(duration, totalFrames, fpsScale, maxFps);
 		if (N < 2) return 'static'; // nothing worth caching
 		// Dedicated pre-warm sheet — never the live one, so a live bake yielding
 		// mid-render can't interleave and corrupt this emote's frames.
@@ -484,7 +515,7 @@ async function prewarmBake(url, px, fpsScale = 1) {
 	finally { try { animation.delete(); } catch {} }
 }
 
-async function doRasterize(url, px, key, fpsScale = 1) {
+async function doRasterize(url, px, key, fpsScale = 1, maxFps = 0) {
 	// ── Fast path: rehydrate from the persistent disk cache (no Lottie) ──
 	if (await diskHydrate(url, px)) { _frameJobs.delete(key); return; }
 
@@ -499,15 +530,13 @@ async function doRasterize(url, px, key, fpsScale = 1) {
 	}
 	const atlas = getAtlas(px);
 	if (!atlas) { _frameJobs.delete(key); return; }
-	const sl = atlas.slot; // supersampled pixel size (px * SUPERSAMPLE)
+	const sl = atlas.slot; // supersampled pixel size (px * supersampleFor(px))
 	const sheet = ensureRasterSheetForPx(px);
 	if (!sheet) { _frameJobs.delete(key); return; }
 	// fpsScale (1.5 on the high-end LOD upgrade) bakes more frames = smoother
-	// loop. Capped to the raster sheet's grid (RASTER_COLS² slots) so it can
-	// never overflow — on desktop MAX_RASTER_FRAMES is already near the cap, so
-	// the bump mainly benefits fast phones (e.g. 40 → 60 frames).
-	const _frameCap = Math.min(Math.round(MAX_RASTER_FRAMES * fpsScale), RASTER_COLS * RASTER_COLS);
-	const N = Math.min(entry.totalFrames, _frameCap);
+	// loop; maxFps caps the other way, for surfaces that would rather have the
+	// emote NOW than have every frame of it. See frameCountFor.
+	const N = frameCountFor(entry.duration, entry.totalFrames, fpsScale, maxFps);
 	const slots = atlasAllocSlots(atlas, N);
 	if (!slots) { _frameJobs.delete(key); return; } // atlas full — thumb stays up
 
@@ -630,10 +659,6 @@ function renderCanvasCells(now) {
 		if (!cell.visible || !cell.ctx) continue;
 		const entry = _anims.get(cell.url);
 		if (!entry || entry.duration <= 0) continue; // not built yet → thumb still covers it
-		// A LIVE cell needs a parsed animation; a diskOnly entry has none. That
-		// only happens if a live cell shares a URL with a rasterized one — rare,
-		// but pull the real Lottie in and let the thumb hold until it's built.
-		if (!cell.rasterized && !entry.animation) { requestAnimUpgrade(cell.url, entry); continue; }
 
 		// Compute the target frame FIRST so we can bail before doing any GPU
 		// work if it hasn't advanced since last tick. Paused/static cells
@@ -655,63 +680,102 @@ function renderCanvasCells(now) {
 				: Math.min(1, elapsed / entry.duration);
 		}
 		// ── Rasterized engine: blit a frame from the shared atlas ────────
+		// ONLY once the whole loop is baked. While it isn't, this cell falls
+		// through to the live renderer below instead of sitting behind its
+		// thumb — Telegram's `allowDrawFramesWhileCacheGenerating`: their
+		// RLottieDrawable draws frames straight from the native decoder while
+		// `cacheGenerateTask` fills the frame cache alongside it, so a sticker
+		// is in motion from the moment it's on screen and the cache is purely
+		// an optimisation for later. Waiting for the bake is what made the grid
+		// fill in one emote at a time.
 		if (cell.rasterized) {
 			const ckey = cell.url + '@' + cell.w;
 			const cache = _frameCache.get(ckey);
-			if (!cache) { scheduleRasterize(cell.url, cell.w, cell.fpsScale); continue; } // thumb covers until ready
-			// Touch LRU so an on-screen emoji is never the eviction victim.
-			cache.atlas.lru.delete(ckey);
-			cache.atlas.lru.set(ckey, cache);
-			const N = cache.N;
-			const _ready = cache.ready ?? N;        // progressive bake: frames [0, ready) live
-			const fullyBaked = _ready >= N;
-			let fi;
-			if (!cell.firstPainted) {
-				// The sprite thumb is the emote's LAST frame (render_thumbs bakes
-				// op-1), so DON'T reveal until the whole loop is baked, then hand off
-				// ON the last frame — pixel-identical to the thumb, so the swap is
-				// seamless: no fade, no pop, no empty-frame-0 blank. Until then keep
-				// blitting the newest baked frame UNDER the (still-covering) thumb.
-				fi = fullyBaked ? N - 1 : _ready - 1;
-			} else if (cell.paused) {
-				fi = cell.paintIndex != null ? Math.min(cell.paintIndex, N - 1) : N - 1;
-			} else {
-				// Play forward on this cell's own clock, phased to start at the last
-				// frame (where we handed off) and loop N-1 → 0 → 1 …
-				const elapsed = (now - cell.startTime) / 1000;
-				const tt = cell.loop
-					? (elapsed % entry.duration) / entry.duration
-					: Math.min(1, elapsed / entry.duration);
-				fi = Math.min(N - 1, Math.floor(tt * N));
+			if (!cache) scheduleRasterize(cell.url, cell.w, cell.fpsScale, cell.maxFps);
+			const _ready = cache ? (cache.ready ?? cache.N) : 0;
+			if (cache && _ready >= cache.N) {
+				const N = cache.N;
+				// Touch LRU so an on-screen emoji is never the eviction victim.
+				cache.atlas.lru.delete(ckey);
+				cache.atlas.lru.set(ckey, cache);
+				let fi;
+				if (!cell.firstPainted) {
+					// The sprite thumb is the emote's LAST frame (render_thumbs bakes
+					// op-1), so hand off ON the last frame — pixel-identical to the
+					// thumb, so the swap is seamless: no fade, no pop, no
+					// empty-frame-0 blank.
+					fi = N - 1;
+				} else if (cell.paused) {
+					fi = cell.paintIndex != null ? Math.min(cell.paintIndex, N - 1) : N - 1;
+				} else {
+					// Play forward on this cell's own clock, phased to start at the last
+					// frame (where we handed off) and loop N-1 → 0 → 1 …
+					const elapsed = (now - cell.startTime) / 1000;
+					const tt = cell.loop
+						? (elapsed % entry.duration) / entry.duration
+						: Math.min(1, elapsed / entry.duration);
+					fi = Math.min(N - 1, Math.floor(tt * N));
+				}
+				// Blit only when the frame actually moved. `viaAtlas` forces one
+				// blit on the tick this cell switches over from the live renderer —
+				// the two paths number their frames differently (source frames vs
+				// the N baked ones), so an accidental collision would otherwise
+				// leave the last live frame on screen for a tick.
+				if (fi !== cell.lastFrame || !cell.viaAtlas) {
+					const slot = cache.slots[fi];
+					const ss = cache.atlas.slot; // supersampled source size
+					const pageCanvas = cache.atlas.pages[slot.page].canvas;
+					let okR = false;
+					try {
+						cell.ctx.clearRect(0, 0, cell.w, cell.h);
+						// Source rect is the supersampled slot; dest is the cell —
+						// the browser downsamples ss→cell.w for the crisp result.
+						cell.ctx.drawImage(pageCanvas, slot.x, slot.y, ss, ss, 0, 0, cell.w, cell.h);
+						okR = true;
+					} catch { /* detached */ }
+					if (!okR) continue;
+					cell.lastFrame = fi;
+					cell.viaAtlas = true;
+					cell.paintCount = (cell.paintCount || 0) + 1;
+				}
+				// A cell that reached the atlas without ever painting live (the disk
+				// cache hydrated before its first tick) reveals here, on the last
+				// frame = the thumb. Then start its clock phased so playback
+				// continues forward from that frame into the loop.
+				if (!cell.firstPainted) {
+					cell.firstPainted = true;
+					firstPaints.push(id);
+					cell.startTime = now - ((N - 1) / N) * entry.duration * 1000;
+				}
+				continue;
 			}
-			if (cell.firstPainted && fi === cell.lastFrame) continue; // frame unchanged
-			const slot = cache.slots[fi];
-			const ss = cache.atlas.slot; // supersampled source size
-			const pageCanvas = cache.atlas.pages[slot.page].canvas;
-			let okR = false;
-			try {
-				cell.ctx.clearRect(0, 0, cell.w, cell.h);
-				// Source rect is the supersampled slot; dest is the cell —
-				// the browser downsamples ss→cell.w for the crisp result.
-				cell.ctx.drawImage(pageCanvas, slot.x, slot.y, ss, ss, 0, 0, cell.w, cell.h);
-				okR = true;
-			} catch { /* detached */ }
-			if (!okR) continue;
-			cell.lastFrame = fi;
-			cell.paintCount = (cell.paintCount || 0) + 1;
-			// Hand off ONLY once the full loop is baked, so the revealed frame is
-			// the last frame = the thumb. Then start this cell's own clock phased
-			// so playback continues forward from that last frame into the loop.
-			if (!cell.firstPainted && fullyBaked) {
-				cell.firstPainted = true;
-				firstPaints.push(id);
-				cell.startTime = now - ((N - 1) / N) * entry.duration * 1000;
-			}
+			// Not baked yet → HOLD. The sprite thumb covering this cell is a
+			// real frame of this emote (its last one), so the cell shows the
+			// artwork, just still, and starts moving when its loop is whole.
+			// We deliberately do NOT render live alongside the bake: that runs
+			// two rasterisers over the same animation at the same moment, which
+			// is exactly the contention this engine exists to avoid. One
+			// renderer, one pass, then playback is a blit.
 			continue;
 		}
 
-		const frame = Math.min(entry.totalFrames - 1, Math.floor(t * entry.totalFrames));
-		if (cell.firstPainted && frame === cell.lastFrame) continue; // nothing new to draw
+		// Live rendering needs the parsed animation. A diskOnly entry has none,
+		// so pull the real Lottie in and let the thumb hold until it arrives.
+		if (!entry.animation) { requestAnimUpgrade(cell.url, entry); continue; }
+
+		let frame = Math.floor(t * entry.totalFrames);
+		// Quantise to the cell's target rate — Telegram's `framesPerUpdates`
+		// (`shouldLimitFps` halves the rate for keyboard-sized stickers). The
+		// redundant-frame check below then skips the ticks in between, so a
+		// picker cell rendering live costs 30 renders a second, not 60.
+		if (cell.maxFps > 0) {
+			const srcFps = entry.totalFrames / Math.max(entry.duration, 0.0001);
+			const step = Math.max(1, Math.round(srcFps / cell.maxFps));
+			frame = Math.floor(frame / step) * step;
+		}
+		frame = Math.min(entry.totalFrames - 1, frame);
+		if (cell.firstPainted && frame === cell.lastFrame && !cell.viaAtlas) continue; // nothing new to draw
+		cell.viaAtlas = false;
 
 		const s = ensureScratchForPx(cell.w);
 		if (!s) continue;
@@ -1329,7 +1393,7 @@ self.onmessage = async (e) => {
 			(async () => {
 				let warmed = 0, cached = 0;
 				for (const url of urls) {
-					const r = await prewarmBake(url, px, fpsScale || 1).catch(() => 'err');
+					const r = await prewarmBake(url, px, fpsScale || 1, msg.maxFps || 0).catch(() => 'err');
 					if (r === 'warmed') warmed++;
 					else if (r === 'cached') cached++;
 					await _yieldIdle();
@@ -1366,13 +1430,19 @@ self.onmessage = async (e) => {
 				w: msg.w,
 				h: msg.h,
 				fpsScale: msg.fpsScale || 1,
+				maxFps: msg.maxFps || 0,
 				visible: !!msg.visible,
 				visibleAt: msg.visible ? ++_visSeq : 0,
 				prebuilt: _built,
 				startTime: 0,
 				paintCount: 0,
 				firstPainted: false,
-				lastFrame: -1
+				lastFrame: -1,
+				// Which renderer drew the last frame — the atlas or the live
+				// decoder. Cells cross between the two (live while baking,
+				// atlas once baked, back to live if their slots are evicted)
+				// and the two number their frames differently.
+				viaAtlas: false
 			});
 			// Probe the disk cache the instant a rasterized cell mounts — BEFORE
 			// the load-anim that SpriteSticker fires right after. On a hit the

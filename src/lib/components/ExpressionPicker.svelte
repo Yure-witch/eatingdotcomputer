@@ -167,7 +167,16 @@
 	let _slotPx = 0;
 	function setFrac(f) {
 		if (!indEl) return;
-		if (!_slotPx) _slotPx = railEl?.querySelector('.expr-tab')?.offsetWidth || 48;
+		if (!_slotPx) {
+			// PITCH, not slot width: the row is a flex box with a gap, so the nth
+			// icon sits at n * (width + gap). Stepping by offsetWidth alone drifts
+			// one gap per tab — nothing at the first icon, 9.6px by the fourth on
+			// mobile, where the gap is 0.2rem — which puts the circle visibly left
+			// of the last icon.
+			const first = railEl?.querySelector('.expr-tab');
+			const gap = parseFloat(getComputedStyle(railEl).columnGap) || 0;
+			_slotPx = (first?.offsetWidth || 48) + gap;
+		}
 		// Written DIRECTLY as a transform, not via a --expr-frac custom property.
 		// An unregistered custom property is inherited, so setting it on the rail
 		// invalidated style for the rail and every descendant — four buttons and
@@ -175,7 +184,10 @@
 		// from calc(var(…)) can never be a compositor animation; it re-resolves
 		// on the main thread each frame. A plain px transform on one element is
 		// neither.
-		indEl.style.transform = `translate3d(${f * _slotPx}px,0,0)`;
+		// -50% on Y is not decoration: the CSS parks this at `top: 50%` and relies
+		// on the transform to pull it back half its own height. Writing 0 here
+		// dropped the circle a full 24px below the icons.
+		indEl.style.transform = `translate3d(${f * _slotPx}px,-50%,0)`;
 	}
 
 	// Panes mount lazily and then STAY mounted. Tearing a pane down on
@@ -741,17 +753,20 @@
 		/* Gap between icon slots. The indicator steps by slot + gap, so this
 		   has to be ONE number both consumers read — see .expr-indicator. */
 		--expr-gap: 1px;
-		/* Horizontal padding, matching the bottom nav's --nav-pad. A
-		   fully-rounded pill curves away over its last ~half-height, so an icon
-		   flush to the end sits in the curve and reads as falling out of the
-		   container — which is exactly what the kitchen icon was doing. */
-		/* Generous, and deliberately so. The rail is fully rounded, so its cap
-		   radius is half its height (28px at a 56px rail) — the pill curves away
-		   across that whole span. Padding smaller than the radius leaves the end
-		   icon sitting inside the curve, which reads as falling out of the
-		   container even when the boxes technically nest. 18px keeps clear
-		   space either side of the first and last icons. */
-		--expr-pad: 18px;
+		/* SAME inset as the top and bottom, so the selected circle is concentric
+		   with the rail's own cap — the relationship the home bottom nav has
+		   (60px bar, 52px pill, a 4px gap all round, curves running parallel;
+		   see .nav-indicator in BottomNav.svelte).
+		   The rail is 56px tall with a 28px cap radius; 3px padding + the 1px
+		   border puts the 48px circle's centre exactly 28px in from the end, so
+		   its 24px radius sits concentric inside that 28px cap with an even 4px
+		   ring — top, bottom AND ends.
+		   This was 18px, on the theory that an icon flush to a rounded end
+		   "sits in the curve and reads as falling out of the container". True of
+		   a bare glyph; not true of a circle that nests inside the cap. All 18px
+		   bought was a wide dead margin the selected state never reached, which
+		   is what made it look like it was floating rather than hugging. */
+		--expr-pad: 3px;
 		/* Shared bottom offset — these used to differ (6px vs 8px), so the two
 		   surfaces sat on different baselines. */
 		--expr-rail-bottom: 8px;
@@ -1016,16 +1031,12 @@
 		width: var(--expr-slot-w, 3rem);
 		border-radius: 50%;
 		background: var(--sidebar-active, var(--md-sys-color-secondary-container, var(--paper)));
-		/* Steps by the SLOT PITCH — slot width PLUS the row's gap — not by the
-		   slot width alone, and not by `100%` of the block's own width (it's
-		   narrower than a slot, so a self-relative step would drift too).
-		   Stepping by the bare slot width was off by one gap per tab, so the
-		   error grew left-ward the further along the rail you went: nothing at
-		   the first icon, a whole 7.6px at the fourth on mobile, where the gap
-		   is 0.2rem. That put the highlight visibly left of the kitchen icon,
-		   sitting over the space beside it rather than under it. */
-		transform: translate3d(
-			calc(var(--expr-frac, 0) * (var(--expr-slot-w, 3rem) + var(--expr-gap, 0px))), -50%, 0);
+		/* Resting state only — the FIRST slot, before any JS runs. From then on
+		   setFrac() writes this transform directly in px (a calc(var(…)) can't be
+		   a compositor animation). The -50% is the half-height pull-back for
+		   `top: 50%`; setFrac has to keep writing it, or the circle drops half
+		   its height below the icons. */
+		transform: translate3d(0, -50%, 0);
 		will-change: transform;
 		pointer-events: none;
 		z-index: 0;

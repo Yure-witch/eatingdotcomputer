@@ -7,7 +7,11 @@
 		engineMode,
 		setEngineManual,
 		isStaticPack,
-		TG_CAT_ICONS
+		tgThumbUrl,
+		tgcThumbUrl,
+		TG_CAT_ICONS,
+		PICKER_STICKER_PX,
+		PICKER_FPS
 	} from '$lib/telegram-emoji-store.js';
 	// Picker uses a pre-rasterised sprite renderer: each emoji is rendered
 	// once via rlottie (the worker WASM renderer Telegram itself uses for
@@ -150,7 +154,19 @@
 	// raster resolution (size x dpr x oversample), which keys the renderer's
 	// atlases, so a width-dependent size would spawn a new atlas per viewport
 	// width — exactly the accumulation the memory work just capped.
-	const STICKER_PX = 28;
+	// Both live in the store: the background warm bakes against them, and a
+	// local copy drifting from it is a cache that silently stops hitting.
+	// (24 fps rather than the frame budget: a cell stays behind its thumb until
+	// its whole loop is baked, so a 2 s emote goes from 121 frames to 48. At
+	// 28px, in a grid of two dozen moving things, that's invisible; the wait
+	// was not.)
+	const STICKER_PX = PICKER_STICKER_PX;
+	// Tab icons bake cheaper than grid cells. They're 20px of decoration, but
+	// there are twenty of them and they mount at the same instant as the grid —
+	// so on a cold open their bakes compete with the emotes the user is actually
+	// looking at. 15 halves their share of that (and still divides 60 and 120
+	// evenly, so it doesn't judder — see PICKER_FPS).
+	const TAB_FPS = 15;
 	const GRID_PAD_X = 4;          // 0.25rem padding on .tg-grid-wrap each side (matches regular picker)
 	// Buffer ≈ 3 rows each side. Smaller cells mean more cells/row, so a
 	// large buffer can balloon active spritesheet memory. 3 is enough to
@@ -165,15 +181,27 @@
 	// Skottie stage too, so the buffer cells also have their last
 	// animation frame held on the canvas (see PAINT_BUFFER_PX in
 	// skottie-stage.js — note that's about painting, not mounting).
-	// Desktop with WebGPU absorbs the cost of pre-mounting 20 rows
-	// above + below for jank-free flings. Mobile pays the cost in
+	// Rows pre-mounted above + below the viewport in the flat (standalone /
+	// search) grid. This is a floor, not an optimisation: an unmounted cell
+	// renders as an EMPTY div, so anything outside this band is a visible hole
+	// while you scroll. It was 20 (far more than a fling needs), then 4 (too
+	// few — the holes were the complaint). Ten is about a viewport and a half.
+	// Mobile pays the cost in
 	// GPU memory — each mounted animated cell pins a Skottie surface
 	// in the worker, and iOS WebGPU kills the renderer once the
 	// per-page budget is exceeded. Zero buffer means only the cells
 	// strictly in the viewport are mounted; scrolling pulls in a new
 	// row and the row that scrolls out unmounts (releasing its anim
 	// via SpriteSticker's teardown → worker refcount drop → free).
-	const BUFFER_ROWS = _IS_COARSE ? 0 : 20;
+	// Coarse gets 2 rows, not 0. Zero meant the row leaving the viewport
+	// UNMOUNTED — destroying its canvas and releasing its animation — the
+	// instant it crossed the edge, and remounted from scratch if you scrolled
+	// back a few pixels. That thrash at both boundaries is what makes a scroll
+	// stutter. Two rows of hysteresis costs a handful of cells; it was only 0
+	// because a mounted cell used to pin a live Skottie surface, which the
+	// rasterized engines and the off-screen release between them have made
+	// untrue.
+	const BUFFER_ROWS = _IS_COARSE ? 6 : 10;
 	let scrollTop = $state(0);
 	// First-open mount stagger: the live-cell band starts at a fraction of the
 	// viewport and ramps to full over a few animation frames, so the initial
@@ -580,21 +608,45 @@
 	// you scroll. Falls back to the constant until the first cell exists.
 	let CELL_PX = $state(CELL_FALLBACK);
 	const cellsPerRow = $derived(COLS);
+	// `CELL_PX` is the pitch the virtualization multiplies by ROW INDEX, so an
+	// error in it doesn't shift the band — it TILTS it, by a growing amount the
+	// further down you are. Measure it while the picker is still `loading` (no
+	// `.tg-cell` exists yet) and it silently keeps CELL_FALLBACK; a fallback
+	// that's ~6px off the real column width puts row 20 off by a whole band,
+	// and the cells actually on screen are judged out of it and unmount. That
+	// is the "animated ones vanish as I scroll", and it's worst in chat, where
+	// the picker mounts inside a sheet that is still animating and whose grid
+	// is still waiting on its manifests.
+	let _measured = false;
 	function measureGrid() {
 		if (!gridWrapEl) return;
-		gridH = gridWrapEl.clientHeight;
-		gridW = gridWrapEl.clientWidth;
+		const h = gridWrapEl.clientHeight;
+		const w = gridWrapEl.clientWidth;
+		if (h > 0) gridH = h;
+		if (w > 0) gridW = w;
 		const cell = gridWrapEl.querySelector('.tg-cell');
-		const w = cell?.getBoundingClientRect().width;
-		if (w > 0) CELL_PX = w;
+		const cw = cell?.getBoundingClientRect().width;
+		// Only accept a pitch measured off a REAL cell. Anything else leaves the
+		// fallback in place, and the fallback is exactly what drifts.
+		if (cw > 0) { CELL_PX = cw; _measured = true; }
 	}
 	function onGridScroll(e) {
 		scrollTop = e.target.scrollTop;
 		if (_fillFrac < 1) _fillFrac = 1; // scrolling needs the whole band now
+		// First scroll is the first moment the grid is definitely laid out and
+		// definitely has cells. One extra measurement, once, then never again.
+		if (!_measured) measureGrid();
 		syncActiveFromScroll();
 	}
+	// Cells only exist once the manifests land, so this is the measurement that
+	// actually gets a real pitch on a cold open.
+	$effect(() => { loading; if (!loading) queueMicrotask(measureGrid); });
 	onMount(() => {
 		measureGrid();
+		// The sheet animates in with a transform, so the ResizeObserver below
+		// never fires for it — nothing about the wrap's box changes. Re-measure
+		// once after it has settled.
+		const _settleMeasure = setTimeout(measureGrid, 400);
 		// The panel mounts inside a sheet that is still animating in, so the
 		// mount-time width is not the final one. Without this the geometry kept
 		// whatever it read mid-animation.
@@ -603,7 +655,7 @@
 			ro = new ResizeObserver(() => measureGrid());
 			ro.observe(gridWrapEl);
 		}
-		_roCleanup = () => ro?.disconnect();
+		_roCleanup = () => { ro?.disconnect(); clearTimeout(_settleMeasure); };
 		// Grow the live band to full over successive frames (see _fillFrac). Each
 		// frame mounts ~a row or two more, keeping every frame under budget.
 		if (_fillFrac < 1) {
@@ -777,14 +829,23 @@
 						<img class="tg-tab-upload-img" src={_uploadItems[0]?.url}
 							alt={uploadsLabel} width="20" height="20" loading="eager" decoding="async" />
 					{:else if cat.pack}
-						<!-- Tab icons live outside the grid's scroll content (the
-						     Skottie stage host), so force them onto the rlottie
-						     engine so they animate in both engine modes. `eager`
-						     skips the 150 ms scroll-settle delay so they spring
-						     to life the moment the picker opens. -->
+						<!-- 20 pack tabs, and they used to be pinned to `rlottie`
+						     + `eager`: twenty live animations, each with its own
+						     main-thread rAF draw loop, running for as long as the
+						     picker was open — while the grid's hundreds of cells
+						     render off-thread. That was the one thing hammering
+						     the main thread during a scroll.
+						     The rlottie pin dates from the shared-overlay era,
+						     when a cell outside the stage host's canvas couldn't
+						     be drawn at all. The inline-canvas engines give every
+						     cell its own canvas, so a tab icon animates on the
+						     worker like anything else. Dropping `eager` with it
+						     means off-strip tabs don't animate and release like
+						     any other off-screen cell; the visible ones still
+						     start immediately, since they're intersecting on
+						     mount. -->
 						<LottieSticker short={cat.pack.short} id={cat.pack.firstId} size={20} mode="visible"
-							loop={true} root={tabsEl} title={cat.label}
-							forceEngine="rlottie" eager={true} />
+							loop={true} root={tabsEl} title={cat.label} maxFps={TAB_FPS} />
 					{:else}
 						{cat.icon}
 					{/if}
@@ -849,23 +910,37 @@
 			<div class="tg-loading"><span class="tg-spinner"></span>Loading…</div>
 		{:else if isStandalone(active) || search.trim()}
 			<!-- Standalone view: Effects, Custom, or active search.
-			     Single flat grid, index-virtualized against scrollTop. -->
-			<div class="tg-grid" bind:this={gridEl}>
-				{#each filteredItems as it, i (it.custom ? `c:${it.id}` : it.cp + ':' + i)}
+			     Single flat grid, index-virtualized against scrollTop.
+			     The window is applied to the DOM, not just to the sticker
+			     inside it: this used to emit a .tg-cell — with a title string
+			     built by concatenation — for every item in the library, which
+			     on an unfiltered library is ~2,300 nodes created the moment you
+			     type into search. Only the visible rows are built now; the rows
+			     above and below are represented by padding on the grid, so the
+			     scroll height and the scrollbar are unchanged. `visibleStart` is
+			     always a whole number of rows, so the padding lands the first
+			     rendered cell exactly where its real row is. -->
+			{@const _cpr = Math.max(1, cellsPerRow)}
+			{@const _rowsAbove = Math.floor(visibleStart / _cpr)}
+			{@const _rowsTotal = Math.ceil(filteredItems.length / _cpr)}
+			{@const _window = filteredItems.slice(visibleStart, visibleEnd)}
+			{@const _rowsBelow = Math.max(0, _rowsTotal - _rowsAbove - Math.ceil(_window.length / _cpr))}
+			<div class="tg-grid" bind:this={gridEl}
+				style:padding-top="{_rowsAbove * CELL_PX}px"
+				style:padding-bottom="{_rowsBelow * CELL_PX}px">
+				{#each _window as it, wi (it.custom ? `c:${it.id}` : it.cp + ':' + (visibleStart + wi))}
 					<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 					<div class="tg-cell" class:tg-cell-hidden={_showHidden && _isCellHidden(it)}
 						title={it.custom
 							? `${it.name || it.alt}  ${it.alt}  ·  ${it.packTitle}${it.kw?.length ? '\n' + it.kw.slice(0, 6).join(', ') : ''}`
 							: it.e}
 						onclick={() => cellAction(it)}>
-						{#if i >= visibleStart && i < visibleEnd}
-							{#if it.custom}
-								<LottieSticker short={it.short} id={it.id} size={STICKER_PX} mode="visible" staticOnly={_static}
-									ignoreHidden={_showHidden} root={gridWrapEl} title={it.alt} />
-							{:else}
-								<LottieSticker cp={it.cp} flag={it.flag} size={STICKER_PX} mode="visible" staticOnly={_static}
-									ignoreHidden={_showHidden} root={gridWrapEl} title={it.e} />
-							{/if}
+						{#if it.custom}
+							<LottieSticker short={it.short} id={it.id} size={STICKER_PX} mode="visible" staticOnly={_static}
+								ignoreHidden={_showHidden} root={gridWrapEl} title={it.alt} maxFps={PICKER_FPS} />
+						{:else}
+							<LottieSticker cp={it.cp} flag={it.flag} size={STICKER_PX} mode="visible" staticOnly={_static}
+								ignoreHidden={_showHidden} root={gridWrapEl} title={it.e} maxFps={PICKER_FPS} />
 						{/if}
 					</div>
 				{/each}
@@ -890,14 +965,24 @@
 			     visibility flips). -->
 			{@const totalHeight = flowingGeometry.length ? flowingGeometry[flowingGeometry.length - 1].pxEnd : 0}
 			{@const _cpr = Math.max(1, cellsPerRow)}
-			{@const _cellVisTop = scrollTop - CELL_PX * 2}
-			{@const _cellVisBot = scrollTop + (gridH + CELL_PX * 2) * _fillFrac}
+			<!-- Live band: a whole viewport of slack above and below, not the two
+			     rows it used to be. Two rows meant a cell unmounted the moment it
+			     passed the edge and its `.tg-cell` went EMPTY — no canvas, no
+			     thumb, nothing — so scrolling at any speed left a trail of holes
+			     where the animated emotes had been. A viewport either side is
+			     ~3× the mounted cells and they cost a canvas each, which the
+			     rasterized engines can afford (an off-screen cell isn't drawn
+			     and isn't rasterised — see renderCells' `visible` gate), and it
+			     buys a scroll that stays populated. -->
+			{@const _bandPad = Math.max(CELL_PX * 3, gridH || 600)}
+			{@const _cellVisTop = scrollTop - _bandPad}
+			{@const _cellVisBot = scrollTop + (gridH + _bandPad) * _fillFrac}
 			<div class="tg-grid tg-grid-flow" bind:this={gridEl} style:height="{totalHeight}px">
 				{#each flowingSections as section, sIdx (section.key)}
 					{@const geo = flowingGeometry[sIdx]}
 					{@const sectionVisible = geo
-						&& geo.pxEnd >= scrollTop - 100
-						&& geo.pxStart <= scrollTop + gridH + 100}
+						&& geo.pxEnd >= scrollTop - _bandPad
+						&& geo.pxStart <= scrollTop + gridH + _bandPad}
 					{#if sectionVisible}
 						<div class="tg-section" style:top="{geo.pxStart}px" style:height="{geo.pxEnd - geo.pxStart}px">
 							<div class="tg-section-label">{section.label}</div>
@@ -942,11 +1027,22 @@
 												{/if}
 											{:else if it.custom}
 												<LottieSticker short={it.short} id={it.id} size={STICKER_PX} mode="visible" staticOnly={_static}
-													ignoreHidden={_showHidden} root={gridWrapEl} title={it.alt} />
+													ignoreHidden={_showHidden} root={gridWrapEl} title={it.alt} maxFps={PICKER_FPS} />
 											{:else}
 												<LottieSticker cp={it.cp} flag={it.flag} size={STICKER_PX} mode="visible" staticOnly={_static}
-													ignoreHidden={_showHidden} root={gridWrapEl} title={it.e} />
+													ignoreHidden={_showHidden} root={gridWrapEl} title={it.e} maxFps={PICKER_FPS} />
 											{/if}
+										{:else}
+											<!-- Outside the live band: the emote's thumb, NOT nothing. An
+											     unmounted cell left an empty div, so any scroll that outran
+											     the band left holes where the animated emotes had been —
+											     and widening the band only moves where the holes start. A
+											     cell is now never blank, only ever still. `loading=lazy`
+											     means the browser never fetches the ones you don't reach. -->
+											<img class="tg-thumb-still"
+												src={it.upload ? it.url : it.custom ? tgcThumbUrl(it.short, it.id) : tgThumbUrl(it.cp)}
+												alt="" width={STICKER_PX} height={STICKER_PX}
+												loading="lazy" decoding="async" />
 										{/if}
 									</div>
 								{/each}
@@ -1089,6 +1185,9 @@
 	   skew the virtualization count; once the cell SIZE derived from it too, it
 	   became visible as 15 tiny columns instead of 9. Grid tracks can't go
 	   stale. */
+	/* Still thumb for cells outside the live band — same box as an animated
+	   cell so nothing shifts when one replaces the other. */
+	.tg-thumb-still { width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
 	.tg-grid { display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); gap: 0; }
 	/* Flow variant: explicit-height container, sections pinned at
 	   their precomputed pxStart. Container height is locked at
