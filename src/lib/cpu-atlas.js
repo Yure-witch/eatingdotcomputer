@@ -61,13 +61,14 @@ const MAX_ATLAS_PAGES = 10;
 // at emote sizes. Only picker/tab-sized cells are capped; anything larger is
 // rare enough not to pressure the budget and keeps its full resolution.
 const SLOT_PX_MAX = 42;
-// ≤96 so recents cells (34 CSS px = 68 at dpr 2) bake at the SAME resolution
-// as the picker grid — one shared 42px atlas for both surfaces. Full-res 68px
-// recents were tried and reverted twice: the slots are 2.6x the area, the
-// budget maths stops closing, and the crispness reads as marginal at 34 CSS
-// px anyway. One shared size also means a tab switch shares warm entries
-// instead of evicting across atlases.
-const baseSlotFor = (px) => (px > SLOT_PX_MAX && px <= 96 ? SLOT_PX_MAX : px);
+// ≤68, precisely: the cap exists for the two dense grids — the picker at
+// 56px cells and recents at 68 — both of which read fine from the shared
+// 42px atlas (1.3-1.6x under-render on cells 28-34 CSS px small). It briefly
+// reached ≤96 and that was too greedy: a 48 CSS px CHAT emote is a 96px cell,
+// and crushing it into a 42px slot is a 2.3x upscale you can see across the
+// room. Anything larger than 68 keeps native resolution; those cells are few
+// at a time, and the visible-only budget transfer absorbs their pages.
+const baseSlotFor = (px) => (px > SLOT_PX_MAX && px <= 68 ? SLOT_PX_MAX : px);
 const slotPxFor = (px, fast = false) => {
 	const s = baseSlotFor(px);
 	return fast ? Math.max(16, Math.round(s / FAST_DIV)) : s;
