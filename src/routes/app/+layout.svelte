@@ -28,6 +28,7 @@
 		loadTelegramEmoji, loadCustomPacks, getCachedTgEmoji, getCachedCustomPacks
 	} from '$lib/telegram-emoji-store.js';
 	import { prewarmEmojiData } from '$lib/emoji-data.js';
+	import { prewarmNotoEmoji } from '$lib/noto-emoji.js';
 	import { getCustomEmojiMap, getCachedCustomEmojiMap } from '$lib/custom-emoji-store.js';
 
 	let { data, children } = $props();
@@ -37,7 +38,7 @@
 	// paint. Browser-only: the module default (false) is never mutated on the
 	// server, so SSR can't leak the flag across users.
 	import { setTgHidden } from '$lib/tg-visibility.js';
-	import { emotesAwake } from '$lib/emote-idle.js';
+	import { emotesAwake, holdEmotes } from '$lib/emote-idle.js';
 	import { hardRefresh } from '$lib/hard-refresh.js';
 	if (browser) setTgHidden(data.currentUser?.hideTgEmoji);
 
@@ -833,10 +834,18 @@
 	// existing coarse-pointer idle switch — the components already know how to
 	// freeze on it, and any interaction wakes them again.)
 	let _emotesFrozen = false;
+	let _emotesHold = null;
 	function _freezeEmotes(on) {
 		if (on === _emotesFrozen) return;
 		_emotesFrozen = on;
-		emotesAwake.set(!on);
+		// holdEmotes(), NOT emotesAwake.set(): `emotesAwake` is a DERIVED store
+		// (idle timer AND hold count), so it has no `.set` — this threw
+		// "emotesAwake.set is not a function" on every swipe that reached here,
+		// which killed the rest of the gesture handler mid-gesture. The hold is
+		// also the correct primitive: it outranks the idle timer, which wakes on
+		// the very pointerdown we're freezing for.
+		if (on) _emotesHold ??= holdEmotes();
+		else { _emotesHold?.(); _emotesHold = null; }
 	}
 	// Tear the gesture's transient state down: inline transforms and the layer
 	// promotion both go. Both layers are back at 0 by the time this runs, so it's
@@ -1814,6 +1823,10 @@
 		// picker button never waits on the network — the difference between an
 		// instant open and a spinner on a slow phone.
 		prewarmEmojiData();
+		// Noto Color Emoji is a large face and the picker defaults to it. Pull
+		// it now so the first open isn't a download plus a swap-triggered
+		// relayout of a few hundred cells.
+		prewarmNotoEmoji();
 
 		// Restore a locally-cached member ordering ONLY if the server hasn't
 		// supplied one yet (first drag before it round-trips, or offline).

@@ -23,6 +23,7 @@
 	import { onMount, tick } from 'svelte';
 	import { initSemanticSearch, searchEmoji, isSemanticReady, onSemanticReady } from '$lib/emoji-semantic.js';
 	import PickerStickyBtn from './PickerStickyBtn.svelte';
+	import { loadNotoEmoji } from '$lib/noto-emoji.js';
 
 	let { onSelect, onClose = null } = $props();
 
@@ -479,17 +480,16 @@
 		}
 	});
 
-	// Sync Noto Color Emoji font: toggle the html class + inject Google Fonts link when needed
+	// Sync the Noto Color Emoji face. The link injection used to live here,
+	// which meant the first picker open paid for the CSS round-trip and a
+	// multi-megabyte font download — and then re-laid-out every cell when the
+	// face swapped in. $lib/noto-emoji.js owns it now and the app warms it on
+	// idle at boot; this call is the idempotent fallback for any surface that
+	// somehow gets there first.
 	$effect(() => {
 		if (typeof document === 'undefined') return;
 		document.documentElement.classList.toggle('noto-emoji', fontStyle === 'noto');
-		if (fontStyle !== 'noto') return;
-		if (document.querySelector('#noto-color-emoji-font')) return;
-		const link = document.createElement('link');
-		link.id   = 'noto-color-emoji-font';
-		link.rel  = 'stylesheet';
-		link.href = 'https://fonts.googleapis.com/css2?family=Noto+Color+Emoji&display=swap';
-		document.head.appendChild(link);
+		if (fontStyle === 'noto') loadNotoEmoji();
 	});
 
 	function setFont(style) {
