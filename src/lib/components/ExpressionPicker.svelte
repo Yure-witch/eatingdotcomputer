@@ -709,6 +709,9 @@
 		/* Shared bottom offset — these used to differ (6px vs 8px), so the two
 		   surfaces sat on different baselines. */
 		--expr-rail-bottom: 8px;
+		/* Shared side margin, so the rail and the delete key sit on matching
+		   edges instead of each picking its own. */
+		--expr-edge: 10px;
 		display: flex;
 		flex-direction: column;
 		width: 340px;
@@ -795,7 +798,7 @@
 		.expr-tabs {
 			gap: 0.2rem;
 			padding: 3px var(--expr-pad);
-			margin: 4px 0 var(--expr-rail-bottom) var(--nav-inset, 56px);
+			margin: 4px 0 var(--expr-rail-bottom) var(--expr-edge);
 			align-items: stretch;
 		}
 		/* --expr-tab-h is the single source for this height: the close button
@@ -815,7 +818,7 @@
 		bottom: var(--expr-rail-bottom);
 		/* Just outside the rail's right edge — the rail is inset --nav-inset,
 		   so this sits in that band, aligned with it rather than inside it. */
-		right: 6px;
+		right: var(--expr-edge);
 		z-index: 5;
 		width: var(--expr-slot-w);
 		height: var(--expr-rail-h);
@@ -873,7 +876,13 @@
 		   so it needs no extra margin carved out of the rail. */
 		height: var(--expr-rail-h);
 		box-sizing: border-box;
-		margin: 4px var(--nav-inset, 56px) var(--expr-rail-bottom);
+		/* Edge-anchored, NOT inset by --nav-inset. That 56px inset was right when
+		   the rail stretched the full width like the bottom nav. Once it became
+		   content-width the same inset just shoved a ~233px pill into the
+		   middle-right of the sheet — misaligned against the delete key at the
+		   opposite edge, and on a 320px screen wide enough to run underneath
+		   it. */
+		margin: 4px var(--expr-edge) var(--expr-rail-bottom);
 		padding: 3px var(--expr-pad);
 		border-radius: 999px;
 		background: var(--sidebar-bg, var(--md-sys-color-surface-container, var(--surface-2)));
