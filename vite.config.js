@@ -16,6 +16,14 @@ const { count, sha } = gitInfo();
 
 export default defineConfig({
 	plugins: [sveltekit()],
+	server: {
+		// Dev only. Vite rejects requests whose Host header it does not
+		// recognise, which blocks tunnelling the dev server to a phone for
+		// real-device testing (Safari's bottom address bar and mobile Chrome's
+		// toolbar cannot be emulated in a headless browser). Not used by the
+		// production build — `vite build` ignores `server`.
+		allowedHosts: ['.trycloudflare.com', '.ngrok-free.app', '.loca.lt']
+	},
 	define: {
 		__BUILD_NUMBER__: JSON.stringify(count),
 		__BUILD_SHA__: JSON.stringify(sha)

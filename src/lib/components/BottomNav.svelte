@@ -230,10 +230,17 @@
 	   indicator transform already derives from --nav-inset and --slot-count, so
 	   the sliding highlight tracks this with no extra maths. */
 	@media (max-width: 640px) {
-		.bottom-nav.five-up { --nav-inset: 16px; }
+		/* The +2px on --nav-pad-r was tuned against the 56px inset to stop the
+		   LAST slot's pill sitting closer to the edge than the first. At the
+		   wider five-slot geometry that compensation overshoots: it pushes the
+		   whole track right, which reads as the rightmost icon crowding its
+		   neighbour and the selected pill sitting off-centre. Symmetric padding
+		   is correct here — the indicator subtracts both pads by name, so it
+		   follows. */
+		.bottom-nav.five-up { --nav-inset: 16px; --nav-pad-r: var(--nav-pad); }
 	}
 	@media (max-width: 380px) {
-		.bottom-nav.five-up { --nav-inset: 8px; --nav-pad: 5px; }
+		.bottom-nav.five-up { --nav-inset: 8px; --nav-pad: 5px; --nav-pad-r: var(--nav-pad); }
 	}
 
 	@media (max-width: 640px) {
