@@ -125,7 +125,19 @@ const _isMobileUA = typeof navigator !== 'undefined'
 // Any mobile UA (even an 8 GB flagship, which reports deviceMemory: 8) OR a
 // genuinely low-RAM machine gets the small atlas. Mobile GPUs are the
 // constraint, not just RAM, so the UA check matters.
-const _lowMem = _isMobileUA || _deviceMem <= 4;
+//
+// This is only the OPENING GUESS, and it is wrong in the cases that hurt most:
+// deviceMemory is Chromium-only, so every WebKit device falls back to 8 and
+// leans entirely on the UA — while iPadOS Safari ships a macOS UA by default
+// and a Capacitor WKWebView can too. The devices least able to absorb a 268 MB
+// desktop atlas were therefore the ones most likely to be handed one.
+//
+// A worker cannot settle this itself: WorkerNavigator has no maxTouchPoints and
+// no matchMedia, and iPadOS reports `MacIntel` for platform just like a Mac. So
+// the main thread — which can see touch points and pointer coarseness — sends
+// the real answer in a `configure` message, posted at spawn ahead of any other
+// work. Everything derived from the tier stays mutable until then.
+let _lowMem = _isMobileUA || _deviceMem <= 4;
 
 // SUPERSAMPLE: render each frame at this multiple of the cell's device px,
 // then downscale on blit → crisper edges than native 1:1. Most expensive
@@ -148,7 +160,7 @@ function supersampleFor(px) {
 // Frame cap. Frames are sampled across the whole loop, so true 60fps needs
 // duration*60 frames; 120 gives a full 60fps for loops up to 2s. Mobile
 // targets ~40fps to keep its atlas small.
-const MAX_RASTER_FRAMES = _lowMem ? 40 : 120;
+let MAX_RASTER_FRAMES = _lowMem ? 40 : 120;
 
 // How many frames one loop bakes. Three ceilings, lowest wins:
 //   • the source's own frame count — never invent detail it doesn't have
@@ -173,8 +185,8 @@ const RASTER_COLS = 11;               // 11×11 grid holds up to 121 frames
 // ~24 visible cap at any dpr). Desktop/high-mem: 2048² × 16 ≈ 256 MB — enough
 // for the visible set at 1.5× supersample + 2× oversample slots (duplicate
 // emotes share one url@px entry, so this covers far more than 16 instances).
-const ATLAS_DIM = _lowMem ? 1024 : 2048;
-const MAX_ATLAS_PAGES = _lowMem ? 6 : 16;
+let ATLAS_DIM = _lowMem ? 1024 : 2048;
+let MAX_ATLAS_PAGES = _lowMem ? 6 : 16;
 
 // `slot` = rendered/stored pixel size = px * supersampleFor(px) (the cell displays
 // at px, so this is supersampled and downscaled on blit).
@@ -218,8 +230,35 @@ function getAtlas(px) {
 // that it is now the total across every size rather than a per-size limit, so
 // one live size behaves identically to before and only the accumulation is
 // capped.
-const MAX_TOTAL_PAGES = _lowMem ? 10 : 16;
+let MAX_TOTAL_PAGES = _lowMem ? 10 : 16;
 let _totalPages = 0;
+
+/**
+ * Adopt the device tier the main thread measured, and take this shard's share
+ * of the device-wide page budget.
+ *
+ * `MAX_TOTAL_PAGES` is module scope, and this module is instantiated once PER
+ * WORKER — the stage spawns up to 4 on a phone and 12 on a desktop. So the
+ * "40 MB ceiling" the comment above describes was really 40 MB × 4, and the
+ * desktop ceiling ~268 MB × 12. The budget reads device-wide; nothing made it
+ * so. `pageBudget` is the caller's already-divided share.
+ *
+ * Ignored once any atlas exists: the pages are sized by ATLAS_DIM at creation,
+ * so changing it underneath live pages would mix geometries. The stage posts
+ * this before any render work, so in practice it always lands first.
+ */
+function applyDeviceTier({ lowMem, pageBudget } = {}) {
+	if (_atlasByPx.size || _totalPages) return false;
+	if (typeof lowMem === 'boolean') {
+		_lowMem = lowMem;
+		MAX_RASTER_FRAMES = _lowMem ? 40 : 120;
+		ATLAS_DIM = _lowMem ? 1024 : 2048;
+		MAX_ATLAS_PAGES = _lowMem ? 6 : 16;
+		MAX_TOTAL_PAGES = _lowMem ? 10 : 16;
+	}
+	if (pageBudget > 0) MAX_TOTAL_PAGES = Math.max(2, Math.floor(pageBudget));
+	return true;
+}
 
 function addAtlasPage(a) {
 	if (a.pages.length >= MAX_ATLAS_PAGES) return false;
@@ -1189,6 +1228,12 @@ function renderFrame(msg) {
 self.onmessage = async (e) => {
 	const msg = e.data;
 	switch (msg.type) {
+		case 'configure': {
+			// Device tier + this shard's page budget, measured on the main
+			// thread where touch points and pointer media queries exist.
+			applyDeviceTier(msg);
+			break;
+		}
 		case 'init': {
 			_canvas = msg.canvas;
 			_fastHandoff = !!msg.fastHandoff;

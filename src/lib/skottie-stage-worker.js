@@ -49,6 +49,27 @@ const NUM_WORKERS = _FINE_POINTER
 	? Math.min(12, Math.max(4, _CORES - 2))
 	: Math.min(4, Math.max(2, _CORES));
 
+// The device tier, measured here rather than in the worker.
+//
+// skottie-worker.js has to guess from the UA, which gets iPadOS Safari and any
+// Capacitor WKWebView wrong — both present as macOS — and deviceMemory does not
+// exist on WebKit at all. Touch points and pointer coarseness are visible from
+// the main thread and are what the UA was standing in for, so decide it here
+// and tell each shard.
+const _LOW_MEM = (() => {
+	if (typeof navigator === 'undefined') return false;
+	if (navigator.deviceMemory && navigator.deviceMemory <= 4) return true;
+	if ((navigator.maxTouchPoints || 0) > 1) return true;
+	try { return !window.matchMedia('(pointer: fine)').matches; } catch { return false; }
+})();
+
+// Atlas pages are budgeted per worker, but the memory pressure is per DEVICE:
+// every shard is a separate module instance with its own MAX_TOTAL_PAGES, so
+// an unshared budget multiplies by NUM_WORKERS — 4× on a phone, 12× on a
+// desktop. Divide the device ceiling across the shards that will hold it.
+const _DEVICE_PAGE_BUDGET = _LOW_MEM ? 10 : 16;
+const _SHARD_PAGE_BUDGET = Math.max(2, Math.floor(_DEVICE_PAGE_BUDGET / NUM_WORKERS));
+
 // ── Scroll throttle (identical to skottie-stage.js) ──────────────────────
 let _isScrolling = false;
 let _scrollResetTimer = null;
@@ -350,6 +371,14 @@ export function ensureStage() {
 				{ type: 'module' }
 			);
 			sh.worker.addEventListener('message', (e) => onShardMessage(i, e));
+			// Ahead of 'init' and any render work: messages are delivered in
+			// order, so the shard adopts the real tier before it can allocate
+			// an atlas at the wrong geometry.
+			sh.worker.postMessage({
+				type: 'configure',
+				lowMem: _LOW_MEM,
+				pageBudget: _SHARD_PAGE_BUDGET
+			});
 				// fastHandoff: desktop settles animations in a couple of paints —
 				// shorten the placeholder hold so first render feels instant
 				// (mobile keeps the full hold-then-cross-fade contract).
