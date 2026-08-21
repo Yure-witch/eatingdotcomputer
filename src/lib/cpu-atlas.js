@@ -429,9 +429,12 @@ function pumpRaster() {
 		_rasterPending.delete(key);
 		_frameJobs.add(key);
 		_rasterLanes++;
-		const _j0 = performance.now();
+		// NOT wall time. Timing the whole doRasterize includes the await on the
+		// rlottie worker, which is idle waiting — that is how this reported 222%
+		// of wall time while the main thread showed zero long tasks. Count jobs
+		// here; the main-thread cost is already captured by pack and readback.
 		doRasterize(job.url, job.px, key, job.maxFps || 0)
-			.then(() => { _prof.raster += performance.now() - _j0; _prof.rasterN++; })
+			.then(() => { _prof.rasterN++; })
 			.catch((e) => { console.warn('[cpu-atlas] rasterise failed', e); })
 			.finally(() => {
 				_frameJobs.delete(key);
@@ -563,7 +566,13 @@ async function doRasterize(url, px, key, maxFps = 0) {
 	}
 	// Persist BEFORE releasing the rlottie bitmaps — they are the pixels we
 	// need to capture, and `release` frees them.
-	if (frameCacheAvailable() && N >= 2 && !_encodeBusy) {
+	// Persist only when there is nothing waiting to be rasterised, and only in
+	// idle time. This readback is a synchronous getImageData on the main thread
+	// and measured at 14% of wall time during a scroll — pure cache-population
+	// competing with the frames the user is looking at. Nothing needs it now;
+	// it only has to happen before the NEXT session.
+	const _quiet = _rasterPending.size === 0 && _rasterLanes <= 1;
+	if (frameCacheAvailable() && N >= 2 && !_encodeBusy && _quiet) {
 		try {
 			// Pack the frames into a scratch grid at SLOT size (not source
 			// size): that is the geometry the atlas blits at, so a later

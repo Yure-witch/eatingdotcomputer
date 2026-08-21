@@ -58,10 +58,14 @@
 			ltMs = 0; ltN = 0;
 
 			live = p
-				? `${fps.toFixed(0)}fps · block ${lt.ms.toFixed(0)}ms · rast ${p.raster.toFixed(0)} · pack ${p.pack.toFixed(0)} · read ${p.readback.toFixed(0)}`
+				? `${fps.toFixed(0)}fps · block ${lt.ms.toFixed(0)}ms · baked ${p.rasterN} · pack ${p.pack.toFixed(0)} · read ${p.readback.toFixed(0)}`
 				: `${fps.toFixed(0)}fps · block ${lt.ms.toFixed(0)}ms · cpu-atlas idle (wrong engine?)`;
 
-			if (recording > 0 && p) {
+			if (recording > 0) {
+				// Tick down even if cpu-atlas gave us nothing — otherwise a
+				// missing profile leaves the countdown stuck on 8 forever and
+				// the button looks dead.
+				if (!p) { recording--; if (recording === 0) finish(); return; }
 				acc.secs++; acc.fps += fps;
 				acc.lt += lt.ms; acc.ltN += lt.n; acc.worst = Math.max(acc.worst, lt.worst);
 				acc.render += p.render; acc.raster += p.raster; acc.pack += p.pack; acc.readback += p.readback;
@@ -78,7 +82,7 @@
 			report = [
 				`${a.secs}s sample · avg ${(a.fps / s).toFixed(1)} fps`,
 				`blocked   ${ms(a.lt)}  ${pct(a.lt)}  (${a.ltN} long tasks, worst ${a.worst.toFixed(0)}ms)`,
-				`rasterise ${ms(a.raster)}  ${pct(a.raster)}  (${a.rasterN} emotes, ${a.pending} queued)`,
+				`rasterise ${a.rasterN} emotes baked, ${a.pending} queued  (off-thread — no main-thread cost)`,
 				`packing   ${ms(a.pack)}  ${pct(a.pack)}`,
 				`READBACK  ${ms(a.readback)}  ${pct(a.readback)}  <- disk cache, blocks`,
 				`rendering ${ms(a.render)}  ${pct(a.render)}`,
@@ -96,7 +100,8 @@
 		acc = { secs: 0, fps: 0, lt: 0, ltN: 0, worst: 0, render: 0, raster: 0, pack: 0, readback: 0, rasterN: 0, pending: 0 };
 		report = '';
 		recording = 8;
-		note = 'scroll now — 8s';
+		note = '● RECORDING — scroll now';
+		live = '● recording…';
 	}
 
 	async function copy(e) {
@@ -114,6 +119,22 @@
 		setTimeout(() => { note = ''; }, 3000);
 	}
 
+	// The A/B is only valid from equal starting states. A warm-ON run bakes the
+	// library to disk, so a warm-OFF run straight after reads from the cache the
+	// first run just built and looks fast for the wrong reason. Wipe between
+	// runs so both start cold.
+	async function wipeCache(e) {
+		swallow(e);
+		note = 'wiping…';
+		try {
+			await new Promise((res) => {
+				const r = indexedDB.deleteDatabase('emote-frame-cache');   // DB_NAME in frame-cache.js
+				r.onsuccess = r.onerror = r.onblocked = () => res();
+			});
+		} catch {}
+		location.reload();
+	}
+
 	function toggleWarm(e) {
 		swallow(e);
 		try {
@@ -124,13 +145,13 @@
 	}
 </script>
 
-<!-- Every pointer event is swallowed: the picker closes on outside taps and on
-     wheel/touchmove, so an un-guarded overlay dismisses the surface it exists
-     to measure. -->
-<div class="ep"
-	onclickcapture={swallow} onpointerdowncapture={swallow}
-	ontouchstartcapture={swallow} ontouchmovecapture={swallow} onwheelcapture={swallow}
-	role="group" aria-label="emote profiler">
+<!-- The bar is click-through: `pointer-events: none` on the container, `auto`
+     on just the controls. Swallowing touchmove here was blocking the scroll of
+     the grid underneath — the profiler was stopping the very gesture it exists
+     to measure. Now touches pass straight through the bar to the picker, and
+     only the buttons take input. Each button handler still stops propagation
+     on its own event so tapping one cannot dismiss the picker. -->
+<div class="ep" role="group" aria-label="emote profiler">
 
 	<div class="ep-live">{live}</div>
 
@@ -140,6 +161,7 @@
 		</button>
 		<button onclick={copy}>Copy</button>
 		<button class:ep-warn={warmOff} onclick={toggleWarm}>{warmOff ? 'warm OFF' : 'warm on'}</button>
+		<button onclick={wipeCache}>wipe cache</button>
 		{#if note}<span class="ep-note">{note}</span>{/if}
 	</div>
 
@@ -148,21 +170,39 @@
 
 <style>
 	.ep {
-		position: fixed; left: 4px; right: 4px; bottom: 4px; z-index: 2147483000;
-		background: rgba(0, 0, 0, 0.88); color: #0f0;
-		font: 10px/1.4 ui-monospace, monospace;
-		border-radius: 10px; padding: 5px 7px;
-		display: flex; flex-direction: column; gap: 4px;
+		/* TOP, not bottom: the picker's rail and the app nav both live at the
+		   bottom, and a bar there covers the controls you need. */
+		position: fixed; left: 4px; right: 4px; z-index: 2147483000;
+		top: calc(env(safe-area-inset-top, 0px) + 4px);
+		/* Click-through. Anything that overlaps the grid must not intercept the
+		   scroll — see the comment on the markup. */
+		pointer-events: none;
+		color: #0f0;
+		font: 10px/1.35 ui-monospace, monospace;
+		display: flex; flex-direction: column; gap: 3px;
+		align-items: flex-start;
 	}
-	.ep-live { white-space: nowrap; overflow-x: auto; }
+	/* Only the readout gets a backdrop, and only as wide as its text, so it
+	   shades as little of the grid as possible. */
+	.ep-live, .ep pre {
+		background: rgba(0, 0, 0, 0.82);
+		border-radius: 7px; padding: 3px 6px;
+	}
+	.ep-live { white-space: nowrap; max-width: 100%; overflow-x: auto; }
 	.ep-btns { display: flex; gap: 5px; align-items: center; flex-wrap: wrap; }
 	.ep-btns button {
 		font: 600 11px system-ui; padding: 7px 11px; border-radius: 7px;
 		border: 1px solid #444; background: #1b1b1b; color: #eee;
 		/* Big enough to hit while scrolling with a thumb. */
 		min-height: 32px;
+		pointer-events: auto;   /* the only things that take input */
 	}
-	.ep-rec.ep-on { background: #7f1d1d; border-color: #b91c1c; color: #fff; }
+	.ep pre { pointer-events: auto; }   /* selectable, for the manual-copy path */
+	.ep-rec.ep-on {
+		background: #dc2626; border-color: #fca5a5; color: #fff;
+		animation: ep-pulse 1s steps(2) infinite;
+	}
+	@keyframes ep-pulse { 50% { opacity: 0.55; } }
 	.ep-btns button.ep-warn { background: #7c2d12; border-color: #ea580c; color: #fff; }
 	.ep-note { color: #0f0; }
 	.ep pre {
