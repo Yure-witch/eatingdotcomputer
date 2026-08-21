@@ -88,7 +88,6 @@ let _nextId = 1;
 const _frameCache = new Map();     // url@px -> { atlas, slots:[{page,x,y}], N, duration }
 const _frameJobs = new Set();      // url@px currently rasterising
 const _rasterPending = new Map();  // url@px -> { url, px } (visible-first queue)
-let _rasterBusy = false;
 const _atlasByPx = new Map();      // px -> atlas
 let _running = false;
 // Bumped by every reclaim. A bake that started before the current epoch is
@@ -341,25 +340,48 @@ function visibleKeys() {
 	for (const c of _cells.values()) if (c.visible) set.add(c.url + '@' + c.w);
 	return set;
 }
-async function pumpRaster() {
-	if (_rasterBusy) return;
-	_rasterBusy = true;
-	try {
-		while (_rasterPending.size) {
-			const vis = visibleKeys();
-			for (const key of [..._rasterPending.keys()]) {
-				if (!vis.has(key)) _rasterPending.delete(key); // scrolled off → abandon
-			}
-			if (!_rasterPending.size) break;
-			const [key, job] = _rasterPending.entries().next().value;
-			_rasterPending.delete(key);
-			_frameJobs.add(key);
-			try { await doRasterize(job.url, job.px, key, job.maxFps || 0); }
-			catch (e) { console.warn('[cpu-atlas] rasterise failed', e); }
-			_frameJobs.delete(key);
+// How many emotes may be rasterising at once.
+//
+// This used to be one — a single `await` in a loop — while rlottie runs a pool
+// of ~10 workers and lottie-spritesheet already allows 4-8 concurrent jobs. So
+// the atlas fed a ten-lane pool through a one-lane funnel, and a full grid
+// filled in at whatever a single worker could manage.
+//
+// Measured on a throttled phone profile, 90 cells given a 3s window: 36, 47,
+// 53, 55 built. Never memory — the budget sat at 9 of 12 pages with three to
+// spare. It was still rasterising when time ran out, and the cells that had
+// not got there yet were the ones sitting frozen on their thumbs.
+//
+// Capped rather than unbounded because each completion also does main-thread
+// work (packing N frames into atlas slots); the pool's own limiter queues
+// anything past its width, so more lanes than this buys nothing.
+const RASTER_LANES = (() => {
+	const hw = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 4;
+	return Math.max(2, Math.min(4, Math.ceil(hw / 2)));
+})();
+let _rasterLanes = 0;
+
+function pumpRaster() {
+	while (_rasterLanes < RASTER_LANES && _rasterPending.size) {
+		// Re-check visibility on every pick, not once per batch: a fling can
+		// retire a whole screenful between one lane starting and the next.
+		const vis = visibleKeys();
+		for (const key of [..._rasterPending.keys()]) {
+			if (!vis.has(key)) _rasterPending.delete(key);   // scrolled off → abandon
 		}
-	} finally {
-		_rasterBusy = false;
+		if (!_rasterPending.size) return;
+
+		const [key, job] = _rasterPending.entries().next().value;
+		_rasterPending.delete(key);
+		_frameJobs.add(key);
+		_rasterLanes++;
+		doRasterize(job.url, job.px, key, job.maxFps || 0)
+			.catch((e) => { console.warn('[cpu-atlas] rasterise failed', e); })
+			.finally(() => {
+				_frameJobs.delete(key);
+				_rasterLanes--;
+				pumpRaster();          // free lane — pull the next one in
+			});
 	}
 }
 // One encode in flight at a time. During a first-open storm the render loop is
