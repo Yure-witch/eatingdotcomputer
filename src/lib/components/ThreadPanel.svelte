@@ -82,6 +82,7 @@
 	import MessageAttachment from './MessageAttachment.svelte';
 	import ExpressionPicker from './ExpressionPicker.svelte';
 	import MediaPicker from './MediaPicker.svelte';
+	import ReactionEmote from './ReactionEmote.svelte';
 	import Avatar from './Avatar.svelte';
 	import ProfileHover from './ProfileHover.svelte';
 	import { decodeReactionKey } from '$lib/reaction-key.js';
@@ -483,10 +484,10 @@
 				onclick={() => toggleReaction(msgId, emoji)}
 				onmouseenter={positionReactionTooltip}
 				onfocus={positionReactionTooltip}>
-				<span class="thread-rx-emoji">{@html contentHtml(emoji)}</span>
+				<span class="thread-rx-emoji"><ReactionEmote token={emoji} size={18} /></span>
 				<span class="thread-rx-count">{Object.keys(users).length}</span>
 				<div class="reaction-tooltip">
-					<span class="reaction-tooltip-emoji">{@html contentHtml(emoji)}</span>
+					<span class="reaction-tooltip-emoji"><ReactionEmote token={emoji} size={22} /></span>
 					<div class="reaction-tooltip-text">
 						<span class="reaction-tooltip-names">{Object.keys(users).map((uid) => userMap[uid]?.name ?? 'Someone').join(', ')}</span>
 						<span class="reaction-tooltip-label">reacted</span>
