@@ -805,20 +805,17 @@
 		/* Gap between icon slots. The indicator steps by slot + gap, so this
 		   has to be ONE number both consumers read — see .expr-indicator. */
 		--expr-gap: 1px;
-		/* SAME inset as the top and bottom, so the selected circle is concentric
-		   with the rail's own cap — the relationship the home bottom nav has
-		   (60px bar, 52px pill, a 4px gap all round, curves running parallel;
-		   see .nav-indicator in BottomNav.svelte).
-		   The rail is 56px tall with a 28px cap radius; 3px padding + the 1px
-		   border puts the 48px circle's centre exactly 28px in from the end, so
-		   its 24px radius sits concentric inside that 28px cap with an even 4px
-		   ring — top, bottom AND ends.
-		   This was 18px, on the theory that an icon flush to a rounded end
-		   "sits in the curve and reads as falling out of the container". True of
-		   a bare glyph; not true of a circle that nests inside the cap. All 18px
-		   bought was a wide dead margin the selected state never reached, which
-		   is what made it look like it was floating rather than hugging. */
-		--expr-pad: 3px;
+		/* End padding for the rail. The circle's hug is VERTICAL — 48px circle in
+		   a 56px pill, the home nav's 4px-ring relationship — and that comes from
+		   heights, not from this. This is about the END slots: an UN-highlighted
+		   glyph near a fully-rounded cap has no circle nesting it, so with 3px of
+		   end padding the kitchen icon sat visually inside the cap's curve and
+		   read as cut off (the original 18px comment was right about exactly
+		   this; 3px was an overcorrection for the circle's sake). 12px clears the
+		   curve — glyph edge lands 23.5px from the pill's end, where the cap is
+		   already ~27px tall — while the selected circle stays concentric on its
+		   slot wherever it is. */
+		--expr-pad: 12px;
 		/* Shared bottom offset — these used to differ (6px vs 8px), so the two
 		   surfaces sat on different baselines. */
 		--expr-rail-bottom: 8px;
