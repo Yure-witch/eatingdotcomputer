@@ -2,12 +2,12 @@
 	import { onMount } from 'svelte';
 
 	const CSSPX = 50;      // display size
-	const FRAMES = 24;     // frames in the loop
-	const FPS = 24;        // content rate
+	const FPS_RATE = 24;   // content rate
+	const MAX_FRAMES = 48; // per emote — bounds the atlas under max texture size
 	const N = 30;          // emotes on screen
 
 	let lines = $state([]);
-	let running = $state('');
+	let status = $state('starting…');
 	let done = $state(false);
 	let header = $state('');
 	let copied = $state('');
@@ -35,8 +35,10 @@
 	}
 
 	onMount(async () => {
-		const DPR = Math.min(window.devicePixelRatio || 1, 3);
-		const PX = Math.round(CSSPX * DPR);
+		const DPR = window.devicePixelRatio || 1;
+		// Cap the bake: 30 emotes x 48 frames must fit one texture, and phones
+		// commonly stop at 4096. 72px keeps the atlas at 3456x2160.
+		const PX = Math.min(Math.round(CSSPX * DPR), 72);
 
 		// Measure the display's real refresh rate — the frame budget depends on it.
 		const refresh = await new Promise((res) => {
@@ -45,25 +47,67 @@
 			requestAnimationFrame(t);
 		});
 		const budget = 1000 / refresh;
-		header = `${N} cells · ${CSSPX}px @ dpr ${DPR} (${PX}px) · ${FRAMES}f @ ${FPS}fps · ${refresh.toFixed(0)}Hz → ${budget.toFixed(1)}ms budget`;
+		// header is set below, once the real emotes are baked and FRAMES is known.
 
-		// ── Source: ONE horizontal sprite strip, shared by every variant ──
-		const strip = document.createElement('canvas');
-		strip.width = PX * FRAMES; strip.height = PX;
-		{
-			const c = strip.getContext('2d');
-			for (let i = 0; i < FRAMES; i++) {
-				const x = i * PX, a = (i / FRAMES) * Math.PI * 2;
-				c.fillStyle = `hsl(${(i * 360) / FRAMES},75%,55%)`;
-				c.fillRect(x, 0, PX, PX);
-				c.fillStyle = '#fff';
-				c.beginPath();
-				c.arc(x + PX / 2 + Math.cos(a) * PX * 0.25, PX / 2 + Math.sin(a) * PX * 0.25, PX * 0.16, 0, 7);
-				c.fill();
+		// ── Bake REAL Telegram emotes through the app's own rlottie pipeline ──
+		// Synthetic shapes flatter every approach equally: flat fills, uniform
+		// alpha, no antialiased edges. Real emotes have soft edges and partial
+		// alpha everywhere, which is what actually costs during a blit.
+		status = 'loading emote manifest…';
+		let cells = [], FRAMES = 0;
+		try {
+			const TG = await import('$lib/telegram-emoji-store.js');
+			const LS = await import('$lib/lottie-spritesheet.js');
+			const man = await TG.loadTelegramEmoji();
+			const cps = (man?.emoji || []).filter((e) => !e.flag).slice(0, N).map((e) => e.cp);
+			if (!cps.length) throw new Error('no emoji in manifest');
+			const srcPx = LS.rasterSizeFor(PX);
+			for (let i = 0; i < cps.length; i++) {
+				status = `rasterising real emotes… ${i + 1}/${cps.length}`;
+				const url = TG.tgAnimatedUrl(cps[i]);
+				try {
+					const data = await TG.fetchLottie(url);
+					if (!data) continue;
+					const entry = await LS.acquire(url, data, srcPx, FPS_RATE);
+					if (entry.pending) await entry.pending;
+					const fr = (entry.frames || []).slice(0, MAX_FRAMES);
+					if (fr.length >= 2) cells.push({ url, srcPx, frames: fr, n: fr.length });
+					else LS.release(url, srcPx);
+				} catch { /* skip */ }
 			}
+			if (!cells.length) throw new Error('nothing rasterised');
+			FRAMES = Math.max(...cells.map((b) => b.n));
+		} catch (e) {
+			say('could not load real emotes: ' + e.message);
+			say('(needs to be online — it pulls the R2 emote manifest)');
+			done = true; status = ''; return;
 		}
-		const stripBmp = await createImageBitmap(strip);
-		const stripURL = strip.toDataURL();
+
+		// One atlas: a row per emote, a column per frame. Every variant samples
+		// from this, so the only thing that differs is how pixels reach the screen.
+		status = 'packing atlas…';
+		const atlas = document.createElement('canvas');
+		atlas.width = FRAMES * PX;
+		atlas.height = cells.length * PX;
+		{
+			const c = atlas.getContext('2d');
+			for (let r = 0; r < cells.length; r++)
+				for (let fi = 0; fi < FRAMES; fi++) {
+					const bm = cells[r].frames[Math.min(fi, cells[r].n - 1)];
+					if (bm) { try { c.drawImage(bm, 0, 0, bm.width, bm.height, fi * PX, r * PX, PX, PX); } catch {} }
+				}
+			const LS = await import('$lib/lottie-spritesheet.js');
+			for (const b of cells) { try { LS.release(b.url, b.srcPx); } catch {} }
+		}
+		const stripBmp = await createImageBitmap(atlas);
+		// Blob URL, not base64: this atlas is millions of pixels and a data URL
+		// would be tens of MB of string for the CSS variants to parse.
+		const stripURL = await new Promise((res) => atlas.toBlob((b) => res(URL.createObjectURL(b)), 'image/png'));
+		const strip = atlas;
+		const ROWS_OF = cells.length;
+		const sx = (f) => (((f % FRAMES) + FRAMES) % FRAMES) * PX;
+		const sy = (i) => (i % ROWS_OF) * PX;
+		header = `${N} cells · ${CSSPX}px @ dpr ${DPR} (baked ${PX}px) · ${ROWS_OF} REAL emotes × ${FRAMES}f @ ${FPS_RATE}fps · ${refresh.toFixed(0)}Hz → ${budget.toFixed(1)}ms budget`;
 
 		const host = document.getElementById('host');
 		const grid = (cols) => `display:grid;grid-template-columns:repeat(${cols},${CSSPX}px);gap:2px`;
@@ -82,7 +126,7 @@
 				c.width = PX; c.height = PX; c.style.cssText = `width:${CSSPX}px;height:${CSSPX}px`;
 				host.appendChild(c); ctxs.push(c.getContext('2d'));
 			}
-			return { draw: (f) => { for (let i = 0; i < N; i++) ctxs[i].drawImage(strip, ((f + i) % FRAMES) * PX, 0, PX, PX, 0, 0, PX, PX); } };
+			return { draw: (f) => { for (let i = 0; i < N; i++) ctxs[i].drawImage(strip, sx(f + i), sy(i), PX, PX, 0, 0, PX, PX); } };
 		});
 
 		V('2 one canvas, 2D', 'js', () => {
@@ -91,7 +135,7 @@
 			c.width = COLS * PX; c.height = ROWS * PX;
 			c.style.cssText = `width:${COLS * CSSPX}px;height:${ROWS * CSSPX}px`;
 			host.appendChild(c); const g = c.getContext('2d');
-			return { draw: (f) => { for (let i = 0; i < N; i++) g.drawImage(strip, ((f + i) % FRAMES) * PX, 0, PX, PX, (i % COLS) * PX, ((i / COLS) | 0) * PX, PX, PX); } };
+			return { draw: (f) => { for (let i = 0; i < N; i++) g.drawImage(strip, sx(f + i), sy(i), PX, PX, (i % COLS) * PX, ((i / COLS) | 0) * PX, PX, PX); } };
 		});
 
 		V('3 row canvases, 2D', 'js', () => {
@@ -103,7 +147,7 @@
 				c.style.cssText = `width:${COLS * CSSPX}px;height:${CSSPX}px`;
 				host.appendChild(c); gs.push(c.getContext('2d'));
 			}
-			return { draw: (f) => { for (let i = 0; i < N; i++) gs[(i / COLS) | 0].drawImage(strip, ((f + i) % FRAMES) * PX, 0, PX, PX, (i % COLS) * PX, 0, PX, PX); } };
+			return { draw: (f) => { for (let i = 0; i < N; i++) gs[(i / COLS) | 0].drawImage(strip, sx(f + i), sy(i), PX, PX, (i % COLS) * PX, 0, PX, PX); } };
 		});
 
 		V('4 one canvas, dirty-rect', 'js', () => {
@@ -119,7 +163,7 @@
 					const fi = (f + i) % FRAMES;
 					if (last[i] === fi) continue;
 					last[i] = fi;
-					g.drawImage(strip, fi * PX, 0, PX, PX, (i % COLS) * PX, ((i / COLS) | 0) * PX, PX, PX);
+					g.drawImage(strip, sx(fi), sy(i), PX, PX, (i % COLS) * PX, ((i / COLS) | 0) * PX, PX, PX);
 				}
 			} };
 		});
@@ -159,8 +203,9 @@
 			gl.viewport(0, 0, c.width, c.height);
 			return { draw: (f) => {
 				for (let i = 0; i < N; i++) {
-					const fi = (f + i) % FRAMES, u0 = fi / FRAMES, u1 = u0 + 1 / FRAMES;
-					uv.set([u0, 0, u1, 0, u0, 1, u0, 1, u1, 0, u1, 1], i * 12);
+					const u0 = sx(f + i) / atlas.width, u1 = u0 + PX / atlas.width;
+					const v0 = sy(i) / atlas.height, v1 = v0 + PX / atlas.height;
+					uv.set([u0, v0, u1, v0, u0, v1, u0, v1, u1, v0, u1, v1], i * 12);
 				}
 				gl.bindBuffer(gl.ARRAY_BUFFER, ub);
 				gl.bufferSubData(gl.ARRAY_BUFFER, 0, uv);
@@ -172,13 +217,13 @@
 			// The compositor animates it. JS does nothing per frame at all.
 			host.style.cssText = grid(COLS);
 			const st = document.createElement('style');
-			st.textContent = `@keyframes rp-play{from{background-position:0 0}to{background-position:-${FRAMES * CSSPX}px 0}}`;
+			st.textContent = `@keyframes rp-play{from{background-position-x:0}to{background-position-x:-${FRAMES * CSSPX}px 0}}`;
 			host.appendChild(st);
 			for (let i = 0; i < N; i++) {
 				const d = document.createElement('div');
 				d.style.cssText = `width:${CSSPX}px;height:${CSSPX}px;` +
-					`background-image:url(${stripURL});background-size:${FRAMES * CSSPX}px ${CSSPX}px;` +
-					`animation:rp-play ${FRAMES / FPS}s steps(${FRAMES}) infinite;animation-delay:-${(i * 0.037).toFixed(3)}s`;
+					`background-image:url(${stripURL});background-size:${FRAMES * CSSPX}px ${ROWS_OF * CSSPX}px;background-position-y:-${(i % ROWS_OF) * CSSPX}px;` +
+					`animation:rp-play ${FRAMES / FPS_RATE}s steps(${FRAMES}) infinite;animation-delay:-${(i * 0.037).toFixed(3)}s`;
 				host.appendChild(d);
 			}
 			return { css: true };
@@ -190,7 +235,7 @@
 			for (let i = 0; i < N; i++) {
 				const d = document.createElement('div');
 				d.style.cssText = `width:${CSSPX}px;height:${CSSPX}px;` +
-					`background-image:url(${stripURL});background-size:${FRAMES * CSSPX}px ${CSSPX}px`;
+					`background-image:url(${stripURL});background-size:${FRAMES * CSSPX}px ${ROWS_OF * CSSPX}px;background-position-y:-${(i % ROWS_OF) * CSSPX}px`;
 				host.appendChild(d); els.push(d);
 			}
 			return { draw: (f) => { for (let i = 0; i < N; i++) els[i].style.backgroundPositionX = `-${((f + i) % FRAMES) * CSSPX}px`; } };
@@ -215,7 +260,7 @@
 			return { draw: (f) => {
 				for (let i = 0; i < N; i++) {
 					if (!ctxs[i] || !ogs[i]) continue;
-					ogs[i].drawImage(strip, ((f + i) % FRAMES) * PX, 0, PX, PX, 0, 0, PX, PX);
+					ogs[i].drawImage(strip, sx(f + i), sy(i), PX, PX, 0, 0, PX, PX);
 					try { ctxs[i].transferFromImageBitmap(offs[i].transferToImageBitmap()); } catch {}
 				}
 			} };
@@ -239,7 +284,7 @@
 					const {N,COLS,PX,FRAMES,FPS}=cfg;
 					if(!self.__t0) self.__t0=performance.now();
 					const idx=Math.floor(((performance.now()-self.__t0)/1000)*FPS);
-					for(let i=0;i<N;i++) g.drawImage(strip,((idx+i)%FRAMES)*PX,0,PX,PX,(i%COLS)*PX,((i/COLS)|0)*PX,PX,PX);
+					for(let i=0;i<N;i++) g.drawImage(strip,((idx+i)%FRAMES)*PX,(i%cfg.ROWS_OF)*PX,PX,PX,(i%COLS)*PX,((i/COLS)|0)*PX,PX,PX);
 					f++;
 					self.postMessage({t:'f',f,ms:performance.now()-self.__t0});
 					raf=requestAnimationFrame(tick);
@@ -250,7 +295,7 @@
 			let wf = 0, wms = 0;
 			w.onmessage = (e) => { if (e.data?.t === 'f') { wf = e.data.f; wms = e.data.ms; } };
 			return {
-				start() { w.postMessage({ t: 'init', canvas: off, strip: stripBmp, N, COLS, PX, FRAMES, FPS }, [off]); },
+				start() { w.postMessage({ t: 'init', canvas: off, strip: stripBmp, N, COLS, PX, FRAMES, FPS: FPS_RATE, ROWS_OF }, [off]); },
 				stop() { try { w.terminate(); } catch {} URL.revokeObjectURL(url); },
 				// The main thread does nothing here, so its rAF would look
 				// perfect regardless. What matters is whether the WORKER keeps
@@ -262,14 +307,14 @@
 		V('10 CSS steps + will-change', 'css', () => {
 			host.style.cssText = grid(COLS);
 			const st = document.createElement('style');
-			st.textContent = `@keyframes rp-play2{from{background-position:0 0}to{background-position:-${FRAMES * CSSPX}px 0}}`;
+			st.textContent = `@keyframes rp-play2{from{background-position-x:0}to{background-position-x:-${FRAMES * CSSPX}px 0}}`;
 			host.appendChild(st);
 			for (let i = 0; i < N; i++) {
 				const d = document.createElement('div');
 				d.style.cssText = `width:${CSSPX}px;height:${CSSPX}px;will-change:background-position;` +
 					`transform:translateZ(0);` +
-					`background-image:url(${stripURL});background-size:${FRAMES * CSSPX}px ${CSSPX}px;` +
-					`animation:rp-play2 ${FRAMES / FPS}s steps(${FRAMES}) infinite;animation-delay:-${(i * 0.037).toFixed(3)}s`;
+					`background-image:url(${stripURL});background-size:${FRAMES * CSSPX}px ${ROWS_OF * CSSPX}px;background-position-y:-${(i % ROWS_OF) * CSSPX}px;` +
+					`animation:rp-play2 ${FRAMES / FPS_RATE}s steps(${FRAMES}) infinite;animation-delay:-${(i * 0.037).toFixed(3)}s`;
 				host.appendChild(d);
 			}
 			return { css: true };
@@ -281,7 +326,7 @@
 
 		const run = (v) => new Promise(async (resolve) => {
 			host.innerHTML = ''; host.style.cssText = '';
-			running = v.label;
+			status = v.label;
 			let inst;
 			try { inst = v.build(); } catch (e) { say(`${v.label.padEnd(26)} BUILD FAILED: ${e.message}`); return resolve(); }
 			if (inst.fail) { say(`${v.label.padEnd(26)} unavailable — ${inst.fail}`); return resolve(); }
@@ -291,48 +336,64 @@
 			// Content clock: advance the frame index at FPS, not once per tick,
 			// so every variant animates at the same rate and we compare cost.
 			let f = 0, frames = 0, t0 = 0, last = 0;
-			const gaps = [];
+			const gaps = [], costs = [];
+			const WARMUP = 800;   // first paints include layer creation, texture upload, shader compile
 			const tick = (now) => {
 				if (!t0) { t0 = now; last = now; }
-				else { gaps.push(now - last); last = now; }
+				else if (now - t0 > WARMUP) { gaps.push(now - last); last = now; }
+				else last = now;
 				frames++;
-				if (inst.draw) inst.draw(Math.floor(((now - t0) / 1000) * FPS));
+				if (inst.draw) {
+					// THE metric. Frame cadence cannot measure work when vsync is
+					// capped (Low Power Mode pins rAF at 30fps, and then every
+					// variant reports an identical 33ms p50 no matter what it
+					// costs). Time spent inside draw() is hostage to nothing.
+					const c0 = performance.now();
+					inst.draw(Math.floor(((now - t0) / 1000) * FPS_RATE));
+					if (now - t0 > WARMUP) costs.push(performance.now() - c0);
+				}
 				if (now - t0 < DUR) requestAnimationFrame(tick);
 				else {
 					if (inst.stop) inst.stop();
 					const fps = frames / ((now - t0) / 1000);
+					const cs = costs.slice().sort((a, b) => a - b);
+					const cost = cs[(cs.length * 0.5) | 0] || 0;      // median ms of work per frame
+					const cost95 = cs[(cs.length * 0.95) | 0] || 0;
 					const s = gaps.slice().sort((a, b) => a - b);
-					const p50 = s[(s.length * 0.5) | 0] || 0;
 					const p95 = s[(s.length * 0.95) | 0] || 0;
-					const worst = s[s.length - 1] || 0;
 					const jank = gaps.filter((g) => g > budget * 1.8).length;
-					results.push({ label: v.label, kind: v.kind, fps, p50, p95, worst, jank });
+					results.push({ label: v.label, kind: v.kind, fps, cost, cost95, p95, jank });
 					const ex = inst.extra ? '  ' + inst.extra() : '';
-					say(`${v.label.padEnd(26)}${fps.toFixed(0).padStart(4)}fps  p50 ${p50.toFixed(1).padStart(5)}  p95 ${p95.toFixed(1).padStart(5)}  worst ${worst.toFixed(0).padStart(4)}  jank ${String(jank).padStart(3)}${ex}`);
+					say(`${v.label.padEnd(26)}${cost.toFixed(2).padStart(7)}${cost95.toFixed(2).padStart(8)}${fps.toFixed(0).padStart(6)}${String(jank).padStart(6)}${ex}`);
 					resolve();
 				}
 			};
 			requestAnimationFrame(tick);
 		});
 
-		say(`${'variant'.padEnd(26)} fps    p50     p95    worst  jank`);
-		say('─'.repeat(72));
+		say(`${'variant'.padEnd(26)}${'work'.padStart(7)}${'p95work'.padStart(8)}${'fps'.padStart(6)}${'jank'.padStart(6)}`);
+		say(`${''.padEnd(26)}${'ms/frame'.padStart(7)}`);
+		say('─'.repeat(60));
 		for (const v of variants) { await run(v); await new Promise((r) => setTimeout(r, 350)); }
 
-		host.innerHTML = ''; host.style.cssText = ''; running = '';
-		const ranked = results.slice().sort((a, b) => (a.p95 - b.p95) || (b.fps - a.fps));
+		host.innerHTML = ''; host.style.cssText = ''; status = '';
+		const ranked = results.slice().sort((a, b) => a.cost - b.cost);
 		say('');
-		say('BEST → WORST by p95 frame time (lower = smoother):');
-		ranked.forEach((r, i) => say(`  ${i + 1}. ${r.label.padEnd(26)} p95 ${r.p95.toFixed(1)}ms  jank ${r.jank}`));
+		say('CHEAPEST → DEAREST by work per frame:');
+		ranked.forEach((r, i) => say(`  ${i + 1}. ${r.label.padEnd(26)} ${r.cost.toFixed(2)}ms/frame`));
 		say('');
-		say(`budget ${budget.toFixed(1)}ms · "jank" = frames over 1.8x budget`);
-		say('css variants do ZERO js per frame — the compositor animates them');
+		say(`display ${refresh.toFixed(0)}Hz → ${budget.toFixed(1)}ms budget`);
+		if (refresh < 50) say('⚠ 29-31Hz means LOW POWER MODE is on — turn it off and re-run.');
+		say('"work" = ms spent in draw() per frame. This is the number that ranks');
+		say('the approaches: it measures cost, not how often the OS lets us paint.');
+		say('css + worker variants do no main-thread work, so ~0.00 is correct —');
+		say('for the worker, judge it by the "worker Nfps" figure instead.');
 		done = true;
 	});
 </script>
 
 <div style="font:12px/1.5 ui-monospace,monospace;padding:.75rem">
-	<h2 style="font:600 15px system-ui;margin:0 0 .25rem">render probe {done ? '— done' : running ? `— ${running}` : '— starting…'}</h2>
+	<h2 style="font:600 15px system-ui;margin:0 0 .25rem">render probe {done ? '— done' : status ? `— ${status}` : ''}</h2>
 	<p style="margin:0 0 .5rem;color:#666">{header}</p>
 	<div id="host" style="margin:.5rem 0;min-height:{Math.ceil(30 / 6) * 52}px"></div>
 	<div style="display:flex;gap:.5rem;align-items:center;margin:.5rem 0">
