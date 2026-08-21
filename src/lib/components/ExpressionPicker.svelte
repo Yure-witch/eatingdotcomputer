@@ -1141,10 +1141,11 @@
 		pointer-events: none;
 		z-index: 0;
 	}
-	/* While dimmed, the selected circle fades further than the pill: own
-	   opacity 0.6 × the rail's 0.5 = 30% effective. A full-strength accent
-	   inside half-faded chrome was the one thing still shouting. */
-	.expr-tabs.chrome-dim .expr-indicator { opacity: 0.6; }
+	/* While dimmed, the selected circle all but disappears: own opacity 0.2 ×
+	   the rail's 0.5 = 10% effective. The accent is the loudest pixel in the
+	   chrome, so it's the one that fades furthest — the pill stays a readable
+	   50% so you can still find the rail to bring it back. */
+	.expr-tabs.chrome-dim .expr-indicator { opacity: 0.2; }
 	/* The canvas -> thumb swap that used to live here is GONE.
 	   Hiding ~70 .tg-canvas elements tore down that many composited layers and
 	   showing them again re-uploaded every texture — a hitch at the start of
