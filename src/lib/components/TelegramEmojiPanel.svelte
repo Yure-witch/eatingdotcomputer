@@ -977,6 +977,19 @@
 			{@const _bandPad = Math.max(CELL_PX * 3, gridH || 600)}
 			{@const _cellVisTop = scrollTop - _bandPad}
 			{@const _cellVisBot = scrollTop + (gridH + _bandPad) * _fillFrac}
+			<!-- TEMPORARY: render-approach benchmark entrypoint. Sits as a sibling
+			     ABOVE .tg-grid-flow rather than inside it — the sections in there
+			     are absolutely positioned at computed offsets, so anything added
+			     among them would need the geometry recomputed. As a preceding
+			     sibling it just pushes the whole grid down and scrolls with the
+			     emotes, touching no layout maths. The ~44px it adds does shift
+			     scrollTop out of step with geo.pxStart, which is harmless: the
+			     windowing band is at least 600px, so the error cannot reach the
+			     edge of it. DELETE THIS (and /renderprobe) once an approach is
+			     chosen. -->
+			<a class="tg-probe-link" href="/renderprobe">
+				⏱ Run render benchmark <span>30 emotes · 50px · 24fps · 10 approaches</span>
+			</a>
 			<div class="tg-grid tg-grid-flow" bind:this={gridEl} style:height="{totalHeight}px">
 				{#each flowingSections as section, sIdx (section.key)}
 					{@const geo = flowingGeometry[sIdx]}
@@ -1194,6 +1207,17 @@
 	   `flowingGeometry`'s last pxEnd, so the ResizeObserver on
 	   `gridEl` never fires from section virtualization. The Skottie
 	   stage's surface stays alive across the entire scroll. */
+	/* TEMPORARY — benchmark entrypoint, remove with the link above. */
+	.tg-probe-link {
+		display: flex; align-items: center; gap: 0.5rem;
+		margin: 0 0 0.5rem; padding: 0.6rem 0.85rem;
+		border: 1px dashed var(--border); border-radius: 12px;
+		background: var(--surface-container, rgba(127, 127, 127, 0.08));
+		color: var(--ink); text-decoration: none;
+		font: 600 13px/1.2 system-ui;
+	}
+	.tg-probe-link span { font-weight: 400; opacity: 0.6; font-size: 11px; }
+
 	.tg-grid-flow {
 		display: block;
 		position: relative;
