@@ -309,8 +309,10 @@
 		pendingAtt = { url: gif.gif, filename: gif.title || 'GIF', mimetype: 'image/gif', size: 0 };
 		showMedia = false;
 	}
-	function onInsertReaction(r) {
-		pendingAtt = { url: r.url, filename: r.name || 'reaction', mimetype: r.mimetype || 'image/png', size: 0 };
+	function onInsertReaction(reaction) {
+		// Chat's shape, including isReaction — the flag is what makes a reaction
+		// image render as a bare sticker rather than a framed attachment.
+		pendingAtt = { url: reaction.url, filename: reaction.name, mimetype: 'image/webp', size: 0, isReaction: true };
 		showMedia = false;
 	}
 
@@ -593,7 +595,14 @@
 			onSelectEmoji={(emoji) => { toggleReaction(pickerMsgId, emoji); pickerMsgId = null; }}
 			onInsertKitchen={(token) => { toggleReaction(pickerMsgId, token); pickerMsgId = null; }}
 			onInsertCustomEmoji={(emoji) => { toggleReaction(pickerMsgId, `[ce:${emoji.shortcode}]`); pickerMsgId = null; }}
-			onInsertTgEmoji={(it) => { toggleReaction(pickerMsgId, it.token ?? `[tg:${it.id}]`); pickerMsgId = null; }}
+			onInsertTgEmoji={(it) => {
+				// Chat's exact token shapes. I had invented `it.token ?? [tg:it.id]`,
+				// and neither field exists: a standard Telegram emote is keyed by its
+				// CODEPOINT and a custom one needs both its shortcode and id — so
+				// every animated reaction wrote the literal string "undefined".
+				const tok = it.custom ? `[tgc:${it.short}:${it.id}]` : `[tg:${it.cp}]`;
+				toggleReaction(pickerMsgId, tok); pickerMsgId = null;
+			}}
 		/>
 	</div>
 {/if}
