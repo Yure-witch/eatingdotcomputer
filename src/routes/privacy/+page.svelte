@@ -30,7 +30,9 @@
 		<dd>
 			Your name and email address, from whichever method you sign in with — Google,
 			Apple, or an email and password. If you sign in with Apple and choose to hide
-			your email, we only ever see Apple's relay address.
+			your email, we only ever see Apple's relay address. Your account is also given
+			an internal identifier, which is how your messages, submissions, and files are
+			associated with you.
 		</dd>
 
 		<dt>Things you write and upload</dt>
