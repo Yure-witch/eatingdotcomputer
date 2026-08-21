@@ -81,6 +81,35 @@ export const { handle, signIn, signOut } = SvelteKitAuth({
 				const user = result.rows[0];
 				if (!user) return null;
 
+				// Land an Apple sign-in that belongs to NO class in the App Store
+				// review class. App Review often exercises "Sign in with Apple"
+				// itself rather than the demo credentials, and a brand-new account
+				// otherwise stops at the enrollment gate — which reads as broken,
+				// unfinished software (Guideline 2.1). idc-review is self-contained
+				// demo content, so there is nothing real to leak into.
+				//
+				// Only when they have NO membership at all: this must never touch
+				// a real student's enrollment, nor re-add one an instructor denied,
+				// and it also repairs an account that signed in before this existed.
+				try {
+					const existingMembership = await db.execute({
+						sql: 'SELECT 1 FROM class_memberships WHERE user_id = ? LIMIT 1',
+						args: [String(user.id)]
+					});
+					if (existingMembership.rows.length === 0) {
+						const reviewClass = await db.execute({
+							sql: "SELECT id FROM classes WHERE id = 'idc-review'"
+						});
+						if (reviewClass.rows[0]) {
+							await db.execute({
+								sql: `INSERT OR IGNORE INTO class_memberships (id, class_id, user_id, status, reviewed_at)
+								      VALUES (?, 'idc-review', ?, 'approved', datetime('now'))`,
+								args: [crypto.randomUUID(), String(user.id)]
+							});
+						}
+					}
+				} catch { /* never block a valid sign-in on the demo enrollment */ }
+
 				return {
 					id: String(user.id),
 					email: String(user.email),
