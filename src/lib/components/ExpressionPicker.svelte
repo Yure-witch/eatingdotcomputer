@@ -410,7 +410,13 @@
 	let _chromeT = null;
 	// Accumulated gesture travel — see the scroll subscription below for why
 	// the chrome commits at a threshold instead of on every sample.
-	const UP_PX = 20;    // scroll back up this far and the chrome returns
+	// Asymmetric on purpose, and MORE so than before: coming back is the move
+	// the user is waiting on, and 20px of accumulated finger travel was too
+	// much to ask of a flick — the finger's own contact travel in an upward
+	// flick can be a handful of samples before liftoff, and the momentum that
+	// follows emits no touch events at all. So restoring costs 6px (any
+	// deliberate up-move), dimming still takes a real push.
+	const UP_PX = 6;     // scroll back up this far and the chrome returns
 	const DOWN_PX = 12;  // and this far down before it gets out of the way
 	let _accUp = 0;
 	let _accDown = 0;
@@ -611,8 +617,15 @@
 	}
 </script>
 
+<!-- Capture-phase pointerdown: ANY touch of the picker surface brings the
+     dimmed chrome back immediately — the user reaching for the rail shouldn't
+     have to scroll to make it opaque first. Capture so no inner
+     stopPropagation can eat it; if the touch turns into a downward drag, the
+     hysteresis re-dims after 12px, which is the correct outcome for that
+     gesture anyway. -->
 <div class="expr-panel"
      class:expr-panel-react={mode === 'react'} class:expr-dragging={dragging}
+     onpointerdowncapture={() => { if (chrome === 'dim') setChrome('rest'); }}
      bind:this={panelEl} style:transform={dragY ? `translate3d(0,${dragY}px,0)` : null}>
 	{#if mode === 'react'}
 		<!-- Reaction mode: just the EmojiPicker, no chrome. The chat
@@ -958,7 +971,7 @@
 		transition: opacity 0.11s ease;
 	}
 	.expr-del :global(.msi) { font-size: 25px; }
-	.expr-del.chrome-dim { opacity: 0.5; }
+	.expr-del.chrome-dim { opacity: 0.18; }
 		.expr-tab-back { padding: 0 0.6rem; min-height: 3.7rem; border-radius: 16px; }
 	}
 
@@ -1032,7 +1045,11 @@
 	   icons are the right size as they are. Down = translucent; up or sideways
 	   = fully visible (there is no `chrome-page` rule, so paging simply falls
 	   through to the opaque default). */
-	.expr-tabs.chrome-dim { opacity: 0.5; }
+	/* "Out of the way" means nearly gone — 0.5 still read as a solid control
+	   sitting on the content. Pointer-events stay on: it's translucent, not
+	   disabled, and any tap on the panel restores it (see the panel's
+	   pointerdown capture). */
+	.expr-tabs.chrome-dim { opacity: 0.18; }
 	/* Swiping BETWEEN categories — the strip is what you're using. */
 
 	/* NOTE: the top bars' controls are deliberately NOT sized from
