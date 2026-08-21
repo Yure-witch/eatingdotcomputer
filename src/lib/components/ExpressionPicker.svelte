@@ -534,8 +534,7 @@
 		_growAnim = requestAnimationFrame(tick);
 	}
 
-	function dragStart(e) {
-		if (!onClose) return;
+	function beginDrag(e, captureEl) {
 		_dragId = e.pointerId;
 		_y0 = _lastY = e.clientY;
 		_t0 = _lastT = e.timeStamp;
@@ -546,7 +545,42 @@
 		const base = (panelEl?.offsetHeight || 480) - _grow0;
 		_growMax = Math.max(0, Math.round((window.innerHeight || 800) * GROW_MAX_VH) - base);
 		dragging = true;
-		try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
+		try { captureEl?.setPointerCapture(e.pointerId); } catch {}
+	}
+	function dragStart(e) {
+		if (!onClose) return;
+		beginDrag(e, e.currentTarget);
+	}
+
+	// ── The category rail is a resize handle on its vertical axis ────
+	// Its horizontal axis belongs to the native tab scroll; up/down was
+	// unclaimed. `touch-action: pan-x` on the rail keeps horizontal panning
+	// native while vertical drags keep firing pointer events at us. An 8px
+	// axis-lock decides the gesture's owner once — sideways goes to the
+	// scroller (we stand down for the rest of the touch), vertical becomes
+	// exactly the grabber's drag, taps never move far enough to arm either.
+	let _railId = null, _railMode = null, _rx0 = 0, _ry0 = 0;
+	function railDown(e) {
+		if (!onClose) return;
+		_railId = e.pointerId;
+		_railMode = null;
+		_rx0 = e.clientX; _ry0 = e.clientY;
+	}
+	function railMove(e) {
+		if (e.pointerId !== _railId || _railMode === 'h') return;
+		if (!_railMode) {
+			const dx = Math.abs(e.clientX - _rx0), dy = Math.abs(e.clientY - _ry0);
+			if (dx < 8 && dy < 8) return;
+			_railMode = dx > dy ? 'h' : 'v';
+			if (_railMode === 'h') return;
+			beginDrag(e, railEl);
+		}
+		dragMove(e);
+	}
+	function railUp(e) {
+		if (e.pointerId !== _railId) return;
+		if (_railMode === 'v') dragEnd(e);
+		_railId = null; _railMode = null;
 	}
 	function dragMove(e) {
 		if (!dragging || e.pointerId !== _dragId) return;
@@ -710,7 +744,9 @@
 		<nav class="expr-tabs" aria-label="Expression categories"
 			bind:this={railEl}
 			style:--expr-slots={TABS.length}
-			class:chrome-dim={chrome === 'dim'}>
+			class:chrome-dim={chrome === 'dim'}
+			onpointerdown={railDown} onpointermove={railMove}
+			onpointerup={railUp} onpointercancel={railUp}>
 			<!-- One block that GLIDES with the live scroll fraction, rather than a
 			     per-tab background snapping on and off — so it's visibly halfway
 			     between two icons when your swipe is. Copied from the bottom
@@ -1069,6 +1105,9 @@
 
 	.expr-tabs {
 		position: relative;   /* containing block for .expr-indicator */
+		/* Horizontal panning stays native (the tab scroll); vertical drags
+		   keep producing pointer events for the resize gesture above. */
+		touch-action: pan-x;
 		display: flex;
 		gap: var(--expr-gap);
 		/* In-flow child of .expr-chrome-row — the row floats over the grid, this
