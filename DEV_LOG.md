@@ -36,6 +36,25 @@ Each entry includes:
 
 ---
 
+### 2026-08-21 — Expression avatar: instant save + the form-submit hijack
+- **Status**: `attempted` (verified: pick 😭 → "saved" → DB row expr/😭 →
+  header avatar updated with no reload)
+- **The actual bug behind "picking an expression doesn't stick"**: the
+  AvatarPicker renders INSIDE the edit-profile `<form>`, and the
+  ExpressionPicker's cells are `<button>`s with no explicit type — default
+  type is SUBMIT, so tapping any emoji submitted the whole profile form
+  (saving the OLD avatar) and navigated away. Fixed with an onclick guard on
+  `.ap-expr-popover` that preventDefaults button clicks (their own handlers
+  still run) — one point that covers every picker tab, including
+  TelegramEmojiPanel which another session owns.
+- **Instant save**: AvatarPicker gains an optional `oncommit` prop (fired on
+  expression confirm + generative re-pick, NOT photos — those need the
+  form's upload path). Edit profile wires it to the new
+  POST /api/profile/avatar (session user only, gen|expr, token ≤200 chars)
+  and then `invalidateAll()` — which re-runs every load so the new avatar
+  shows in the header/sidebar/chat immediately. Onboarding passes no
+  oncommit and keeps submit-time behaviour.
+
 ### 2026-08-21 — Self-serve account creation (/signup)
 - **Status**: `attempted` (verified: create → auto sign-in → onboarding with
   name prefilled; test user deleted after)

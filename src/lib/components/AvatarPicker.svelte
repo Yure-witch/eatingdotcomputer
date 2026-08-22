@@ -27,7 +27,13 @@
 		uid = '',
 		avatarKind = $bindable('gen'),
 		avatarValue = $bindable(null),
-		photoFile = $bindable(null)
+		photoFile = $bindable(null),
+		// Called when the user COMMITS a non-upload choice (confirming an
+		// expression, or switching back to generative) — not for previews and
+		// not for photos, which need the form's upload path. The edit-profile
+		// page uses it to save instantly; onboarding leaves it unset and keeps
+		// its submit-time behaviour.
+		oncommit = null
 	} = $props();
 
 	let showExpr = $state(false);
@@ -53,6 +59,7 @@
 		avatarKind = 'gen';
 		avatarValue = null;
 		photoFile = null;
+		oncommit?.({ kind: 'gen', value: null });
 	}
 
 	function onPhotoChange(e) {
@@ -87,6 +94,7 @@
 		photoFile = null;
 		pendingExpr = null;
 		showExpr = false;
+		oncommit?.({ kind: 'expr', value: avatarValue });
 	}
 
 	function cancelExpr() {
@@ -160,7 +168,18 @@
 		     inline tokens that render natively in an Avatar chip. -->
 		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 		<div class="ap-expr-backdrop" onclick={cancelExpr}></div>
-		<div class="ap-expr-popover" use:popoverPos={{ anchor: exprBtnEl, side: 'bottom' }}>
+		<!-- The onclick guard is load-bearing: this component renders INSIDE the
+		     profile <form>, and the ExpressionPicker's cells are buttons without
+		     an explicit type — so a tap on any emoji was an implicit SUBMIT of
+		     the whole profile form, which saved the old avatar and navigated
+		     away. Preventing the default for button clicks kills the submit;
+		     the buttons' own handlers still run. -->
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div
+			class="ap-expr-popover"
+			use:popoverPos={{ anchor: exprBtnEl, side: 'bottom' }}
+			onclick={(e) => { if (e.target instanceof Element && e.target.closest('button')) e.preventDefault(); }}
+		>
 			<ExpressionPicker
 				inline={true}
 				rememberTab={false}

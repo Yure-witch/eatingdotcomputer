@@ -1,5 +1,6 @@
 <script>
 	import { enhance } from '$app/forms';
+	import { invalidateAll } from '$app/navigation';
 	import AvatarPicker from '$lib/components/AvatarPicker.svelte';
 	import FormattedInput from '$lib/components/FormattedInput.svelte';
 	let { data, form } = $props();
@@ -13,6 +14,28 @@
 	let avatarKind = $state(data.prefill.avatarKind ?? 'gen');
 	let avatarValue = $state(data.prefill.avatarValue ?? null);
 	let photoFile = $state(null);
+
+	// Instant save for expression / generative picks: committing in the
+	// picker IS the decision, so don't make it also depend on remembering to
+	// hit "Save changes". invalidateAll() then re-runs every load, which is
+	// what pushes the new avatar into the header, sidebar, and chat
+	// immediately. Photos still save via the form (they carry an upload).
+	let avatarStatus = $state('');
+	async function saveAvatar({ kind, value }) {
+		avatarStatus = 'saving…';
+		try {
+			const r = await fetch('/api/profile/avatar', {
+				method: 'POST', headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ kind, value })
+			});
+			if (!r.ok) throw new Error(String(r.status));
+			avatarStatus = 'saved';
+			invalidateAll();
+		} catch {
+			avatarStatus = 'could not save — try again';
+		}
+		setTimeout(() => (avatarStatus = ''), 2500);
+	}
 
 	// Bio uses FormattedInput so inline emotes work here too. Hidden
 	// input mirrors the value into the form payload; the existing
@@ -152,8 +175,12 @@
 						bind:avatarKind
 						bind:avatarValue
 						bind:photoFile
+						oncommit={saveAvatar}
 					/>
 				</div>
+				{#if avatarStatus}
+					<p class="avatar-status">{avatarStatus}</p>
+				{/if}
 				<input type="hidden" name="avatar_kind" value={avatarKind} />
 				<input type="hidden" name="avatar_value" value={avatarKind === 'expr' ? (avatarValue ?? '') : ''} />
 
@@ -362,6 +389,10 @@
 		display: flex; justify-content: center;
 		padding: 0.25rem 0 0.75rem;
 		position: relative;
+	}
+	.avatar-status {
+		margin: -0.5rem 0 0; text-align: center;
+		font-size: 0.78rem; color: var(--muted-fg);
 	}
 
 	/* ── Blocked users ── */
