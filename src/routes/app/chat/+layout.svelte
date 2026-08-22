@@ -311,7 +311,12 @@
 		   Put the inset back as the offset it was meant to be. Zero off native,
 		   so the PWA and desktop are untouched. */
 		:global(.fwd-host.conv-layer) .chat-wrap {
-			margin-top: calc(52px + var(--native-top-inset, 0px));
+			/* The MEASURED header height, not 52px + inset: the conversation
+			   header is taller than the standard 52px on mobile (title +
+			   class subtitle ≈ 64px), and on native --header-h already
+			   includes the notch padding — so this is the same value the old
+			   calc approximated, minus the 12px it was short by. */
+			margin-top: var(--header-h, 52px);
 		}
 
 		/* NOTE: the chat heights deliberately do NOT subtract --kb-h.
@@ -324,33 +329,43 @@
 		   (the picker sizes itself to it). Fixing the iOS case properly needs a
 		   real device to measure against. */
 
+		/* All of the mobile heights size from --vvh minus the MEASURED header.
+		   100dvh is the LAYOUT viewport, and mobile browser chrome (Safari's
+		   bottom bar, Chrome's toolbar) covers the bottom slice of it — so a
+		   100dvh-derived chat ended with its compose bar under the toolbar.
+		   --vvh (keyboard-metrics.js) is where the visible bottom actually is;
+		   it equals 100dvh in the native shell and while the keyboard is open,
+		   so those geometries are unchanged. --header-h is the header's real
+		   rendered height (the mobile conversation header is ~64px, not 52,
+		   and on native it already includes the notch padding — which is what
+		   the old `52px + var(--native-top-inset)` was approximating).
+		   Fallbacks cover SSR/first paint before the measurement runs. */
 		.chat-wrap {
-			/* Subtract the AppHeader (52px on mobile too — its mobile
-			   media query keeps the same height) AND the bottom nav
-			   (56 px) AND any safe-area inset. */
-			height: calc(100dvh - 52px - var(--native-top-inset, 0px) - 56px - env(safe-area-inset-bottom, 0px));
-			margin-top: 52px;
+			/* Subtract the AppHeader AND the bottom nav (56 px) AND any
+			   safe-area inset. */
+			height: calc(var(--vvh, 100dvh) - var(--header-h, 52px) - 56px - env(safe-area-inset-bottom, 0px));
+			margin-top: var(--header-h, 52px);
 		}
 		/* When the bottom nav hides for the on-screen keyboard
 		   (BottomNav.svelte adds `html.kb-open`), reclaim the strip
 		   it was occupying so the compose docks right above the
 		   keyboard instead of leaving 56 px of empty space. */
 		:global(html.kb-open) .chat-wrap {
-			height: calc(100dvh - 52px - var(--native-top-inset, 0px));
+			height: calc(var(--vvh, 100dvh) - var(--header-h, 52px));
 		}
 		/* Same reclaim when the expression picker is open: the bottom nav is
 		   hidden (body.expr-picker-open), so without this the chat keeps a
 		   56 px reservation for it and the picker ends up with a big strip of
 		   empty space below the docked sheet. */
 		:global(body.expr-picker-open) .chat-wrap {
-			height: calc(100dvh - 52px - var(--native-top-inset, 0px));
+			height: calc(var(--vvh, 100dvh) - var(--header-h, 52px));
 		}
 		/* In an individual conversation the bottom nav is hidden, so reclaim the
 		   FULL bottom strip (the input bar owns the safe-area via its own
 		   padding-bottom). Same height as the kb-open / picker-open cases so
 		   there's never a conflicting safe-area gap when those engage. */
 		:global(html.in-conversation) .chat-wrap {
-			height: calc(100dvh - 52px - var(--native-top-inset, 0px));
+			height: calc(var(--vvh, 100dvh) - var(--header-h, 52px));
 		}
 	}
 

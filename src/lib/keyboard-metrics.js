@@ -83,8 +83,10 @@ export function initKeyboardMetrics() {
 		// offsetTop matters when the page is scrolled within a pinched viewport.
 		const hidden = window.innerHeight - vv.height - vv.offsetTop;
 		// Browser chrome sliding in/out produces small deltas that aren't a
-		// keyboard; treat only a substantial bite as one.
-		const isKeyboard = hidden > 120;
+		// keyboard; treat only a substantial bite as one. A pinch-zoom also
+		// shrinks vv.height dramatically — never treat that as layout input.
+		const pinched = Math.abs((vv.scale || 1) - 1) > 0.01;
+		const isKeyboard = !pinched && hidden > 120;
 		noteKeyboardHeight(isKeyboard ? hidden : 0);
 		// …but that sub-120px slice is not nothing: it is the browser's own
 		// chrome (Safari's bottom address bar, Chrome's toolbar). `position:
@@ -97,7 +99,22 @@ export function initKeyboardMetrics() {
 		// is why the shell already looks right and must not move. Also zero
 		// while the keyboard is open, because the keyboard path owns the offset
 		// then and adding both would double-count.
-		r?.style.setProperty('--browser-chrome-h', isKeyboard ? '0px' : `${Math.max(0, Math.round(hidden))}px`);
+		const chrome = isKeyboard || pinched ? 0 : Math.max(0, Math.round(hidden));
+		r?.style.setProperty('--browser-chrome-h', `${chrome}px`);
+		// --vvh: where the VISIBLE bottom edge sits, in layout-viewport
+		// coordinates. Containers sized with `height: 100dvh` (or fixed to
+		// bottom:0) run to the layout viewport's bottom and end up under the
+		// browser chrome; sizing them from --vvh instead makes them end exactly
+		// at the visible bottom. While the keyboard is open (or the page is
+		// pinch-zoomed) we publish the full layout height so keyboard handling
+		// keeps today's 100dvh-equivalent geometry — the kb path owns that
+		// state. In the native shell visualViewport never shrinks, so --vvh
+		// equals 100dvh and nothing moves there either.
+		const vvh = isKeyboard || pinched
+			? window.innerHeight
+			: Math.round(vv.height + vv.offsetTop);
+		r?.style.setProperty('--vvh', `${vvh}px`);
+		_dbg?.(hidden, chrome, vvh, isKeyboard, pinched);
 	};
 	const onChange = () => {
 		if (raf) return;
@@ -106,5 +123,46 @@ export function initKeyboardMetrics() {
 
 	vv.addEventListener('resize', onChange);
 	vv.addEventListener('scroll', onChange);
+	initViewportDebug(); // before the first measure, so the readout fills in
 	measure();
+}
+
+// ── Temporary on-device diagnostics ─────────────────────────────────────────
+// Open any page with `?vvdbg` (or set localStorage.vvdbg = '1') to get a live
+// readout of the viewport numbers this module works from. The mobile-chrome
+// bug can only be reproduced on real hardware, and these values have never
+// been confirmed there — this is how we confirm them. Remove once the mobile
+// compose-bar work is settled.
+let _dbg = null;
+function initViewportDebug() {
+	let on = false;
+	try {
+		on = new URLSearchParams(location.search).has('vvdbg') || localStorage.getItem('vvdbg') === '1';
+	} catch {}
+	if (!on) return;
+	const el = document.createElement('div');
+	el.style.cssText =
+		'position:fixed;top:70px;left:4px;z-index:99999;pointer-events:none;' +
+		'font:10px/1.5 monospace;color:#0f0;background:rgba(0,0,0,0.72);' +
+		'padding:4px 6px;border-radius:6px;white-space:pre;';
+	document.body.appendChild(el);
+	// One probe per unit — offsetHeight tells us what the browser actually
+	// resolves 100dvh/svh/lvh to, so we can compare against visualViewport.
+	const probes = {};
+	for (const u of ['dvh', 'svh', 'lvh']) {
+		const p = document.createElement('div');
+		p.style.cssText = `position:fixed;left:-9999px;top:0;width:1px;height:100${u};`;
+		document.body.appendChild(p);
+		probes[u] = p;
+	}
+	_dbg = (hidden, chrome, vvh, isKeyboard, pinched) => {
+		const vv = window.visualViewport;
+		el.textContent =
+			`innerH  ${window.innerHeight}\n` +
+			`vv.h    ${Math.round(vv.height)}  ot ${Math.round(vv.offsetTop)}  sc ${(vv.scale || 1).toFixed(2)}\n` +
+			`dvh ${probes.dvh.offsetHeight}  svh ${probes.svh.offsetHeight}  lvh ${probes.lvh.offsetHeight}\n` +
+			`hidden  ${Math.round(hidden)}  chrome ${chrome}\n` +
+			`--vvh   ${vvh}${isKeyboard ? '  KB' : ''}${pinched ? '  PINCH' : ''}\n` +
+			`scrollY ${Math.round(window.scrollY)}  docH ${document.documentElement.scrollHeight}`;
+	};
 }

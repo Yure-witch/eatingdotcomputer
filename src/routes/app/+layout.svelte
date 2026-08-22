@@ -3168,7 +3168,19 @@
 	   popovers keep stacking against the page root exactly as before — which a
 	   `position: fixed` layer would have broken by trapping them under the
 	   header. */
-	.app-shell.layered { position: relative; }
+	.app-shell.layered {
+		position: relative;
+		/* flow-root: the pager-track's margin-top (var(--header-h), ~64px on
+		   mobile web) COLLAPSED through this box and pushed the whole shell
+		   down by the header height. The conv layer below anchors top:0 to
+		   this box and is sized to the viewport, so the collapse made it hang
+		   that far past the screen bottom — cutting the compose bar off on
+		   mobile browsers. A BFC keeps the child margin inside. The native
+		   shell never collapsed (its padding-top blocks it), so it is
+		   unchanged; the pager is also unchanged (its margin now pushes it
+		   down the same distance from inside). */
+		display: flow-root;
+	}
 	/* Native scroll-snap pager — one panel per tab section. The browser's
 	   compositor drives the swipe, so it's smooth regardless of page weight. */
 	.pager-track {
@@ -3181,8 +3193,12 @@
 		margin-top: calc(var(--header-h, 52px) - var(--native-top-inset, 0px));
 		/* FULL height (to the screen bottom). Section panels reserve the bottom
 		   nav via their own padding; the conversation panel uses the whole thing
-		   (its nav is hidden). This lets the conversation be a real pager panel. */
-		height: calc(100dvh - var(--header-h, 52px));
+		   (its nav is hidden). This lets the conversation be a real pager panel.
+		   --vvh, not 100dvh: 100dvh runs under mobile browser chrome (Safari's
+		   bottom bar), which put the panels' nav reservation — and the lifted
+		   nav pill itself — out of line. --vvh is the visible bottom; identical
+		   to 100dvh on native and desktop (keyboard-metrics.js). */
+		height: calc(var(--vvh, 100dvh) - var(--header-h, 52px));
 		overflow-x: auto;
 		overflow-y: hidden;
 		scroll-snap-type: x mandatory;
@@ -3252,7 +3268,9 @@
 		position: absolute;
 		top: 0; left: 0;
 		width: 100%;
-		height: 100dvh;
+		/* --vvh, not 100dvh: end at the VISIBLE bottom, above any mobile
+		   browser chrome. Equal to 100dvh on native and desktop. */
+		height: var(--vvh, 100dvh);
 		background: var(--paper);
 	}
 	/* The transform is applied ONLY while sliding — a permanent transform (even

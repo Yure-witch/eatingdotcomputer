@@ -36,6 +36,45 @@ Each entry includes:
 
 ---
 
+### 2026-08-21 — Mobile-web compose bar cut off: real root cause found
+- **Status**: `attempted` (verified in emulation; pending user confirmation on a
+  real phone — NOT deployed, App Review still pending)
+- **Root cause was NOT (only) browser chrome.** `.pager-track`'s
+  `margin-top: var(--header-h)` (~64px on mobile web) **margin-collapsed
+  through `.app-shell`**, pushing the whole shell down 64px. The conversation
+  layer (`.fwd-host.conv-layer`, `position:absolute; top:0; height:100dvh`)
+  anchors to the shifted shell, so it hung 64px past the screen bottom on EVERY
+  mobile browser — chrome or no chrome. Reproduced in the desktop-Chrome mobile
+  emulator (no browser chrome at all): input-area bottom at 876 in an 812px
+  viewport. Native never collapsed because `body.native-app .app-shell` has
+  `padding-top` (notch inset), which blocks margin collapse — exactly why the
+  shell looked perfect. Browser chrome (Safari bottom bar) ADDS its slice on
+  top of the 64px on real devices.
+- **Fix**:
+  - `.app-shell.layered { display: flow-root }` — keeps the pager margin
+    inside; shell starts at y=0 like native. Pager visual position unchanged
+    (its margin now pushes from inside).
+  - New `--vvh` var (keyboard-metrics.js): visible-bottom in layout-viewport
+    coords (`vv.height + vv.offsetTop`); equals `window.innerHeight` while the
+    keyboard is open or pinch-zoomed, so kb geometry is untouched; equals
+    100dvh on native/desktop. `.fwd-host.conv-layer`, all mobile `.chat-wrap`
+    heights, and `.pager-track` now size from `var(--vvh, 100dvh)`.
+  - Chat heights/margins use measured `var(--header-h)` instead of hardcoded
+    `52px + var(--native-top-inset)` (the mobile conv header is really ~62-64px;
+    on native --header-h already includes the notch padding, so same value).
+  - REVERTED the `padding-bottom: var(--browser-chrome-h)` on `.input-area`
+    (both chat pages) — container now ends at the visible bottom, padding would
+    double-lift. `--browser-chrome-h` still lifts the fixed-position things:
+    nav pill, `.compose-picker-pop` (now `bottom: var(--browser-chrome-h)`),
+    `.compose-kitchen-pop`.
+- **Verified in mobile emulation (375x812, no chrome)**: shell top 0, layer
+  0-812, chat-wrap 62-812, input-area bottom exactly 812. With simulated
+  chrome (`--vvh:762; --browser-chrome-h:50`): compose bottom 762, pager-track
+  ends 762, nav pill 696-756 — all above the "toolbar". Desktop unchanged.
+- **Debug aid**: open any page with `?vvdbg=1` (or `localStorage.vvdbg='1'`)
+  for a live on-screen readout of innerHeight / vv.height / dvh-svh-lvh probes /
+  hidden / chrome / --vvh. Temporary — remove when this work settles.
+
 ### 2026-08-21 — App Store review class + emote/emoji defaults
 - **Status**: `attempted` (built + captured, pending user confirmation)
 - **Why**: the listing screenshots were being taken in the live `#class` channel,

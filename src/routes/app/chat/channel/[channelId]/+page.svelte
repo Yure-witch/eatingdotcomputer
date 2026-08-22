@@ -5388,13 +5388,10 @@
 	}
 	.att-img-close:hover { background: rgba(0,0,0,0.7); }
 
-	/* padding-bottom, not margin: the picker docks against this element's own
-	   box, so margin would open a gap between the compose bar and the picker.
-	   --browser-chrome-h is the slice the browser's bottom toolbar covers (see
-	   lib/keyboard-metrics.js); it is 0 in the native shell and 0 while the
-	   keyboard is open, so neither of those moves. Without it the send button
-	   and the expression picker sit under Chrome's toolbar, out of reach. */
-	.input-area { flex-shrink: 0; position: relative; padding-bottom: var(--browser-chrome-h, 0px); }
+	/* No browser-chrome padding here: .chat-wrap is sized from --vvh (see
+	   chat/+layout.svelte), so this bar's container already ends at the
+	   VISIBLE bottom — padding on top of that would double-lift. */
+	.input-area { flex-shrink: 0; position: relative; }
 	.typing-indicator {
 		font-size: 0.75rem; color: var(--muted-fg); padding: 0 1.5rem 0.25rem;
 		margin: 0; min-height: 1.2rem;
@@ -5635,7 +5632,12 @@
 		}
 		.compose-picker-pop {
 			position: fixed;
-			left: 0; right: 0; bottom: 0;
+			left: 0; right: 0;
+			/* Fixed positioning resolves against the LAYOUT viewport, but the
+			   compose bar above sits in the --vvh-sized chat — lift the sheet by
+			   the browser-chrome slice so its top stays flush with the bar.
+			   0 in the native shell and whenever no chrome overlays the page. */
+			bottom: var(--browser-chrome-h, 0px);
 			/* left/right:0 already fixes the width; `100vw` used to override that
 			   with the viewport width INCLUDING any scrollbar, which is what let
 			   the sheet hang past the right edge of the page. */
@@ -5743,7 +5745,9 @@
 		.compose-kitchen-pop {
 			position: fixed;
 			left: 0; right: 0;
-			bottom: calc(var(--input-area-h, 56px) + env(safe-area-inset-bottom, 0px));
+			/* + browser-chrome: fixed resolves against the layout viewport, the
+			   input area lives in the --vvh-sized chat above the browser's bar. */
+			bottom: calc(var(--input-area-h, 56px) + env(safe-area-inset-bottom, 0px) + var(--browser-chrome-h, 0px));
 			z-index: 60;
 		}
 	}

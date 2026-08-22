@@ -5126,8 +5126,9 @@
 	}
 	.att-img-close:hover { background: rgba(0,0,0,0.7); }
 
-	/* Same lift as the channel page — see the note there. 0 in the native shell. */
-	.input-area { flex-shrink: 0; position: relative; padding-bottom: var(--browser-chrome-h, 0px); }
+	/* No browser-chrome padding — the --vvh-sized .chat-wrap already ends at
+	   the visible bottom (see the note on the channel page). */
+	.input-area { flex-shrink: 0; position: relative; }
 	.typing-indicator {
 		font-size: 0.75rem; color: var(--muted-fg); padding: 0 1.5rem 0.25rem;
 		margin: 0; min-height: 1.2rem;
@@ -5341,7 +5342,10 @@
 		}
 		.compose-picker-pop {
 			position: fixed;
-			left: 0; right: 0; bottom: 0;
+			left: 0; right: 0;
+			/* Lift by the browser-chrome slice so the sheet's top stays flush
+			   with the --vvh-sized compose bar above (see the channel page). */
+			bottom: var(--browser-chrome-h, 0px);
 			/* left/right:0 already fixes the width; `100vw` used to override that
 			   with the viewport width INCLUDING any scrollbar, which is what let
 			   the sheet hang past the right edge of the page. */
@@ -5444,7 +5448,9 @@
 		.compose-kitchen-pop {
 			position: fixed;
 			left: 0; right: 0;
-			bottom: calc(var(--input-area-h, 56px) + env(safe-area-inset-bottom, 0px));
+			/* + browser-chrome: fixed resolves against the layout viewport, the
+			   input area lives in the --vvh-sized chat above the browser's bar. */
+			bottom: calc(var(--input-area-h, 56px) + env(safe-area-inset-bottom, 0px) + var(--browser-chrome-h, 0px));
 			z-index: 60;
 		}
 	}
