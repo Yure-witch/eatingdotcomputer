@@ -4,6 +4,7 @@
 	import { enhance } from '$app/forms';
 	import { invalidateAll } from '$app/navigation';
 	import { subscribeToPush, unsubscribeFromPush, isPushSubscribed } from '$lib/push.js';
+	import { isNativeApp } from '$lib/native.js';
 	import FileTypeIcon from '$lib/components/FileTypeIcon.svelte';
 	import FormattedInput from '$lib/components/FormattedInput.svelte';
 	import { createContentRenderer } from '$lib/message-render.js';
@@ -41,6 +42,7 @@
 	let notifPermission = $state('default');
 	let installPrompt = $state(null);
 	let isStandalone = $state(false);
+	let isNative = $state(false);
 	let isMobile = $state(false);
 	let isIOS = $state(false);
 	let isAndroid = $state(false);
@@ -52,6 +54,7 @@
 		if (!browser) return;
 		const refreshTimer = setInterval(() => invalidateAll(), 30_000);
 		isStandalone = window.matchMedia('(display-mode: standalone)').matches || !!window.navigator.standalone;
+		isNative = isNativeApp();
 		const iosDevice = /iphone|ipad|ipod/i.test(navigator.userAgent);
 		const androidDevice = /android/i.test(navigator.userAgent);
 		isMobile = iosDevice || androidDevice;
@@ -969,8 +972,9 @@
 			</fieldset>
 		{/if}
 
-		<!-- Mobile install instructions -->
-		{#if isMobile && !isStandalone}
+		<!-- Mobile install instructions. Hidden in the native shell — you're
+		     already in the app, there's nothing to install. -->
+		{#if isMobile && !isStandalone && !isNative}
 			<div class="install-banner">
 				<p class="install-banner-title">📲 Install eating.computer</p>
 				{#if installPrompt}

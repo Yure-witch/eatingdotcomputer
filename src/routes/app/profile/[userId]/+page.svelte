@@ -178,6 +178,16 @@
 	const showCustomPage = $derived(!!customHtml && !(isOwnProfile && customizing));
 	let showSigPicker = $state(false);
 	let sigBtnEl = $state(null);
+
+	// While the signature-expression picker is open, borrow the chat compose's
+	// body class: app.css hides the bottom nav for it (`body.expr-picker-open
+	// .bottom-nav`), same as AvatarPicker does on profile edit. Cleanup also
+	// covers navigating away with the picker still open.
+	$effect(() => {
+		if (typeof document === 'undefined') return;
+		document.body.classList.toggle('expr-picker-open', showSigPicker);
+		return () => document.body.classList.remove('expr-picker-open');
+	});
 	let saveStatus = $state('');
 	let saveTimer = null;
 

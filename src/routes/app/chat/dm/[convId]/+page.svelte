@@ -4536,7 +4536,7 @@
 				</div>
 			{/if}
 		</div>
-		<div class="send-wrap" class:behind-picker={showComposePicker || showMediaPicker} bind:this={sendWrapEl} onpointerdown={onSendDown} onpointerup={onSendQuickUp} onpointermove={sizeSliderActive ? onSendMove : null} onpointercancel={sizeSliderActive ? onSendCancel : null}>
+		<div class="send-wrap" class:behind-picker={showComposePicker || showMediaPicker || !!pickerMsgId} bind:this={sendWrapEl} onpointerdown={onSendDown} onpointerup={onSendQuickUp} onpointermove={sizeSliderActive ? onSendMove : null} onpointercancel={sizeSliderActive ? onSendCancel : null}>
 			{#if sizeSliderActive}
 				<div class="sz-panel" style:top="{panelFixedTop}px" style:left="{panelFixedLeft}px" style:right="{panelFixedRight}px" style:height="{panelHeight}px">
 					<div class="sz-track-line"></div>
