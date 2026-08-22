@@ -1,5 +1,5 @@
 <script>
-	import { tick } from 'svelte';
+	import { tick, onMount } from 'svelte';
 	import Avatar from '$lib/components/Avatar.svelte';
 	import ExpressionPicker from '$lib/components/ExpressionPicker.svelte';
 	import { createContentRenderer } from '$lib/message-render.js';
@@ -214,6 +214,30 @@
 		style.sig = token ?? '';
 		showSigPicker = false;
 		scheduleSave();
+	}
+
+	// ── Blocked users (own profile only) ────────────────────────────────
+	let blockedList = $state([]);
+	let blockedLoaded = $state(false);
+	onMount(async () => {
+		if (!isOwnProfile) { blockedLoaded = true; return; }
+		try {
+			const r = await fetch('/api/moderation/block');
+			if (r.ok) blockedList = (await r.json()).blocked;
+		} catch { /* renders as empty */ }
+		blockedLoaded = true;
+	});
+	async function unblock(userId) {
+		try {
+			const r = await fetch('/api/moderation/block', {
+				method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ userId })
+			});
+			if (!r.ok) throw new Error(String(r.status));
+			blockedList = blockedList.filter((b) => b.userId !== userId);
+		} catch {
+			alert('Could not unblock — check your connection and try again.');
+		}
 	}
 
 	// ExpressionPicker → token mapping, same shapes AvatarPicker uses.
@@ -607,6 +631,25 @@
 			{#if isOwnProfile && !profile.bio && !profile.website && !profile.year && !profile.school && !profile.focus}
 				<div class="empty-own">
 					<p>Your profile is pretty bare. <a href="/app/profile/edit">Add a bio, school, and more →</a> — or hit ✨ Customize to give it a vibe.</p>
+				</div>
+			{/if}
+
+			<!-- Blocked users — own profile only. Managed here AND on Edit
+			     profile; blocking itself happens from the ⋮ menu on a message. -->
+			{#if isOwnProfile && blockedLoaded}
+				<div class="section">
+					<h2>Blocked users</h2>
+					{#if blockedList.length === 0}
+						<p class="blocked-empty">No one is blocked. Block someone from the ⋮ menu on any of their messages.</p>
+					{:else}
+						<p class="blocked-empty">You won't see their messages, and they can't notify you. Blocking is private.</p>
+						{#each blockedList as b (b.userId)}
+							<div class="blocked-row">
+								<span class="blocked-name">{b.name}</span>
+								<button type="button" class="btn-secondary" onclick={() => unblock(b.userId)}>Unblock</button>
+							</div>
+						{/each}
+					{/if}
 				</div>
 			{/if}
 		</div>
@@ -1112,6 +1155,15 @@
 		color: var(--muted-fg);
 		margin: 0 0 0.5rem;
 	}
+
+	/* ── Blocked users (own profile) ── */
+	.blocked-empty { font-size: 0.85rem; color: var(--muted-fg); margin: 0 0 0.5rem; }
+	.blocked-row {
+		display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;
+		padding: 0.5rem 0.75rem; margin-top: 0.4rem;
+		border: 1.5px solid var(--border); border-radius: 8px;
+	}
+	.blocked-name { font-size: 0.9rem; font-weight: 600; color: var(--ink); }
 
 	.bio {
 		font-size: 0.9rem;

@@ -1357,7 +1357,14 @@
 	.manage-tabs {
 		display: flex; gap: 0; margin-bottom: 1.5rem;
 		border-bottom: 1.5px solid var(--border);
+		/* Six tabs don't fit a phone. Without this the strip just CLIPPED —
+		   Moderation (the reports queue) and Gemma were unreachable on
+		   mobile. Scrolls horizontally, scrollbar hidden. */
+		overflow-x: auto;
+		scrollbar-width: none;
+		-webkit-overflow-scrolling: touch;
 	}
+	.manage-tabs::-webkit-scrollbar { display: none; }
 	.tp-toggle { accent-color: var(--ink); cursor: pointer; }
 
 	.manage-tab {
@@ -1366,6 +1373,7 @@
 		color: var(--muted-fg); border-bottom: 2px solid transparent; margin-bottom: -1.5px;
 		transition: color 0.15s, border-color 0.15s;
 		display: flex; align-items: center; gap: 0.4rem;
+		flex-shrink: 0; white-space: nowrap;
 	}
 	.manage-tab:hover { color: var(--ink); }
 	.manage-tab.active { color: var(--ink); border-bottom-color: var(--ink); }
