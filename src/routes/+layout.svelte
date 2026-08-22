@@ -33,6 +33,12 @@
 
 	let { children } = $props();
 
+	// ── Connectivity banner ─────────────────────────────────────────────
+	// navigator.onLine + the online/offline events: coarse, but it matches
+	// what the user experiences (no sends, no live updates). The service
+	// worker keeps cached pages browsable meanwhile.
+	let isOffline = $state(false);
+
 	// ── Last-route memory (native shell + installed PWA) ────────────────
 	const LAST_ROUTE_KEY = 'ec-last-route';
 	// Restore only in app-like containers, where "opening" means launching an
@@ -78,6 +84,13 @@
 				.register('/service-worker.js', { type: dev ? 'module' : 'classic' })
 				.catch(() => {});
 		}
+
+		// Connectivity: seed from the current state, then track the events.
+		isOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
+		const onOnline = () => (isOffline = false);
+		const onOffline = () => (isOffline = true);
+		window.addEventListener('online', onOnline);
+		window.addEventListener('offline', onOffline);
 
 		// Reopen where you left off. The native shell (and installed PWA) cold
 		// starts at "/", which redirects an authenticated session to /app — the
@@ -370,13 +383,39 @@
 	</div>
 {/if}
 
+{#if isOffline}
+	<div class="offline-banner" role="status">
+		<span class="offline-dot"></span>
+		You're offline — reconnecting…
+	</div>
+{/if}
+
 <footer class="build-info">build #{__BUILD_NUMBER__} · {__BUILD_SHA__}</footer>
 
 <style>
-	@media (max-width: 640px) {
-		.update-banner {
-			bottom: calc(max(6px, env(safe-area-inset-bottom, 0px)) + 60px + 12px);
-		}
+	/* Same placement rules as the update banner: clears the mobile nav pill
+	   and the browser's bottom chrome. Red-tinted so a dead connection reads
+	   at a glance; disappears on the `online` event. */
+	.offline-banner {
+		position: fixed; bottom: 1rem; left: 50%; transform: translateX(-50%);
+		background: #7f1d1d; color: #fff;
+		border: 1px solid #a94444; border-radius: 999px;
+		padding: 0.5rem 1rem; z-index: 1001;
+		display: flex; align-items: center; gap: 0.5rem;
+		font-size: 0.85rem; box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+		white-space: nowrap;
+		animation: offline-in 0.3s ease;
+	}
+	.offline-dot {
+		width: 8px; height: 8px; border-radius: 50%;
+		background: #fca5a5; flex-shrink: 0;
+		animation: offline-pulse 1.4s ease-in-out infinite;
+	}
+	@keyframes offline-in { from { opacity: 0; transform: translateX(-50%) translateY(8px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+	@keyframes offline-pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
+	@media (prefers-reduced-motion: reduce) {
+		.offline-banner { animation: none; }
+		.offline-dot { animation: none; }
 	}
 	.update-banner {
 		position: fixed; bottom: 1rem; left: 50%; transform: translateX(-50%);
@@ -395,6 +434,16 @@
 		border: none; border-radius: 6px;
 		padding: 0.3rem 0.75rem; font-family: inherit;
 		font-size: 0.82rem; font-weight: 600; cursor: pointer;
+	}
+	/* Mobile: clear the bottom nav pill (60px, floating at max(6px, safe-area)
+	   plus the browser-chrome lift). AFTER the base rules on purpose — a media
+	   query adds no specificity, so when this block sat before them the base
+	   `bottom: 1rem` always won and both banners landed under the pill. */
+	@media (max-width: 640px) {
+		.update-banner,
+		.offline-banner {
+			bottom: calc(max(6px, env(safe-area-inset-bottom, 0px)) + var(--browser-chrome-h, 0px) + 60px + 12px);
+		}
 	}
 	.build-info {
 		position: fixed; bottom: 0.5rem; right: 0.75rem;

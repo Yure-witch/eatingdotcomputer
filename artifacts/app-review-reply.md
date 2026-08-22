@@ -47,10 +47,12 @@ for those.
 
 ## 2. Devices and OS versions tested
 
-⚠️ TODO — fill in your actual hardware, e.g.:
-- iPhone [model], iOS [version] (physical device)
-- iPhone [model] simulator, iOS [version]
-- Desktop/mobile Safari and Chrome (the app is also offered as a web app)
+- iPhone 13 Pro (physical device), latest iOS
+  (⚠️ check Settings → General → About for the exact version number and put
+  it here before sending)
+- iPhone simulator (Xcode), same iOS SDK
+- Mobile Safari and Chrome on iPhone; desktop Safari, Chrome, and Firefox
+  (the app is also offered as an installable web app)
 
 ## 3. What the app is, who it's for, and the value it provides
 
@@ -81,12 +83,15 @@ without stitching together separate tools.
 - The app requires an account. Sign-in supports Google (OAuth), Apple, and
   username/password credentials; new accounts can be created in-app from
   "Create an account" on the login screen.
-- Demo account for review: username ⚠️ TODO / password ⚠️ TODO
-  (pre-enrolled in a fully populated demonstration class with assignments,
-  syllabus, and an active chat channel — no additional setup is needed; log
-  in and every feature is reachable).
-  ⚠️ TODO if you have a second (instructor-role) reviewer account, list it
-  too: Apple asks for credentials for each account type.
+- Demo account for review: username **reviewer** / password
+  **EatingReview2026** (pre-enrolled in a fully populated demonstration
+  class with assignments, syllabus, and an active chat channel — no
+  additional setup is needed; log in and every feature is reachable).
+- The app has one other account type, instructor (course management,
+  moderation queue). Instructor functionality is demonstrated at the end of
+  the screen recording; instructor accounts manage real student data, so we
+  have not included live instructor credentials. Happy to provide them on
+  request.
 - New public sign-ups require instructor approval before they see class
   content (the app serves a closed classroom), which is why the demo account
   is provided pre-approved.
