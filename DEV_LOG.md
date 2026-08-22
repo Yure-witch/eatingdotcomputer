@@ -36,6 +36,26 @@ Each entry includes:
 
 ---
 
+### 2026-08-21 — CRITICAL: service worker served one user's data to another
+- **Status**: `attempted` (fix deployed; hard-refresh signal fired to purge
+  every client's poisoned caches)
+- **Symptom**: switching accounts landed you in the WRONG account — log in
+  as a student, see the instructor's app (name, role, class, data).
+- **Root cause**: the service worker's asset handler cache-first'd EVERY
+  same-origin GET, not just static assets — including SvelteKit's
+  `__data.json` payloads and `/api/*` GETs, which are per-user. After an
+  account switch the first loads were served from the previous user's
+  cache. Also a privacy hole (user B could be shown user A's data).
+- **Fix**: the cache-first path is now an allowlist — `/_app/immutable/*`
+  (content-hashed) + the precached static files. Everything else passes to
+  the network untouched. Old caches self-purge on deploy (versioned cache
+  name, cleared on activate), and the dev/refreshNeeded hard-refresh
+  (unregister SW + clear caches + cache-busted reload) was fired to clean
+  every open client immediately.
+- **RULE, carved in stone**: a service worker must NEVER cache anything
+  session-scoped. If a response can differ by cookie, it does not go in
+  Cache Storage.
+
 ### 2026-08-21 — Avatar picker round 2: the tap that never landed
 - **Status**: `attempted` (all four verified in dev; hit-testing checked with
   elementFromPoint, not synthetic .click())
