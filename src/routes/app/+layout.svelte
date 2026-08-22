@@ -1828,6 +1828,35 @@
 	// "You're in" banner shown once right after enrollment approval.
 	let acceptedClassName = $state('');
 
+	// ── Offline snapshot ────────────────────────────────────────────────
+	// A small, per-user picture of "what the app looked like" — class,
+	// channels with their latest line, members — written to localStorage on
+	// every meaningful change. The /offline fallback page renders it, so a
+	// cold open with no network shows your class frozen in time instead of a
+	// generic apology. SAFE where the service-worker cache wasn't: device
+	// storage is wiped on sign-out / switch / account deletion, and the
+	// snapshot carries its owner's id so a mismatch is discarded on read.
+	$effect(() => {
+		if (typeof localStorage === 'undefined' || !data?.currentUser) return;
+		try {
+			const snap = {
+				v: 1,
+				userId: data.currentUser.id,
+				userName: data.currentUser.name,
+				className: data.currentClass ? `${data.currentClass.name} — ${data.currentClass.term}` : '',
+				at: Date.now(),
+				channels: (data.channels ?? []).map((c) => ({
+					id: c.id,
+					name: c.name,
+					last: channelMeta[c.id]?.lastMessage ? String(channelMeta[c.id].lastMessage).slice(0, 90) : '',
+					lastUser: channelMeta[c.id]?.lastUser ? String(channelMeta[c.id].lastUser).slice(0, 40) : ''
+				})),
+				members: (data.users ?? []).slice(0, 50).map((u) => ({ name: u.name, role: u.role }))
+			};
+			localStorage.setItem('ec-offline-snapshot', JSON.stringify(snap));
+		} catch { /* quota or private mode — the offline page stays generic */ }
+	});
+
 	onMount(async () => {
 
 		// Enrollment-acceptance banner: the pending screen leaves the class
