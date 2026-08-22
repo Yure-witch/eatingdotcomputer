@@ -1,6 +1,6 @@
 <script>
 	import '../app.css';
-	import { updated } from '$app/stores';
+	import { updated, navigating } from '$app/stores';
 	import { onMount } from 'svelte';
 	import {
 		loadSpriteSheet,
@@ -36,6 +36,31 @@
 	// Build stamp reveal (bottom-right corner tap) — see the markup note.
 	let showBuild = $state(false);
 	let _buildTimer = null;
+
+	// ── Navigation progress ─────────────────────────────────────────────
+	// On a weak connection the data fetch behind a client navigation can take
+	// seconds, and the app used to sit frozen with no acknowledgement — which
+	// reads as broken, and re-taps make it worse. A slim indeterminate bar
+	// appears once a navigation has been pending 250ms (fast navs never see
+	// it), and after 5s it gains a "Slow connection…" note so the wait is at
+	// least named.
+	let navPending = $state(false);
+	let navSlow = $state(false);
+	let _navTimer = null;
+	let _navSlowTimer = null;
+	$effect(() => {
+		if ($navigating) {
+			clearTimeout(_navTimer);
+			clearTimeout(_navSlowTimer);
+			_navTimer = setTimeout(() => (navPending = true), 250);
+			_navSlowTimer = setTimeout(() => (navSlow = true), 5000);
+		} else {
+			clearTimeout(_navTimer);
+			clearTimeout(_navSlowTimer);
+			navPending = false;
+			navSlow = false;
+		}
+	});
 
 	// ── Connectivity banner ─────────────────────────────────────────────
 	// navigator.onLine + the online/offline events: coarse, but it matches
@@ -394,6 +419,15 @@
 	</div>
 {/if}
 
+{#if navPending}
+	<div class="nav-progress" role="progressbar" aria-label="Loading page">
+		<div class="nav-progress-bar"></div>
+	</div>
+	{#if navSlow && !isOffline}
+		<div class="slow-banner" role="status">Slow connection — still loading…</div>
+	{/if}
+{/if}
+
 <!-- Build stamp: hidden unless the bottom-right corner is tapped (shows for
      6s, tap again to dismiss early). The hotspot sits BELOW the bottom nav
      and the banners in z-order, so where those occupy the corner they win
@@ -408,6 +442,36 @@
 {/if}
 
 <style>
+	/* ── Navigation progress ── */
+	.nav-progress {
+		position: fixed; top: 0; left: 0; right: 0;
+		height: 3px; z-index: 1002;
+		background: transparent; pointer-events: none;
+		overflow: hidden;
+	}
+	.nav-progress-bar {
+		height: 100%; width: 40%;
+		background: var(--md-sys-color-primary, var(--accent, #b61d3e));
+		border-radius: 0 2px 2px 0;
+		animation: nav-progress-sweep 1.1s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+	}
+	@keyframes nav-progress-sweep {
+		from { transform: translateX(-100%); }
+		to   { transform: translateX(250vw); }
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.nav-progress-bar { animation-duration: 2.4s; }
+	}
+	.slow-banner {
+		position: fixed; top: 10px; left: 50%; transform: translateX(-50%);
+		z-index: 1002; pointer-events: none;
+		background: #7a5a00; color: #fff;
+		border-radius: 999px; padding: 0.4rem 0.9rem;
+		font-size: 0.8rem; white-space: nowrap;
+		box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+		animation: offline-in 0.3s ease;
+	}
+
 	/* Same placement rules as the update banner: clears the mobile nav pill
 	   and the browser's bottom chrome. Red-tinted so a dead connection reads
 	   at a glance; disappears on the `online` event. */
