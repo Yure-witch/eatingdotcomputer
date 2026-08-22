@@ -360,6 +360,28 @@
 	let dmLoadingMore = $state(false);
 	let dmListEl = $state(null);
 
+	// ── Reported messages ───────────────────────────────────────────────
+	// Status overrides layered over data.messageReports, so a resolve/reopen
+	// updates in place without refetching the whole page load.
+	let reportStatus = $state({});
+	const reportStatusOf = (r) => reportStatus[r.id] ?? r.status;
+	const openReportCount = $derived((data.messageReports ?? []).filter((r) => reportStatusOf(r) === 'open').length);
+
+	async function setReportStatus(report, status) {
+		const prev = reportStatusOf(report);
+		reportStatus = { ...reportStatus, [report.id]: status };
+		try {
+			const res = await fetch('/api/moderation/report', {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ id: report.id, status })
+			});
+			if (!res.ok) throw new Error(String(res.status));
+		} catch {
+			reportStatus = { ...reportStatus, [report.id]: prev };
+		}
+	}
+
 	async function viewDmConversation(convId) {
 		if (viewingDmConvId === convId) { closeDmView(); return; }
 		viewingDmConvId = convId;
@@ -555,7 +577,10 @@
 				{#if data.pendingRequests.length > 0}<span class="tab-badge">{data.pendingRequests.length}</span>{/if}
 			</button>
 			<button class="manage-tab" class:active={activeTab === 'activity'} onclick={() => activeTab = 'activity'}>Activity</button>
-			<button class="manage-tab" class:active={activeTab === 'moderation'} onclick={() => activeTab = 'moderation'}>Moderation</button>
+			<button class="manage-tab" class:active={activeTab === 'moderation'} onclick={() => activeTab = 'moderation'}>
+				Moderation
+				{#if openReportCount > 0}<span class="tab-badge">{openReportCount}</span>{/if}
+			</button>
 			<button class="manage-tab" class:active={activeTab === 'gemma'} onclick={() => activeTab = 'gemma'}>Gemma</button>
 		</nav>
 
@@ -1146,6 +1171,37 @@
 		{/if}
 
 		{#if activeTab === 'moderation'}
+	<section class="members-section">
+		<h2>Reported messages <span class="member-count">({openReportCount} open)</span></h2>
+		<p class="chart-empty" style="margin-bottom:0.75rem">
+			Messages members flagged with <strong>Report</strong> in chat. The content shown is a
+			snapshot from the moment of the report, so it survives edits and deletions.
+		</p>
+		{#if (data.messageReports ?? []).length === 0}
+			<p class="chart-empty">No reports.</p>
+		{:else}
+			<div class="report-list">
+				{#each data.messageReports as report (report.id)}
+					{@const status = reportStatusOf(report)}
+					<div class="report-card" class:report-resolved={status === 'resolved'}>
+						<div class="report-info">
+							<div class="report-head">
+								<strong>{report.reporterName || 'Unknown'}</strong> reported
+								<strong>{report.authorName || 'Unknown'}</strong>
+								<span class="report-conv">in {report.conversationId}</span>
+								<span class="report-time">{formatRelativeTime(new Date(report.createdAt.replace(' ', 'T') + 'Z').getTime())}</span>
+							</div>
+							<div class="report-content">{report.content || '(no text — attachment or emote message)'}</div>
+							{#if report.reason}<div class="report-reason">Reason: {report.reason}</div>{/if}
+						</div>
+						<button class="btn-edit" onclick={() => setReportStatus(report, status === 'open' ? 'resolved' : 'open')}>
+							{status === 'open' ? 'Resolve' : 'Reopen'}
+						</button>
+					</div>
+				{/each}
+			</div>
+		{/if}
+	</section>
 	<section class="members-section">
 		<h2>Hidden emotes <span class="member-count">({$hiddenEmoteList.length})</span></h2>
 		<p class="chart-empty" style="margin-bottom:0.75rem">
@@ -1952,6 +2008,35 @@
 	.hidden-emote-art { width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; }
 	.btn-unhide { width: 100%; padding: 0.25rem 0; border: 1.5px solid var(--border); border-radius: 6px; background: var(--paper); color: var(--ink); font-family: inherit; font-size: 0.72rem; font-weight: 600; cursor: pointer; transition: all 0.13s; }
 	.btn-unhide:hover { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+
+	/* ── Reported messages ── */
+	.report-list { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.75rem; }
+	.report-card {
+		display: flex;
+		align-items: flex-start;
+		gap: 1rem;
+		background: var(--paper);
+		border: 1.5px solid var(--border);
+		border-radius: 10px;
+		padding: 0.85rem 1.1rem;
+	}
+	.report-card.report-resolved { opacity: 0.55; }
+	.report-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.3rem; }
+	.report-head { font-size: 0.85rem; color: var(--ink); }
+	.report-conv { color: var(--muted-fg); margin-left: 0.35rem; }
+	.report-time { color: var(--muted-fg); margin-left: 0.35rem; font-size: 0.78rem; }
+	.report-content {
+		font-size: 0.88rem;
+		color: var(--ink);
+		background: var(--surface-2, rgba(0,0,0,0.04));
+		border-radius: 8px;
+		padding: 0.5rem 0.7rem;
+		white-space: pre-wrap;
+		word-break: break-word;
+		max-height: 8rem;
+		overflow-y: auto;
+	}
+	.report-reason { font-size: 0.8rem; color: var(--muted-fg); }
 
 	.dm-list { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.75rem; }
 

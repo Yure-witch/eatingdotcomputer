@@ -36,6 +36,38 @@ Each entry includes:
 
 ---
 
+### 2026-08-21 — Message reporting + native shell offline/instant open
+- **Status**: `attempted` (reporting verified end-to-end in browser; native
+  changes need an Xcode build to take effect)
+- **Reporting (App Store Guideline 1.2)**: `message_reports` table (migration
+  063, APPLIED to prod), `/api/moderation/report` (POST any member / GET+PATCH
+  instructor), kebab menu on other people's messages now shows **Report** for
+  everyone (Delete stays instructor-only) in both channel + DM pages; content
+  is snapshotted at report time so it survives edits/deletes. Instructors get a
+  push notification per report and review in Manage → Moderation ("Reported
+  messages" section, open-count badge on the tab, Resolve/Reopen). Verified:
+  filed report → badge → card → resolve → reopen all work.
+- **Native shell instant open + offline**: WKAppBoundDomains
+  (eating.computer) in Info.plist + `limitsNavigationsToAppBoundDomains: true`
+  in capacitor.config.ts — this is what grants WKWebView service-worker
+  support. Root layout now REGISTERS the SW in the native shell instead of
+  tearing it down (old policy predated ABD; safe now because the SW is
+  network-first for HTML, assets are content-hashed, and
+  installChunkErrorRecovery hard-refreshes as backstop). Old installed
+  binaries without the plist key simply have no `navigator.serviceWorker` —
+  no-op. Result once the new binary ships: cold start serves the full
+  JS/CSS/font bundle from the SW disk cache; app opens offline.
+- **Resume where you left off**: root layout saves the last `/app` route
+  (localStorage `ec-last-route`) on every navigation; a launch landing on
+  exactly `/app` in the native shell or installed PWA jumps back to it
+  (replaceState). Deep links (push notifications) are untouched — they never
+  land on bare `/app`.
+- **Known limits**: the HTML document still loads from network when online
+  (deliberate — it is the SSR session/data carrier); "new version" handling is
+  the existing `updated.check()` + chunk-recovery path. The webDir offline
+  fallback page may not load under ABD, but the SW offline fallback replaces
+  it with the real app.
+
 ### 2026-08-21 — Mobile-web compose bar cut off: real root cause found
 - **Status**: `attempted` (verified in emulation; pending user confirmation on a
   real phone — NOT deployed, App Review still pending)

@@ -2542,6 +2542,29 @@
 		}).catch(() => {});
 	}
 
+	// Content reporting (App Store Guideline 1.2): files the message — content
+	// snapshotted server-side — for instructor review in Manage → Moderation.
+	async function reportMessage(msg) {
+		if (!confirm('Report this message to the instructor?')) return;
+		try {
+			const res = await fetch('/api/moderation/report', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					messageId: msg.id,
+					convId: data.convId,
+					content: msg.content ?? '',
+					authorId: msg.userId,
+					authorName: msg.userName
+				})
+			});
+			if (!res.ok) throw new Error(String(res.status));
+			alert('Reported. The instructor will review it.');
+		} catch {
+			alert('Could not send the report — check your connection and try again.');
+		}
+	}
+
 	async function toggleReaction(msgId, emoji) {
 		const uid = data.currentUser.id;
 		const alreadyReacted = !!reactions[msgId]?.[emoji]?.[uid];
@@ -3901,14 +3924,17 @@
 						<button class="action-btn action-btn-delete" onclick={(e) => { e.stopPropagation(); if (confirm('Delete this message?')) deleteMessage(msg); }} title="Delete">
 							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
 						</button>
-					{:else if data.currentUser.role === 'instructor'}
+					{:else}
 						<div class="kebab-wrap">
 							<button class="action-btn" onclick={(e) => { e.stopPropagation(); kebabOpenId = kebabOpenId === msg.id ? null : msg.id; }} title="More">
 								<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>
 							</button>
 							{#if kebabOpenId === msg.id}
 								<div class="kebab-menu">
-									<button class="kebab-item kebab-item-delete" onclick={(e) => { e.stopPropagation(); kebabOpenId = null; if (confirm('Delete this message?')) deleteMessage(msg); }}>Delete</button>
+									<button class="kebab-item" onclick={(e) => { e.stopPropagation(); kebabOpenId = null; reportMessage(msg); }}>Report</button>
+									{#if data.currentUser.role === 'instructor'}
+										<button class="kebab-item kebab-item-delete" onclick={(e) => { e.stopPropagation(); kebabOpenId = null; if (confirm('Delete this message?')) deleteMessage(msg); }}>Delete</button>
+									{/if}
 								</div>
 							{/if}
 						</div>

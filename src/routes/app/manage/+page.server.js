@@ -467,6 +467,32 @@ export async function load({ locals, parent }) {
 		})
 		.sort((a, b) => (b.lastAt || 0) - (a.lastAt || 0));
 
+	// Reported messages (Manage → Moderation). Open ones first; the API
+	// endpoint /api/moderation/report handles filing and resolving.
+	let messageReports = [];
+	if (db) {
+		const r = await db.execute(
+			`SELECT id, message_id, conversation_id, message_content, message_user_id, message_user_name,
+			        reporter_id, reporter_name, reason, status, created_at, resolved_at
+			 FROM message_reports
+			 ORDER BY (status = 'open') DESC, created_at DESC
+			 LIMIT 200`
+		).catch(() => ({ rows: [] }));
+		messageReports = r.rows.map((row) => ({
+			id: String(row.id),
+			messageId: String(row.message_id),
+			conversationId: String(row.conversation_id),
+			content: String(row.message_content ?? ''),
+			authorId: String(row.message_user_id ?? ''),
+			authorName: String(row.message_user_name ?? ''),
+			reporterName: String(row.reporter_name ?? ''),
+			reason: String(row.reason ?? ''),
+			status: String(row.status),
+			createdAt: String(row.created_at),
+			resolvedAt: row.resolved_at ? String(row.resolved_at) : null
+		}));
+	}
+
 	// Enrollment window for the currently selected class. Surfaces
 	// the toggle + start/end dates that drive the student onboarding
 	// picker — only classes with enrollment_open=1 AND today inside
@@ -517,7 +543,7 @@ export async function load({ locals, parent }) {
 	}
 	for (const m of members) m.emotes = emotesByUser[m.id] ?? [];
 
-	return { weeks, maxWeek, members, activityByUser, userDeviceActivity, deviceNotifData, pendingRequests, classId, dmConversations, enrollment, unattributedEmotes };
+	return { weeks, maxWeek, members, activityByUser, userDeviceActivity, deviceNotifData, pendingRequests, classId, dmConversations, enrollment, unattributedEmotes, messageReports };
 }
 
 const ALL_TYPES = ['link', 'image', 'video'];

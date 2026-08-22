@@ -29,8 +29,22 @@
 	import { dev } from '$app/environment';
 	import { initNativeShell, isNativeApp, updateStatusBarTheme } from '$lib/native.js';
 	import GetAppBanner from '$lib/components/GetAppBanner.svelte';
+	import { afterNavigate, goto } from '$app/navigation';
 
 	let { children } = $props();
+
+	// ── Last-route memory (native shell + installed PWA) ────────────────
+	const LAST_ROUTE_KEY = 'ec-last-route';
+	// Restore only in app-like containers, where "opening" means launching an
+	// icon rather than following a URL.
+	const restoreLastRoute = () =>
+		isNativeApp() || (typeof matchMedia !== 'undefined' && matchMedia('(display-mode: standalone)').matches);
+	afterNavigate(() => {
+		try {
+			const p = location.pathname;
+			if (p.startsWith('/app')) localStorage.setItem(LAST_ROUTE_KEY, p);
+		} catch { /* private mode — resume just falls back to the dashboard */ }
+	});
 
 	onMount(() => {
 		// A page loaded from an older build can't fetch chunk names that no longer
@@ -44,24 +58,43 @@
 		// suppression hacks.
 		initNativeShell();
 
-		// Service worker: register on web/PWA, but NEVER inside the native
-		// shell — a cache-first SW serves stale chunks into the WKWebView and
-		// black-screens it. In the native app we instead tear down any SW that
-		// a previous session (or the live site) left registered, and drop its
-		// caches, so the web view always loads fresh from the network.
+		// Service worker: register everywhere, including the native shell.
+		// The shell used to tear the SW down ("cache-first SW serves stale
+		// chunks and black-screens the WKWebView") — but that predates three
+		// things that make it safe and fast now: (1) WKAppBoundDomains in the
+		// shell's Info.plist, which is what gives WKWebView service-worker
+		// support at all (in binaries without it, navigator.serviceWorker is
+		// simply undefined here and this is a no-op — which is why this code is
+		// safe to ship to old installs); (2) this SW is network-first for HTML,
+		// so a deploy's fresh document always pairs with its own chunks —
+		// cache-first only applies to content-hashed assets, which never go
+		// stale under their own name; (3) installChunkErrorRecovery above
+		// hard-refreshes (SW unregistered, caches dropped, cache-busted reload)
+		// if a stale pairing somehow happens anyway. What this buys the shell:
+		// cold starts serve the whole JS/CSS/font bundle from disk instead of
+		// the network, and the app still opens when offline.
 		if ('serviceWorker' in navigator) {
-			if (isNativeApp()) {
-				navigator.serviceWorker.getRegistrations()
-					.then((regs) => regs.forEach((r) => r.unregister()))
-					.catch(() => {});
-				if (typeof caches !== 'undefined') {
-					caches.keys().then((keys) => keys.forEach((k) => caches.delete(k))).catch(() => {});
+			navigator.serviceWorker
+				.register('/service-worker.js', { type: dev ? 'module' : 'classic' })
+				.catch(() => {});
+		}
+
+		// Reopen where you left off. The native shell (and installed PWA) cold
+		// starts at "/", which redirects an authenticated session to /app — the
+		// dashboard — no matter where you were when iOS killed the process.
+		// afterNavigate (below) remembers the last /app route; when a launch
+		// lands on exactly "/app" (the generic entry, never a deep link — push
+		// notifications navigate straight to their own /app/... URLs), jump
+		// back to the remembered place. replaceState so Back doesn't return to
+		// the flash of dashboard. Web tabs are left alone: typing a URL into a
+		// browser should go where the URL says.
+		if (restoreLastRoute()) {
+			try {
+				const saved = localStorage.getItem(LAST_ROUTE_KEY);
+				if (saved && saved !== '/app' && saved.startsWith('/app') && location.pathname === '/app') {
+					goto(saved, { replaceState: true });
 				}
-			} else {
-				navigator.serviceWorker
-					.register('/service-worker.js', { type: dev ? 'module' : 'classic' })
-					.catch(() => {});
-			}
+			} catch { /* private mode — stay on the dashboard */ }
 		}
 
 		// Native resume: DON'T blindly reload (that's what flashed the loading

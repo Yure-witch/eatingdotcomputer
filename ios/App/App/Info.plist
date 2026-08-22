@@ -65,5 +65,13 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
+	<!-- App-Bound Domains: unlocks service-worker support in WKWebView for the
+	     live site the shell loads, so cold starts serve the whole asset bundle
+	     from the SW disk cache (see capacitor.config.ts ios block). Covers
+	     www. via the registrable domain. -->
+	<key>WKAppBoundDomains</key>
+	<array>
+		<string>eating.computer</string>
+	</array>
 </dict>
 </plist>

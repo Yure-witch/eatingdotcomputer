@@ -23,6 +23,15 @@ const config: CapacitorConfig = {
 	},
 	ios: {
 		contentInset: 'never',
+		// App-Bound Domains (with WKAppBoundDomains in Info.plist): WKWebView
+		// only grants SERVICE WORKER support to app-bound domains, and the
+		// service worker is what makes a cold start fast — the whole JS/CSS/font
+		// bundle is served from disk (precached by src/service-worker.js), so
+		// only the HTML document and data hit the network. Also gives the shell
+		// a real offline mode: the SW falls back to cached pages. Login is
+		// unaffected — Google/Apple sign-in run through native plugins, not
+		// webview redirects, so navigation never leaves eating.computer.
+		limitsNavigationsToAppBoundDomains: true,
 		// Lets the server tell a shell request apart from a plain browser one, so
 		// an unauthenticated launch can go straight to /login instead of the
 		// marketing landing page (see src/routes/+page.server.js).
