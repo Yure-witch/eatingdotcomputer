@@ -11,13 +11,32 @@
 	let menuOpen = $state(false);
 	let menuEl = $state(null);
 	let switchForm = $state(null);
+	let signoutForm = $state(null);
+
+	// Leaving an account means LEAVING it: besides the session cookie (the
+	// form action's job), the device holds per-user state — last route,
+	// emoji-font choice, accepted-class flags, drafts — that would bleed into
+	// whoever signs in next. Clear the lot; device-level bits it re-learns in
+	// a frame. The post-signout redirect is a full page load, so nothing
+	// in-memory survives either.
+	function clearLocalState() {
+		try { sessionStorage.clear(); } catch {}
+		try { localStorage.clear(); } catch {}
+	}
 
 	// Clear the native Google session BEFORE signing out of the app. Our cookie
 	// going away isn't enough — GIDSignIn keeps its own session, so the next
 	// "Continue with Google" would silently restore the account you just left.
 	async function switchAccount() {
 		await nativeGoogleSignOut();
+		clearLocalState();
 		switchForm?.requestSubmit();
+	}
+
+	async function signOutFully(form) {
+		await nativeGoogleSignOut();
+		clearLocalState();
+		form?.requestSubmit();
 	}
 
 	function firstName(name) {
@@ -66,8 +85,8 @@
 				<form method="POST" action="/app?/switchaccount" style="display:contents" bind:this={switchForm}>
 					<button type="button" class="dropdown-item dropdown-item-btn" onclick={switchAccount}>Switch account</button>
 				</form>
-				<form method="POST" action="/app?/signout" style="display:contents">
-					<button type="submit" class="dropdown-item dropdown-item-btn">Sign out</button>
+				<form method="POST" action="/app?/signout" style="display:contents" bind:this={signoutForm}>
+					<button type="button" class="dropdown-item dropdown-item-btn" onclick={() => signOutFully(signoutForm)}>Sign out</button>
 				</form>
 			</div>
 		{/if}

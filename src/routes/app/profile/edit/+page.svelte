@@ -138,6 +138,10 @@
 				deleteBusy = false;
 				return;
 			}
+			// The account is gone — its device state goes with it, so the next
+			// sign-in (possibly someone else) starts clean.
+			try { sessionStorage.clear(); } catch {}
+			try { localStorage.clear(); } catch {}
 			signoutForm?.requestSubmit();
 		} catch {
 			deleteError = 'Deletion failed — check your connection and try again.';
@@ -254,17 +258,23 @@
 			</label>
 
 			<!-- Blocked users: the block list lives here; blocking itself
-			     happens from the ⋮ menu on a message in chat. -->
-			{#if blockedLoaded && blockedList.length > 0}
+			     happens from the ⋮ menu on a message in chat. Always rendered
+			     (with an empty state) — a section that only exists when
+			     non-empty is undiscoverable. -->
+			{#if blockedLoaded}
 				<div class="blocked-section">
 					<h2>Blocked users</h2>
-					<p>You won't see messages from these people, and they can't notify you. Blocking is private — they aren't told.</p>
-					{#each blockedList as b (b.userId)}
-						<div class="blocked-row">
-							<span class="blocked-name">{b.name}</span>
-							<button type="button" class="btn-unblock" onclick={() => unblock(b.userId)}>Unblock</button>
-						</div>
-					{/each}
+					<p>You won't see messages from these people, and they can't notify you. Blocking is private — they aren't told. Block someone from the ⋮ menu on any of their messages.</p>
+					{#if blockedList.length === 0}
+						<p class="blocked-empty">No one is blocked.</p>
+					{:else}
+						{#each blockedList as b (b.userId)}
+							<div class="blocked-row">
+								<span class="blocked-name">{b.name}</span>
+								<button type="button" class="btn-unblock" onclick={() => unblock(b.userId)}>Unblock</button>
+							</div>
+						{/each}
+					{/if}
 				</div>
 			{/if}
 
@@ -286,7 +296,14 @@
 				{:else}
 					<label>
 						<span>Type <strong>DELETE</strong> to confirm</span>
-						<input type="text" bind:value={deleteConfirmText} placeholder="DELETE" autocomplete="off" autocapitalize="characters" />
+						<!-- The confirm field is the LAST thing on the page, and in the
+						     native shell the keyboard overlays the web view without
+						     resizing it — so it typed blind under the keyboard. The
+						     --kb-h padding on main (below) creates room to scroll into,
+						     and the focus handler does the scrolling once the keyboard
+						     has committed to opening. -->
+						<input type="text" bind:value={deleteConfirmText} placeholder="DELETE" autocomplete="off" autocapitalize="characters"
+							onfocus={(e) => setTimeout(() => e.target.scrollIntoView({ block: 'center', behavior: 'smooth' }), 300)} />
 					</label>
 					<div class="danger-actions">
 						<button type="button" class="btn-ghost" onclick={() => { deleteArmed = false; deleteConfirmText = ''; deleteError = ''; }}>Cancel</button>
@@ -316,7 +333,10 @@
 	   (BottomNav.svelte), so the clearance holds on notched phones and under
 	   Safari/Chrome's browser bars alike. */
 	@media (max-width: 640px) {
-		main { padding-bottom: calc(2rem + 64px + env(safe-area-inset-bottom, 0px) + var(--browser-chrome-h, 0px)); }
+		/* --kb-h: when the keyboard is up (native shell overlays the webview
+		   without resizing it), this adds exactly the covered strip as
+		   scrollable room, so the DELETE confirm field can scroll above it. */
+		main { padding-bottom: calc(2rem + 64px + env(safe-area-inset-bottom, 0px) + var(--browser-chrome-h, 0px) + var(--kb-h, 0px)); }
 	}
 
 	.back { display: inline-block; font-size: 0.85rem; color: var(--muted-fg); text-decoration: none; margin-bottom: 1.5rem; }
@@ -409,6 +429,7 @@
 		border: 1.5px solid var(--border); border-radius: 8px;
 	}
 	.blocked-name { font-size: 0.9rem; font-weight: 600; color: var(--ink); }
+	.blocked-empty { font-size: 0.85rem; color: var(--muted-fg); margin: 0; font-style: italic; }
 	.btn-unblock {
 		padding: 0.4rem 0.9rem; background: none;
 		border: 1.5px solid var(--border); border-radius: 8px;

@@ -615,6 +615,13 @@ body.native-app .input-area {
 body.native-app.kb-native-open .input-area {
 	transform: translateY(calc(-1 * var(--kb-height, 0px)));
 }
+/* Gemma's compose is its own component (.gm-compose-wrap, not .input-area),
+   so it never got the lift — on the native shell the keyboard overlays the
+   web view and simply covered it. Same treatment as the chat compose. */
+body.native-app .gm-compose-wrap { transition: transform 0.2s ease; }
+body.native-app.kb-native-open .gm-compose-wrap {
+	transform: translateY(calc(-1 * var(--kb-height, 0px)));
+}
 /* Never transform the input area while the picker is open, so the fixed picker
    always anchors to the viewport.
    `transition: none` is load-bearing, not tidiness. The rule above transitions

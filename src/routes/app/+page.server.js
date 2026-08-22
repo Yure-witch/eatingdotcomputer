@@ -94,6 +94,9 @@ export async function load({ locals, parent }) {
 export const actions = {
 	signout: async (event) => {
 		await signOut(event, { redirect: false });
+		// The class selection is the previous user's context — a different
+		// account signing in next shouldn't inherit it.
+		event.cookies.delete('selected_class_id', { path: '/' });
 		redirect(303, '/login');
 	},
 
@@ -102,6 +105,7 @@ export const actions = {
 	// "Switch account" just signs you straight back into the account you left.
 	switchaccount: async (event) => {
 		await signOut(event, { redirect: false });
+		event.cookies.delete('selected_class_id', { path: '/' });
 		redirect(303, '/login?switch=1');
 	},
 
