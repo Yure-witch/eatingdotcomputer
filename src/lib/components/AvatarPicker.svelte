@@ -37,6 +37,18 @@
 	// otherwise drop off the bottom of the card).
 	let exprBtnEl = $state(null);
 
+	// While the picker is open, borrow the chat compose's body class: app.css
+	// hides the bottom nav for it (`body.expr-picker-open .bottom-nav`), so
+	// the picker isn't sharing the bottom of the screen with Home/Chat/…
+	// exactly as when it docks in chat. No-op on pages without the nav
+	// (onboarding, desktop). The effect cleanup also covers unmounting with
+	// the picker still open.
+	$effect(() => {
+		if (typeof document === 'undefined') return;
+		document.body.classList.toggle('expr-picker-open', showExpr);
+		return () => document.body.classList.remove('expr-picker-open');
+	});
+
 	function pickGenerative() {
 		avatarKind = 'gen';
 		avatarValue = null;
