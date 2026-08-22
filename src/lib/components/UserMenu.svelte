@@ -72,8 +72,16 @@
 		{#if menuOpen}
 			<div class="user-dropdown">
 				{#if !minimal}
-					<a href="/app/profile/{user.id}" class="dropdown-item" onclick={() => menuOpen = false}>
-						Profile
+					<!-- Two distinct destinations, split on purpose: the PUBLIC page
+					     (?customize=1 opens its customizer straight away) versus the
+					     account SETTINGS (name, avatar, notifications, blocked
+					     users, delete). One "Profile" entry hid the second behind
+					     the first. -->
+					<a href="/app/profile/{user.id}?customize=1" class="dropdown-item" onclick={() => menuOpen = false}>
+						Customize profile
+					</a>
+					<a href="/app/profile/edit" class="dropdown-item" onclick={() => menuOpen = false}>
+						Profile settings
 					</a>
 					<a href="/app/theme" class="dropdown-item" onclick={() => menuOpen = false}>
 						Customize theme

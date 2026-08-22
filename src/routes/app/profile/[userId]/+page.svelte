@@ -173,6 +173,13 @@
 
 	// ---- Customizer (own profile only) ----
 	let customizing = $state(false);
+	// ?customize=1 (the user menu's "Customize profile") lands with the
+	// customizer already open — own profile only.
+	onMount(() => {
+		try {
+			if (isOwnProfile && new URLSearchParams(location.search).has('customize')) customizing = true;
+		} catch { /* opens closed, the ✨ button still works */ }
+	});
 	// Owner toggling the customizer drops back to the standard card view
 	// so the preset controls stay reachable while a custom page is live.
 	const showCustomPage = $derived(!!customHtml && !(isOwnProfile && customizing));
