@@ -281,6 +281,16 @@
 	.shell { min-height: 100vh; display: flex; flex-direction: column; background: var(--paper); }
 
 	main { padding: calc(1.5rem + var(--header-h, 52px)) 2rem 2rem; max-width: 480px; width: 100%; margin: 0 auto; }
+	/* Mobile: the bottom nav pill floats over the page, so the page has to
+	   scroll past it — without this reservation the Danger zone (the LAST
+	   thing on the page) ends up underneath the pill and can't be reached.
+	   64px ≈ pill height + its 6px float gap; the safe-area and
+	   --browser-chrome-h terms mirror the pill's own bottom offset
+	   (BottomNav.svelte), so the clearance holds on notched phones and under
+	   Safari/Chrome's browser bars alike. */
+	@media (max-width: 640px) {
+		main { padding-bottom: calc(2rem + 64px + env(safe-area-inset-bottom, 0px) + var(--browser-chrome-h, 0px)); }
+	}
 
 	.back { display: inline-block; font-size: 0.85rem; color: var(--muted-fg); text-decoration: none; margin-bottom: 1.5rem; }
 	.back:hover { color: var(--ink); }
