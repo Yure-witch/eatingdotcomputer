@@ -50,8 +50,13 @@ export const actions = {
 
 		const passwordHash = await hash(password, 10);
 		await db.execute({
-			sql: `INSERT INTO users (id, email, username, name, password_hash, role, onboarding_step)
-			      VALUES (?, ?, ?, ?, ?, 'student', 'profile')`,
+			// Same defaults as the review accounts (and Apple sign-ups):
+			// hide_tg_emoji = 1 keeps the third-party emote packs (Telegram,
+			// Emoji Kitchen) off until the instructor enables them per member
+			// (Manage → Members → 3rd-party); emoji_font = 'system' renders
+			// native platform emoji rather than pulling the Noto face.
+			sql: `INSERT INTO users (id, email, username, name, password_hash, role, onboarding_step, hide_tg_emoji, emoji_font)
+			      VALUES (?, ?, ?, ?, ?, 'student', 'profile', 1, 'system')`,
 			args: [crypto.randomUUID(), finalEmail, username, name, passwordHash]
 		});
 
