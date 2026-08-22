@@ -4,7 +4,7 @@
 	import { enhance } from '$app/forms';
 	import { invalidateAll } from '$app/navigation';
 	import { subscribeToPush, unsubscribeFromPush, isPushSubscribed } from '$lib/push.js';
-	import { isNativeApp } from '$lib/native.js';
+	import { isNativeApp, APP_STORE_URL } from '$lib/native.js';
 	import FileTypeIcon from '$lib/components/FileTypeIcon.svelte';
 	import FormattedInput from '$lib/components/FormattedInput.svelte';
 	import { createContentRenderer } from '$lib/message-render.js';
@@ -976,11 +976,20 @@
 		     already in the app, there's nothing to install. -->
 		{#if isMobile && !isStandalone && !isNative}
 			<div class="install-banner">
-				<p class="install-banner-title">📲 Install eating.computer</p>
-				{#if installPrompt}
+				{#if isIOS && APP_STORE_URL}
+					<!-- iOS with a live store listing: the native app is the
+					     better home (real push via APNs, keyboard-aware
+					     compose). The PWA path stays for Android, where web
+					     push works natively. -->
+					<p class="install-banner-title">📲 eating.computer for iPhone</p>
+					<p class="install-banner-sub">Get the app for reliable notifications — mentions, replies, and DMs land on your lock screen.</p>
+					<a class="btn-primary appstore-link" href={APP_STORE_URL} target="_blank" rel="noopener noreferrer">Download on the App Store</a>
+				{:else if installPrompt}
+					<p class="install-banner-title">📲 Install eating.computer</p>
 					<p class="install-banner-sub">Add to your home screen for the full experience.</p>
 					<button class="btn-primary" onclick={install}>Install app</button>
 				{:else if isIOS}
+					<p class="install-banner-title">📲 Install eating.computer</p>
 					<p class="install-banner-sub">To install on iPhone or iPad:</p>
 					<ol class="install-steps">
 						<li>Tap the <strong>Share</strong> button <span class="ios-share">⎙</span> at the bottom of Safari</li>
@@ -988,6 +997,7 @@
 						<li>Tap <strong>Add</strong></li>
 					</ol>
 				{:else if isAndroid}
+					<p class="install-banner-title">📲 Install eating.computer</p>
 					<p class="install-banner-sub">To install on Android:</p>
 					<ol class="install-steps">
 						<li>Tap the <strong>⋮ menu</strong> in Chrome</li>
@@ -1724,6 +1734,7 @@
 	.sub-video { max-width: 100%; max-height: 300px; border-radius: 6px; display: block; }
 
 	/* Buttons */
+	.appstore-link { display: inline-block; text-decoration: none; text-align: center; }
 	.btn-primary {
 		padding: 0.65rem 1.4rem; background: var(--ink); color: var(--paper);
 		border: none; border-radius: 10px; font-family: inherit; font-size: 0.9rem;

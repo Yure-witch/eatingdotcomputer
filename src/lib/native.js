@@ -16,6 +16,11 @@ import { noteKeyboardHeight } from '$lib/keyboard-metrics.js';
  * null, the "Get the app" banner stays hidden (no dead link). The moment you
  * paste the real URL here, the banner lights up for mobile-web visitors.
  */
+// Once the app is approved, set this to the public listing URL
+// (https://apps.apple.com/app/id<APPLE_ID> — the Apple ID is in App Store
+// Connect → App Information). While null, iOS web visitors keep the
+// Add-to-Home-Screen instructions; set, they get the App Store callout on
+// the dashboard instead (see /app/+page.svelte's install banner).
 export const APP_STORE_URL = null;
 
 /** True only inside the Capacitor native shell (iOS/Android app). */
@@ -219,6 +224,24 @@ async function _postApnsToken(token) {
  * token to the server. Tapping a delivered notification routes to its url.
  * No-op on web. Safe to call more than once (register() is idempotent).
  */
+/**
+ * Current native push-permission state: 'granted' | 'denied' | 'prompt'
+ * (or null on web / if the plugin is unavailable). Lets settings surfaces
+ * show the real state and word the button accordingly — iOS never
+ * re-prompts once denied, so 'denied' means "go to Settings".
+ */
+export async function nativePushPermission() {
+	if (!isNativeApp()) return null;
+	try {
+		const { PushNotifications } = await import('@capacitor/push-notifications');
+		const perm = await PushNotifications.checkPermissions();
+		const v = perm?.receive ?? 'prompt';
+		return v === 'prompt-with-rationale' ? 'prompt' : v;
+	} catch {
+		return null;
+	}
+}
+
 export async function registerNativePush() {
 	if (!isNativeApp()) return;
 	try {

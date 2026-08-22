@@ -87,6 +87,51 @@
 		setTimeout(() => (gemmaOptInStatus = ''), 2000);
 	}
 
+	// ── Notifications ────────────────────────────────────────────────────
+	// A manual (re-)enable that works everywhere: the native shell asks the
+	// OS again via the Capacitor plugin; web/PWA runs the permission prompt +
+	// push subscription. Neither platform re-prompts once DENIED — the only
+	// honest thing to show then is where to flip it back on.
+	import { isNativeApp, registerNativePush, nativePushPermission } from '$lib/native.js';
+	import { subscribeToPush, unsubscribeFromPush, isPushSubscribed } from '$lib/push.js';
+	let notifState = $state('loading'); // enabled | ready | prompt | denied | unsupported | loading
+	let notifBusy = $state(false);
+	const notifIsNative = typeof window !== 'undefined' && isNativeApp();
+	async function refreshNotifState() {
+		if (notifIsNative) {
+			const p = await nativePushPermission();
+			notifState = p === 'granted' ? 'enabled' : p === 'denied' ? 'denied' : p === 'prompt' ? 'prompt' : 'unsupported';
+			return;
+		}
+		if (typeof Notification === 'undefined' || !('serviceWorker' in navigator) || !('PushManager' in window)) {
+			notifState = 'unsupported';
+			return;
+		}
+		if (Notification.permission === 'denied') { notifState = 'denied'; return; }
+		if (Notification.permission === 'default') { notifState = 'prompt'; return; }
+		notifState = (await isPushSubscribed()) ? 'enabled' : 'ready';
+	}
+	onMount(refreshNotifState);
+	async function enableNotifs() {
+		notifBusy = true;
+		try {
+			if (notifIsNative) {
+				await registerNativePush();
+			} else {
+				if (Notification.permission === 'default') await Notification.requestPermission();
+				if (Notification.permission === 'granted') await subscribeToPush();
+			}
+		} catch { /* state readout below tells the truth */ }
+		await refreshNotifState();
+		notifBusy = false;
+	}
+	async function disableNotifs() {
+		notifBusy = true;
+		try { await unsubscribeFromPush(); } catch {}
+		await refreshNotifState();
+		notifBusy = false;
+	}
+
 	// ── Blocked users (App Store Guideline 1.2) ─────────────────────────
 	// The single place the whole block list is visible and reversible —
 	// blocking happens in chat, unblocking happens here (or inline in a
@@ -257,6 +302,29 @@
 				</span>
 			</label>
 
+			<!-- Notifications: manual (re-)enable, since the OS prompt only
+			     ever appears once on its own. -->
+			{#if notifState !== 'unsupported' && notifState !== 'loading'}
+				<div class="notif-section">
+					<h2>Notifications</h2>
+					{#if notifState === 'enabled'}
+						<p class="notif-sub">Notifications are on for this device.</p>
+						{#if !notifIsNative}
+							<button type="button" class="btn-notif" disabled={notifBusy} onclick={disableNotifs}>{notifBusy ? '…' : 'Turn off on this device'}</button>
+						{/if}
+					{:else if notifState === 'denied'}
+						<p class="notif-sub">
+							Notifications are blocked for this
+							{notifIsNative ? 'app — turn them on in Settings → eating.computer → Notifications.' : 'site — allow them in your browser settings, then come back and enable.'}
+						</p>
+						<button type="button" class="btn-notif" disabled={notifBusy} onclick={enableNotifs}>{notifBusy ? '…' : 'Check again'}</button>
+					{:else}
+						<p class="notif-sub">Get notified about mentions, replies, and DMs.</p>
+						<button type="button" class="btn-notif" disabled={notifBusy} onclick={enableNotifs}>{notifBusy ? '…' : 'Enable notifications'}</button>
+					{/if}
+				</div>
+			{/if}
+
 			<!-- Blocked users: the block list lives here; blocking itself
 			     happens from the ⋮ menu on a message in chat. Always rendered
 			     (with an empty state) — a section that only exists when
@@ -414,6 +482,24 @@
 		margin: -0.5rem 0 0; text-align: center;
 		font-size: 0.78rem; color: var(--muted-fg);
 	}
+
+	/* ── Notifications ── */
+	.notif-section {
+		margin-top: 1.25rem; padding-top: 1.25rem;
+		border-top: 1.5px solid var(--border);
+		display: flex; flex-direction: column; gap: 0.6rem;
+	}
+	.notif-section h2 { margin: 0; font-size: 1rem; font-weight: 600; color: var(--ink); }
+	.notif-sub { margin: 0; font-size: 0.8rem; color: var(--muted-fg); line-height: 1.45; }
+	.btn-notif {
+		align-self: flex-start;
+		padding: 0.5rem 0.9rem; background: none;
+		border: 1.5px solid var(--border); border-radius: 8px;
+		font-family: inherit; font-size: 0.85rem; font-weight: 600;
+		color: var(--ink); cursor: pointer; transition: border-color 0.15s;
+	}
+	.btn-notif:hover { border-color: var(--ink); }
+	.btn-notif:disabled { opacity: 0.5; cursor: default; }
 
 	/* ── Blocked users ── */
 	.blocked-section {
