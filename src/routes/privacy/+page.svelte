@@ -99,8 +99,22 @@
 	<p>
 		Course content and messages are kept for as long as the class account exists, so
 		the class has its own history. Uploaded files that are never attached to anything
-		are deleted automatically within minutes. Ask the instructor to delete your
-		account and we will remove your profile, your uploads, and your messages.
+		are deleted automatically within minutes.
+	</p>
+
+	<h2>Deleting your account</h2>
+	<p>
+		You can delete your account yourself, inside the app: open your profile, choose
+		<strong>Edit profile</strong>, and use <strong>Delete account</strong> at the
+		bottom of the page. Deletion is immediate and permanent. It removes your
+		profile, your uploads and submissions, your saved messages, your notifications,
+		and the device registrations used for push notifications.
+	</p>
+	<p>
+		Messages you posted in class conversations remain, so the conversation still
+		reads as a whole for everyone else — but they stop being attributed to you and
+		are shown as “Deleted user”. If you also want the text of your messages
+		removed, email the address below and we will do it.
 	</p>
 
 	<h2>Children</h2>
@@ -112,7 +126,8 @@
 	<ul>
 		<li>Notifications can be turned off in your device settings at any time.</li>
 		<li>The daily digest is off by default and can be turned off again in your profile.</li>
-		<li>You can ask for a copy of your data, or ask for your account to be deleted.</li>
+		<li>You can delete your account at any time from Edit profile → Delete account.</li>
+		<li>You can ask for a copy of your data, or for your message text to be removed after deletion.</li>
 	</ul>
 
 	<h2>Changes</h2>

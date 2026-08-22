@@ -36,6 +36,34 @@ Each entry includes:
 
 ---
 
+### 2026-08-21 — In-app account deletion (Guideline 5.1.1(v)) + privacy policy
+- **Status**: `attempted` (verified end-to-end: throwaway account created,
+  deleted through the UI flow, all rows confirmed gone)
+- **UI**: Profile → Edit profile → "Delete account" danger zone; two-step
+  (reveal, then type DELETE to arm the button). On success the page submits
+  the same `/app?/signout` action the user menu uses — cookie cleared after
+  the row is already gone → lands on /login.
+- **API**: POST `/api/profile/delete-account` (self-service only, requires
+  `{confirm:'DELETE'}`). Deletes: users row (last, and required to succeed —
+  everything else is best-effort so a partial failure can be retried),
+  memberships, submissions/completions, stars, notifications both directions,
+  push + APNs tokens, activity/sessions/AI keys, Gemma goals/links,
+  inspiration rows, reactions, uploaded_files + their R2 objects, avatar R2
+  prefix, conversation_members, and the RTDB nodes userChats/lastRead/
+  presence/notifications/gemmaDigestState/recs for the uid. Messages are
+  KEPT but anonymised: user_name -> 'Deleted user' across chat_messages,
+  thread_messages, messages, direct_messages, starred author names, report
+  names, emote/reaction-image credits. Live RTDB messages only store the uid,
+  which stops resolving once the row is gone.
+- **Guard**: the only remaining instructor cannot self-delete (409 with
+  explanation) — the class would be ownerless.
+- **Privacy policy**: new "Deleting your account" section describing the
+  in-app flow and the messages-anonymised split, with email escalation for
+  full message-text removal; "Your choices" updated; the old "ask the
+  instructor" wording removed.
+- **Recording note**: don't delete the Apple demo account on camera — use a
+  throwaway (scripts/create-reviewer.js makes one) or re-run the script after.
+
 ### 2026-08-21 — Message reporting + native shell offline/instant open
 - **Status**: `attempted` (reporting verified end-to-end in browser; native
   changes need an Xcode build to take effect)

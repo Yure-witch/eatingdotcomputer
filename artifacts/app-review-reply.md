@@ -120,15 +120,18 @@ and user-generated content*. It has both. Status:
    snapshotted to the database, instructors get a push notification, and
    review/resolve lives in Manage → Moderation. Show this in the recording:
    report a message, then show it appearing in Manage → Moderation.
-2. **In-app account deletion — Guideline 5.1.1(v).** STILL MISSING. Any app
-   that supports account creation must let users initiate account deletion
-   inside the app. The privacy page currently says to ask the instructor;
-   that does not satisfy the rule. Needs: a "Delete account" action
-   (profile/settings) that deletes or schedules deletion of the account and
-   its data.
+2. ✅ **In-app account deletion — Guideline 5.1.1(v).** BUILT (2026-08-21):
+   Profile → Edit profile → Delete account, with a typed DELETE confirmation.
+   Immediately removes the profile, memberships, uploads (R2 objects
+   included), submissions, notifications, device tokens, and personal data;
+   messages remain anonymised as "Deleted user" (the privacy policy states
+   this split and offers full message removal by email). Show it in the
+   recording with a throwaway account — the demo account itself should NOT
+   be deleted on camera (Apple needs it working afterwards); record the flow
+   on a second account, or re-create the demo account after.
 3. **User blocking — Guideline 1.2.** STILL MISSING. UGC apps need a way to
    block abusive users, separate from reporting. Needs: "Block user" (hides
    that user's messages/DMs for the blocker).
 
-Recommendation: build 2 and 3, capture all three in the screen recording,
+Recommendation: build 3, capture all three flows in the screen recording,
 then reply.

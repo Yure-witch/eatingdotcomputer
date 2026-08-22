@@ -63,6 +63,38 @@
 		} catch { gemmaOptInStatus = 'failed'; gemmaOptIn = !gemmaOptIn; }
 		setTimeout(() => (gemmaOptInStatus = ''), 2000);
 	}
+
+	// ── Account deletion (App Store Guideline 5.1.1(v)) ─────────────────
+	// Two-step: the button reveals a typed-confirmation row, and only the
+	// exact word DELETE arms the final button. After the server confirms,
+	// the signout form (server action → cookie cleared → /login) runs; the
+	// account is already gone at that point.
+	let deleteArmed = $state(false);
+	let deleteConfirmText = $state('');
+	let deleteBusy = $state(false);
+	let deleteError = $state('');
+	let signoutForm = $state(null);
+	async function deleteAccount() {
+		if (deleteConfirmText !== 'DELETE' || deleteBusy) return;
+		deleteBusy = true;
+		deleteError = '';
+		try {
+			const r = await fetch('/api/profile/delete-account', {
+				method: 'POST', headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ confirm: 'DELETE' })
+			});
+			if (!r.ok) {
+				const j = await r.json().catch(() => null);
+				deleteError = j?.message || 'Deletion failed — please try again.';
+				deleteBusy = false;
+				return;
+			}
+			signoutForm?.requestSubmit();
+		} catch {
+			deleteError = 'Deletion failed — check your connection and try again.';
+			deleteBusy = false;
+		}
+	}
 </script>
 
 <svelte:head><title>Edit profile — eating.computer</title></svelte:head>
@@ -167,6 +199,39 @@
 					<span class="gemma-optin-sub">For goal tracking, Gemma normally only reads class channels and your chats with instructors. Turn this on to let her also pick up goals and requests from your other DMs.{gemmaScanStatus ? ` — ${gemmaScanStatus}` : ''}</span>
 				</span>
 			</label>
+
+			<!-- Danger zone: in-app account deletion. The hidden signout form
+			     is the same server action the user menu uses — it clears the
+			     session cookie AFTER the account row is already gone. -->
+			<div class="danger-zone">
+				<h2>Delete account</h2>
+				<p>
+					Permanently deletes your profile, uploads, submissions, saved messages,
+					notifications, and device registrations. Messages you sent stay in the
+					class conversation, shown as “Deleted user”. This cannot be undone.
+					See the <a href="/privacy" target="_blank" rel="noopener noreferrer">privacy policy</a> for details.
+				</p>
+				{#if !deleteArmed}
+					<button type="button" class="btn-danger-ghost" onclick={() => { deleteArmed = true; deleteError = ''; }}>
+						Delete my account…
+					</button>
+				{:else}
+					<label>
+						<span>Type <strong>DELETE</strong> to confirm</span>
+						<input type="text" bind:value={deleteConfirmText} placeholder="DELETE" autocomplete="off" autocapitalize="characters" />
+					</label>
+					<div class="danger-actions">
+						<button type="button" class="btn-ghost" onclick={() => { deleteArmed = false; deleteConfirmText = ''; deleteError = ''; }}>Cancel</button>
+						<button type="button" class="btn-danger" disabled={deleteConfirmText !== 'DELETE' || deleteBusy} onclick={deleteAccount}>
+							{deleteBusy ? 'Deleting…' : 'Permanently delete my account'}
+						</button>
+					</div>
+				{/if}
+				{#if deleteError}
+					<p class="error">{deleteError}</p>
+				{/if}
+				<form method="POST" action="/app?/signout" style="display:none" bind:this={signoutForm}></form>
+			</div>
 		</div>
 	</main>
 </div>
@@ -247,4 +312,30 @@
 		padding: 0.25rem 0 0.75rem;
 		position: relative;
 	}
+
+	/* ── Danger zone ── */
+	.danger-zone {
+		margin-top: 1.25rem; padding-top: 1.25rem;
+		border-top: 1.5px solid var(--border);
+		display: flex; flex-direction: column; gap: 0.6rem;
+	}
+	.danger-zone h2 { margin: 0; font-size: 1rem; font-weight: 600; color: #b91c1c; }
+	.danger-zone p { margin: 0; font-size: 0.8rem; color: var(--muted-fg); line-height: 1.45; }
+	.danger-zone p a { color: inherit; }
+	.btn-danger-ghost {
+		align-self: flex-start;
+		padding: 0.5rem 0.9rem; background: none;
+		border: 1.5px solid #fca5a5; border-radius: 8px;
+		font-family: inherit; font-size: 0.85rem; font-weight: 600;
+		color: #b91c1c; cursor: pointer; transition: background 0.15s;
+	}
+	.btn-danger-ghost:hover { background: #fef2f2; }
+	.danger-actions { display: flex; justify-content: flex-end; gap: 0.5rem; }
+	.btn-danger {
+		padding: 0.6rem 1.1rem; background: #b91c1c; color: #fff;
+		border: none; border-radius: 8px; font-family: inherit;
+		font-size: 0.9rem; font-weight: 600; cursor: pointer; transition: opacity 0.15s;
+	}
+	.btn-danger:hover { opacity: 0.85; }
+	.btn-danger:disabled { opacity: 0.4; cursor: default; }
 </style>
