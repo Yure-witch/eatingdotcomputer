@@ -36,6 +36,25 @@ Each entry includes:
 
 ---
 
+### 2026-08-21 — Self-serve account creation (/signup)
+- **Status**: `attempted` (verified: create → auto sign-in → onboarding with
+  name prefilled; test user deleted after)
+- **/signup**: name + username + optional email (synthesized
+  `${username}@accounts.eating.computer` when blank — the credentials
+  provider matches on email OR username, so the synthetic address is
+  collision-checked like a real one) + password (min 8, bcrypt 10). New
+  accounts are role student at onboarding_step 'profile', so they enter the
+  same onboarding as OAuth signups; class approval still gates all content.
+  Login page gained "New here? Create an account".
+- **Auto sign-in gotcha**: the first attempt used a pre-rendered hidden
+  credentials form submitted from an $effect on `form.created` — it RACED
+  enhance's default post-submit work (reset + invalidateAll) and posted
+  empty fields (server log: CredentialsSignin 500). Fix: custom enhance
+  callback — `update({reset:false, invalidateAll:false})`, then BUILD the
+  sign-in form dynamically from local state and submit it as a full-page
+  POST to /login (the login page's default signIn action owns the cookie
+  handshake + /app redirect; onboarding guard routes from there).
+
 ### 2026-08-21 — User blocking (Guideline 1.2) + demo auto-approval flow
 - **Status**: `attempted` (both verified end-to-end in the browser)
 - **Blocking**: `blocked_users` table (migration 064), `/api/moderation/block`

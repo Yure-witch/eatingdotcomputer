@@ -167,6 +167,8 @@
 
 			<button type="submit" class="btn-primary">Sign in</button>
 		</form>
+
+		<p class="signup-hint">New here? <a href="/signup">Create an account</a></p>
 	</div>
 </main>
 
@@ -363,6 +365,12 @@
 		height: 1px;
 		background: var(--border);
 	}
+
+	.signup-hint {
+		margin: 0.25rem 0 0; text-align: center;
+		font-size: 0.85rem; color: var(--muted-fg);
+	}
+	.signup-hint a { color: var(--ink); }
 
 	.error {
 		padding: 0.6rem 0.75rem;

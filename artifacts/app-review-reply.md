@@ -13,8 +13,9 @@ Center, or QuickTime via cable for a clean file). Suggested shot list, in
 order — one continuous take is fine:
 
 1. Launch the app from the home screen (cold start, show the icon being tapped).
-2. Registration + approval: sign up with a fresh account (Sign in with Apple
-   works well on camera), complete the profile step, request to join
+2. Registration + approval: tap "Create an account" on the login screen and
+   sign up with a username + password (Sign in with Apple/Google also exist —
+   worth a moment on screen). Complete the profile step, request to join
    "Interactive Design Concepts" — the demo class approves the request a few
    seconds later on its own: show the "Waiting for instructor to approve
    enrollment" screen, then the "You've been accepted" banner as the app
@@ -27,13 +28,19 @@ order — one continuous take is fine:
    submission form (link/image/video types).
 5. Chat: open the class channel, send a message, add an emoji reaction, open
    the expression picker, send a GIF. Open a DM.
-6. Content reporting + blocking: open the ⋮ menu on a classmate's message —
+6. Gemma (brief): open the Gemma DM for a moment — the reply discloses an AI
+   service, so showing it exists is good transparency.
+7. Content reporting + blocking: open the ⋮ menu on a classmate's message —
    Report it (confirm), then Block the user and show their messages
    disappear; show Edit profile → Blocked users → Unblock.
-7. Files tab: show uploads and starred messages.
-8. Account deletion: Edit profile → Delete account → type DELETE → confirm —
+8. Files tab: show uploads and starred messages.
+9. Account deletion: Edit profile → Delete account → type DELETE → confirm —
    ends back at the login screen. Do this with the fresh account from step 2,
    NOT the demo credentials Apple will use later.
+10. Instructor epilogue (recommended): sign in as the instructor account →
+    Manage → Moderation → show the report from step 7 in the queue and tap
+    Resolve — evidence that reports reach a human moderator (the substance
+    of Guideline 1.2).
 
 There are no purchases, subscriptions, or paid content — nothing to record
 for those.
@@ -71,8 +78,9 @@ without stitching together separate tools.
 
 ## 4. Setup and access instructions
 
-- The app requires an account. Sign-in supports Google (OAuth) and
-  username/password credentials.
+- The app requires an account. Sign-in supports Google (OAuth), Apple, and
+  username/password credentials; new accounts can be created in-app from
+  "Create an account" on the login screen.
 - Demo account for review: username ⚠️ TODO / password ⚠️ TODO
   (pre-enrolled in a fully populated demonstration class with assignments,
   syllabus, and an active chat channel — no additional setup is needed; log
