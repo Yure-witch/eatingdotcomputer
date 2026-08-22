@@ -1,5 +1,5 @@
 <script>
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount, onDestroy, tick } from 'svelte';
 	import {
 		tgAnimatedUrl,
 		tgDataVer,
@@ -165,6 +165,29 @@
 	let painted = $state(false);
 	let activeEngine = null;       // engine the current load belongs to — guards against stale work after toggle
 
+	// ── Slot recycling ──────────────────────────────────────────────────
+	// The picker's grid hands a live component instance a DIFFERENT emote
+	// instead of destroying it and building a new one (see the slot-keyed
+	// {#each} in TelegramEmojiPanel). Mounting and unmounting ~9 cells for
+	// every row you scroll past — canvas, thumb, IntersectionObserver,
+	// register/unregister — is the churn that made scrolling cost DOM work.
+	//
+	// Nothing used to watch for it: `url` is read once, at register time, so a
+	// recycled cell would keep drawing the emote it was born with. `_boundUrl`
+	// is what the current registration is actually FOR; when it stops matching
+	// `url`, the cell re-points at the new emote in place.
+	let _boundUrl = null;
+	// Bumped only to force a FRESH <canvas> element. A canvas that has been
+	// transferControlToOffscreen()'d can never get a 2D context and can never
+	// be transferred twice, so the worker engines cannot reuse the element
+	// across a retarget. rlottie and the CPU atlas draw through a 2D context on
+	// the live element, so they reuse it — which is the whole point, since
+	// reusing the element is what makes the transfer a once-per-slot cost
+	// rather than a once-per-emote one.
+	let _canvasEpoch = $state(0);
+	const _canvasOwnedByWorker = (eng) =>
+		eng === 'skottie-worker' || eng === 'skottie-webgpu' || eng === 'webgpu-rasterized';
+
 	// ── rlottie engine state ────────────────────────────────────────────
 	let entry = null;
 	let registeredUrl = null;
@@ -256,10 +279,14 @@
 		let result;
 		try { result = await acquire(u, data, srcPx); }
 		catch (e) { console.warn('[sprite] rasterise failed', e); return; }
-		if (!mounted || activeEngine !== 'rlottie') { release(u, srcPx); return; }
+		// `url !== u`: recycled into a different emote while rasterising. Release
+		// against the SAME (u, srcPx) we acquired — the cache is keyed url@px and
+		// releasing on the new url would decrement a stranger and leak these.
+		if (!mounted || activeEngine !== 'rlottie' || url !== u) { release(u, srcPx); return; }
 		entry = result;
 		registeredUrl = u;
 		registeredPx = srcPx;
+		_boundUrl = u;
 		paintFrame_rlottie(entry.totalFrames - 1);
 		updatePlay_rlottie();
 	}
@@ -347,7 +374,9 @@
 		const mod = skModule(eng);
 		skottieMod = mod;
 		await mod.ensureStage();
-		if (!mounted || activeEngine !== eng) return;
+		// `url !== u`: the slot was recycled while ensureStage was resolving.
+		// Registering now would bind this cell to the emote it USED to show.
+		if (!mounted || activeEngine !== eng || url !== u) return;
 
 		// If the worker already has this animation built (because a
 		// previous cell instance — likely from a section the user
@@ -411,6 +440,7 @@
 				// holds the animation, so the CSS thumb backdrop can drop out.
 				onFirstPaint: () => { if (mounted) painted = true; }
 			});
+			_boundUrl = u;
 			if (paused) return;
 			if (eager || visible) await queueSkottieAnimation();
 			return;
@@ -455,6 +485,7 @@
 			// rebuilds; next 3-paint cycle will hide it again.
 			onSurfaceLost: () => { if (mounted) painted = false; }
 		});
+		_boundUrl = u;
 
 		// Static packs (MadEmoji etc) have no animation.
 		if (paused) return;
@@ -582,6 +613,49 @@
 	function teardownCurrent(which) {
 		if (which === 'rlottie') teardown_rlottie();
 		else teardown_skottie();
+	}
+
+	// Re-point a recycled cell at its new emote, keeping the DOM this instance
+	// already owns. Fires only when `url` changes UNDER a live registration —
+	// a fresh mount goes through onMount instead, and `_boundUrl` stays null
+	// until something has actually registered, so this never runs on the way in.
+	$effect(() => {
+		const u = url;
+		if (!mounted || _boundUrl === null || _boundUrl === u) return;
+		retarget(u);
+	});
+
+	async function retarget(u) {
+		const prevEngine = activeEngine;
+		// Null it first: teardown and the await below both yield, and a fast
+		// scroll can recycle this slot again before we come back.
+		_boundUrl = null;
+		clearTimeout(_offscreenT); _offscreenT = null;
+		clearTimeout(_lodTimer); _lodTimer = null;
+		clearTimeout(_hiFadeT); _hiFadeT = null;
+		// The high-res overlay is baked for the OLD emote at the old url —
+		// it has to go before anything else, or it stays composited on top of
+		// the new one for its full 3s dwell.
+		if (hiCellId != null) { SkWorker.unregisterCanvasCell?.(hiCellId); hiCellId = null; }
+		hiActive = false; hiOpacity = 0;
+		teardownCurrent(prevEngine);
+		// Thumb back over the canvas BEFORE the new emote starts baking. Same
+		// contract as everywhere else in this file: a cell may be still, but it
+		// must never be blank — and here it must also never be WRONG, which is
+		// what showing the previous emote's last frame while the new one bakes
+		// would be. The thumb is already the new emote's; it's driven by props.
+		painted = false;
+		lastBitmap = null;
+		if (_canvasOwnedByWorker(prevEngine)) {
+			// Transferred canvas: the element is spent. Swap in a fresh one and
+			// let `bind:this` land before we register against it.
+			_canvasEpoch++;
+			await tick();
+		}
+		// Recycled again while we were yielding — that pass owns the cell now.
+		if (!mounted || url !== u) return;
+		activeEngine = engine;
+		if (isSkottieEngine(engine) || eager || visible) ensureLoaded();
 	}
 
 	onMount(() => {
@@ -820,11 +894,17 @@
 		     render worker, which blits animation frames straight into it —
 		     it flows with the DOM so scrolling is native (no lag). In
 		     rlottie mode it's drawn locally via a 2D context. The
-		     {#key engine} wrapper recreates the element on an engine swap
+		     {#key} wrapper recreates the element on an engine swap
 		     so a canvas that was transferred (and can't get a 2D context,
 		     or be transferred twice) is replaced by a fresh one for the
-		     new engine. -->
-		{#key engine}
+		     new engine.
+		     `_canvasEpoch` is the other reason to recreate it: a recycled
+		     slot re-points at a new emote, and on the worker engines the
+		     transferred element is spent and has to be replaced. On rlottie
+		     and the CPU atlas the epoch never moves, so the element (and its
+		     2D context) survives every recycle — which is what makes the
+		     grid's slot reuse actually free. -->
+		{#key `${engine}#${_canvasEpoch}`}
 			<canvas bind:this={canvas} class="tg-canvas" width={px} height={px}></canvas>
 		{/key}
 		<!-- High-res cross-fade overlay: mounts once the primary has rendered and

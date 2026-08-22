@@ -7,8 +7,6 @@
 		engineMode,
 		setEngineManual,
 		isStaticPack,
-		tgThumbUrl,
-		tgcThumbUrl,
 		TG_CAT_ICONS,
 		PICKER_STICKER_PX,
 		PICKER_FPS
@@ -933,20 +931,32 @@
 			<div class="tg-grid" bind:this={gridEl}
 				style:padding-top="{_rowsAbove * CELL_PX}px"
 				style:padding-bottom="{_rowsBelow * CELL_PX}px">
-				{#each _window as it, wi (it.custom ? `c:${it.id}` : it.cp + ':' + (visibleStart + wi))}
+				<!-- Keyed by WINDOW SLOT, not by the item. Keying on the item made
+				     every scrolled row destroy nine cells at one edge and build
+				     nine at the other — canvas, thumb, IntersectionObserver and a
+				     worker registration each, synchronously inside the scroll
+				     handler. Keyed by slot, Svelte keeps the same ~180 instances
+				     for the life of the panel and only updates their props; the
+				     sticker re-points itself in place (see `_boundUrl` in
+				     SpriteSticker). Scrolling stops building DOM entirely. -->
+				{#each _window as it, wi (wi)}
 					<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 					<div class="tg-cell" class:tg-cell-hidden={_showHidden && _isCellHidden(it)}
 						title={it.custom
 							? `${it.name || it.alt}  ${it.alt}  ·  ${it.packTitle}${it.kw?.length ? '\n' + it.kw.slice(0, 6).join(', ') : ''}`
 							: it.e}
 						onclick={() => cellAction(it)}>
-						{#if it.custom}
-							<LottieSticker short={it.short} id={it.id} size={STICKER_PX} mode="visible" staticOnly={_static}
-								ignoreHidden={_showHidden} root={gridWrapEl} title={it.alt} maxFps={PICKER_FPS} />
-						{:else}
-							<LottieSticker cp={it.cp} flag={it.flag} size={STICKER_PX} mode="visible" staticOnly={_static}
-								ignoreHidden={_showHidden} root={gridWrapEl} title={it.e} maxFps={PICKER_FPS} />
-						{/if}
+						<!-- ONE sticker, not an {#if it.custom} pair. Search results
+						     interleave custom and unicode emotes, so a branch here
+						     would remount the sticker every time a slot crossed
+						     between the two — defeating the slot key for exactly
+						     the view that churns most. SpriteSticker decides which
+						     it is from `short`/`id` being present. -->
+						<LottieSticker cp={it.custom ? undefined : it.cp} flag={!it.custom && !!it.flag}
+							short={it.custom ? it.short : null} id={it.custom ? it.id : null}
+							size={STICKER_PX} mode="visible" staticOnly={_static}
+							ignoreHidden={_showHidden} root={gridWrapEl}
+							title={it.custom ? it.alt : it.e} maxFps={PICKER_FPS} />
 					</div>
 				{/each}
 				{#if filteredItems.length === 0 && search}
@@ -989,24 +999,47 @@
 						&& geo.pxEnd >= scrollTop - _bandPad
 						&& geo.pxStart <= scrollTop + gridH + _bandPad}
 					{#if sectionVisible}
+						<!-- Row window for THIS section. A section can be thousands of
+						     items (Smileys alone), and every one of them used to be a
+						     .tg-cell in the DOM the whole time the section was in
+						     band — the cell-level {#if} only decided whether the
+						     sticker inside it mounted. So the DOM held the entire
+						     section while the sticker set churned nine-at-a-time on
+						     every scrolled row: the worst of both, a large static
+						     DOM AND per-row construction.
+						     Now only the banded rows exist at all, and the rows
+						     above and below are padding on the grid — the same trick
+						     the search branch uses. Section height is unchanged
+						     (it's fixed by `geo`), so the absolute-positioned
+						     section layout and the scrollbar are untouched, which is
+						     what keeps the ResizeObserver quiet (see the note above
+						     about why sections are pinned). -->
+						{@const _rowsTotal = Math.ceil(section.items.length / _cpr)}
+						{@const _gridTop = geo.pxStart + HEADER_PX}
+						{@const _r0 = Math.max(0, Math.min(_rowsTotal, Math.floor((_cellVisTop - _gridTop) / CELL_PX)))}
+						{@const _r1 = Math.max(_r0, Math.min(_rowsTotal, Math.ceil((_cellVisBot - _gridTop) / CELL_PX)))}
+						{@const _win = section.items.slice(_r0 * _cpr, _r1 * _cpr)}
 						<div class="tg-section" style:top="{geo.pxStart}px" style:height="{geo.pxEnd - geo.pxStart}px">
 							<div class="tg-section-label">{section.label}</div>
-							<div class="tg-section-grid">
-								{#each section.items as it, i (it.custom ? `${section.key}:c:${it.id}` : `${section.key}:${it.cp}:${i}`)}
-									<!-- Cell-level virtualization. Compute each
-									     cell's absolute pixel band from
-									     `geo.pxStart + HEADER_PX + row * CELL_PX`,
-									     mount the LottieSticker only if that band
-									     intersects the visible viewport (± two
-									     rows of buffer for pre-fetch). Off-viewport
-									     cells render as bare 36×36 div slots so
-									     the flex-wrap layout inside the section
-									     still lays them out at their correct row /
-									     column, but the Skottie worker only sees
-									     the ~visible-row × cellsPerRow cells, not
-									     every cell in every in-band section. -->
-									{@const _cellAbsY = geo.pxStart + HEADER_PX + Math.floor(i / _cpr) * CELL_PX}
-									{@const _cellLive = _cellAbsY + CELL_PX > _cellVisTop && _cellAbsY < _cellVisBot}
+							<div class="tg-section-grid"
+								style:padding-top="{_r0 * CELL_PX}px"
+								style:padding-bottom="{Math.max(0, _rowsTotal - _r1) * CELL_PX}px">
+								<!-- Keyed by WINDOW SLOT, not by the item — the whole
+								     point of the change. Keyed by item, sliding the
+								     window by one row destroyed nine cells and built
+								     nine more, each a canvas + thumb +
+								     IntersectionObserver + a worker registration,
+								     synchronously inside the scroll handler. Keyed by
+								     slot, the same instances persist and only their
+								     props change; SpriteSticker re-points itself at
+								     the new emote in place (`_boundUrl`), reusing the
+								     canvas it already owns.
+								     Every item in a given section is the same KIND
+								     (a pack section is all custom, Smileys is all
+								     unicode, uploads are their own section), so the
+								     {#if} branches below never flip under a slot —
+								     which is what would remount and undo this. -->
+								{#each _win as it, wi (wi)}
 									<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 									<div class="tg-cell" class:tg-cell-hidden={_showHidden && _isCellHidden(it)}
 										class:tg-cell-upload={it.upload}
@@ -1016,38 +1049,39 @@
 											? `${it.name || it.alt}  ${it.alt}  ·  ${it.packTitle}${it.kw?.length ? '\n' + it.kw.slice(0, 6).join(', ') : ''}`
 											: it.e}
 										onclick={() => cellAction(it)}>
-										{#if _cellLive}
-											{#if it.upload}
-												<!-- Class upload: a plain image, no Lottie pipeline. -->
-												<img class="tg-upload-img" src={it.url} alt={':' + it.shortcode + ':'}
-													width={STICKER_PX} height={STICKER_PX} loading="lazy" decoding="async" />
-												{#if onDeleteUpload}
-													<!-- The picker is the ONLY place an uploaded emote can be
-													     deleted, so this has to survive the merge. Hover on
-													     desktop; on touch it's always shown, since there is no
-													     hover to reveal it. -->
-													<button class="tg-upload-del" title="Remove :{it.shortcode}:"
-														aria-label="Remove :{it.shortcode}:"
-														onclick={(ev) => { ev.stopPropagation(); onDeleteUpload(it.id); }}>×</button>
-												{/if}
-											{:else if it.custom}
-												<LottieSticker short={it.short} id={it.id} size={STICKER_PX} mode="visible" staticOnly={_static}
-													ignoreHidden={_showHidden} root={gridWrapEl} title={it.alt} maxFps={PICKER_FPS} />
-											{:else}
-												<LottieSticker cp={it.cp} flag={it.flag} size={STICKER_PX} mode="visible" staticOnly={_static}
-													ignoreHidden={_showHidden} root={gridWrapEl} title={it.e} maxFps={PICKER_FPS} />
+										<!-- No live/still branch any more: everything inside the
+										     window IS the band, and a cell that scrolls out of the
+										     viewport (but is still windowed) parks itself — the
+										     sticker's own IntersectionObserver drops its animation
+										     500ms after it leaves and the CSS thumb re-covers the
+										     canvas. That machinery already existed and is tuned
+										     (rootMargin, the paged-away vs scrolled-past
+										     distinction, the defer-while-scrolling guard); the
+										     cell-level {#if} was a second, cruder copy of it
+										     layered on top, and it was the copy that churned.
+										     "Never blank, only ever still" still holds: a freshly
+										     windowed cell paints its thumb from the sprite sheet
+										     that is already in memory, in the same frame it
+										     mounts. -->
+										{#if it.upload}
+											<!-- Class upload: a plain image, no Lottie pipeline. -->
+											<img class="tg-upload-img" src={it.url} alt={':' + it.shortcode + ':'}
+												width={STICKER_PX} height={STICKER_PX} loading="lazy" decoding="async" />
+											{#if onDeleteUpload}
+												<!-- The picker is the ONLY place an uploaded emote can be
+												     deleted, so this has to survive the merge. Hover on
+												     desktop; on touch it's always shown, since there is no
+												     hover to reveal it. -->
+												<button class="tg-upload-del" title="Remove :{it.shortcode}:"
+													aria-label="Remove :{it.shortcode}:"
+													onclick={(ev) => { ev.stopPropagation(); onDeleteUpload(it.id); }}>×</button>
 											{/if}
+										{:else if it.custom}
+											<LottieSticker short={it.short} id={it.id} size={STICKER_PX} mode="visible" staticOnly={_static}
+												ignoreHidden={_showHidden} root={gridWrapEl} title={it.alt} maxFps={PICKER_FPS} />
 										{:else}
-											<!-- Outside the live band: the emote's thumb, NOT nothing. An
-											     unmounted cell left an empty div, so any scroll that outran
-											     the band left holes where the animated emotes had been —
-											     and widening the band only moves where the holes start. A
-											     cell is now never blank, only ever still. `loading=lazy`
-											     means the browser never fetches the ones you don't reach. -->
-											<img class="tg-thumb-still"
-												src={it.upload ? it.url : it.custom ? tgcThumbUrl(it.short, it.id) : tgThumbUrl(it.cp)}
-												alt="" width={STICKER_PX} height={STICKER_PX}
-												loading="lazy" decoding="async" />
+											<LottieSticker cp={it.cp} flag={it.flag} size={STICKER_PX} mode="visible" staticOnly={_static}
+												ignoreHidden={_showHidden} root={gridWrapEl} title={it.e} maxFps={PICKER_FPS} />
 										{/if}
 									</div>
 								{/each}
@@ -1195,7 +1229,6 @@
 	   stale. */
 	/* Still thumb for cells outside the live band — same box as an animated
 	   cell so nothing shifts when one replaces the other. */
-	.tg-thumb-still { width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
 	.tg-grid { display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); gap: 0; }
 	/* Flow variant: explicit-height container, sections pinned at
 	   their precomputed pxStart. Container height is locked at
