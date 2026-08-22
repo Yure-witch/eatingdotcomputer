@@ -1,7 +1,11 @@
 import { build, files, version } from '$service-worker';
 
 const CACHE = `cache-${version}`;
-const ASSETS = [...build, ...files];
+// /offline is a prerendered, data-free page — the navigation fallback when
+// the network is gone. Prerendered routes are NOT in `build`/`files`, so it
+// is added to the precache list by hand.
+const OFFLINE_PAGE = '/offline';
+const ASSETS = [...build, ...files, OFFLINE_PAGE];
 // Fast membership test for the fetch handler's allowlist.
 const ASSET_SET = new Set(ASSETS);
 
@@ -31,11 +35,15 @@ self.addEventListener('fetch', (event) => {
 	// Vite/HMR updates always show up on a normal refresh (no stale-bundle caching).
 	if (url.hostname === 'localhost' || url.hostname === '127.0.0.1') return;
 
-	// HTML navigations: network-first so the app shell is always fresh after a deploy.
-	// Falls back to cache only if offline.
+	// HTML navigations: network-first so the app shell is always fresh after a
+	// deploy. Offline, fall back to the precached /offline page — pages
+	// themselves are deliberately never cached (they carry session data), so
+	// matching the request URL alone would find nothing.
 	if (event.request.mode === 'navigate') {
 		event.respondWith(
-			fetch(event.request).catch(() => caches.match(event.request))
+			fetch(event.request).catch(async () =>
+				(await caches.match(event.request)) ?? (await caches.match(OFFLINE_PAGE))
+			)
 		);
 		return;
 	}

@@ -3343,6 +3343,14 @@
 		   browser chrome. Equal to 100dvh on native and desktop. */
 		height: var(--vvh, 100dvh);
 		background: var(--paper);
+		/* The layer's own scroll. Absolute layers don't grow the document, so
+		   a page taller than one screen (Tasks, Inspiration — plain pages, no
+		   internal scroller of their own) was simply CUT OFF below the fold
+		   with no way to reach it. Chat pages fill the layer exactly and keep
+		   scrolling in their message list, so nothing changes for them. */
+		overflow-y: auto;
+		-webkit-overflow-scrolling: touch;
+		overscroll-behavior: contain;
 	}
 	/* The transform is applied ONLY while sliding — a permanent transform (even
 	   translateX(0)) makes this a containing block for position:fixed
