@@ -2,6 +2,8 @@ import { build, files, version } from '$service-worker';
 
 const CACHE = `cache-${version}`;
 const ASSETS = [...build, ...files];
+// Fast membership test for the fetch handler's allowlist.
+const ASSET_SET = new Set(ASSETS);
 
 self.addEventListener('install', (event) => {
 	event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(ASSETS)));
@@ -38,7 +40,18 @@ self.addEventListener('fetch', (event) => {
 		return;
 	}
 
-	// Static assets (JS, CSS, fonts, icons): cache-first, update in background.
+	// ONLY the build's static assets are cache-first: content-hashed files
+	// under /_app/immutable/ plus the precached static files (fonts, icons).
+	// Everything else — __data.json, /api/*, anything dynamic — goes straight
+	// to the network, UNTOUCHED. The old handler cached every same-origin GET,
+	// which included SvelteKit's per-user data payloads: after switching
+	// accounts, the first loads could be served from the PREVIOUS user's
+	// cache — wrong name, wrong role, wrong class, someone else's data. A
+	// service worker must never hold anything session-scoped.
+	const isStatic = url.pathname.startsWith('/_app/immutable/') || ASSET_SET.has(url.pathname);
+	if (!isStatic) return;
+
+	// Static assets: cache-first, update in background.
 	event.respondWith(
 		caches.match(event.request).then((cached) => {
 			const network = fetch(event.request).then((response) => {
