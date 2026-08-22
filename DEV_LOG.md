@@ -36,6 +36,33 @@ Each entry includes:
 
 ---
 
+### 2026-08-21 — Avatar picker round 2: the tap that never landed
+- **Status**: `attempted` (all four verified in dev; hit-testing checked with
+  elementFromPoint, not synthetic .click())
+- **Why the checkmark "didn't save" on real phones while every test passed**:
+  `.ap-expr-backdrop` is fixed inset-0 z-index 998; `.ap-confirm` had NO
+  z-index — the invisible backdrop sat ON TOP of the tick, so a real tap hit
+  the backdrop → cancelExpr → pick silently discarded. Synthetic
+  `element.click()` bypasses hit-testing, which is why browser-driven tests
+  kept "passing". Fix: z-index 1000 on the tick. LESSON: verify
+  tap-reachability with `document.elementFromPoint`, not .click().
+- **Indicator misalignment (avatar popover only, chat fine)**: the tab-strip
+  pitch was measured ONCE and cached; in the popover the first measurement
+  runs during initial paint and catches squeezed/unsettled slot widths, then
+  every park steps by the stale pitch. Now re-measures whenever the
+  indicator parks on a whole tab (open/tab-tap — alignToTab's settle retries
+  at 80/200/450ms self-heal it), cache reused only for fractional swipe
+  frames. Also the 48px circle now sizes itself to the slot (a full-size
+  circle "centred" on a 34px squeezed icon bled 7px over both neighbours).
+- **Nav: no selected state off-tab**: activeSlot fell back to 0 when no item
+  matched, parking the pill on Home from /app/profile/* and /app/theme.
+  `anyActive` now fades the pill out (opacity, not unmount, so it glides
+  back in) whenever the route maps to no slot.
+- **Live avatar propagation (RTDB)**: avatar endpoint + edit-profile action
+  bump `membersRev`; the app layout listens (skip-first) and invalidateAll()s
+  — verified: external bump → client refetched /app/__data.json. New
+  avatars/names now appear for everyone with the app open, no reload.
+
 ### 2026-08-21 — Expression avatar: instant save + the form-submit hijack
 - **Status**: `attempted` (verified: pick 😭 → "saved" → DB row expr/😭 →
   header avatar updated with no reload)

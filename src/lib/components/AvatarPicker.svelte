@@ -274,6 +274,11 @@
 	.ap-preview { position: relative; display: inline-flex; align-items: center; }
 	.ap-confirm {
 		position: absolute; left: calc(100% + 0.75rem);
+		/* ABOVE the fixed backdrop (z-index 998). Without this the full-screen
+		   backdrop swallowed real taps on the tick — cancelExpr instead of
+		   confirmExpr, so the pick silently never saved. (Synthetic .click()
+		   in tests bypasses hit-testing, which is how it slipped through.) */
+		z-index: 1000;
 		display: inline-flex; align-items: center; justify-content: center;
 		width: 48px; height: 48px; flex-shrink: 0;
 		border: none; border-radius: 50%;

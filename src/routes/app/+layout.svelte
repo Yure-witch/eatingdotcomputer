@@ -1682,7 +1682,7 @@
 	}
 
 	// ── Firebase refs ──
-	let userChatsRef, lastReadRef, presenceRef, connectedRef, allPresenceRef;
+	let userChatsRef, lastReadRef, presenceRef, connectedRef, allPresenceRef, membersRevRef;
 	let channelMetaRef, unreadCountsRef;
 	let pushBroadcast; // BroadcastChannel for push-notification relay from service worker
 	let heartbeatTimer, tickTimer, presencePollTimer, idleTickTimer;
@@ -1974,6 +1974,23 @@
 			watchDevRefresh();
 			reportBuild();
 		}
+
+		// Profile changes broadcast: the avatar endpoint and the edit-profile
+		// action bump `membersRev` after writing Turso. Refetch everything
+		// when it moves so the new avatar/name shows live — for the person
+		// who changed it (their other devices) AND for everyone else. The
+		// first snapshot is the current value, not a change: skip it, or
+		// every app open would refetch data it was just served.
+		let _membersRevSeen = null;
+		membersRevRef = ref(rtdb, 'membersRev');
+		onValue(membersRevRef, (snap) => {
+			const v = snap.val();
+			if (v === null || v === undefined) return;
+			if (_membersRevSeen === null) { _membersRevSeen = v; return; }
+			if (v === _membersRevSeen) return;
+			_membersRevSeen = v;
+			invalidateAll();
+		});
 
 		// Presence write — per-device so two simultaneous logins don't clobber each other
 		presenceRef = ref(rtdb, `presence/${data.currentUser.id}/${deviceId}`);
@@ -2396,6 +2413,7 @@
 		if (lastReadRef) off(lastReadRef);
 		if (allPresenceRef) off(allPresenceRef);
 		if (connectedRef) off(connectedRef);
+		if (membersRevRef) off(membersRevRef);
 		if (channelMetaRef) off(channelMetaRef);
 		if (unreadCountsRef) off(unreadCountsRef);
 		for (const r of Object.values(channelRefs)) off(r);

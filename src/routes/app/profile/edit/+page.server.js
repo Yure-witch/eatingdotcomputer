@@ -2,6 +2,7 @@ import { redirect, fail } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
 import { getDb } from '$lib/server/turso.js';
 import { uploadToR2 } from '$lib/server/r2.js';
+import { getAdminDb } from '$lib/server/firebase-admin.js';
 
 export async function load({ locals, parent }) {
 	await parent();
@@ -95,6 +96,10 @@ export const actions = {
 				session.user.id
 			]
 		});
+
+		// Live broadcast — open clients watch membersRev and refetch, so the
+		// new name/avatar shows for everyone without a reload.
+		getAdminDb().ref('membersRev').set(Date.now()).catch(() => {});
 
 		redirect(303, `/app/profile/${session.user.id}`);
 	}

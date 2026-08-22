@@ -169,11 +169,16 @@
 		const i = items.findIndex((it) => it.active(activePath));
 		return i < 0 ? 0 : (i === 0 ? 0 : i + 1);
 	});
+	// Routes the nav has no slot for (profile pages, the theme picker, …):
+	// nothing is selected, so nothing should LOOK selected. Without this the
+	// slot fallback above parked the pill on Home, which read as "you are on
+	// Home" from a page that is somewhere else entirely.
+	const anyActive = $derived(chatActive || items.some((it) => it.active(activePath)));
 </script>
 
 <!-- Mobile bottom nav only — desktop nav is in the global sidebar (app/+layout.svelte) -->
 <nav class="bottom-nav" class:hidden={keyboardOpen} class:five-up={slotCount >= 5}>
-	<span class="nav-indicator" style:--slot-count={slotCount} style:--nav-slot={activeSlot}></span>
+	<span class="nav-indicator" class:no-slot={!anyActive} style:--slot-count={slotCount} style:--nav-slot={activeSlot}></span>
 	<!-- Order: Home, Chat, Orbit, Lab, [Manage] — Chat sits immediately right of
 	     Home so a rightward swipe out of a conversation reads as going "back". -->
 	{#each items as item, idx}
@@ -348,8 +353,12 @@
 		   fraction is rewritten every frame, and a transition there would make the
 		   pill trail the finger. */
 		:global(html.nav-animating) .nav-indicator {
-			transition: transform 0.2s cubic-bezier(0.33, 1, 0.68, 1);
+			transition: transform 0.2s cubic-bezier(0.33, 1, 0.68, 1), opacity 0.15s ease;
 		}
+		/* No slot maps to this route — fade the pill out rather than unmount
+		   it, so returning to a real tab glides in from a sane position. */
+		.nav-indicator.no-slot { opacity: 0; }
+		.nav-indicator { transition: opacity 0.15s ease; }
 		/* Set locally — .msi only defines 18/20/24, so a size class here would be
 		   inventing one that doesn't exist. */
 		.bottom-nav .msi { font-size: 25px; }

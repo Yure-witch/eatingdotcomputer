@@ -169,7 +169,15 @@
 	let _slotW = 48;
 	function setFrac(f) {
 		if (!indEl) return;
-		if (!_slotPx) {
+		// Re-measure whenever the indicator PARKS on a whole tab (open, tab
+		// tap — rare), and reuse the cache only for the fractional frames of a
+		// swipe, which is the hot path the once-only cache was protecting. A
+		// cache with no refresh was the avatar-popover misalignment: the first
+		// measurement ran during the popover's initial paint, caught the slots
+		// at a squeezed width, and every park afterwards stepped by the stale
+		// pitch. Chat never showed it because its layout is settled before the
+		// picker ever opens.
+		if (!_slotPx || Number.isInteger(f)) {
 			// PITCH, not slot width: the row is a flex box with a gap, so the nth
 			// icon sits at n * (width + gap). Stepping by offsetWidth alone drifts
 			// one gap per tab — nothing at the first icon, 9.6px by the fourth on
@@ -179,6 +187,17 @@
 			const gap = parseFloat(getComputedStyle(railEl).columnGap) || 0;
 			_slotW = first?.offsetWidth || 48;
 			_slotPx = _slotW + gap;
+			// Narrow containers (the avatar-picker popover) squeeze the slots
+			// below the circle's natural 48px. A 48px circle "centred" on a 34px
+			// icon bleeds ~7px over BOTH neighbours, which reads as the
+			// highlight sitting on the wrong tab. Size the circle to the slot
+			// (48 cap = the CSS width) so it hugs exactly one icon — and grow it
+			// back if the rail relaxes to full size.
+			const target = Math.min(48, _slotW);
+			if ((indEl.offsetWidth || 48) !== target) {
+				indEl.style.width = `${target}px`;
+				indEl.style.height = `${target}px`;
+			}
 		}
 		// Written DIRECTLY as a transform, not via a --expr-frac custom property.
 		// An unregistered custom property is inherited, so setting it on the rail

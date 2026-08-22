@@ -1,5 +1,6 @@
 import { json, error } from '@sveltejs/kit';
 import { getDb } from '$lib/server/turso.js';
+import { getAdminDb } from '$lib/server/firebase-admin.js';
 
 // Instant avatar save for the picker's non-upload choices ('gen' and
 // 'expr'). Photo avatars keep going through the edit-profile form action —
@@ -27,5 +28,9 @@ export async function POST({ request, locals }) {
 		sql: 'UPDATE users SET avatar_kind = ?, avatar_value = ? WHERE id = ?',
 		args: [kind, value, session.user.id]
 	});
+	// Live broadcast: every open client watches membersRev (app layout) and
+	// refetches its data when it moves, so the new avatar appears everywhere
+	// — other devices and other people — without anyone reloading.
+	getAdminDb().ref('membersRev').set(Date.now()).catch(() => {});
 	return json({ ok: true });
 }
