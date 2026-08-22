@@ -33,6 +33,10 @@
 
 	let { children } = $props();
 
+	// Build stamp reveal (bottom-right corner tap) — see the markup note.
+	let showBuild = $state(false);
+	let _buildTimer = null;
+
 	// ── Connectivity banner ─────────────────────────────────────────────
 	// navigator.onLine + the online/offline events: coarse, but it matches
 	// what the user experiences (no sends, no live updates). The service
@@ -390,7 +394,18 @@
 	</div>
 {/if}
 
-<footer class="build-info">build #{__BUILD_NUMBER__} · {__BUILD_SHA__}</footer>
+<!-- Build stamp: hidden unless the bottom-right corner is tapped (shows for
+     6s, tap again to dismiss early). The hotspot sits BELOW the bottom nav
+     and the banners in z-order, so where those occupy the corner they win
+     the tap — the sliver of corner outside them still reveals the stamp. -->
+<button class="build-hotspot" aria-label="Show build info" onclick={() => {
+	clearTimeout(_buildTimer);
+	showBuild = !showBuild;
+	if (showBuild) _buildTimer = setTimeout(() => (showBuild = false), 6000);
+}}></button>
+{#if showBuild}
+	<footer class="build-info">build #{__BUILD_NUMBER__} · {__BUILD_SHA__}</footer>
+{/if}
 
 <style>
 	/* Same placement rules as the update banner: clears the mobile nav pill
@@ -449,5 +464,14 @@
 		position: fixed; bottom: 0.5rem; right: 0.75rem;
 		font-size: 0.65rem; color: #bbb; pointer-events: none;
 		font-family: monospace; z-index: 10;
+	}
+	.build-hotspot {
+		position: fixed; bottom: 0; right: 0;
+		width: 44px; height: 44px;
+		background: none; border: none; padding: 0;
+		cursor: default;
+		/* Below the nav (1000) and banners (1001): where they cover the
+		   corner, they keep the tap. */
+		z-index: 9;
 	}
 </style>

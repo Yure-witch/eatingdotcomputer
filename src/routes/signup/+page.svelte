@@ -167,4 +167,18 @@
 		font-size: 0.85rem; color: var(--muted-fg);
 	}
 	.login-hint a { color: var(--ink); }
+
+	/* Phones: four fields + button must fit WITHOUT scrolling — needing to
+	   scroll to find the password box on a sign-up form is a losing first
+	   impression (and looks clumsy on the App Review recording). The brand
+	   lockup gives up most of the space; the field gaps give up the rest. */
+	@media (max-width: 640px) {
+		main { padding: 1rem 1.25rem; align-items: flex-start; }
+		.card { gap: 0.7rem; }
+		.brand { margin-bottom: 0.1rem; gap: 0.5rem; }
+		.mark { width: 44px; height: 44px; border-radius: 11px; }
+		.brand-name { font-size: 1.35rem; }
+		form { gap: 0.55rem; }
+		input { padding: 0.55rem 0.75rem; }
+	}
 </style>
