@@ -12,11 +12,42 @@
 	// Quiet by default: a spinner alone, because approval is usually quick and
 	// a wall of "awaiting approval" copy makes a two-second wait feel like a
 	// dead end. Only after 30s do we explain what's being waited on.
-	let waitingLong = $state(false);
+	// Auto-approve (demo) classes are the exception: the wait is short and
+	// scripted, so the text shows immediately — the whole point is that the
+	// flow is legible on a screen recording.
+	let waitingLong = $state(data.autoApprove);
+	// The escape hatches (Check status / choose another class) stay on the 30s
+	// timer even for demo classes — flashing buttons that resolve themselves
+	// five seconds later would just be noise on the recording.
+	let showControls = $state(false);
 	let longTimer;
+	let autoTimer;
+
+	// The acceptance banner (/app layout) keys off this. Set whenever THIS
+	// screen is what carried the student into the app — manual approvals
+	// included — so being let in always announces itself.
+	function noteAccepted() {
+		try { sessionStorage.setItem('ec-accepted-class', data.className); } catch {}
+	}
 
 	onMount(async () => {
-		longTimer = setTimeout(() => (waitingLong = true), 30000);
+		longTimer = setTimeout(() => { waitingLong = true; showControls = true; }, 30000);
+
+		// Demo classes: hold on "waiting" long enough to read, then approve.
+		// The approvals/{uid} listener below is what actually moves us along;
+		// the direct goto is only the fallback for a broken RTDB connection.
+		if (data.autoApprove && data.status === 'pending') {
+			autoTimer = setTimeout(async () => {
+				try {
+					const r = await fetch('/api/class/auto-approve', { method: 'POST' });
+					if (r.ok) {
+						noteAccepted();
+						setTimeout(() => goto('/app'), 1200); // fallback if the RTDB signal never lands
+					}
+				} catch { /* the Check status button still works */ }
+			}, 5000);
+		}
+
 		if (!data.firebaseToken || !data.userId) return;
 		try {
 			await signInWithCustomToken(auth, data.firebaseToken);
@@ -24,13 +55,14 @@
 
 		approvalRef = ref(rtdb, `approvals/${data.userId}`);
 		onValue(approvalRef, (snap) => {
-			if (snap.exists()) goto('/app');
+			if (snap.exists()) { noteAccepted(); goto('/app'); }
 		});
 	});
 
 	onDestroy(() => {
 		if (approvalRef) off(approvalRef);
 		clearTimeout(longTimer);
+		clearTimeout(autoTimer);
 	});
 </script>
 
@@ -47,6 +79,9 @@
 
 		{#if waitingLong}
 			<p class="waiting-long">Waiting for instructor to approve enrollment</p>
+			<p class="sub">Requested to join <strong>{data.className}</strong>{data.term ? ` (${data.term})` : ''}</p>
+		{/if}
+		{#if showControls}
 			{#if form?.status === 'pending'}
 				<p class="still-pending">Still pending — check back in a bit.</p>
 			{/if}

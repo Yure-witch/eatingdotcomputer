@@ -126,6 +126,7 @@
 	<ul>
 		<li>Notifications can be turned off in your device settings at any time.</li>
 		<li>The daily digest is off by default and can be turned off again in your profile.</li>
+		<li>You can report any message to the instructor, and block other members — you stop seeing their messages and they can no longer notify you. Manage your block list under Edit profile.</li>
 		<li>You can delete your account at any time from Edit profile → Delete account.</li>
 		<li>You can ask for a copy of your data, or for your message text to be removed after deletion.</li>
 	</ul>

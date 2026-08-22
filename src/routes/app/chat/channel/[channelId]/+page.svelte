@@ -2656,6 +2656,35 @@
 		}).catch(() => {});
 	}
 
+	// ── Blocking (App Store Guideline 1.2) ──────────────────────────────
+	// The block list is the blocker's own view-filter: their messages simply
+	// don't render for you. Reassigned (not mutated) so the derived below
+	// re-runs. Loaded once per page; block/unblock updates it in place.
+	let blockedIds = $state(new Set());
+	const visibleMessages = $derived(blockedIds.size ? messages.filter((m) => !blockedIds.has(m.userId)) : messages);
+	async function loadBlockedIds() {
+		try {
+			const r = await fetch('/api/moderation/block');
+			if (r.ok) {
+				const j = await r.json();
+				blockedIds = new Set(j.blocked.map((b) => b.userId));
+			}
+		} catch { /* unfiltered view until it loads */ }
+	}
+	async function blockUser(msg) {
+		if (!confirm(`Block ${msg.userName}? You'll stop seeing their messages. You can unblock them from Edit profile.`)) return;
+		try {
+			const r = await fetch('/api/moderation/block', {
+				method: 'POST', headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ userId: msg.userId })
+			});
+			if (!r.ok) throw new Error(String(r.status));
+			blockedIds = new Set([...blockedIds, msg.userId]);
+		} catch {
+			alert('Could not block — check your connection and try again.');
+		}
+	}
+
 	// Content reporting (App Store Guideline 1.2): files the message — content
 	// snapshotted server-side — for instructor review in Manage → Moderation.
 	async function reportMessage(msg) {
@@ -2713,6 +2742,8 @@
 		// might have left behind.
 		pageTitle.set('# ' + data.channelId);
 		pageTitleHref.set(null);
+
+		loadBlockedIds();
 
 		// ── Performance monitoring ─────────────────────────────────────────────
 		// Long task observer — fires when any main-thread task takes >50 ms
@@ -3984,8 +4015,8 @@
 	{#if messages.length === 0}
 		<p class="empty">No messages yet. Say something!</p>
 	{/if}
-	{#each messages as msg, i (msg.id)}
-		{@const prev = messages[i - 1]}
+	{#each visibleMessages as msg, i (msg.id)}
+		{@const prev = visibleMessages[i - 1]}
 		{@const isFirst = !prev || prev.userId !== msg.userId || msg.createdAt - prev.createdAt > 300000}
 		{@const isMine = msg.userId === data.currentUser.id}
 		{@const msgReactions = reactions[msg.id] ?? {}}
@@ -4116,6 +4147,9 @@
 							{#if kebabOpenId === msg.id}
 								<div class="kebab-menu">
 									<button class="kebab-item" onclick={(e) => { e.stopPropagation(); kebabOpenId = null; reportMessage(msg); }}>Report</button>
+									{#if msg.userRole !== 'instructor' && msg.userId !== 'gemma'}
+										<button class="kebab-item" onclick={(e) => { e.stopPropagation(); kebabOpenId = null; blockUser(msg); }}>Block user</button>
+									{/if}
 									{#if data.currentUser.role === 'instructor'}
 										<button class="kebab-item kebab-item-delete" onclick={(e) => { e.stopPropagation(); kebabOpenId = null; if (confirm('Delete this message?')) deleteMessage(msg); }}>Delete</button>
 									{/if}

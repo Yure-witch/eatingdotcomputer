@@ -36,6 +36,33 @@ Each entry includes:
 
 ---
 
+### 2026-08-21 — User blocking (Guideline 1.2) + demo auto-approval flow
+- **Status**: `attempted` (both verified end-to-end in the browser)
+- **Blocking**: `blocked_users` table (migration 064), `/api/moderation/block`
+  (GET/POST/DELETE, self-service; instructors + gemma unblockable — 400 with
+  message, verified). "Block user" in the message ⋮ menu (channels + DMs,
+  non-instructor authors only); blocked users' messages filtered from render
+  via `visibleMessages` derived in both chat pages; DM with a blocked user
+  shows a notice + inline Unblock; Edit profile gets a "Blocked users" list
+  with Unblock. Server: /api/chat send now skips blockers of the sender for
+  unread ticks, mention/reply notification rows, chat-list bumps, and push —
+  message still lands in the conv node so unblocking restores history.
+  Verified: blocked Maya Okonkwo as navtest → #studio dropped 14→11 messages,
+  unblocked from Edit profile → restored.
+- **Demo auto-approval** (for the App Review recording): `classes.auto_approve`
+  (=1 for idc-review, which is now enrollment_open so it appears in the
+  sign-up class picker). The pending screen shows "Waiting for instructor to
+  approve enrollment" IMMEDIATELY for auto-approve classes (30s-delayed for
+  real ones, unchanged), then after 5s calls `/api/class/auto-approve`
+  (validates auto_approve=1 server-side; real classes 403; reviewed_by =
+  the user's own id — an 'auto' sentinel violates the users FK, learned the
+  hard way). Approval flows through the same approvals/{uid} RTDB signal as
+  a manual approve. Landing in /app shows a dismissable "🎉 You've been
+  accepted into {class} — welcome!" pill for 8s (sessionStorage handoff from
+  the pending screen — manual instructor approvals get the banner too).
+  Verified: pending → 5s → auto-approved → banner, on a throwaway account,
+  then deleted via the account-deletion endpoint (clean, incomplete: []).
+
 ### 2026-08-21 — In-app account deletion (Guideline 5.1.1(v)) + privacy policy
 - **Status**: `attempted` (verified end-to-end: throwaway account created,
   deleted through the UI flow, all rows confirmed gone)

@@ -8,7 +8,7 @@ export async function load({ locals }) {
 
 	const db = getDb();
 	const result = db ? await db.execute({
-		sql: `SELECT cm.status, c.name, c.term
+		sql: `SELECT cm.status, c.name, c.term, c.auto_approve
 		      FROM class_memberships cm
 		      JOIN classes c ON cm.class_id = c.id
 		      WHERE cm.user_id = ?
@@ -36,7 +36,10 @@ export async function load({ locals }) {
 		firebaseToken,
 		className: String(membership.name ?? ''),
 		term: String(membership.term ?? ''),
-		status: String(membership.status ?? 'pending')
+		status: String(membership.status ?? 'pending'),
+		// Demo/test-environment classes approve themselves a few seconds in —
+		// the page drives it (see +page.svelte) so the wait is visible.
+		autoApprove: Number(membership.auto_approve) === 1
 	};
 }
 

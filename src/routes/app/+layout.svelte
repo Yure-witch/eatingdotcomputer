@@ -1825,7 +1825,23 @@
 
 	afterNavigate(() => { presencePing(); });
 
+	// "You're in" banner shown once right after enrollment approval.
+	let acceptedClassName = $state('');
+
 	onMount(async () => {
+
+		// Enrollment-acceptance banner: the pending screen leaves the class
+		// name in sessionStorage when approval is what carried the user into
+		// the app (auto-approved demo class or a live instructor approval).
+		// One showing, then the flag is gone.
+		try {
+			const cls = sessionStorage.getItem('ec-accepted-class');
+			if (cls) {
+				sessionStorage.removeItem('ec-accepted-class');
+				acceptedClassName = cls;
+				setTimeout(() => (acceptedClassName = ''), 8000);
+			}
+		} catch { /* private mode — no banner */ }
 
 		// Load the emote manifests so chat-list previews can resolve emote thumb
 		// URLs (TG / custom packs / custom emoji). Bump _prevVer when each lands so
@@ -2746,6 +2762,12 @@
      routes. -->
 <AppHeader currentClass={data.currentClass} allClasses={data.allClasses} user={data.currentUser ?? null} />
 
+{#if acceptedClassName}
+	<button type="button" class="accepted-banner" onclick={() => (acceptedClassName = '')}>
+		🎉 You've been accepted into <strong>{acceptedClassName}</strong> — welcome!
+	</button>
+{/if}
+
 <!-- Toasts -->
 {#if toasts.length}
 	<div class="toast-stack">
@@ -3153,6 +3175,37 @@
 	}
 	@media (max-width: 640px) {
 		.global-bell { display: none; }
+	}
+
+	/* ── Enrollment acceptance banner ── */
+	/* Fixed under the header, above everything, dismissable by tap and
+	   self-dismissing after 8s. A button so it's keyboard/VoiceOver
+	   reachable without extra wiring. */
+	.accepted-banner {
+		position: fixed;
+		top: calc(var(--header-h, 52px) + 10px);
+		left: 50%;
+		transform: translateX(-50%);
+		z-index: 300;
+		max-width: min(92vw, 480px);
+		padding: 0.7rem 1.2rem;
+		background: var(--md-sys-color-primary, var(--ink));
+		color: var(--md-sys-color-on-primary, var(--paper));
+		border: none;
+		border-radius: 999px;
+		font-family: inherit;
+		font-size: 0.9rem;
+		line-height: 1.35;
+		cursor: pointer;
+		box-shadow: 0 6px 24px rgba(0, 0, 0, 0.22);
+		animation: accepted-in 0.45s cubic-bezier(0.32, 0.72, 0, 1);
+	}
+	@keyframes accepted-in {
+		from { opacity: 0; transform: translateX(-50%) translateY(-14px); }
+		to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.accepted-banner { animation: none; }
 	}
 
 	/* ── App shell ── */

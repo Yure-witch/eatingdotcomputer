@@ -13,8 +13,13 @@ Center, or QuickTime via cable for a clean file). Suggested shot list, in
 order — one continuous take is fine:
 
 1. Launch the app from the home screen (cold start, show the icon being tapped).
-2. Log in with the demo account (username + password on the login screen).
-   Also show the "Continue with Google" button exists.
+2. Registration + approval: sign up with a fresh account (Sign in with Apple
+   works well on camera), complete the profile step, request to join
+   "Interactive Design Concepts" — the demo class approves the request a few
+   seconds later on its own: show the "Waiting for instructor to approve
+   enrollment" screen, then the "You've been accepted" banner as the app
+   opens. (Real classes stay manually approved; only the demo class
+   self-approves.)
 3. Allow the push-notification permission prompt when it appears (this is the
    only sensitive-capability prompt the app makes — no location, contacts,
    camera, or tracking).
@@ -22,11 +27,13 @@ order — one continuous take is fine:
    submission form (link/image/video types).
 5. Chat: open the class channel, send a message, add an emoji reaction, open
    the expression picker, send a GIF. Open a DM.
-6. Files tab: show uploads and starred messages.
-7. ⚠️ TODO — account deletion flow (see "Blocking gaps" at the bottom: this
-   does not exist yet and must be built and shown).
-8. ⚠️ TODO — content reporting + user blocking in chat (same: must be built
-   and shown, since the app has user-generated content).
+6. Content reporting + blocking: open the ⋮ menu on a classmate's message —
+   Report it (confirm), then Block the user and show their messages
+   disappear; show Edit profile → Blocked users → Unblock.
+7. Files tab: show uploads and starred messages.
+8. Account deletion: Edit profile → Delete account → type DELETE → confirm —
+   ends back at the login screen. Do this with the fresh account from step 2,
+   NOT the demo credentials Apple will use later.
 
 There are no purchases, subscriptions, or paid content — nothing to record
 for those.
@@ -129,9 +136,13 @@ and user-generated content*. It has both. Status:
    recording with a throwaway account — the demo account itself should NOT
    be deleted on camera (Apple needs it working afterwards); record the flow
    on a second account, or re-create the demo account after.
-3. **User blocking — Guideline 1.2.** STILL MISSING. UGC apps need a way to
-   block abusive users, separate from reporting. Needs: "Block user" (hides
-   that user's messages/DMs for the blocker).
+3. ✅ **User blocking — Guideline 1.2.** BUILT (2026-08-21): "Block user" in
+   the message ⋮ menu (channels + DMs). The blocker stops seeing the blocked
+   user's messages, gets no notifications from them, and a blocked DM shows a
+   notice with inline Unblock; the full block list is managed under Edit
+   profile → Blocked users. Instructors and the Gemma assistant cannot be
+   blocked (they moderate/run the class) — use Report for an instructor.
 
-Recommendation: build 3, capture all three flows in the screen recording,
-then reply.
+All three compliance features are now built and deployed. What remains is
+the recording (shot list above), the two ⚠️ TODO fields in sections 2 and 4,
+and pasting the packet into App Store Connect.

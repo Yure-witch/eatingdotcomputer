@@ -66,6 +66,24 @@ export async function POST({ request, locals }) {
 		}
 	}
 
+	// Everyone who has BLOCKED the sender: the message must not surface for
+	// them — no unread ticks, no notification rows, no push. (Their client
+	// also hides it at render; this keeps the server-side signals consistent.)
+	// Best-effort: if the query fails, notifications go out as before.
+	let blockersOfSender = new Set();
+	{
+		const turso = getDb();
+		if (turso) {
+			try {
+				const r = await turso.execute({
+					sql: 'SELECT blocker_id FROM blocked_users WHERE blocked_id = ?',
+					args: [session.user.id]
+				});
+				blockersOfSender = new Set(r.rows.map((row) => String(row.blocker_id)));
+			} catch { /* unfiltered fan-out */ }
+		}
+	}
+
 	// Notification fan-out. Mentions and replies both write a Firebase
 	// `notifications/{uid}/{notifId}` entry (archived to Turso later by
 	// /api/chat/sync, same pattern as messages + reactions). We dedupe
@@ -74,9 +92,9 @@ export async function POST({ request, locals }) {
 	async function fanOutNotifs(convType, convId, msgId) {
 		const recipients = new Map(); // uid -> type ('mention' wins over 'reply')
 		for (const uid of mentionedUids(mentionList.map((m) => ({ uid: m.u })))) {
-			if (uid && uid !== session.user.id) recipients.set(uid, 'mention');
+			if (uid && uid !== session.user.id && !blockersOfSender.has(uid)) recipients.set(uid, 'mention');
 		}
-		if (reply_to?.userId && reply_to.userId !== session.user.id && !recipients.has(reply_to.userId)) {
+		if (reply_to?.userId && reply_to.userId !== session.user.id && !recipients.has(reply_to.userId) && !blockersOfSender.has(reply_to.userId)) {
 			recipients.set(reply_to.userId, 'reply');
 		}
 		if (!recipients.size) return;
@@ -103,18 +121,26 @@ export async function POST({ request, locals }) {
 		const convId = getConvId(session.user.id, to);
 		const msgRef = await db.ref(`dms/${convId}/messages`).push(msg);
 		await fanOutNotifs('dm', convId, msgRef.key);
+		// A recipient who blocked the sender gets NONE of the surfacing: no
+		// chat-list bump, no unread tick, no push. The message itself still
+		// lands in the conversation node, so unblocking restores the history.
+		const recipientBlocked = blockersOfSender.has(to);
 		await Promise.all([
 			db.ref(`userChats/${session.user.id}/${convId}`).update({ otherUserId: to, lastMessage: preview, lastAt: now }),
-			db.ref(`userChats/${to}/${convId}`).update({ otherUserId: session.user.id, otherUserName: senderName, lastMessage: preview, lastAt: now }),
-			db.ref(`unreadCounts/${to}`).update({ [convId]: ServerValue.increment(1) })
+			...(recipientBlocked ? [] : [
+				db.ref(`userChats/${to}/${convId}`).update({ otherUserId: session.user.id, otherUserName: senderName, lastMessage: preview, lastAt: now }),
+				db.ref(`unreadCounts/${to}`).update({ [convId]: ServerValue.increment(1) })
+			])
 		]);
 		// Push notification to recipient
-		await notifyUsers([to], {
-			title: senderName,
-			body: preview,
-			url: `/app/chat/dm/${convId}`,
-			tag: `dm-${convId}`
-		});
+		if (!recipientBlocked) {
+			await notifyUsers([to], {
+				title: senderName,
+				body: preview,
+				url: `/app/chat/dm/${convId}`,
+				tag: `dm-${convId}`
+			});
+		}
 	} else {
 		// Channel
 		const channel = channelId ?? 'class';
@@ -147,7 +173,7 @@ export async function POST({ request, locals }) {
 					const unreadUpdates = {};
 					for (const r of membersResult.rows) {
 						const uid = String(r.id);
-						if (uid === session.user.id) continue;
+						if (uid === session.user.id || blockersOfSender.has(uid)) continue;
 						unreadUpdates[`unreadCounts/${uid}/${channel}`] = ServerValue.increment(1);
 					}
 					if (Object.keys(unreadUpdates).length > 0) {
@@ -161,7 +187,7 @@ export async function POST({ request, locals }) {
 				sql: 'SELECT DISTINCT user_id FROM push_subscriptions WHERE user_id != ?',
 				args: [session.user.id]
 			});
-			const userIds = usersResult.rows.map((r) => String(r.user_id));
+			const userIds = usersResult.rows.map((r) => String(r.user_id)).filter((uid) => !blockersOfSender.has(uid));
 			await notifyUsers(userIds, {
 				title: `New message in #${channel}`,
 				body: `${senderName}: ${preview}`,

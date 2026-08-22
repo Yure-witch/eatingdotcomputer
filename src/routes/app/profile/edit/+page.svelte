@@ -64,6 +64,32 @@
 		setTimeout(() => (gemmaOptInStatus = ''), 2000);
 	}
 
+	// ── Blocked users (App Store Guideline 1.2) ─────────────────────────
+	// The single place the whole block list is visible and reversible —
+	// blocking happens in chat, unblocking happens here (or inline in a
+	// blocked DM).
+	let blockedList = $state([]);
+	let blockedLoaded = $state(false);
+	onMount(async () => {
+		try {
+			const r = await fetch('/api/moderation/block');
+			if (r.ok) blockedList = (await r.json()).blocked;
+		} catch { /* section shows as empty */ }
+		blockedLoaded = true;
+	});
+	async function unblock(userId) {
+		try {
+			const r = await fetch('/api/moderation/block', {
+				method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ userId })
+			});
+			if (!r.ok) throw new Error(String(r.status));
+			blockedList = blockedList.filter((b) => b.userId !== userId);
+		} catch {
+			alert('Could not unblock — check your connection and try again.');
+		}
+	}
+
 	// ── Account deletion (App Store Guideline 5.1.1(v)) ─────────────────
 	// Two-step: the button reveals a typed-confirmation row, and only the
 	// exact word DELETE arms the final button. After the server confirms,
@@ -200,6 +226,21 @@
 				</span>
 			</label>
 
+			<!-- Blocked users: the block list lives here; blocking itself
+			     happens from the ⋮ menu on a message in chat. -->
+			{#if blockedLoaded && blockedList.length > 0}
+				<div class="blocked-section">
+					<h2>Blocked users</h2>
+					<p>You won't see messages from these people, and they can't notify you. Blocking is private — they aren't told.</p>
+					{#each blockedList as b (b.userId)}
+						<div class="blocked-row">
+							<span class="blocked-name">{b.name}</span>
+							<button type="button" class="btn-unblock" onclick={() => unblock(b.userId)}>Unblock</button>
+						</div>
+					{/each}
+				</div>
+			{/if}
+
 			<!-- Danger zone: in-app account deletion. The hidden signout form
 			     is the same server action the user menu uses — it clears the
 			     session cookie AFTER the account row is already gone. -->
@@ -312,6 +353,28 @@
 		padding: 0.25rem 0 0.75rem;
 		position: relative;
 	}
+
+	/* ── Blocked users ── */
+	.blocked-section {
+		margin-top: 1.25rem; padding-top: 1.25rem;
+		border-top: 1.5px solid var(--border);
+		display: flex; flex-direction: column; gap: 0.6rem;
+	}
+	.blocked-section h2 { margin: 0; font-size: 1rem; font-weight: 600; color: var(--ink); }
+	.blocked-section p { margin: 0; font-size: 0.8rem; color: var(--muted-fg); line-height: 1.45; }
+	.blocked-row {
+		display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;
+		padding: 0.5rem 0.75rem;
+		border: 1.5px solid var(--border); border-radius: 8px;
+	}
+	.blocked-name { font-size: 0.9rem; font-weight: 600; color: var(--ink); }
+	.btn-unblock {
+		padding: 0.4rem 0.9rem; background: none;
+		border: 1.5px solid var(--border); border-radius: 8px;
+		font-family: inherit; font-size: 0.82rem; font-weight: 600;
+		color: var(--ink); cursor: pointer; transition: border-color 0.15s;
+	}
+	.btn-unblock:hover { border-color: var(--ink); }
 
 	/* ── Danger zone ── */
 	.danger-zone {

@@ -2542,6 +2542,50 @@
 		}).catch(() => {});
 	}
 
+	// ── Blocking (App Store Guideline 1.2) ──────────────────────────────
+	// Same contract as the channel page: the block list is a view-filter.
+	// In a DM the whole conversation is with one person, so blocking them
+	// also swaps in a notice with an inline Unblock.
+	let blockedIds = $state(new Set());
+	const visibleMessages = $derived(blockedIds.size ? messages.filter((m) => !blockedIds.has(m.userId)) : messages);
+	const otherBlocked = $derived(blockedIds.has(otherUser.id));
+	async function loadBlockedIds() {
+		try {
+			const r = await fetch('/api/moderation/block');
+			if (r.ok) {
+				const j = await r.json();
+				blockedIds = new Set(j.blocked.map((b) => b.userId));
+			}
+		} catch { /* unfiltered view until it loads */ }
+	}
+	async function blockUser(msg) {
+		if (!confirm(`Block ${msg.userName}? You'll stop seeing their messages. You can unblock them from Edit profile.`)) return;
+		try {
+			const r = await fetch('/api/moderation/block', {
+				method: 'POST', headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ userId: msg.userId })
+			});
+			if (!r.ok) throw new Error(String(r.status));
+			blockedIds = new Set([...blockedIds, msg.userId]);
+		} catch {
+			alert('Could not block — check your connection and try again.');
+		}
+	}
+	async function unblockOther() {
+		try {
+			const r = await fetch('/api/moderation/block', {
+				method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ userId: otherUser.id })
+			});
+			if (!r.ok) throw new Error(String(r.status));
+			const next = new Set(blockedIds);
+			next.delete(otherUser.id);
+			blockedIds = next;
+		} catch {
+			alert('Could not unblock — check your connection and try again.');
+		}
+	}
+
 	// Content reporting (App Store Guideline 1.2): files the message — content
 	// snapshotted server-side — for instructor review in Manage → Moderation.
 	async function reportMessage(msg) {
@@ -2600,6 +2644,8 @@
 		// is the only place the partner's name surfaces at the top.
 		pageTitle.set(otherUser.name);
 		pageTitleHref.set(profileLink(otherUser.id, data.currentUser.id));
+
+		loadBlockedIds();
 
 		// ── Performance monitoring ─────────────────────────────────────────────
 		if (typeof PerformanceObserver !== 'undefined') {
@@ -3800,8 +3846,14 @@
 	{#if messages.length === 0}
 		<p class="empty">Start your conversation with {otherUser.name}.</p>
 	{/if}
-	{#each messages as msg, i (msg.id)}
-		{@const prev = messages[i - 1]}
+	{#if otherBlocked}
+		<div class="blocked-notice">
+			<p>You've blocked <strong>{otherUser.name}</strong>. Their messages are hidden.</p>
+			<button class="btn-unblock-inline" onclick={unblockOther}>Unblock</button>
+		</div>
+	{/if}
+	{#each visibleMessages as msg, i (msg.id)}
+		{@const prev = visibleMessages[i - 1]}
 		{@const isFirst = !prev || prev.userId !== msg.userId || msg.createdAt - prev.createdAt > 300000}
 		{@const isMine = msg.userId === data.currentUser.id}
 		{@const msgReactions = reactions[msg.id] ?? {}}
@@ -3932,6 +3984,9 @@
 							{#if kebabOpenId === msg.id}
 								<div class="kebab-menu">
 									<button class="kebab-item" onclick={(e) => { e.stopPropagation(); kebabOpenId = null; reportMessage(msg); }}>Report</button>
+									{#if msg.userRole !== 'instructor' && msg.userId !== 'gemma'}
+										<button class="kebab-item" onclick={(e) => { e.stopPropagation(); kebabOpenId = null; blockUser(msg); }}>Block user</button>
+									{/if}
 									{#if data.currentUser.role === 'instructor'}
 										<button class="kebab-item kebab-item-delete" onclick={(e) => { e.stopPropagation(); kebabOpenId = null; if (confirm('Delete this message?')) deleteMessage(msg); }}>Delete</button>
 									{/if}
@@ -5151,6 +5206,31 @@
 		display: flex; align-items: center; justify-content: center;
 	}
 	.att-img-close:hover { background: rgba(0,0,0,0.7); }
+
+	/* Blocked-conversation notice (sits in the message list flow). */
+	.blocked-notice {
+		margin: 1rem auto;
+		max-width: 420px;
+		padding: 0.8rem 1.1rem;
+		border: 1.5px solid var(--border);
+		border-radius: 12px;
+		background: var(--surface-2, rgba(0, 0, 0, 0.04));
+		text-align: center;
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+		align-items: center;
+	}
+	.blocked-notice p { margin: 0; font-size: 0.85rem; color: var(--muted-fg); }
+	.btn-unblock-inline {
+		padding: 0.45rem 1rem;
+		background: none;
+		border: 1.5px solid var(--border);
+		border-radius: 8px;
+		font-family: inherit; font-size: 0.85rem; font-weight: 600;
+		color: var(--ink); cursor: pointer;
+	}
+	.btn-unblock-inline:hover { border-color: var(--ink); }
 
 	/* No browser-chrome padding — the --vvh-sized .chat-wrap already ends at
 	   the visible bottom (see the note on the channel page). */
