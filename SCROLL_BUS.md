@@ -65,6 +65,41 @@ main-thread blocking.
 The bus exists to keep the listener surface from growing and to give components
 one well-defined way to observe scrolling — not to make scrolling faster.
 
+## Scroll-snap traps that do not look like snap bugs
+
+Collected from the pager, the expression picker, and a port of this pattern to
+rickydotnow (whose findings flow back here).
+
+**An `overflow: hidden` ancestor BETWEEN a snap area and its scroll container
+silently steals the snap area.** A snap area belongs to its *nearest* scroll
+container ancestor — and `overflow: hidden` makes an element one. Wrap a
+`scroll-snap-align` child in a clipped frame (rounded corners are the classic
+reason) and it stops being a snap point of the outer track entirely. The
+failure mode hides its cause: with `mandatory` and a broken target list,
+Chrome can park the track several pages in AT LOAD and pin it there —
+`scrollLeft = 0` reverts within the frame. It reads as "starts on the wrong
+page and won't scroll back", not as a snap bug. One-shot diagnostic: set
+`scrollSnapType = 'none'`, write `scrollLeft = 0`, restore; if it springs
+back, snap owns the position. Fix: `overflow: visible` on the wrapper (clip
+something inside the snap area instead). Our `.expr-pane` is safe only
+because it is the snap area itself, not a wrapper around one — don't add an
+inner clipped frame carrying the snap-align.
+
+**Snap fights programmatic per-frame scrolls.** Writing `scrollLeft` every
+frame while `scroll-snap-type` is active loses to the snap engine. Pause it
+(`el.style.scrollSnapType = 'none'`), drive, then restore — and restore on a
+condition, not a duration: watch for arrival by rAF (with a ceiling), because
+a fixed timer re-snaps heavy pages to where they just left. `scrollend` is
+the tidy signal where available, but it never fires if the scroll ends where
+it started — keep a fallback restore.
+
+**`scroll-snap-stop: always` is the strict one-page-per-swipe rule.** If a
+fling must never carry past the neighbour, this is the native answer — do not
+rebuild paging on transforms to get it.
+
+**Don't compute positions as `index * clientWidth`** unless every page is
+provably uniform. Measure the target's actual `offsetLeft`.
+
 ## Exceptions
 
 Svelte's `onscroll={...}` attribute on an element you own is fine for something
