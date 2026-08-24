@@ -603,7 +603,7 @@
 	.submode-tab {
 		padding: 0.3rem 0.85rem; font-family: inherit; font-size: 0.8rem; font-weight: 600;
 		background: none; color: var(--muted-fg); border: 1px solid var(--border);
-		border-radius: 999px; cursor: pointer; transition: all 0.12s;
+		border-radius: 999px; cursor: pointer; transition: background 0.12s, color 0.12s, border-color 0.12s;
 	}
 	.submode-tab:hover { border-color: var(--ink); color: var(--ink); }
 	.submode-tab.active { background: var(--ink); color: var(--paper); border-color: var(--ink); }
@@ -691,7 +691,7 @@
 	.view-chip {
 		padding: 0.35rem 0.9rem; font-family: inherit; font-size: 0.8rem; font-weight: 600;
 		background: none; color: var(--muted-fg); border: 1px solid var(--border);
-		border-radius: 999px; cursor: pointer; transition: all 0.12s;
+		border-radius: 999px; cursor: pointer; transition: background 0.12s, color 0.12s, border-color 0.12s;
 	}
 	.view-chip:hover { border-color: var(--ink); color: var(--ink); }
 	.view-chip.active { background: var(--ink); color: var(--paper); border-color: var(--ink); }

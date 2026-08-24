@@ -2579,9 +2579,18 @@
 	// the message arrived" rather than merely "tab was open".
 	function onChatActivity(e) {
 		if (e && e.isTrusted === false) return;
-		_lastInputAt = Date.now();
-		if (_readPending) flushPendingRead();
+		const now = Date.now();
+		_lastInputAt = now;
+		// mousemove rides this listener at pointer-poll rate. The pending-read
+		// check is only meaningful when something IS pending, and a flush
+		// attempt costs a visibility+focus query — gate on the flag so the
+		// common case (nothing deferred, just cursor jitter) is one Date.now().
+		if (!_readPending) return;
+		if (now - _lastFlushTry < 1000) return; // don't retry more than 1×/s
+		_lastFlushTry = now;
+		flushPendingRead();
 	}
+	let _lastFlushTry = 0;
 
 	function markRead() {
 		if (!isViewingActively()) {

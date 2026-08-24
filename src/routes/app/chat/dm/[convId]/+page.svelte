@@ -2460,9 +2460,15 @@
 	// arrived" rather than merely "tab was open".
 	function onChatActivity(e) {
 		if (e && e.isTrusted === false) return;
-		_lastInputAt = Date.now();
-		if (_readPending) flushPendingRead();
+		const now = Date.now();
+		_lastInputAt = now;
+		// Same gating as the channel page: mousemove is at pointer-poll rate,
+		// so only look at pending reads when one exists, max 1×/s.
+		if (!_readPending || now - _lastFlushTry < 1000) return;
+		_lastFlushTry = now;
+		flushPendingRead();
 	}
+	let _lastFlushTry = 0;
 
 	function markRead() {
 		if (!isViewingActively()) {

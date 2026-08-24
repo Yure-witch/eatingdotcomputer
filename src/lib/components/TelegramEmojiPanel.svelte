@@ -1296,7 +1296,7 @@
 	.tg-cell-hidden:hover { opacity: 0.7; }
 
 	.tg-mod-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.15rem 0.6rem 0.35rem; background: var(--surface-2); border-bottom: 1px solid var(--border); flex-shrink: 0; }
-	.tg-mod-btn { display: inline-flex; align-items: center; gap: 0.25rem; padding: 0.2rem 0.55rem; border: 1.5px solid var(--border); border-radius: 6px; background: var(--paper); color: var(--muted-fg); font-family: inherit; font-size: 0.74rem; cursor: pointer; transition: all 0.13s; }
+	.tg-mod-btn { display: inline-flex; align-items: center; gap: 0.25rem; padding: 0.2rem 0.55rem; border: 1.5px solid var(--border); border-radius: 6px; background: var(--paper); color: var(--muted-fg); font-family: inherit; font-size: 0.74rem; cursor: pointer; transition: background 0.13s, color 0.13s, border-color 0.13s; }
 	.tg-mod-btn .msi-18 { font-size: 16px; }
 	.tg-mod-btn.active { background: #b42318; border-color: #b42318; color: #fff; }
 	.tg-mod-hint-inline { font-size: 0.7rem; color: var(--muted-fg); }
@@ -1352,7 +1352,7 @@
 
 	.tg-mode-row { display: flex; align-items: center; gap: 0.4rem; padding: 0.35rem 0.55rem; border-bottom: 1px solid var(--border); flex-shrink: 0; background: var(--surface-2); }
 	.tg-mode-label { font-size: 0.7rem; color: var(--muted-fg); font-weight: 600; }
-	.tg-mode-btn { flex: 1; padding: 0.25rem 0; border: 1.5px solid var(--border); border-radius: 6px; background: var(--paper); color: var(--muted-fg); font-family: inherit; font-size: 0.74rem; cursor: pointer; transition: all 0.13s; }
+	.tg-mode-btn { flex: 1; padding: 0.25rem 0; border: 1.5px solid var(--border); border-radius: 6px; background: var(--paper); color: var(--muted-fg); font-family: inherit; font-size: 0.74rem; cursor: pointer; transition: background 0.13s, color 0.13s, border-color 0.13s; }
 	/* active = ink tile with paper text — flips correctly with the theme
 	   (the old hardcoded #fff was white-on-white in dark mode) */
 	.tg-mode-btn.active { background: var(--ink, var(--ink)); color: var(--paper, #fff); border-color: var(--ink, var(--ink)); }

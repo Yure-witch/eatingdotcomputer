@@ -52,7 +52,11 @@
 
 	onMount(async () => {
 		if (!browser) return;
-		const refreshTimer = setInterval(() => invalidateAll(), 30_000);
+		// 30s data refresh. Skipped while the tab/app is hidden — an invisible
+		// surface doesn't need fresh load data, and each invalidate re-runs
+		// every load function (network + re-render). Resumes on return, so a
+		// backgrounded Capacitor webview stops burning radio + CPU.
+		const refreshTimer = setInterval(() => { if (!document.hidden) invalidateAll(); }, 30_000);
 		isStandalone = window.matchMedia('(display-mode: standalone)').matches || !!window.navigator.standalone;
 		isNative = isNativeApp();
 		const iosDevice = /iphone|ipad|ipod/i.test(navigator.userAgent);
@@ -1104,7 +1108,7 @@
 	.check-box {
 		width: 24px; height: 24px; border: 2px solid var(--border); border-radius: 6px;
 		display: flex; align-items: center; justify-content: center;
-		transition: all 0.15s; background: var(--paper);
+		transition: background 0.15s, color 0.15s, border-color 0.15s, transform 0.15s; background: var(--paper);
 	}
 	.check-box.checked {
 		background: var(--ink); border-color: var(--ink); color: var(--paper);
@@ -1185,7 +1189,7 @@
 	.upload-btn {
 		display: flex; align-items: center; justify-content: center;
 		width: 34px; height: 34px; border: 1.5px solid var(--border); border-radius: 8px;
-		cursor: pointer; color: var(--muted-fg); transition: all 0.15s; flex-shrink: 0;
+		cursor: pointer; color: var(--muted-fg); transition: background 0.15s, color 0.15s, border-color 0.15s, transform 0.15s; flex-shrink: 0;
 		text-transform: none; letter-spacing: 0; font-weight: 400;
 	}
 	.upload-btn:hover { border-color: var(--ink); color: var(--ink); }
@@ -1630,7 +1634,7 @@
 		align-self: flex-start; padding: 0.4rem 0.9rem;
 		background: none; border: 1.5px dashed var(--border); border-radius: 8px;
 		font-family: inherit; font-size: 0.82rem; color: var(--muted-fg);
-		cursor: pointer; transition: all 0.15s;
+		cursor: pointer; transition: background 0.15s, color 0.15s, border-color 0.15s, transform 0.15s;
 	}
 	.btn-add-item:hover { border-color: var(--ink); color: var(--ink); }
 
@@ -1759,7 +1763,7 @@
 		display: flex; align-items: center; gap: 0.3rem; padding: 0.2rem 0.4rem;
 		background: none; border: 1.5px solid var(--border); border-radius: 6px;
 		cursor: pointer; color: var(--muted-fg); font-size: 0.72rem; font-family: inherit;
-		transition: all 0.15s;
+		transition: background 0.15s, color 0.15s, border-color 0.15s, transform 0.15s;
 	}
 	.vis-toggle-btn:hover { border-color: var(--muted-fg); color: var(--ink); }
 	.vis-toggle-btn.vis-on { border-color: #27ae60; color: #27ae60; background: #e8f8f0; }

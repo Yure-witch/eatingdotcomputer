@@ -318,7 +318,7 @@
 	.text-in { padding: 0.5rem 0.7rem; border: 1.5px solid var(--border); border-radius: 8px; background: var(--paper); color: var(--ink); font-family: inherit; font-size: 0.95rem; }
 	.group { display: flex; flex-direction: column; gap: 0.5rem; }
 	.chips { display: flex; flex-wrap: wrap; gap: 0.35rem; }
-	.chip { font-family: inherit; font-size: 0.76rem; padding: 0.3rem 0.6rem; border: 1.5px solid var(--border); border-radius: 999px; background: var(--paper); color: var(--muted-fg); cursor: pointer; transition: all 0.12s; }
+	.chip { font-family: inherit; font-size: 0.76rem; padding: 0.3rem 0.6rem; border: 1.5px solid var(--border); border-radius: 999px; background: var(--paper); color: var(--muted-fg); cursor: pointer; transition: background 0.12s, color 0.12s, border-color 0.12s; }
 	.chip.sm { font-size: 0.72rem; padding: 0.25rem 0.55rem; }
 	.chip.on { background: var(--ink); color: var(--paper); border-color: var(--ink); }
 	.row { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; }

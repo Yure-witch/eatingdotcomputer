@@ -948,7 +948,7 @@
 		font-weight: 500;
 		color: var(--muted-fg);
 		cursor: pointer;
-		transition: all 0.15s;
+		transition: background 0.15s, color 0.15s, border-color 0.15s, transform 0.15s;
 	}
 	.type-tab.active { border-color: var(--ink); color: var(--ink); }
 	.type-tab:hover { border-color: var(--ink); color: var(--ink); }

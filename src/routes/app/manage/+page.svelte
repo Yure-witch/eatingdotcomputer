@@ -73,13 +73,22 @@
 					scoutInfo = j.scout ?? null;
 					gemmaGenPolledAt = Date.now();
 					gemmaGenNow = Date.now();
+					syncTick();
 				}
 			} catch { /* keep last */ }
 		};
 		poll();
-		const iv = setInterval(poll, 5000);
-		const tick = setInterval(() => { if (gemmaGenerating.length) gemmaGenNow = Date.now(); }, 1000);
-		return () => { alive = false; clearInterval(iv); clearInterval(tick); };
+		// 5s poll paused while hidden; the 1s clock only runs while
+		// something is actually generating (a Date.now() refresh for the
+		// elapsed readout — pointless when the list is empty).
+		const iv = setInterval(() => { if (!document.hidden) poll(); }, 5000);
+		let tick = null;
+		const syncTick = () => {
+			if (gemmaGenerating.length && !tick) tick = setInterval(() => { if (gemmaGenerating.length) gemmaGenNow = Date.now(); }, 1000);
+			else if (!gemmaGenerating.length && tick) { clearInterval(tick); tick = null; }
+		};
+		syncTick();
+		return () => { alive = false; clearInterval(iv); if (tick) clearInterval(tick); };
 	});
 	let interestsDraft = $state({});
 	let interestsStatus = $state({});
@@ -1525,7 +1534,7 @@
 		font-weight: 500;
 		color: var(--muted-fg);
 		cursor: pointer;
-		transition: all 0.15s;
+		transition: background 0.15s, color 0.15s, border-color 0.15s, transform 0.15s;
 	}
 	.btn-add-inline:hover { border-color: var(--ink); color: var(--ink); }
 
@@ -1802,7 +1811,7 @@
 		font-weight: 500;
 		color: var(--muted-fg);
 		cursor: pointer;
-		transition: all 0.12s;
+		transition: background 0.12s, color 0.12s, border-color 0.12s;
 	}
 	.range-tab:hover { border-color: var(--muted-fg); color: var(--ink); }
 	.range-tab.active { border-color: var(--ink); color: var(--ink); background: var(--paper); }
@@ -1835,7 +1844,7 @@
 	.btn-reset {
 		font-family: inherit; font-size: 0.75rem; font-weight: 500;
 		color: var(--muted-fg); background: none; border: 1px solid var(--border);
-		border-radius: 5px; padding: 0.15rem 0.5rem; cursor: pointer; transition: all 0.12s;
+		border-radius: 5px; padding: 0.15rem 0.5rem; cursor: pointer; transition: background 0.12s, color 0.12s, border-color 0.12s;
 	}
 	.btn-reset:hover { border-color: var(--danger); color: var(--danger); }
 	.btn-reset[href] { text-decoration: none; display: inline-block; }
@@ -2014,7 +2023,7 @@
 	.hidden-emote-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 0.6rem; margin-top: 0.5rem; }
 	.hidden-emote-card { display: flex; flex-direction: column; align-items: center; gap: 0.4rem; padding: 0.6rem 0.4rem; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); }
 	.hidden-emote-art { width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; }
-	.btn-unhide { width: 100%; padding: 0.25rem 0; border: 1.5px solid var(--border); border-radius: 6px; background: var(--paper); color: var(--ink); font-family: inherit; font-size: 0.72rem; font-weight: 600; cursor: pointer; transition: all 0.13s; }
+	.btn-unhide { width: 100%; padding: 0.25rem 0; border: 1.5px solid var(--border); border-radius: 6px; background: var(--paper); color: var(--ink); font-family: inherit; font-size: 0.72rem; font-weight: 600; cursor: pointer; transition: background 0.13s, color 0.13s, border-color 0.13s; }
 	.btn-unhide:hover { background: var(--ink); color: var(--paper); border-color: var(--ink); }
 
 	/* ── Reported messages ── */

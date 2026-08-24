@@ -430,7 +430,7 @@
 	.ce-upload-section { padding: 0.5rem 0.65rem 0.4rem; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 0.3rem; flex-shrink: 0; max-height: 55%; overflow-y: auto; overscroll-behavior: contain; }
 
 	.ce-mode-toggle { display: flex; gap: 0.3rem; }
-	.ce-mode-btn { flex: 1; padding: 0.22rem 0; border: 1.5px solid var(--border); border-radius: 6px; background: var(--paper); color: #8a8078; font-family: inherit; font-size: 0.75rem; cursor: pointer; transition: all 0.13s; }
+	.ce-mode-btn { flex: 1; padding: 0.22rem 0; border: 1.5px solid var(--border); border-radius: 6px; background: var(--paper); color: #8a8078; font-family: inherit; font-size: 0.75rem; cursor: pointer; transition: background 0.13s, color 0.13s, border-color 0.13s; }
 	.ce-mode-btn.active { background: var(--ink, var(--ink)); color: #fff; border-color: var(--ink, var(--ink)); }
 
 	.ce-url-row { display: flex; align-items: center; gap: 0.35rem; }

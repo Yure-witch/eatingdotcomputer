@@ -156,28 +156,49 @@
 		}
 
 		// Ambient morphing — a few random cells swap on their own.
+		// Paused entirely while hidden (visibilitychange) rather than just
+		// no-oping inside the tick — an interval that fires into a void still
+		// wakes the CPU every 400ms in a backgrounded WKWebView.
 		function startAmbient() {
-			if (reduced) return;
+			if (reduced || ambientTimer) return;
 			ambientTimer = setInterval(() => {
 				if (!cells.length || document.hidden) return;
 				const n = 2 + ((Math.random() * 3) | 0);
 				for (let k = 0; k < n; k++) morph(cells[(Math.random() * cells.length) | 0]);
 			}, 400);
 		}
+		function stopAmbient() {
+			clearInterval(ambientTimer);
+			ambientTimer = null;
+		}
+		function onVis() {
+			if (document.hidden) stopAmbient();
+			else startAmbient();
+		}
+		document.addEventListener('visibilitychange', onVis);
 
 		readColors();
-		let ro;
 		// Fonts must be loaded before measuring or the widths are wrong.
 		(document.fonts?.ready ?? Promise.resolve()).then(() => { if (!destroyed) layout(); });
 		layout(); // first pass with fallback metrics; re-laid out once fonts land
 		startAmbient();
 		window.addEventListener('mousemove', onMove, { passive: true });
-		window.addEventListener('resize', () => { readColors(); layout(); });
+		// Resize relayouts are expensive (full grid measure); coalesce bursts
+		// (window drag, iOS orientation change fires several) to one per frame.
+		let resizeRaf = 0;
+		const onResize = () => {
+			if (resizeRaf) return;
+			resizeRaf = requestAnimationFrame(() => { resizeRaf = 0; readColors(); layout(); });
+		};
+		window.addEventListener('resize', onResize, { passive: true });
 
 		return () => {
 			destroyed = true;
-			clearInterval(ambientTimer);
+			stopAmbient();
+			document.removeEventListener('visibilitychange', onVis);
+			if (resizeRaf) cancelAnimationFrame(resizeRaf);
 			window.removeEventListener('mousemove', onMove);
+			window.removeEventListener('resize', onResize);
 		};
 	});
 </script>

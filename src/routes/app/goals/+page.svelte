@@ -388,7 +388,7 @@
 		border: 2px solid var(--border); border-radius: 6px;
 		background: var(--paper); cursor: pointer;
 		display: inline-flex; align-items: center; justify-content: center;
-		transition: all 0.15s;
+		transition: background 0.15s, color 0.15s, border-color 0.15s, transform 0.15s;
 	}
 	.goal-check:hover input:not(:checked) { border-color: var(--muted-fg); }
 	.goal-check input:checked { background: var(--ink); border-color: var(--ink); }

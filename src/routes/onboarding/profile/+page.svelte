@@ -410,7 +410,7 @@
 		border: 1.5px solid var(--border); border-radius: 999px;
 		background: var(--paper); cursor: pointer;
 		font-family: inherit; font-size: 0.82rem; color: var(--ink);
-		transition: all 0.15s;
+		transition: background 0.15s, color 0.15s, border-color 0.15s;
 	}
 	@media (hover: hover) { .year-pill:hover { border-color: var(--muted-fg); } }
 	.year-pill.selected { background: var(--ink); border-color: var(--ink); color: var(--paper); font-weight: 600; }

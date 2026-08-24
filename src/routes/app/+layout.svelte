@@ -1575,6 +1575,7 @@
 	// wake-from-idle so other clients see the green dot return
 	// immediately when the user moves their mouse again.
 	let _lastInputAt = $state(Date.now());
+	let _lastMirrorAt = 0;
 	let _lastInputWriteAt = 0;
 	let _myStatusIsIdle = false;
 
@@ -2171,6 +2172,12 @@
 			if (e && e.isTrusted === false) return;
 			const now = Date.now();
 			_lastInputAt = now;
+			// The rawPresence spread below runs Svelte's reactive graph — doing
+			// that on EVERY mousemove (60–120Hz) kept half the layout reacting to
+			// pointer jitter. Throttle the local mirror to 1/s; `_lastInputAt`
+			// above already carries the exact timestamp the idle logic reads.
+			if (now - _lastMirrorAt < 1000 && !_myStatusIsIdle) return;
+			_lastMirrorAt = now;
 			// Also reflect locally so my own dot updates instantly,
 			// not waiting for the RTDB round-trip.
 			rawPresence = {
@@ -3025,7 +3032,7 @@
 		display: flex; align-items: center; gap: 0.4rem;
 		padding: 0.28rem 0.6rem; border-radius: 5px;
 		font-size: 0.875rem; color: var(--sidebar-fg-muted); text-decoration: none;
-		transition: all 0.1s;
+		transition: background 0.1s, color 0.1s;
 	}
 	.sidebar-item:hover { background: var(--sidebar-hover); color: var(--sidebar-fg); }
 	.sidebar-item.active { background: var(--sidebar-active); color: var(--sidebar-active-fg); }

@@ -26,6 +26,7 @@
 	let { root = null } = $props();
 
 	let tip = $state(null);
+	let _lastMX = null, _lastMY = 0;
 	const TIP_W = 160, TIP_MARGIN = 8;
 	const tipLeft = (cx) => Math.max(TIP_MARGIN, Math.min(cx - TIP_W / 2, window.innerWidth - TIP_W - TIP_MARGIN));
 
@@ -45,6 +46,12 @@
 	}
 
 	function onMove(e) {
+		// mousemove fires at pointer-poll rate (60–120Hz). The full
+		// dataset/regex/closest scan below only matters when the cursor has
+		// actually crossed onto a different element — gate it on movement
+		// distance so hovering still costs ~nothing.
+		if (_lastMX !== null && Math.abs(e.clientX - _lastMX) < 3 && Math.abs(e.clientY - _lastMY) < 3) return;
+		_lastMX = e.clientX; _lastMY = e.clientY;
 		const target = e.target;
 		if (target.dataset?.ek) {
 			const m = target.dataset.ek.match(/\[ek:([a-z0-9]+):([0-9a-f-]+):([0-9a-f-]+)\]/i);

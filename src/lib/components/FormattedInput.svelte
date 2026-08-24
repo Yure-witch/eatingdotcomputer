@@ -499,15 +499,17 @@
 	}
 
 	function onCeSelect() {
-		const sel = window.getSelection();
-		showTextFxBar = !!(sel && !sel.isCollapsed && inputEl?.contains(sel.anchorNode));
-		if (sel && !sel.isCollapsed && inputEl?.contains(sel.anchorNode)) {
-			const range = sel.getRangeAt(0);
-			_savedCeSel = {
-				start: cePlainOffset(inputEl, range.startContainer, range.startOffset),
-				end: cePlainOffset(inputEl, range.endContainer, range.endOffset)
-			};
-		}
+		// Cheap scope guard FIRST: this fires on mouseup/keyup anywhere in
+		// the field, and cePlainOffset walks the whole tree — don't pay for
+		// it when there's no selection in the compose.
+		const sel0 = window.getSelection();
+		if (!sel0 || sel0.isCollapsed || !inputEl?.contains(sel0.anchorNode)) return;
+		showTextFxBar = true;
+		const range = sel0.getRangeAt(0);
+		_savedCeSel = {
+			start: cePlainOffset(inputEl, range.startContainer, range.startOffset),
+			end: cePlainOffset(inputEl, range.endContainer, range.endOffset)
+		};
 	}
 
 	function pushUndo() {
