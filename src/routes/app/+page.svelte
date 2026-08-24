@@ -8,9 +8,10 @@
 	import FileTypeIcon from '$lib/components/FileTypeIcon.svelte';
 	import FormattedInput from '$lib/components/FormattedInput.svelte';
 	import { createContentRenderer } from '$lib/message-render.js';
+	import { getCachedCustomEmojiMap } from '$lib/custom-emoji-store.js';
 	import { mountStaticEmotes } from '$lib/emote-mount.js';
 
-	const { contentHtml } = createContentRenderer();
+	const { contentHtml } = createContentRenderer({ getCeMap: getCachedCustomEmojiMap });
 
 	let { data, form } = $props();
 	const user = data.session.user;

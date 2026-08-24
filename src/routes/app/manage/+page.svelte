@@ -3,6 +3,7 @@
 	import SyllabusBuilder from '$lib/components/SyllabusBuilder.svelte';
 	import Avatar from '$lib/components/Avatar.svelte';
 	import { createContentRenderer, bubbleFontSize, jumboEmojiCountM, stripMarkup } from '$lib/message-render.js';
+	import { getCachedCustomEmojiMap } from '$lib/custom-emoji-store.js';
 	import { onMount, onDestroy, tick, getContext } from 'svelte';
 	import { invalidateAll } from '$app/navigation';
 	import { auth, db as rtdb } from '$lib/firebase.js';
@@ -462,7 +463,7 @@
 		return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
 	}
 
-	const { contentHtml: renderModContent } = createContentRenderer();
+	const { contentHtml: renderModContent } = createContentRenderer({ getCeMap: getCachedCustomEmojiMap });
 
 	function formatSize(bytes) {
 		if (!bytes) return '0B';

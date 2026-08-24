@@ -38,7 +38,10 @@
 		avatarValue = null
 	} = $props();
 
-	const { contentHtml } = createContentRenderer();
+	// getCeMap is the whole ballgame for [ce:…] avatars: the default is an
+	// empty map, under which every custom emote renders as its :shortcode:
+	// fallback — which is exactly how this component behaved until now.
+	const { contentHtml } = createContentRenderer({ getCeMap: getCachedCustomEmojiMap });
 
 	const initial = $derived(((name || '?').trim().charAt(0) || '?').toUpperCase());
 

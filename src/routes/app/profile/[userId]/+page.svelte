@@ -3,13 +3,14 @@
 	import Avatar from '$lib/components/Avatar.svelte';
 	import ExpressionPicker from '$lib/components/ExpressionPicker.svelte';
 	import { createContentRenderer } from '$lib/message-render.js';
+	import { getCachedCustomEmojiMap } from '$lib/custom-emoji-store.js';
 	import { mountStaticEmotes } from '$lib/emote-mount.js';
 	import { popoverPos } from '$lib/popover-pos.js';
 	import { GRADIENTS, FONTS, EFFECTS, sanitizeStyle } from '$lib/profile-style.js';
 
 	let { data } = $props();
 	const { profile, isOwnProfile, currentUserId } = data;
-	const { contentHtml } = createContentRenderer();
+	const { contentHtml } = createContentRenderer({ getCeMap: getCachedCustomEmojiMap });
 
 	// The live style. Starts from what the server loaded; the owner's
 	// customizer mutates it in place (instant preview) and autosaves.

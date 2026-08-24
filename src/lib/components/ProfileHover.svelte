@@ -7,10 +7,11 @@
 	import { onMount, tick, getContext } from 'svelte';
 	import Avatar from './Avatar.svelte';
 	import { createContentRenderer } from '$lib/message-render.js';
+	import { getCachedCustomEmojiMap } from '$lib/custom-emoji-store.js';
 	import { mountStaticEmotes } from '$lib/emote-mount.js';
 
 	let { userId, children } = $props();
-	const { contentHtml } = createContentRenderer();
+	const { contentHtml } = createContentRenderer({ getCeMap: getCachedCustomEmojiMap });
 	// Live presence comes from the layout's contexts so the hover
 	// card reflects whatever the sidebar / chat bubble dot is showing
 	// — no separate Firebase subscription needed.

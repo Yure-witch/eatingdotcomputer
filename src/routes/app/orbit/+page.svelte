@@ -3,11 +3,12 @@
 	import { enhance } from '$app/forms';
 	import FileTypeIcon from '$lib/components/FileTypeIcon.svelte';
 	import { createContentRenderer } from '$lib/message-render.js';
+	import { getCachedCustomEmojiMap } from '$lib/custom-emoji-store.js';
 	import { mountStaticEmotes } from '$lib/emote-mount.js';
 
 	let { data, form } = $props();
 	const isInstructor = data.role === 'instructor';
-	const { contentHtml } = createContentRenderer();
+	const { contentHtml } = createContentRenderer({ getCeMap: getCachedCustomEmojiMap });
 
 	// Static-frame mounting for `.tg-emoji` spans rendered by
 	// contentHtml() inside week headlines / topic previews / item

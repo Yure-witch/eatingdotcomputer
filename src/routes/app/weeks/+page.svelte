@@ -2,10 +2,11 @@
 	import { onMount, onDestroy, tick } from 'svelte';
 	import { pageTitle } from '$lib/page-title-store.js';
 	import { createContentRenderer } from '$lib/message-render.js';
+	import { getCachedCustomEmojiMap } from '$lib/custom-emoji-store.js';
 	import { mountStaticEmotes } from '$lib/emote-mount.js';
 
 	let { data } = $props();
-	const { contentHtml } = createContentRenderer();
+	const { contentHtml } = createContentRenderer({ getCeMap: getCachedCustomEmojiMap });
 
 	onMount(() => pageTitle.set('Weeks'));
 	onDestroy(() => pageTitle.set(null));
