@@ -501,9 +501,11 @@
 	function onCeSelect() {
 		// Cheap scope guard FIRST: this fires on mouseup/keyup anywhere in
 		// the field, and cePlainOffset walks the whole tree — don't pay for
-		// it when there's no selection in the compose.
+		// it when there's no selection in the compose. The bail must still
+		// HIDE the bar — the perf rewrite dropped that half, which left the
+		// formatting bar stuck open after deselecting.
 		const sel0 = window.getSelection();
-		if (!sel0 || sel0.isCollapsed || !inputEl?.contains(sel0.anchorNode)) return;
+		if (!sel0 || sel0.isCollapsed || !inputEl?.contains(sel0.anchorNode)) { showTextFxBar = false; return; }
 		showTextFxBar = true;
 		const range = sel0.getRangeAt(0);
 		_savedCeSel = {

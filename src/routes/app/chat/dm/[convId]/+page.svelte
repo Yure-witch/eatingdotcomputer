@@ -413,6 +413,7 @@
 	// Mobile: typography sliders hidden behind the "Aa" pill (channel parity).
 	let showTypoSliders = $state(false);
 	let _isMobileWidth = $state(false);
+	let _aaMq = null, _onAaMq = null;
 	let allowFxNesting = $state(false);
 	let allowFxMultiply = $state(false);
 	let fxSplitWords = $state(true);
@@ -2749,10 +2750,13 @@
 		Promise.all([loadTelegramEmoji(), loadCustomPacks()]).then(() => { tgManifestReady = true; mountTgStickers(); });
 		document.addEventListener('selectionchange', onCeSelect);
 		document.addEventListener('selectionchange', onMsgListSelectionChange);
-		// Aa-toggle gate — same 640px breakpoint the CSS uses.
-		const _aaMq = window.matchMedia('(max-width: 640px)');
+		// Aa-toggle gate — same 640px breakpoint the CSS uses. Component-scope
+		// lets, not consts: the teardown lives in a different scope, and as
+		// onMount consts its reference was a silent ReferenceError (leaked
+		// listener per visit).
+		_aaMq = window.matchMedia('(max-width: 640px)');
 		_isMobileWidth = _aaMq.matches;
-		const _onAaMq = (e) => { _isMobileWidth = e.matches; if (!e.matches) showTypoSliders = false; };
+		_onAaMq = (e) => { _isMobileWidth = e.matches; if (!e.matches) showTypoSliders = false; };
 		_aaMq.addEventListener('change', _onAaMq);
 		document.addEventListener('visibilitychange', flushPendingRead);
 		window.addEventListener('focus', flushPendingRead);
@@ -3209,7 +3213,7 @@
 		if (heartsAnimId) cancelAnimationFrame(heartsAnimId);
 		document.removeEventListener('selectionchange', onCeSelect);
 		document.removeEventListener('selectionchange', onMsgListSelectionChange);
-		try { _aaMq?.removeEventListener?.('change', _onAaMq); } catch {}
+		if (_aaMq && _onAaMq) _aaMq.removeEventListener('change', _onAaMq);
 		if (_selRaf) cancelAnimationFrame(_selRaf);
 		document.removeEventListener('visibilitychange', flushPendingRead);
 		window.removeEventListener('focus', flushPendingRead);

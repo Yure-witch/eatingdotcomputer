@@ -427,6 +427,7 @@
 	// Phone-width gate for the Aa toggle (matchMedia, set in onMount — the
 	// layout already uses the same 640px breakpoint).
 	let _isMobileWidth = $state(false);
+	let _aaMq = null, _onAaMq = null;
 	// Whether the current compose selection is fully flipped (drives the
 	// Flip checkbox's checked state). Recomputed on selectionchange.
 	let selHasFlip = $state(false);
@@ -2867,10 +2868,14 @@
 		Promise.all([loadTelegramEmoji(), loadCustomPacks()]).then(() => { tgManifestReady = true; mountTgStickers(); });
 		document.addEventListener('selectionchange', onCeSelect);
 		document.addEventListener('selectionchange', onMsgListSelectionChange);
-		// Aa-toggle gate — same 640px breakpoint the CSS uses.
-		const _aaMq = window.matchMedia('(max-width: 640px)');
+		// Aa-toggle gate — same 640px breakpoint the CSS uses. Assigned to
+		// component-scope lets (not consts here) so the onDestroy below can
+		// actually reach them — as onMount consts, the cleanup's reference was
+		// a ReferenceError silently eaten by its try/catch, leaking one
+		// matchMedia listener per conversation visit.
+		_aaMq = window.matchMedia('(max-width: 640px)');
 		_isMobileWidth = _aaMq.matches;
-		const _onAaMq = (e) => { _isMobileWidth = e.matches; if (!e.matches) showTypoSliders = false; };
+		_onAaMq = (e) => { _isMobileWidth = e.matches; if (!e.matches) showTypoSliders = false; };
 		_aaMq.addEventListener('change', _onAaMq);
 		document.addEventListener('visibilitychange', flushPendingRead);
 		window.addEventListener('focus', flushPendingRead);
@@ -3350,8 +3355,8 @@
 		pageTitle.set(null);
 		pageTitleHref.set(null);
 		_cancelFpsLoop();
-		try { _aaMq?.removeEventListener?.('change', _onAaMq); } catch {}
-		if (typeof _selRaf !== 'undefined' && _selRaf) cancelAnimationFrame(_selRaf);
+		if (_aaMq && _onAaMq) _aaMq.removeEventListener('change', _onAaMq);
+		if (_selRaf) cancelAnimationFrame(_selRaf);
 		if (firebaseRef) off(firebaseRef);
 		if (typingRef) off(typingRef);
 		if (reactionsRef) off(reactionsRef);
