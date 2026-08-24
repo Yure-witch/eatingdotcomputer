@@ -412,15 +412,11 @@
 	let showTextFxBar = $state(false);
 	// Mobile: typography sliders hidden behind the "Aa" pill (channel parity).
 	let showTypoSliders = $state(false);
-	// Typography-slider preview — see the channel page: first touch on a
-	// slider dismisses the keyboard and the compose grows into its space.
-	let szPreview = $state(false);
-	$effect(() => { if (!showTextFxBar) szPreview = false; });
-	$effect(() => { if (keyboardOpen) szPreview = false; });
-	function startSzPreview() {
-		if (!_isMobileWidth || szPreview) return;
-		szPreview = true;
-		try { inputEl?.blur(); } catch {}
+	// Opening the typography dropdown dismisses the keyboard — one clean
+	// transition before any slider touch (see the channel page).
+	function openTypoSliders() {
+		showTypoSliders = !showTypoSliders;
+		if (showTypoSliders && _isMobileWidth) { try { inputEl?.blur(); } catch {} }
 	}
 	let _isMobileWidth = $state(false);
 	let _aaMq = null, _onAaMq = null;
@@ -4245,7 +4241,7 @@
 	{/key}
 {/if}
 
-<div class="input-area" class:kb-open={keyboardOpen} class:picker-open={_anyComposePicker} class:from-kb={_anyComposePicker && _pickerFromKb} class:sz-preview={szPreview} bind:clientHeight={inputAreaHeight} style:--input-area-h="{inputAreaHeight}px" ondragenter={onDragEnter} ondragover={onDragOver} ondragleave={onDragLeave} ondrop={onDrop}>
+<div class="input-area" class:kb-open={keyboardOpen} class:picker-open={_anyComposePicker} class:from-kb={_anyComposePicker && _pickerFromKb} bind:clientHeight={inputAreaHeight} style:--input-area-h="{inputAreaHeight}px" ondragenter={onDragEnter} ondragover={onDragOver} ondragleave={onDragLeave} ondrop={onDrop}>
 	{#if replyingTo}
 		<div class="reply-bar">
 			<div class="reply-bar-content">
@@ -4334,13 +4330,13 @@
 			     channel page for rationale). -->
 			{#if _isMobileWidth}
 				<button class="typo-aa-toggle" class:typo-aa-open={showTypoSliders}
-					onmousedown={(e) => { e.preventDefault(); showTypoSliders = !showTypoSliders; }}
+					onmousedown={(e) => { e.preventDefault(); openTypoSliders(); }}
 					title="Typography" aria-expanded={showTypoSliders}>
 					<span class="typo-aa-glyph">Aa</span>
 					<span class="msi msi-16 typo-aa-chevron">expand_more</span>
 				</button>
 			{/if}
-			<div class="typo-sliders" class:typo-sliders-open={!_isMobileWidth || showTypoSliders} onpointerdown={startSzPreview}>
+			<div class="typo-sliders" class:typo-sliders-open={!_isMobileWidth || showTypoSliders}>
 			<div class="typo-inline-row">
 				<span class="typo-inline-label">Size</span>
 				<input class="typo-inline-range" type="range" min="0.5" max="7" step="0.05"
@@ -6084,12 +6080,6 @@
 		.message.has-media { contain-intrinsic-size: auto 300px; }
 		/* Oversized type stays always rendered — see the channel page. */
 		.message.big-text { content-visibility: visible; contain-intrinsic-size: none; }
-		/* Typography-slider preview — see the channel page. */
-		.input-area.sz-preview .compose-ce {
-			min-height: calc(var(--kb-h-last, 16rem) - 4rem);
-			max-height: 60dvh;
-			overflow-y: auto;
-		}
 		.reply-bar { padding: 0.4rem 0.75rem; }
 		.input-area {
 			background: var(--paper);
