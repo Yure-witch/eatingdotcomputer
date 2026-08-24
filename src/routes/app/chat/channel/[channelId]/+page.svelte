@@ -421,6 +421,12 @@
 	const _seenSlams = new Set();
 
 	let showTextFxBar = $state(false);
+	// Mobile: typography sliders hidden behind the "Aa" pill. Defaults
+	// closed so a text selection shows just the clean effects row.
+	let showTypoSliders = $state(false);
+	// Phone-width gate for the Aa toggle (matchMedia, set in onMount — the
+	// layout already uses the same 640px breakpoint).
+	let _isMobileWidth = $state(false);
 	// Whether the current compose selection is fully flipped (drives the
 	// Flip checkbox's checked state). Recomputed on selectionchange.
 	let selHasFlip = $state(false);
@@ -1185,9 +1191,14 @@
 			_lastInlineTypo = {};
 		}
 		updateCeSuggestions();
-		detectedCodeLang = detectCode(input);
+		// detectCode sweeps ~15 regexes across the whole message; on the
+		// oninput path it ran on EVERY keystroke. Debounce to 300ms after
+		// typing stops — the suggestion is proactive, not per-character.
+		clearTimeout(_codeDetectT);
+		_codeDetectT = setTimeout(() => { detectedCodeLang = detectCode(input); }, 300);
 		onInput();
 	}
+	let _codeDetectT = null;
 
 	// Plain-text character offset — no PUA chars, matches markupToSegments + findDomPos coordinate space.
 	// Use this in applyTextFx so selection bounds align with segment positions.
@@ -1327,7 +1338,26 @@
 	}
 
 	function onCeSelect() {
-		computeSelHasFlip();
+		// selectionchange fires on EVERY caret blink-move anywhere in the
+		// document — including inside the message list, where the compose
+		// checks below still pay for a full serializeCe + segment walk via
+		// computeSelHasFlip. Two cheap guards first:
+		//   1. Coalesce to one run per frame (dragging a selection handle on a
+		//      120Hz iPhone emitted this hundreds of times a second).
+		//   2. Bail before any heavy work when the selection isn't in the
+		//      compose at all.
+		if (_selRaf) return;
+		_selRaf = requestAnimationFrame(() => {
+			_selRaf = 0;
+			onCeSelectNow();
+		});
+	}
+	let _selRaf = 0;
+	function onCeSelectNow() {
+		const _sel = window.getSelection();
+		const selInCompose = !!(_sel && inputEl && _sel.anchorNode && inputEl.contains(_sel.anchorNode));
+		if (!selInCompose) { selHasFlip = false; }
+		else computeSelHasFlip();
 		const sel = window.getSelection();
 		// Show the bar when a non-collapsed selection lives in the
 		// compose. Don't auto-HIDE when the selection collapses —
@@ -2828,6 +2858,11 @@
 		Promise.all([loadTelegramEmoji(), loadCustomPacks()]).then(() => { tgManifestReady = true; mountTgStickers(); });
 		document.addEventListener('selectionchange', onCeSelect);
 		document.addEventListener('selectionchange', onMsgListSelectionChange);
+		// Aa-toggle gate — same 640px breakpoint the CSS uses.
+		const _aaMq = window.matchMedia('(max-width: 640px)');
+		_isMobileWidth = _aaMq.matches;
+		const _onAaMq = (e) => { _isMobileWidth = e.matches; if (!e.matches) showTypoSliders = false; };
+		_aaMq.addEventListener('change', _onAaMq);
 		document.addEventListener('visibilitychange', flushPendingRead);
 		window.addEventListener('focus', flushPendingRead);
 		// Real-interaction tracking: these keep `_lastInputAt` fresh (so the
@@ -3306,6 +3341,8 @@
 		pageTitle.set(null);
 		pageTitleHref.set(null);
 		_cancelFpsLoop();
+		try { _aaMq?.removeEventListener?.('change', _onAaMq); } catch {}
+		if (typeof _selRaf !== 'undefined' && _selRaf) cancelAnimationFrame(_selRaf);
 		if (firebaseRef) off(firebaseRef);
 		if (typingRef) off(typingRef);
 		if (reactionsRef) off(reactionsRef);
@@ -4448,6 +4485,20 @@
 	{#if showTextFxBar}
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div class="text-typo-bar" onfocusin={() => { showTextFxBar = true; }}>
+			<!-- Mobile: the three typography sliders are the awkward part of
+			     the highlight menu — three full-width rows of chrome landing on
+			     every text selection. They hide behind one "Aa" pill (default
+			     closed on phones) and slide open only when asked. Desktop keeps
+			     them always visible (there's room, and a mouse doesn't mind). -->
+			{#if _isMobileWidth}
+				<button class="typo-aa-toggle" class:typo-aa-open={showTypoSliders}
+					onmousedown={(e) => { e.preventDefault(); showTypoSliders = !showTypoSliders; }}
+					title="Typography" aria-expanded={showTypoSliders}>
+					<span class="typo-aa-glyph">Aa</span>
+					<span class="msi msi-16 typo-aa-chevron">expand_more</span>
+				</button>
+			{/if}
+			<div class="typo-sliders" class:typo-sliders-open={!_isMobileWidth || showTypoSliders}>
 			<div class="typo-inline-row">
 				<span class="typo-inline-label">Size</span>
 				<input class="typo-inline-range" type="range" min="0.5" max="7" step="0.05"
@@ -4476,6 +4527,7 @@
 				_lastInlineTypo = {};
 				if (_savedCeSel) { applyInlineSize(1.0); applyInlineWeight(400); applyInlineWidth(100); }
 			}}>Default</button>
+			</div><!-- /.typo-sliders -->
 		</div>
 		<div class="text-fx-bar">
 			<button class="text-fx-layer-toggle" class:text-fx-layer-on={allowFxNesting} onmousedown={(e) => { e.preventDefault(); allowFxNesting = !allowFxNesting; }} title="Stack different effects on the same text">
@@ -6113,6 +6165,23 @@
 		box-shadow: 0 -8px 26px -16px rgba(0,0,0,0.28);
 		flex-wrap: wrap; align-items: center;
 	}
+	/* Mobile "Aa" pill — typography sliders live behind it */
+	.typo-aa-toggle {
+		display: flex; align-items: center; gap: 0.15rem; flex-shrink: 0;
+		padding: 0.34rem 0.7rem; border: 1px solid var(--border); border-radius: 999px;
+		background: var(--paper); cursor: pointer; font-family: inherit;
+		transition: background 0.12s, color 0.12s, border-color 0.12s;
+	}
+	.typo-aa-open { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+	.typo-aa-glyph { font-size: 0.8rem; font-weight: 700; line-height: 1; }
+	.typo-aa-chevron { transition: transform 0.2s ease; opacity: 0.7; }
+	.typo-aa-open .typo-aa-chevron { transform: rotate(180deg); }
+	.typo-sliders {
+		display: none; /* mobile default: collapsed behind the Aa pill */
+		flex: 1 1 100%;
+		gap: 0.5rem 1rem;
+	}
+	.typo-sliders-open { display: flex; flex-wrap: wrap; }
 	.typo-inline-row {
 		display: flex; align-items: center; gap: 0.6rem; flex: 1 1 150px; min-width: 140px;
 	}

@@ -410,6 +410,9 @@
 	const _seenSlams = new Set();
 
 	let showTextFxBar = $state(false);
+	// Mobile: typography sliders hidden behind the "Aa" pill (channel parity).
+	let showTypoSliders = $state(false);
+	let _isMobileWidth = $state(false);
 	let allowFxNesting = $state(false);
 	let allowFxMultiply = $state(false);
 	let fxSplitWords = $state(true);
@@ -1137,9 +1140,13 @@
 			_lastInlineTypo = {};
 		}
 		updateCeSuggestions();
-		detectedCodeLang = detectCode(input);
+		// detectCode sweeps ~15 regexes across the whole message; debounce
+		// to 300ms after typing stops (see channel page for rationale).
+		clearTimeout(_codeDetectT);
+		_codeDetectT = setTimeout(() => { detectedCodeLang = detectCode(input); }, 300);
 		onInput();
 	}
+	let _codeDetectT = null;
 
 	// Plain-text character offset — no PUA chars, matches markupToSegments + findDomPos coordinate space.
 	// Use this in applyTextFx so selection bounds align with segment positions.
@@ -1279,7 +1286,20 @@
 	}
 
 	function onCeSelect() {
-		computeSelHasFlip();
+		// Same coalescing + compose-scope guard as the channel page:
+		// selectionchange fires document-wide on every caret move, and
+		// computeSelHasFlip serialises the whole compose each time.
+		if (_selRaf) return;
+		_selRaf = requestAnimationFrame(() => {
+			_selRaf = 0;
+			const _sel = window.getSelection();
+			if (_sel && inputEl && _sel.anchorNode && inputEl.contains(_sel.anchorNode)) computeSelHasFlip();
+			else selHasFlip = false;
+			onCeSelectNow();
+		});
+	}
+	let _selRaf = 0;
+	function onCeSelectNow() {
 		const sel = window.getSelection();
 		// Show the bar on non-collapsed selection in the compose. Don't
 		// auto-HIDE when the selection collapses — users want the menu
@@ -2723,6 +2743,11 @@
 		Promise.all([loadTelegramEmoji(), loadCustomPacks()]).then(() => { tgManifestReady = true; mountTgStickers(); });
 		document.addEventListener('selectionchange', onCeSelect);
 		document.addEventListener('selectionchange', onMsgListSelectionChange);
+		// Aa-toggle gate — same 640px breakpoint the CSS uses.
+		const _aaMq = window.matchMedia('(max-width: 640px)');
+		_isMobileWidth = _aaMq.matches;
+		const _onAaMq = (e) => { _isMobileWidth = e.matches; if (!e.matches) showTypoSliders = false; };
+		_aaMq.addEventListener('change', _onAaMq);
 		document.addEventListener('visibilitychange', flushPendingRead);
 		window.addEventListener('focus', flushPendingRead);
 		_lastInputAt = Date.now();
@@ -3178,6 +3203,8 @@
 		if (heartsAnimId) cancelAnimationFrame(heartsAnimId);
 		document.removeEventListener('selectionchange', onCeSelect);
 		document.removeEventListener('selectionchange', onMsgListSelectionChange);
+		try { _aaMq?.removeEventListener?.('change', _onAaMq); } catch {}
+		if (_selRaf) cancelAnimationFrame(_selRaf);
 		document.removeEventListener('visibilitychange', flushPendingRead);
 		window.removeEventListener('focus', flushPendingRead);
 		for (const ev of ['pointerdown', 'keydown', 'wheel', 'touchstart', 'mousemove']) {
@@ -4264,6 +4291,17 @@
 	{#if showTextFxBar}
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div class="text-typo-bar" onfocusin={() => { showTextFxBar = true; }}>
+			<!-- Mobile: typography sliders hide behind an "Aa" pill (see the
+			     channel page for rationale). -->
+			{#if _isMobileWidth}
+				<button class="typo-aa-toggle" class:typo-aa-open={showTypoSliders}
+					onmousedown={(e) => { e.preventDefault(); showTypoSliders = !showTypoSliders; }}
+					title="Typography" aria-expanded={showTypoSliders}>
+					<span class="typo-aa-glyph">Aa</span>
+					<span class="msi msi-16 typo-aa-chevron">expand_more</span>
+				</button>
+			{/if}
+			<div class="typo-sliders" class:typo-sliders-open={!_isMobileWidth || showTypoSliders}>
 			<div class="typo-inline-row">
 				<span class="typo-inline-label">Size</span>
 				<input class="typo-inline-range" type="range" min="0.5" max="7" step="0.05"
@@ -4292,6 +4330,7 @@
 				_lastInlineTypo = {};
 				if (_savedCeSel) { applyInlineSize(1.0); applyInlineWeight(400); applyInlineWidth(100); }
 			}}>Default</button>
+			</div><!-- /.typo-sliders -->
 		</div>
 		<div class="text-fx-bar">
 			<button class="text-fx-layer-toggle" class:text-fx-layer-on={allowFxNesting} onmousedown={(e) => { e.preventDefault(); allowFxNesting = !allowFxNesting; }} title="Stack different effects on the same text">
@@ -5850,6 +5889,23 @@
 		box-shadow: 0 -8px 26px -16px rgba(0,0,0,0.28);
 		flex-wrap: wrap; align-items: center;
 	}
+	/* Mobile "Aa" pill — typography sliders live behind it (channel parity) */
+	.typo-aa-toggle {
+		display: flex; align-items: center; gap: 0.15rem; flex-shrink: 0;
+		padding: 0.34rem 0.7rem; border: 1px solid var(--border); border-radius: 999px;
+		background: var(--paper); cursor: pointer; font-family: inherit;
+		transition: background 0.12s, color 0.12s, border-color 0.12s;
+	}
+	.typo-aa-open { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+	.typo-aa-glyph { font-size: 0.8rem; font-weight: 700; line-height: 1; }
+	.typo-aa-chevron { transition: transform 0.2s ease; opacity: 0.7; }
+	.typo-aa-open .typo-aa-chevron { transform: rotate(180deg); }
+	.typo-sliders {
+		display: none; /* mobile default: collapsed behind the Aa pill */
+		flex: 1 1 100%;
+		gap: 0.5rem 1rem;
+	}
+	.typo-sliders-open { display: flex; flex-wrap: wrap; }
 	.typo-inline-row {
 		display: flex; align-items: center; gap: 0.6rem; flex: 1 1 150px; min-width: 140px;
 	}

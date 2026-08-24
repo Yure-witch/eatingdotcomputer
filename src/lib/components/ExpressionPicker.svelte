@@ -54,6 +54,7 @@
 			// The grow variable outlives this component (it lives on <html>),
 			// so a dismissed picker must hand the dock back at keyboard size.
 			cancelAnimationFrame(_growAnim);
+			if (_growRaf) { cancelAnimationFrame(_growRaf); _growRaf = 0; _growPending = null; }
 			try { document.documentElement.style.setProperty('--expr-grow', '0px'); } catch {}
 			// The picker is the heaviest consumer of the emote renderer: it's
 			// the only surface that puts hundreds of distinct stickers on
@@ -531,6 +532,24 @@
 	// sheet never passes ~86% of the viewport.
 	const GROW_MAX_VH = 0.86;
 	let _grow = 0;          // current extra px (mirrors the CSS var)
+	// Pointermove fires faster than frames (120Hz on ProMotion iPhones), and
+	// each setGrow() writes --expr-grow on <html> — an inherited custom
+	// property, so every write invalidates style for the ENTIRE document.
+	// Writing twice in one frame pays for two full-document recalcs where the
+	// compositor would only have shown one anyway. Coalesce: dragMove just
+	// records the latest value, one rAF applies it. Same visual result,
+	// strictly fewer invalidations — this was the hitch in the grabber drag.
+	let _growPending = null;
+	let _growRaf = 0;
+	function setGrowCoalesced(px) {
+		_growPending = Math.max(0, px);
+		if (_growRaf) return;
+		_growRaf = requestAnimationFrame(() => {
+			_growRaf = 0;
+			if (_growPending !== null) setGrow(_growPending);
+			_growPending = null;
+		});
+	}
 	let _grow0 = 0;         // grow at drag start
 	let _growMax = 0;       // computed per drag from the sheet's base height
 	let _growAnim = 0;      // rAF id for the snap animation
@@ -613,13 +632,17 @@
 		const dy = e.clientY - _y0;             // + down, − up
 		// Up grows; down spends the grow first, and only past the dock does
 		// the dismiss translate begin — one continuous gesture through both.
-		setGrow(Math.min(_growMax, _grow0 - dy));
+		// Coalesced to one --expr-grow write per frame (see setGrowCoalesced).
+		setGrowCoalesced(Math.min(_growMax, _grow0 - dy));
 		dragY = Math.max(0, dy - _grow0);
 	}
 	function dragEnd(e) {
 		if (!dragging || e.pointerId !== _dragId) return;
 		dragging = false;
 		_dragId = null;
+		// A coalesced grow-write still pending would land AFTER the snap
+		// decision below and fight it — flush the queue now.
+		if (_growRaf) { cancelAnimationFrame(_growRaf); _growRaf = 0; _growPending = null; }
 		const totalDy = _lastY - _y0;
 		const dockDy = Math.max(0, totalDy - _grow0);   // travel past the dock
 		const v = dockDy / Math.max(1, _lastT - _t0);
