@@ -4,6 +4,29 @@ This document is a running record of what has been attempted, what is in progres
 
 ---
 
+### 2026-08-24 — Scroll jumps on resized text: the un-skip the anchor can't fix
+- **Status**: `attempted` (mechanism verified in dev: resized rows get
+  class big-text and stay painted; pending user confirmation on device)
+- **Symptom**: scrolling up in chat jumps when the history holds resized
+  text. The existing chat-scroll-anchor (d87e0ac) handles most height
+  changes — but on iOS a programmatic scrollTop write can be DROPPED
+  during momentum scrolling, so when a `content-visibility: auto` row
+  un-skips from its 60px placeholder to a 300px+ real height mid-flick,
+  the corrective write never lands and the raw shove shows.
+- **Fix**: make the big corrections unnecessary instead of trying to win
+  the write. `msgSizeFactor(msg)` = max(whole-message fs, largest inline
+  [sz:] span — PUA <percent> in the content). Rows ≥1.5× get
+  `class="big-text"` → `content-visibility: visible` (always painted;
+  they're rare, the paint cost is noise, and a row that never un-skips
+  can never jump). 1.01–1.5× rows get a size-scaled
+  `contain-intrinsic-size` reservation so their correction is pixels.
+- **Reverted along the way**: a scrollHeight-delta compensation in
+  loadMoreHistory and a WebKit anchoring polyfill — both duplicated what
+  chat-scroll-anchor.js already owns (its header explicitly warns that
+  delta-patches double-compensate). One anchoring system, better inputs.
+
+---
+
 ## Scroll & gesture listeners: use the bus (`$lib/scroll-bus.js`)
 
 Components were each attaching their own `scroll` / `wheel` / `touch` listeners.

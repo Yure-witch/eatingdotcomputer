@@ -428,6 +428,24 @@
 	// layout already uses the same 640px breakpoint).
 	let _isMobileWidth = $state(false);
 	let _aaMq = null, _onAaMq = null;
+
+	// The largest type in a message, as a multiple of base size: whole-message
+	// fs OR the biggest inline [sz:] span (PUA <percent> in the
+	// content). Drives the content-visibility handling below: rows that are
+	// far bigger than the 60px placeholder guess are exactly the ones whose
+	// first paint shoves the timeline — and on iOS the scroll-anchor's
+	// corrective write can be dropped mid-momentum, so for the big ones the
+	// only reliable fix is to never let them un-skip at all.
+	function msgSizeFactor(msg) {
+		let f = msg.fontSize ?? 1;
+		const c = msg.content;
+		if (c && c.includes('\uE150')) {
+			const re = /\uE150([0-9.]+)\uE151/g;
+			let m;
+			while ((m = re.exec(c))) { const v = parseFloat(m[1]) / 100; if (v > f) f = v; }
+		}
+		return f;
+	}
 	// Whether the current compose selection is fully flipped (drives the
 	// Flip checkbox's checked state). Recomputed on selectionchange.
 	let selHasFlip = $state(false);
@@ -4072,7 +4090,17 @@
 		{@const isMine = msg.userId === data.currentUser.id}
 		{@const msgReactions = reactions[msg.id] ?? {}}
 		{@const hasReactions = Object.values(msgReactions).some(u => Object.keys(u).length > 0)}
-		<div class="message" class:mine={isMine} class:first={isFirst} class:starred={starredIds.has(msg.id)} class:slam-shock={slamShockSet.has(msg.id)} class:has-media={!!msg.attachment} data-msg-id={msg.id}>
+		{@const _szf = msgSizeFactor(msg)}
+		<!-- Resized-text handling for content-visibility (mobile-only CSS —
+		     inert on desktop). Moderately sized rows get a size-scaled
+		     reservation so their first paint corrects by pixels instead of
+		     hundreds of pixels; rows ≥1.5× opt out of content-visibility
+		     entirely (class big-text) — they're rare, and on iOS the anchor's
+		     corrective scrollTop write can be dropped mid-momentum, so the
+		     only jump that can't happen is the one that never needs
+		     correcting. -->
+		<div class="message" class:mine={isMine} class:first={isFirst} class:starred={starredIds.has(msg.id)} class:slam-shock={slamShockSet.has(msg.id)} class:has-media={!!msg.attachment} class:big-text={!msg.attachment && _szf >= 1.5} data-msg-id={msg.id}
+			style:contain-intrinsic-size={!msg.attachment && _szf > 1.01 && _szf < 1.5 ? `auto ${Math.round(40 + _szf * 30)}px` : null}>
 			{#if isFirst}
 				{@const senderStatus = presenceStatusCtx?.value?.[msg.userId]}
 				<div class="meta">
@@ -6327,6 +6355,13 @@
 		   but each correction is a scrollTop write mid-flick, which on iOS costs
 		   momentum. Guessing closer means fewer, smaller corrections. */
 		.message.has-media { contain-intrinsic-size: auto 300px; }
+		/* Oversized type (≥1.5× — whole-message fs or any inline [sz:] span)
+		   stays ALWAYS rendered. Its real height can be many times the
+		   guess, and on iOS the scroll-anchor's corrective write is dropped
+		   during momentum — the only un-skip jump that can't happen is the
+		   one that never occurs. These rows are rare; the paint cost is
+		   noise. */
+		.message.big-text { content-visibility: visible; contain-intrinsic-size: none; }
 		.reply-bar { padding: 0.4rem 0.75rem; }
 		.input-area {
 			background: var(--paper);
