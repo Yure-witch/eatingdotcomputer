@@ -1034,6 +1034,12 @@
 		   over the compose. Same shape chat uses: open at the height the KEYBOARD
 		   occupied (--kb-h-last), so swapping between them doesn't move anything,
 		   and own the safe area the bar gives up. */
+		/* Grabber drag rides a transform; the height var commits on release —
+		   see ExpressionPicker's setDragExtra. */
+		:global(html.expr-grow-dragging) .fi-expr-pop {
+			transform: translateY(calc(-1 * var(--expr-grow-drag, 0px)));
+			will-change: transform;
+		}
 		.fi-expr-pop {
 			/* + var(--expr-grow): the grabber's pull-up gesture, same variable
 			   the chat dock consumes. Outer min caps the expanded sheet. */

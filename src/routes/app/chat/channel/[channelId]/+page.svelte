@@ -424,6 +424,18 @@
 	// Mobile: typography sliders hidden behind the "Aa" pill. Defaults
 	// closed so a text selection shows just the clean effects row.
 	let showTypoSliders = $state(false);
+	// Typography-slider preview: the first touch on a slider dismisses the
+	// keyboard and the compose grows into the space it occupied
+	// (--kb-h-last), so the resize you're performing is actually visible at
+	// size. Cleared when the fx bar goes away or the keyboard returns.
+	let szPreview = $state(false);
+	$effect(() => { if (!showTextFxBar) szPreview = false; });
+	$effect(() => { if (keyboardOpen) szPreview = false; });
+	function startSzPreview() {
+		if (!_isMobileWidth || szPreview) return;
+		szPreview = true;
+		try { inputEl?.blur(); } catch {}
+	}
 	// Phone-width gate for the Aa toggle (matchMedia, set in onMount — the
 	// layout already uses the same 640px breakpoint).
 	let _isMobileWidth = $state(false);
@@ -4440,7 +4452,7 @@
 	{/key}
 {/if}
 
-<div class="input-area" class:kb-open={keyboardOpen} class:picker-open={_anyComposePicker} class:from-kb={_anyComposePicker && _pickerFromKb} bind:clientHeight={inputAreaHeight} style:--input-area-h="{inputAreaHeight}px" ondragenter={onDragEnter} ondragover={onDragOver} ondragleave={onDragLeave} ondrop={onDrop}>
+<div class="input-area" class:kb-open={keyboardOpen} class:picker-open={_anyComposePicker} class:from-kb={_anyComposePicker && _pickerFromKb} class:sz-preview={szPreview} bind:clientHeight={inputAreaHeight} style:--input-area-h="{inputAreaHeight}px" ondragenter={onDragEnter} ondragover={onDragOver} ondragleave={onDragLeave} ondrop={onDrop}>
 	{#if replyingTo}
 		<div class="reply-bar">
 			<div class="reply-bar-content">
@@ -4540,7 +4552,7 @@
 					<span class="msi msi-16 typo-aa-chevron">expand_more</span>
 				</button>
 			{/if}
-			<div class="typo-sliders" class:typo-sliders-open={!_isMobileWidth || showTypoSliders}>
+			<div class="typo-sliders" class:typo-sliders-open={!_isMobileWidth || showTypoSliders} onpointerdown={startSzPreview}>
 			<div class="typo-inline-row">
 				<span class="typo-inline-label">Size</span>
 				<input class="typo-inline-range" type="range" min="0.5" max="7" step="0.05"
@@ -5784,6 +5796,19 @@
 		.input-area.kb-open .input-bar {
 			padding-bottom: var(--compose-dock-gap);
 		}
+		/* Grabber drag = transforms only (ExpressionPicker's setDragExtra):
+		   during html.expr-grow-dragging the sheet and the compose ride
+		   --expr-grow-drag on the compositor; --expr-grow (real layout)
+		   commits once on release. Scoped to the transient class so no
+		   permanent containing blocks are created for the fixed pickers. */
+		:global(html.expr-grow-dragging) .compose-picker-pop {
+			transform: translateY(calc(-1 * var(--expr-grow-drag, 0px)));
+			will-change: transform;
+		}
+		:global(html.expr-grow-dragging) .input-area.picker-open > *:not(.compose-picker-pop):not(.compose-picker-backdrop) {
+			transform: translateY(calc(-1 * var(--expr-grow-drag, 0px)));
+			will-change: transform;
+		}
 		.compose-picker-pop {
 			position: fixed;
 			left: 0; right: 0;
@@ -6355,6 +6380,16 @@
 		   but each correction is a scrollTop write mid-flick, which on iOS costs
 		   momentum. Guessing closer means fewer, smaller corrections. */
 		.message.has-media { contain-intrinsic-size: auto 300px; }
+		/* Typography-slider preview: keyboard dismissed, the compose takes the
+		   keyboard's remembered height so the resize being performed is
+		   visible at size. --kb-h-last is the same remembered value the
+		   picker docks at. */
+		.input-area.sz-preview .compose-ce {
+			min-height: calc(var(--kb-h-last, 16rem) - 4rem);
+			max-height: 60dvh;
+			overflow-y: auto;
+		}
+
 		/* Oversized type (≥1.5× — whole-message fs or any inline [sz:] span)
 		   stays ALWAYS rendered. Its real height can be many times the
 		   guess, and on iOS the scroll-anchor's corrective write is dropped

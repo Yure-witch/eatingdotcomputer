@@ -54,7 +54,7 @@
 			// The grow variable outlives this component (it lives on <html>),
 			// so a dismissed picker must hand the dock back at keyboard size.
 			cancelAnimationFrame(_growAnim);
-			if (_growRaf) { cancelAnimationFrame(_growRaf); _growRaf = 0; _growPending = null; }
+			clearDragTransforms();
 			try { document.documentElement.style.setProperty('--expr-grow', '0px'); } catch {}
 			// The picker is the heaviest consumer of the emote renderer: it's
 			// the only surface that puts hundreds of distinct stickers on
@@ -532,23 +532,54 @@
 	// sheet never passes ~86% of the viewport.
 	const GROW_MAX_VH = 0.86;
 	let _grow = 0;          // current extra px (mirrors the CSS var)
-	// Pointermove fires faster than frames (120Hz on ProMotion iPhones), and
-	// each setGrow() writes --expr-grow on <html> — an inherited custom
-	// property, so every write invalidates style for the ENTIRE document.
-	// Writing twice in one frame pays for two full-document recalcs where the
-	// compositor would only have shown one anyway. Coalesce: dragMove just
-	// records the latest value, one rAF applies it. Same visual result,
-	// strictly fewer invalidations — this was the hitch in the grabber drag.
-	let _growPending = null;
-	let _growRaf = 0;
-	function setGrowCoalesced(px) {
-		_growPending = Math.max(0, px);
-		if (_growRaf) return;
-		_growRaf = requestAnimationFrame(() => {
-			_growRaf = 0;
-			if (_growPending !== null) setGrow(_growPending);
-			_growPending = null;
+	// The drag is TRANSFORMS ONLY. Writing --expr-grow per frame — even
+	// coalesced to one write — still recomputes --picker-h, which moves the
+	// compose margin and the sheet height: a full chat relayout plus the
+	// emote grids relaying out at a new height, every frame. That was the
+	// framey grabber. Instead the sheet and the compose ride a GPU transform
+	// (--expr-grow-drag, scoped by html.expr-grow-dragging in the chat
+	// pages' CSS) while --expr-grow stays frozen; the real layout commits
+	// exactly once on release, under the equal-and-opposite transform being
+	// removed in the same frame — so nothing visibly moves at commit.
+	let _dragExtra = 0;        // visual grow relative to the frozen _grow0, px
+	let _dragExtraPending = null;
+	let _dragExtraRaf = 0;
+	function setDragExtra(px) {
+		_dragExtraPending = px;
+		if (_dragExtraRaf) return;
+		_dragExtraRaf = requestAnimationFrame(() => {
+			_dragExtraRaf = 0;
+			if (_dragExtraPending === null) return;
+			_dragExtra = _dragExtraPending;
+			_dragExtraPending = null;
+			try { document.documentElement.style.setProperty('--expr-grow-drag', `${Math.round(_dragExtra)}px`); } catch {}
 		});
+	}
+	function clearDragTransforms() {
+		if (_dragExtraRaf) { cancelAnimationFrame(_dragExtraRaf); _dragExtraRaf = 0; }
+		_dragExtraPending = null;
+		_dragExtra = 0;
+		try {
+			document.documentElement.style.setProperty('--expr-grow-drag', '0px');
+			document.documentElement.classList.remove('expr-grow-dragging');
+		} catch {}
+	}
+	// Ease the transform to `target` grow, then commit the layout once.
+	function snapDragTo(target) {
+		cancelAnimationFrame(_growAnim);
+		const fromExtra = _dragExtraPending ?? _dragExtra;
+		const toExtra = target - _grow0;
+		const d = toExtra - fromExtra;
+		if (Math.abs(d) < 1) { setGrow(target); clearDragTransforms(); return; }
+		const t0 = performance.now(), DUR = 170;
+		const step = (now) => {
+			const t = Math.min(1, (now - t0) / DUR);
+			const v = fromExtra + d * (1 - (1 - t) * (1 - t));   // ease-out
+			try { document.documentElement.style.setProperty('--expr-grow-drag', `${Math.round(v)}px`); } catch {}
+			if (t < 1) _growAnim = requestAnimationFrame(step);
+			else { setGrow(target); clearDragTransforms(); }
+		};
+		_growAnim = requestAnimationFrame(step);
 	}
 	let _grow0 = 0;         // grow at drag start
 	let _growMax = 0;       // computed per drag from the sheet's base height
@@ -557,19 +588,6 @@
 		_grow = Math.max(0, px);
 		try { document.documentElement.style.setProperty('--expr-grow', `${Math.round(_grow)}px`); } catch {}
 	}
-	function snapGrow(target) {
-		cancelAnimationFrame(_growAnim);
-		const from = _grow, d = target - from;
-		if (Math.abs(d) < 1) { setGrow(target); return; }
-		const t0 = performance.now(), DUR = 170;
-		const tick = (now) => {
-			const t = Math.min(1, (now - t0) / DUR);
-			setGrow(from + d * (1 - (1 - t) * (1 - t)));   // ease-out
-			if (t < 1) _growAnim = requestAnimationFrame(tick);
-		};
-		_growAnim = requestAnimationFrame(tick);
-	}
-
 	function beginDrag(e, captureEl) {
 		_dragId = e.pointerId;
 		_y0 = _lastY = e.clientY;
@@ -580,6 +598,8 @@
 		// dock, so panel height minus current grow is the keyboard-sized base.
 		const base = (panelEl?.offsetHeight || 480) - _grow0;
 		_growMax = Math.max(0, Math.round((window.innerHeight || 800) * GROW_MAX_VH) - base);
+		// Arm the transform-drag scope (the chat pages' CSS keys on it).
+		try { document.documentElement.classList.add('expr-grow-dragging'); } catch {}
 		dragging = true;
 		try { captureEl?.setPointerCapture(e.pointerId); } catch {}
 	}
@@ -632,17 +652,18 @@
 		const dy = e.clientY - _y0;             // + down, − up
 		// Up grows; down spends the grow first, and only past the dock does
 		// the dismiss translate begin — one continuous gesture through both.
-		// Coalesced to one --expr-grow write per frame (see setGrowCoalesced).
-		setGrowCoalesced(Math.min(_growMax, _grow0 - dy));
+		// Transform-only: no layout property moves until release (setDragExtra).
+		const visual = Math.max(0, Math.min(_growMax, _grow0 - dy));
+		setDragExtra(visual - _grow0);
 		dragY = Math.max(0, dy - _grow0);
 	}
 	function dragEnd(e) {
 		if (!dragging || e.pointerId !== _dragId) return;
 		dragging = false;
 		_dragId = null;
-		// A coalesced grow-write still pending would land AFTER the snap
-		// decision below and fight it — flush the queue now.
-		if (_growRaf) { cancelAnimationFrame(_growRaf); _growRaf = 0; _growPending = null; }
+		// The visual grow at release: frozen commit + the transform in flight
+		// (take the pending value if a write hasn't flushed yet).
+		const visual = _grow0 + (_dragExtraPending ?? _dragExtra);
 		const totalDy = _lastY - _y0;
 		const dockDy = Math.max(0, totalDy - _grow0);   // travel past the dock
 		const v = dockDy / Math.max(1, _lastT - _t0);
@@ -652,14 +673,15 @@
 			// EXPANDED sheet a flick only collapses (Telegram's behaviour);
 			// dismissing needs travel past the dock line.
 			dragY = panelEl?.offsetHeight || 480;
-			setTimeout(() => { onClose?.(); dragY = 0; setGrow(0); }, 170);
+			setTimeout(() => { onClose?.(); dragY = 0; setGrow(0); clearDragTransforms(); }, 170);
 		} else {
 			dragY = 0; // transition springs it back to the dock
 			// FREE height: the sheet stays wherever the finger left it. Only
 			// the edges magnetize — nearly-closed settles back to keyboard
 			// size, nearly-full settles flush — so a release mid-range holds.
-			if (_grow < 24) snapGrow(0);
-			else if (_grow > _growMax - 16) snapGrow(_growMax);
+			if (visual < 24) snapDragTo(0);
+			else if (visual > _growMax - 16) snapDragTo(_growMax);
+			else snapDragTo(visual);   // commit the free height (one layout)
 		}
 	}
 
@@ -1037,6 +1059,17 @@
 	   sheet sits exactly under the finger instead of lagging behind it. */
 	.expr-panel { transition: transform 0.17s cubic-bezier(0.32, 0.72, 0, 1); }
 	.expr-panel.expr-dragging { transition: none; }
+	/* While the sheet rides the drag transform its box can sit above the dock
+	   line — a skirt in the panel's own background fills the strip below so
+	   the gap can never flash page content. Painted once, travels with the
+	   transform on the compositor. */
+	.expr-panel.expr-dragging::after {
+		content: '';
+		position: absolute;
+		top: 100%; left: 0; right: 0;
+		height: 60vh;
+		background: var(--sidebar-bg, var(--paper));
+	}
 	@media (prefers-reduced-motion: reduce) {
 		.expr-panel { transition: none; }
 	}
