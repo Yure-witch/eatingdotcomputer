@@ -187,7 +187,9 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		padding: 2rem 1.25rem;
+		/* Clear the camera housing in the edge-to-edge native shell; env()
+		   is 0 on the plain web. */
+		padding: calc(2rem + env(safe-area-inset-top, 0px)) 1.25rem calc(2rem + env(safe-area-inset-bottom, 0px));
 		background: var(--paper);
 	}
 

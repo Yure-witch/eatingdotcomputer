@@ -98,7 +98,9 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		padding: 2rem 1.25rem;
+		/* Clear the camera housing in the edge-to-edge native shell; env()
+		   is 0 on the plain web. */
+		padding: calc(2rem + env(safe-area-inset-top, 0px)) 1.25rem calc(2rem + env(safe-area-inset-bottom, 0px));
 		background: var(--paper);
 	}
 
@@ -202,7 +204,7 @@
 	   impression (and looks clumsy on the App Review recording). The brand
 	   lockup gives up most of the space; the field gaps give up the rest. */
 	@media (max-width: 640px) {
-		main { padding: 1rem 1.25rem; align-items: flex-start; }
+		main { padding: calc(1rem + env(safe-area-inset-top, 0px)) 1.25rem calc(1rem + env(safe-area-inset-bottom, 0px)); align-items: flex-start; }
 		.card { gap: 0.7rem; }
 		.brand { margin-bottom: 0.1rem; gap: 0.5rem; }
 		.mark { width: 44px; height: 44px; border-radius: 11px; }

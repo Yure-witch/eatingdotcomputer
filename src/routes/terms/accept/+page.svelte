@@ -45,7 +45,12 @@
 				I agree to the Terms of Use
 			</button>
 		</form>
-		<p class="fine">If you don't agree, <a href="/logout" data-sveltekit-preload-data="off">sign out</a> — the app can't be used without accepting.</p>
+		<!-- Sign-out goes through the same /app?/signout action as the user
+		     menu (clears the class cookie, redirects to /login). The /logout
+		     page is a trap here: it auto-resubmits signOut with no redirect
+		     target, which loops right back to itself. -->
+		<p class="fine">If you don't agree, <button type="submit" form="terms-signout" class="link-btn">sign out</button> — the app can't be used without accepting.</p>
+		<form id="terms-signout" method="POST" action="/app?/signout" hidden></form>
 	</div>
 </main>
 
@@ -56,7 +61,10 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		padding: 2rem 1.25rem;
+		/* The native shell draws edge-to-edge (viewport-fit=cover), so the
+		   top padding has to clear the camera housing. env() is 0 on the
+		   plain web — no visual change there. */
+		padding: calc(2rem + env(safe-area-inset-top, 0px)) 1.25rem calc(2rem + env(safe-area-inset-bottom, 0px));
 		background: var(--paper);
 	}
 
@@ -136,8 +144,19 @@
 		text-align: center;
 	}
 
+	.link-btn {
+		display: inline;
+		padding: 0;
+		border: 0;
+		background: none;
+		color: inherit;
+		font: inherit;
+		text-decoration: underline;
+		cursor: pointer;
+	}
+
 	@media (max-width: 640px) {
-		main { padding: 1.25rem; align-items: flex-start; }
+		main { padding: calc(1.25rem + env(safe-area-inset-top, 0px)) 1.25rem calc(1.25rem + env(safe-area-inset-bottom, 0px)); align-items: flex-start; }
 		.brand { margin-bottom: 0.1rem; }
 		.mark { width: 44px; height: 44px; border-radius: 11px; }
 	}
