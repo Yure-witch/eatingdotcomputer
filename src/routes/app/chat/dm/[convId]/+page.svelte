@@ -4336,7 +4336,7 @@
 					<span class="msi msi-16 typo-aa-chevron">expand_more</span>
 				</button>
 			{/if}
-			<div class="typo-sliders" class:typo-sliders-open={!_isMobileWidth || showTypoSliders}>
+			<div class="aa-sliders" class:aa-sliders-open={!_isMobileWidth || showTypoSliders}>
 			<div class="typo-inline-row">
 				<span class="typo-inline-label">Size</span>
 				<input class="typo-inline-range" type="range" min="0.5" max="7" step="0.05"
@@ -4365,7 +4365,7 @@
 				_lastInlineTypo = {};
 				if (_savedCeSel) { applyInlineSize(1.0); applyInlineWeight(400); applyInlineWidth(100); }
 			}}>Default</button>
-			</div><!-- /.typo-sliders -->
+			</div><!-- /.aa-sliders -->
 		</div>
 		<div class="text-fx-bar">
 			<button class="text-fx-layer-toggle" class:text-fx-layer-on={allowFxNesting} onmousedown={(e) => { e.preventDefault(); allowFxNesting = !allowFxNesting; }} title="Stack different effects on the same text">
@@ -5944,12 +5944,21 @@
 	.typo-aa-glyph { font-size: 0.8rem; font-weight: 700; line-height: 1; }
 	.typo-aa-chevron { transition: transform 0.2s ease; opacity: 0.7; }
 	.typo-aa-open .typo-aa-chevron { transform: rotate(180deg); }
-	.typo-sliders {
-		display: none; /* mobile default: collapsed behind the Aa pill */
-		flex: 1 1 100%;
-		gap: 0.5rem 1rem;
+	/* Renamed from .typo-sliders — that class already existed for another
+	   popover (column layout) and its rules leaked into this wrapper,
+	   stacking the slider rows into a screen-tall tower that shoved the
+	   compose off-screen on desktop. display:contents makes the wrapper
+	   invisible to layout there: the rows sit in the bar's own flex exactly
+	   as they did before the Aa pill existed. */
+	.aa-sliders { display: contents; }
+	@media (max-width: 640px) {
+		.aa-sliders {
+			display: none; /* collapsed behind the Aa pill */
+			flex: 1 1 100%;
+			gap: 0.5rem 1rem;
+		}
+		.aa-sliders.aa-sliders-open { display: flex; flex-wrap: wrap; }
 	}
-	.typo-sliders-open { display: flex; flex-wrap: wrap; }
 	.typo-inline-row {
 		display: flex; align-items: center; gap: 0.6rem; flex: 1 1 150px; min-width: 140px;
 	}
