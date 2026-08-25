@@ -10,6 +10,18 @@ export async function load({ locals, cookies }) {
 	const userId = session.user.id;
 	const db = getDb();
 
+	// Terms gate (Guideline 1.2): nobody uses the app before agreeing to the
+	// Terms of Use. Sign-up sets the timestamp via its required checkbox;
+	// OAuth users and accounts that predate the terms accept once at
+	// /terms/accept. Applies to every role, instructor included.
+	if (db) {
+		const terms = await db.execute({
+			sql: 'SELECT terms_accepted_at FROM users WHERE id = ?',
+			args: [userId]
+		});
+		if (terms.rows[0] && !terms.rows[0].terms_accepted_at) redirect(303, '/terms/accept');
+	}
+
 	let currentClass = null;
 	let allClasses = [];
 

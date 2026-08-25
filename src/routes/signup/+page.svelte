@@ -73,6 +73,17 @@
 				<span>Password</span>
 				<input type="password" name="password" required bind:value={password} minlength="8" autocomplete="new-password" placeholder="At least 8 characters" />
 			</label>
+			<!-- Guideline 1.2: registration requires explicit agreement to the
+			     terms. `required` blocks native submit; the server action checks
+			     it again so the gate can't be scripted around. -->
+			<label class="agree">
+				<input type="checkbox" name="agreeTerms" required checked={form?.agreeTerms ?? false} />
+				<span>
+					I agree to the <a href="/terms" target="_blank" rel="noopener">Terms of Use</a>
+					— no tolerance for objectionable content or abusive behavior — and the
+					<a href="/privacy" target="_blank" rel="noopener">privacy policy</a>.
+				</span>
+			</label>
 			<button type="submit" class="btn-primary" disabled={signingIn}>Create account</button>
 		</form>
 
@@ -167,6 +178,24 @@
 		font-size: 0.85rem; color: var(--muted-fg);
 	}
 	.login-hint a { color: var(--ink); }
+
+	.agree {
+		flex-direction: row;
+		align-items: flex-start;
+		gap: 0.55rem;
+		font-weight: 400;
+		font-size: 0.8rem;
+		line-height: 1.45;
+		color: var(--muted-fg);
+	}
+	.agree input {
+		margin-top: 0.15rem;
+		width: 1rem;
+		height: 1rem;
+		flex-shrink: 0;
+		accent-color: var(--ink);
+	}
+	.agree a { color: var(--ink); }
 
 	/* Phones: four fields + button must fit WITHOUT scrolling — needing to
 	   scroll to find the password box on a sign-up form is a losing first

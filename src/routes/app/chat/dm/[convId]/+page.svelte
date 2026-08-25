@@ -2609,7 +2609,14 @@
 		try {
 			const r = await fetch('/api/moderation/block', {
 				method: 'POST', headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ userId: msg.userId })
+				body: JSON.stringify({
+					userId: msg.userId,
+					// The message the block was made from — snapshotted into the
+					// moderation queue so the instructor sees what prompted it.
+					messageId: msg.id,
+					convId,
+					content: msg.content ?? ''
+				})
 			});
 			if (!r.ok) throw new Error(String(r.status));
 			blockedIds = new Set([...blockedIds, msg.userId]);

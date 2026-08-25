@@ -1193,16 +1193,17 @@
 			<div class="report-list">
 				{#each data.messageReports as report (report.id)}
 					{@const status = reportStatusOf(report)}
+					{@const isBlock = report.reason === 'Blocked this user'}
 					<div class="report-card" class:report-resolved={status === 'resolved'}>
 						<div class="report-info">
 							<div class="report-head">
-								<strong>{report.reporterName || 'Unknown'}</strong> reported
+								<strong>{report.reporterName || 'Unknown'}</strong> {isBlock ? 'blocked' : 'reported'}
 								<strong>{report.authorName || 'Unknown'}</strong>
 								<span class="report-conv">in {report.conversationId}</span>
 								<span class="report-time">{formatRelativeTime(new Date(report.createdAt.replace(' ', 'T') + 'Z').getTime())}</span>
 							</div>
-							<div class="report-content">{report.content || '(no text — attachment or emote message)'}</div>
-							{#if report.reason}<div class="report-reason">Reason: {report.reason}</div>{/if}
+							<div class="report-content">{report.content || (isBlock ? '(blocked from their profile — no specific message)' : '(no text — attachment or emote message)')}</div>
+							{#if report.reason && !isBlock}<div class="report-reason">Reason: {report.reason}</div>{/if}
 						</div>
 						<button class="btn-edit" onclick={() => setReportStatus(report, status === 'open' ? 'resolved' : 'open')}>
 							{status === 'open' ? 'Resolve' : 'Reopen'}

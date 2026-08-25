@@ -1,11 +1,17 @@
 import { json, error } from '@sveltejs/kit';
 import { getDb } from '$lib/server/turso.js';
+import { notifyUsers } from '$lib/server/push.js';
 
 // User blocking (Guideline 1.2). Self-service: the session user manages
 // their OWN block list. Blocking hides the blocked user's messages from the
 // blocker (client-side filter in the chat pages) and stops their
 // notifications (filtered at fan-out in /api/chat). Instructors and the
 // gemma bot cannot be blocked — they moderate / run the class.
+//
+// Guideline 1.2 also requires that "blocking should notify the developer of
+// the inappropriate content", so a NEW block files a row into the same
+// moderation queue reports use (with a snapshot of the message the block was
+// made from, when there is one) and pushes to the instructors.
 
 export async function GET({ locals }) {
 	const session = await locals.auth();
@@ -41,14 +47,53 @@ export async function POST({ request, locals }) {
 	const db = getDb();
 	if (!db) error(503, 'Database unavailable');
 
-	const target = await db.execute({ sql: 'SELECT role FROM users WHERE id = ?', args: [targetId] });
+	const target = await db.execute({ sql: 'SELECT role, name FROM users WHERE id = ?', args: [targetId] });
 	if (!target.rows[0]) error(404, 'User not found');
 	if (String(target.rows[0].role) === 'instructor') error(400, 'Instructors cannot be blocked — use Report instead');
 
-	await db.execute({
+	const inserted = await db.execute({
 		sql: 'INSERT OR IGNORE INTO blocked_users (blocker_id, blocked_id) VALUES (?, ?)',
 		args: [session.user.id, targetId]
 	});
+
+	// Surface the block to the moderator (only for a NEW block — re-blocks
+	// shouldn't refile). Chat pages pass the message the block was made from
+	// so the queue shows what prompted it; the block itself is already saved,
+	// so nothing past this point may fail the request.
+	if (Number(inserted.rowsAffected ?? 0) > 0) {
+		const blockerName = String(session.user.name ?? session.user.username ?? '');
+		const targetName = String(target.rows[0].name ?? '');
+		try {
+			await db.execute({
+				sql: `INSERT INTO message_reports
+				      (id, message_id, conversation_id, message_content, message_user_id, message_user_name, reporter_id, reporter_name, reason)
+				      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				args: [
+					crypto.randomUUID(),
+					String(body?.messageId ?? `block:${targetId}`),
+					String(body?.convId ?? 'block'),
+					String(body?.content ?? '').slice(0, 4000),
+					targetId,
+					targetName.slice(0, 200),
+					session.user.id,
+					blockerName.slice(0, 200),
+					`Blocked this user`
+				]
+			});
+		} catch { /* queue row is best-effort */ }
+		try {
+			const instructors = await db.execute(`SELECT id FROM users WHERE role = 'instructor'`);
+			const ids = instructors.rows.map((r) => String(r.id)).filter((uid) => uid !== session.user.id);
+			if (ids.length) {
+				await notifyUsers(ids, {
+					title: 'User blocked',
+					body: `${blockerName || 'A member'} blocked ${targetName || 'a member'}`,
+					url: '/app/manage',
+					tag: 'report'
+				});
+			}
+		} catch { /* push is best-effort */ }
+	}
 	return json({ ok: true });
 }
 

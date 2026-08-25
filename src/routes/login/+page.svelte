@@ -169,6 +169,14 @@
 		</form>
 
 		<p class="signup-hint">New here? <a href="/signup">Create an account</a></p>
+
+		<!-- Guideline 1.2: the terms are surfaced before signing in, on every
+		     path (OAuth included). First-time acceptance itself is enforced
+		     server-side by the /terms/accept gate after sign-in. -->
+		<p class="terms-hint">
+			By continuing, you agree to the <a href="/terms">Terms of Use</a> and
+			<a href="/privacy">privacy policy</a>.
+		</p>
 	</div>
 </main>
 
@@ -371,6 +379,15 @@
 		font-size: 0.85rem; color: var(--muted-fg);
 	}
 	.signup-hint a { color: var(--ink); }
+
+	.terms-hint {
+		margin: 0;
+		text-align: center;
+		font-size: 0.75rem;
+		line-height: 1.45;
+		color: var(--muted-fg);
+	}
+	.terms-hint a { color: inherit; }
 
 	.error {
 		padding: 0.6rem 0.75rem;

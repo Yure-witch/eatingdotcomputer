@@ -20,8 +20,12 @@ export const actions = {
 		const username = String(data.get('username') ?? '').trim().toLowerCase();
 		const email = String(data.get('email') ?? '').trim().toLowerCase();
 		const password = String(data.get('password') ?? '');
+		const agreeTerms = data.get('agreeTerms') === 'on';
 
-		const values = { name, username, email };
+		const values = { name, username, email, agreeTerms };
+		if (!agreeTerms) {
+			return fail(400, { error: 'You need to agree to the Terms of Use to create an account.', ...values });
+		}
 		if (!name) return fail(400, { error: 'Please enter your name.', ...values });
 		if (!/^[a-z0-9_-]{3,24}$/.test(username)) {
 			return fail(400, { error: 'Usernames are 3–24 characters: letters, numbers, - or _.', ...values });
@@ -55,8 +59,11 @@ export const actions = {
 			// Emoji Kitchen) off until the instructor enables them per member
 			// (Manage → Members → 3rd-party); emoji_font = 'system' renders
 			// native platform emoji rather than pulling the Noto face.
-			sql: `INSERT INTO users (id, email, username, name, password_hash, role, onboarding_step, hide_tg_emoji, emoji_font)
-			      VALUES (?, ?, ?, ?, ?, 'student', 'profile', 1, 'system')`,
+			// terms_accepted_at is set here because the form's required
+			// agreement checkbox (validated above) IS the acceptance — these
+			// accounts skip the /terms/accept gate.
+			sql: `INSERT INTO users (id, email, username, name, password_hash, role, onboarding_step, hide_tg_emoji, emoji_font, terms_accepted_at)
+			      VALUES (?, ?, ?, ?, ?, 'student', 'profile', 1, 'system', datetime('now'))`,
 			args: [crypto.randomUUID(), finalEmail, username, name, passwordHash]
 		});
 
