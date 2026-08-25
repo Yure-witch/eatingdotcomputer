@@ -25,17 +25,35 @@
 		// the card above it. Same idea as the app shell's --vvh.
 		const vv = window.visualViewport;
 		if (!vv) return;
+		// Sizing alone still leaves the lower fields hugging the keyboard
+		// edge (the card is nearly as tall as the visible area), so the
+		// focused input is also scrolled to the middle of what remains
+		// visible — on focus, and again on every keyboard-driven resize,
+		// since the keyboard finishes animating after focus fires.
+		const isPhone = window.matchMedia('(max-width: 640px)');
+		const centerFocused = () => {
+			const el = document.activeElement;
+			if (isPhone.matches && el?.tagName === 'INPUT') {
+				el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+			}
+		};
 		const apply = () => {
 			document.documentElement.style.setProperty('--auth-vvh', `${Math.round(vv.height)}px`);
+			requestAnimationFrame(centerFocused);
+		};
+		const onFocusIn = (e) => {
+			if (e.target?.tagName === 'INPUT') setTimeout(centerFocused, 300);
 		};
 		apply();
 		// Both sources: iOS fires visualViewport resize for the keyboard,
 		// while some webviews only fire window resize.
 		vv.addEventListener('resize', apply);
 		window.addEventListener('resize', apply);
+		document.addEventListener('focusin', onFocusIn);
 		return () => {
 			vv.removeEventListener('resize', apply);
 			window.removeEventListener('resize', apply);
+			document.removeEventListener('focusin', onFocusIn);
 			document.documentElement.style.removeProperty('--auth-vvh');
 		};
 	});
