@@ -119,6 +119,22 @@
 		Default: 'Something went wrong. Please try again.'
 	};
 
+	// Typing credentials on a phone: the brand + provider buttons above the
+	// form put the fields below the fold once the keyboard is up, and
+	// WKWebView can't be trusted to scroll them into view (its visualViewport
+	// doesn't reliably track the keyboard). So while either credential field
+	// is focused, the chrome above the form collapses (phone-width CSS) and
+	// the fields sit at the top of the screen. The focusout timeout keeps the
+	// chrome from flashing back while focus hops between the two fields.
+	let credFocused = false;
+	let credForm;
+	function credFocusIn() { credFocused = true; }
+	function credFocusOut() {
+		setTimeout(() => {
+			if (!credForm?.contains(document.activeElement)) credFocused = false;
+		}, 120);
+	}
+
 	// Arriving from "Switch account": the Google button must present the account
 	// sheet rather than restoring the session that was just signed out of.
 	$: forceChooser = $page.url.searchParams.get('switch') === '1';
@@ -130,8 +146,8 @@
 	<title>Log in — eating.computer</title>
 </svelte:head>
 
-<main>
-	<div class="card">
+<main class:cred-focused={credFocused}>
+	<div class="card" class:cred-focused={credFocused}>
 		<a class="brand" href="/">
 			<img class="mark" src="/favicon.svg" alt="" width="72" height="72" />
 			<span class="brand-name">eating.computer</span>
@@ -201,7 +217,7 @@
 		<div class="divider"><span>or</span></div>
 
 		<!-- Email + password -->
-		<form method="POST" use:enhance>
+		<form method="POST" use:enhance bind:this={credForm} on:focusin={credFocusIn} on:focusout={credFocusOut}>
 			<input type="hidden" name="providerId" value="credentials" />
 			<input type="hidden" name="redirectTo" value="/app" />
 			<label>
@@ -460,5 +476,20 @@
 			min-height: var(--auth-vvh, 100dvh);
 			transition: min-height 0.2s ease-out;
 		}
+
+		/* While a credential field is focused, everything above (and below)
+		   the form collapses so the fields sit at the very top of the screen
+		   — guaranteed above the keyboard without trusting WKWebView to
+		   scroll. Restored the moment focus leaves the form. */
+		main.cred-focused { align-items: flex-start; }
+		.card.cred-focused > .brand,
+		.card.cred-focused > .btn-google,
+		.card.cred-focused > .btn-apple,
+		.card.cred-focused > .link-switch,
+		.card.cred-focused > .divider,
+		.card.cred-focused > .signup-hint,
+		.card.cred-focused > .terms-hint,
+		/* the web Google button lives inside its own form wrapper */
+		.card.cred-focused > form:has(.btn-google) { display: none; }
 	}
 </style>
