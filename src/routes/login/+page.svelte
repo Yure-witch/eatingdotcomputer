@@ -7,7 +7,30 @@
 	// Capacitor only resolves client-side, so this stays false through SSR and
 	// flips on mount — the Apple button is native-only.
 	let isNative = false;
-	onMount(() => { isNative = isNativeApp(); });
+	onMount(() => {
+		isNative = isNativeApp();
+
+		// Keyboard-aware centering (mobile): the card is centered against the
+		// page height, so with a static 100dvh the fields sit under the
+		// keyboard. Track the visual viewport instead — when the keyboard
+		// opens the page shrinks to the visible area and flexbox re-centers
+		// the card above it. Same idea as the app shell's --vvh.
+		const vv = window.visualViewport;
+		if (!vv) return;
+		const apply = () => {
+			document.documentElement.style.setProperty('--auth-vvh', `${Math.round(vv.height)}px`);
+		};
+		apply();
+		// Both sources: iOS fires visualViewport resize for the keyboard,
+		// while some webviews only fire window resize.
+		vv.addEventListener('resize', apply);
+		window.addEventListener('resize', apply);
+		return () => {
+			vv.removeEventListener('resize', apply);
+			window.removeEventListener('resize', apply);
+			document.documentElement.style.removeProperty('--auth-vvh');
+		};
+	});
 
 	let appleForm;
 	let appleIdToken = '';
@@ -399,5 +422,17 @@
 		color: var(--danger);
 		font-size: 0.85rem;
 		margin: 0;
+	}
+
+	/* Phones: follow the visual viewport so the card centers in the space
+	   ABOVE the keyboard while typing (min-height keeps it from ever
+	   clipping — the page just scrolls if a small viewport can't fit it).
+	   Desktop keeps the static height: pinch-zoom also resizes the visual
+	   viewport, and reflowing the page mid-zoom is worse than the problem. */
+	@media (max-width: 640px) {
+		main {
+			min-height: var(--auth-vvh, 100dvh);
+			transition: min-height 0.2s ease-out;
+		}
 	}
 </style>
