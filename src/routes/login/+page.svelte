@@ -4,11 +4,19 @@
 	import { tick, onMount } from 'svelte';
 	import { isNativeApp, nativeGoogleIdToken, nativeAppleIdToken } from '$lib/native.js';
 
-	// Capacitor only resolves client-side, so this stays false through SSR and
-	// flips on mount — the Apple button is native-only.
-	let isNative = false;
+	export let data;
+
+	// Capacitor only resolves client-side; the ec-native cookie (set below on
+	// the first native visit) lets the server pre-render the native buttons so
+	// the Apple button doesn't pop in on mount and shove the fields down. The
+	// onMount check still corrects the very first native launch, where the
+	// cookie doesn't exist yet.
+	let isNative = data?.isNative ?? false;
 	onMount(() => {
 		isNative = isNativeApp();
+		if (isNative) {
+			document.cookie = 'ec-native=1; path=/; max-age=31536000; SameSite=Lax';
+		}
 
 		// Keyboard-aware centering (mobile): the card is centered against the
 		// page height, so with a static 100dvh the fields sit under the
