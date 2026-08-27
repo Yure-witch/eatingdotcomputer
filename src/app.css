@@ -669,3 +669,15 @@ body.native-app { --native-top-inset: max(env(safe-area-inset-top, 0px), 44px); 
 body.native-app .app-header { padding-top: calc(1rem + var(--native-top-inset)) !important; }
 body.native-app .app-shell { padding-top: var(--native-top-inset); }
 
+
+/* The picker's ✕ chip earns its place on touch, where the sheet needs a
+   dismiss affordance. With a fine pointer the popover closes by clicking
+   away (or Esc), so the chip is clutter — hide it there. Gated on POINTER,
+   not width: an iPad is desktop-width and must keep its ✕. */
+@media (pointer: fine) and (hover: hover) {
+	/* !important: PickerStickyBtn's scoped .ctl-btn sets display:inline-flex
+	   at higher specificity than this global attribute selector. */
+	button[aria-label='Close picker'] {
+		display: none !important;
+	}
+}
