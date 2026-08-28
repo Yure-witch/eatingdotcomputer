@@ -20,6 +20,8 @@
 	import PickerStickyBtn from './PickerStickyBtn.svelte';
 	import { prewarm as prewarmSprites } from '$lib/lottie-spritesheet.js';
 	import { loadEmojiData, buildByCp } from '$lib/emoji-data.js';
+	import { WECHAT_EMOJI, WECHAT_BY_SHORTCODE } from '$lib/wechat-emoji.js';
+	import { isTgHidden } from '$lib/tg-visibility.js';
 	import { hiddenEmoteKeys, emoteKey, hideEmote, unhideEmote } from '$lib/hidden-emotes.js';
 	import {
 		setHost as setSkottieHostMain,
@@ -65,9 +67,31 @@
 		onUpload = null
 	} = $props();
 	const UPLOADS_KEY = '__uploads';
+	const WECHAT_KEY = '__wechat';
 	const _uploadItems = $derived(
 		(uploads ?? []).map((u) => ({ upload: true, id: u.id, shortcode: u.shortcode, url: u.url }))
 	);
+	// The bundled WeChat emoticon set — same `upload: true` image-cell shape as
+	// a class upload, because it inserts the same `[ce:]` token and renders
+	// through the same <img> branch. `builtin` is what separates them: no
+	// delete affordance (there is no row to delete — the art ships in
+	// `static/`), and the shortcode is already namespaced `wc_`.
+	// Not a prop: this is a library the panel owns, like the Telegram packs
+	// themselves, rather than something each host has to supply.
+	const _wechatItems = WECHAT_EMOJI.map((e) => ({
+		upload: true, builtin: true, id: e.shortcode, shortcode: e.shortcode, name: e.name, url: e.url
+	}));
+	// Insert-only section: without a callback to insert through, a tap would do
+	// nothing, so don't offer the section at all.
+	//
+	// Also off under the per-user hide-third-party-emotes switch (the App Store
+	// review account — see tg-visibility.js). That flag is named for Telegram
+	// because Telegram packs were the only third-party emote art when it was
+	// added; this is 114 more pieces of it, so it belongs on the same side of
+	// the switch. Class uploads deliberately stay visible under the flag —
+	// those are the class's own content, not a vendor's.
+	const _wechatOn = $derived(!isTgHidden() && !!onInsertUpload && _wechatItems.length > 0);
+	const WECHAT_TAB_ICON = WECHAT_BY_SHORTCODE['wc_smile']?.url ?? _wechatItems[0]?.url;
 	// Instructor moderation: when `moderating` is on (instructor only), the
 	// library shows hidden emotes (dimmed) and clicking one toggles its hidden
 	// state instead of inserting it. When off, hidden emotes are filtered out
@@ -77,14 +101,22 @@
 	const _showHidden = $derived(canModerate && moderating);
 	const _cellKey = (it) => emoteKey({ cp: it.cp, short: it.short, id: it.id, custom: it.custom });
 	const _keep = (it) => _showHidden || !_hiddenSet.has(_cellKey(it));
-	// Uploads have no hidden-emote key (that list is keyed by TG cp/pack), so
-	// they only ever filter on the search box, matched against the shortcode
-	// the user types to insert them.
+	// Image cells (class uploads + the WeChat built-ins) have no hidden-emote
+	// key — that list is keyed by TG cp/pack — so they only ever filter on the
+	// search box. Matched against the shortcode the user types to insert them,
+	// plus the display name, so the WeChat set answers to "smile" and
+	// "Pooh-pooh" and not only to "wc_smile".
+	const _matchUpload = (it, q) =>
+		(it.shortcode || '').toLowerCase().includes(q) || (it.name || '').toLowerCase().includes(q);
 	const _keepUpload = (it) => {
 		const q = search.trim().toLowerCase();
-		return !q || (it.shortcode || '').toLowerCase().includes(q);
+		return !q || _matchUpload(it, q);
 	};
 	const _isCellHidden = (it) => _hiddenSet.has(_cellKey(it));
+	// Tooltip for an image cell. A class upload is only ever known by its
+	// shortcode; a WeChat built-in leads with its WeChat name ("Pooh-pooh")
+	// and keeps the shortcode below it, since that's what you'd type.
+	const uploadTitle = (it) => (it.name ? `${it.name}\n:${it.shortcode}:` : `:${it.shortcode}:`);
 	function cellAction(it) {
 		// Uploads insert a [ce:] token through their own callback, and are not
 		// part of the hidden-emote system (that list is keyed by TG cp/pack),
@@ -114,6 +146,11 @@
 
 	let loading = $state(true);
 	let byCat = $state({});
+	// cp -> { name, kw, st } from emoji-data.json. Unicode emotes carry no name
+	// in the Telegram manifest, so this is the only thing that can answer "what
+	// is this emote called" for them. Set in onMount; `{}` until then, which
+	// just means search falls back to matching the glyph itself.
+	let metaByCp = $state({});
 	let headCats = $state([]); // [{key, label, icon}] — Effects, Custom, Smileys, …, Other
 	let packCats = $state([]); // [{key, label, pack: {short, firstId}}] — one per custom pack
 	let active = $state('Effects');
@@ -246,15 +283,13 @@
 		flashToast(customMode === 'animated' ? 'Sends animated' : 'Sends static');
 	}
 	let search = $state('');
-	// Per-pack opt-in: do alt-emoji CLDR names + keywords count for search in this pack?
-	// Default OFF since most packs' artwork has nothing to do with the underlying emoji.
-	let cldrEnabled = $state({}); // { [short_name]: true }
-	const CLDR_LS_KEY = 'tgCldrEnabled';
-
-	function togglePackCldr(short) {
-		cldrEnabled = { ...cldrEnabled, [short]: !cldrEnabled[short] };
-		try { localStorage.setItem(CLDR_LS_KEY, JSON.stringify(cldrEnabled)); } catch {}
-	}
+	// (The per-pack "emoji-name search" opt-in that used to live here is gone.
+	// It gated whether a pack emote's INHERITED CLDR name counted for search,
+	// default off, because a pack's art often has nothing to do with the emoji
+	// it's keyed to. Inherited names now always count but rank last — see
+	// searchScore — which gets the matches without the noise, and without a
+	// per-pack checkbox nobody would find. The `tgCldrEnabled` localStorage key
+	// is simply abandoned; nothing reads it.)
 
 	// Normalize a codepoint string (lowercase, strip VS16) for matching across
 	// emoji-data ("1F600" or "1F468-200D-1F4BB") and our alt-derived cps.
@@ -282,20 +317,23 @@
 		// by an `{#if loading}` block), so we can't bind it yet. The
 		// $effect below picks up `gridEl` the moment it lands and
 		// wires the Skottie stage host then.
-		try { const raw = localStorage.getItem(CLDR_LS_KEY); if (raw) cldrEnabled = JSON.parse(raw); } catch {}
 		const [m, custom] = await Promise.all([loadTelegramEmoji(), loadCustomPacks()]);
 
-		// Walk emoji-data.json once: build canonical order AND a cp -> {name, kw}
+		// Walk emoji-data.json once: build canonical order AND a cp -> {name, kw, st}
 		// lookup so custom emoji inherit the underlying emoji's name + keywords.
 		let orderMap = {};
-		let metaByCp = {};
+		let meta = {};
 		try {
 			// Shared, memoised index — see $lib/emoji-data.js. Previously this
 			// walked all ~3800 items itself, on top of its own 546 KB parse.
-			({ orderMap, metaByCp } = buildByCp(await loadEmojiData()));
+			({ orderMap, metaByCp: meta } = buildByCp(await loadEmojiData()));
 		} catch { /* fall back to manifest order, empty meta */ }
+		// Kept on the component so SEARCH can reach it too — a unicode emote
+		// carries no name of its own (the manifest is just glyph + codepoint +
+		// category), so scoring one means looking its CLDR entry up here.
+		metaByCp = meta;
 		const ord = (it) => orderMap[cpKey(it.cp)] ?? 1e9;
-		const metaForAlt = (alt) => metaByCp[cpKey(cpFromChar(alt))] || null;
+		const metaForAlt = (alt) => meta[cpKey(cpFromChar(alt))] || null;
 
 		const sorted = {};
 		for (const [c, list] of Object.entries(m.byCat)) sorted[c] = [...list].sort((a, b) => ord(a) - ord(b));
@@ -314,7 +352,11 @@
 				id: e.id, alt: e.alt, short: pack ? pack.short_name : e.short,
 				packTitle: pack ? pack.title : e.packTitle,
 				name: meta.name || '',
-				kw: meta.kw || []
+				kw: meta.kw || [],
+				// Pre-lowercased search tokens of the UNDERLYING emoji, shared by
+				// reference with metaByCp. Inherited, so search ranks it below a
+				// name the emote actually owns — see searchScore.
+				st: meta.st || []
 			};
 		};
 
@@ -430,7 +472,13 @@
 			? [...heads.slice(0, fx), ...uploadsCat, ...heads.slice(fx)]
 			: [...uploadsCat, ...heads];
 
-		return [...headsWithUploads, ...lead, ...statics, ...rest];
+		// WeChat closes the flow. It's a complete, self-contained set of 114
+		// image emotes with nothing to do with the Telegram library, so it
+		// reads as an appendix rather than something interleaved among the
+		// packs — and putting it last keeps every pack's position unchanged
+		// from before it existed.
+		const wechatCat = _wechatOn ? [{ key: WECHAT_KEY, label: 'WeChat', icon: null }] : [];
+		return [...headsWithUploads, ...lead, ...statics, ...rest, ...wechatCat];
 	});
 	const flowingSections = $derived(
 		flowingCats.map((c) => ({
@@ -438,6 +486,8 @@
 			label: c.label ?? c.key,
 			items: c.key === UPLOADS_KEY
 				? _uploadItems.filter(_keepUpload)
+				: c.key === WECHAT_KEY
+				? _wechatItems.filter(_keepUpload)
 				: (byCat[c.key] ?? []).filter(_keep)
 		}))
 	);
@@ -701,8 +751,6 @@
 		visibleStart + Math.ceil((Math.ceil(gridH / CELL_PX) + BUFFER_ROWS * 2) * cellsPerRow * _fillFrac)
 	);
 
-	// Filter custom items — CLDR name + keywords only count for packs where the
-	// user has explicitly opted in via the per-pack toggle (default OFF).
 	// In flow mode, an active search spans EVERY flowing category's items
 	// (Smileys + People + Animals + every pack) collapsed into one flat
 	// result list. Standalone tabs (Effects, Custom) and a non-search
@@ -714,7 +762,12 @@
 		const out = [];
 		for (const s of flowingSections) {
 			for (const it of s.items) {
-				const key = it.custom ? `c:${it.id}` : `u:${it.cp}`;
+				// Image cells (uploads, WeChat) need their own key space. They
+				// carry no `cp`, so they used to all collapse onto the single
+				// key `u:undefined` — which is why searching never surfaced an
+				// uploaded emote, only ever the first one, and then dropped it
+				// again in the filter below.
+				const key = it.upload ? `i:${it.shortcode}` : it.custom ? `c:${it.id}` : `u:${it.cp}`;
 				if (seen.has(key)) continue;
 				seen.add(key);
 				out.push(it);
@@ -722,20 +775,94 @@
 		}
 		return out;
 	});
+	// ── Search scoring ───────────────────────────────────────────────
+	// Everything in the library is searchable by NAME, not just by pasting the
+	// glyph. That used to be true of almost nothing: a unicode emote matched
+	// only `it.e.includes(q)` — the emoji character itself — so "smile" found
+	// no 😀, and a pack emote's inherited CLDR name was behind a per-pack
+	// opt-in that defaulted off. Both are on now.
+	//
+	// The opt-in existed for a real reason, though, and ranking is what
+	// replaces it: a pack's artwork often has nothing to do with the emoji it
+	// is keyed to (a cat drawing filed under 😀), so its INHERITED name is a
+	// guess. Guesses still show — they just sort below every emote that
+	// genuinely owns the word, instead of burying it under twenty packs.
+	//
+	// Lower is better; MISS drops the item. Each band is exact → prefix →
+	// substring, so an emote actually CALLED "smile" leads the emote called
+	// "beaming face with smiling eyes", which leads a pack emote that merely
+	// inherits a smiling face's name.
+	const S_OWN = 0;          // this emote's own name / shortcode / keywords
+	const S_PACK_TITLE = 3;   // the emote's PACK is called that ("cursed")
+	const S_ALT = 4;          // inherited from the emoji it's keyed to
+	const S_MISS = Infinity;
+
+	// `st` is emoji-data's pre-lowercased token list (name words + shortcodes +
+	// aliases + keywords), so this runs without allocating per item — it is
+	// called for every emote in the library on every keystroke.
+	// Returns base (exact token), base+1 (token prefix) or base+2 (inside a
+	// token); the early return is safe because base is the best this band has.
+	function tokenScore(st, q, base) {
+		if (!st?.length) return S_MISS;
+		let best = S_MISS;
+		for (const t of st) {
+			if (t === q) return base;
+			else if (t.startsWith(q)) { if (best > base + 1) best = base + 1; }
+			else if (best > base + 2 && t.includes(q)) best = base + 2;
+		}
+		return best;
+	}
+
+	function textScore(s, q, base) {
+		if (!s) return S_MISS;
+		if (s === q) return base;
+		if (s.startsWith(q)) return base + 1;
+		return s.includes(q) ? base + 2 : S_MISS;
+	}
+
+	function searchScore(it, q) {
+		// Uploads + WeChat built-ins: shortcode and display name are the only
+		// things they have, and both are their own — never inherited.
+		if (it.upload) {
+			return Math.min(
+				textScore((it.shortcode || '').toLowerCase(), q, S_OWN),
+				textScore((it.name || '').toLowerCase(), q, S_OWN)
+			);
+		}
+		if (!it.custom) {
+			// Pasting the glyph itself is as exact as it gets.
+			if ((it.e || '').includes(q)) return S_OWN;
+			// Unicode emote — the CLDR entry describes THIS artwork, so its
+			// name is owned, not inherited.
+			const meta = metaByCp[cpKey(it.cp)];
+			return Math.min(
+				tokenScore(meta?.st, q, S_OWN),
+				// Multi-word queries ("grinning face") match no single token.
+				textScore((meta?.name || '').toLowerCase(), q, S_OWN)
+			);
+		}
+		if ((it.alt || '').includes(q)) return S_OWN;
+		if ((it.packTitle || '').toLowerCase().includes(q)) return S_PACK_TITLE;
+		return Math.min(
+			tokenScore(it.st, q, S_ALT),
+			textScore((it.name || '').toLowerCase(), q, S_ALT)
+		);
+	}
+
 	const filteredItems = $derived.by(() => {
 		const q = search.trim().toLowerCase();
 		if (!q) return items;
-		return _searchPool.filter((it) => {
-			if (it.custom) {
-				const useCldr = cldrEnabled[it.short] === true;
-				if (useCldr && (it.name || '').toLowerCase().includes(q)) return true;
-				if (useCldr && it.kw?.some((k) => k.toLowerCase().includes(q))) return true;
-				if ((it.alt || '').includes(q)) return true;
-				if ((it.packTitle || '').toLowerCase().includes(q)) return true;
-				return false;
-			}
-			return (it.e || '').includes(q);
-		});
+		// Sorted by score, then by position in the pool — so within one band
+		// the flow's own order survives (Effects, Smileys, …, packs, WeChat).
+		// That also keeps each KIND of cell arriving in a run rather than
+		// interleaved, which is what the flat grid's one {#if} branch wants.
+		const hits = [];
+		for (let i = 0; i < _searchPool.length; i++) {
+			const s = searchScore(_searchPool[i], q);
+			if (s !== S_MISS) hits.push({ it: _searchPool[i], s, i });
+		}
+		hits.sort((a, b) => a.s - b.s || a.i - b.i);
+		return hits.map((h) => h.it);
 	});
 </script>
 
@@ -825,12 +952,18 @@
 			{#each flowingCats as cat (cat.key)}
 				<button class="tg-tab"
 					class:tg-tab-pack={!!cat.pack}
-					class:tg-tab-upload={cat.key === UPLOADS_KEY}
+					class:tg-tab-upload={cat.key === UPLOADS_KEY || cat.key === WECHAT_KEY}
 					class:active={active === cat.key}
 					title={cat.label} onclick={() => goToTab(cat.key)}>
 					{#if cat.key === UPLOADS_KEY}
 						<img class="tg-tab-upload-img" src={_uploadItems[0]?.url}
 							alt={uploadsLabel} width="20" height="20" loading="eager" decoding="async" />
+					{:else if cat.key === WECHAT_KEY}
+						<!-- [Smile] is WeChat's own first emoticon, so the rail
+						     reads as that set rather than as a generic icon.
+						     `eager`: the rail is always on screen. -->
+						<img class="tg-tab-upload-img" src={WECHAT_TAB_ICON}
+							alt="WeChat" width="20" height="20" loading="eager" decoding="async" />
 					{:else if cat.pack}
 						<!-- 20 pack tabs, and they used to be pinned to `rlottie`
 						     + `eager`: twenty live animations, each with its own
@@ -866,11 +999,6 @@
 		     can search across everything via the search row below. -->
 		<div class="tg-pack-header">
 			<span class="tg-pack-title">{activeCat.label} <span class="tg-pack-count">· {items.length}</span></span>
-			<label class="tg-cldr-toggle" title="Include the underlying emoji's CLDR name + keywords in search (e.g. 😀 → 'grinning, happy, smile').">
-				<input type="checkbox" checked={!!cldrEnabled[activeCat.pack.short]}
-					onchange={() => togglePackCldr(activeCat.pack.short)} />
-				<span>emoji-name search</span>
-			</label>
 		</div>
 	{/if}
 	<!-- The "Send as:" row and the always-open search row used to live here.
@@ -942,21 +1070,37 @@
 				{#each _window as it, wi (wi)}
 					<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 					<div class="tg-cell" class:tg-cell-hidden={_showHidden && _isCellHidden(it)}
-						title={it.custom
+						class:tg-cell-upload={it.upload}
+						title={it.upload
+							? uploadTitle(it)
+							: it.custom
 							? `${it.name || it.alt}  ${it.alt}  ·  ${it.packTitle}${it.kw?.length ? '\n' + it.kw.slice(0, 6).join(', ') : ''}`
 							: it.e}
 						onclick={() => cellAction(it)}>
-						<!-- ONE sticker, not an {#if it.custom} pair. Search results
-						     interleave custom and unicode emotes, so a branch here
-						     would remount the sticker every time a slot crossed
-						     between the two — defeating the slot key for exactly
-						     the view that churns most. SpriteSticker decides which
-						     it is from `short`/`id` being present. -->
-						<LottieSticker cp={it.custom ? undefined : it.cp} flag={!it.custom && !!it.flag}
-							short={it.custom ? it.short : null} id={it.custom ? it.id : null}
-							size={STICKER_PX} mode="visible" staticOnly={_static}
-							ignoreHidden={_showHidden} root={gridWrapEl}
-							title={it.custom ? it.alt : it.e} maxFps={PICKER_FPS} />
+						{#if it.upload}
+							<!-- The one branch in this grid. Image emotes (uploads,
+							     WeChat) have no Lottie pipeline at all, so they
+							     can't ride the shared sticker below. It does cost a
+							     remount when a slot crosses the image/sticker
+							     boundary mid-scroll — but an <img> is not a canvas
+							     + IntersectionObserver + worker registration, and
+							     a result list has at most a couple of such
+							     boundaries, since each kind arrives in one run. -->
+							<img class="tg-upload-img" src={it.url} alt={':' + it.shortcode + ':'}
+								width={STICKER_PX} height={STICKER_PX} loading="lazy" decoding="async" />
+						{:else}
+							<!-- ONE sticker, not an {#if it.custom} pair. Search results
+							     interleave custom and unicode emotes, so a branch here
+							     would remount the sticker every time a slot crossed
+							     between the two — defeating the slot key for exactly
+							     the view that churns most. SpriteSticker decides which
+							     it is from `short`/`id` being present. -->
+							<LottieSticker cp={it.custom ? undefined : it.cp} flag={!it.custom && !!it.flag}
+								short={it.custom ? it.short : null} id={it.custom ? it.id : null}
+								size={STICKER_PX} mode="visible" staticOnly={_static}
+								ignoreHidden={_showHidden} root={gridWrapEl}
+								title={it.custom ? it.alt : it.e} maxFps={PICKER_FPS} />
+						{/if}
 					</div>
 				{/each}
 				{#if filteredItems.length === 0 && search}
@@ -1044,7 +1188,7 @@
 									<div class="tg-cell" class:tg-cell-hidden={_showHidden && _isCellHidden(it)}
 										class:tg-cell-upload={it.upload}
 										title={it.upload
-											? `:${it.shortcode}:`
+											? uploadTitle(it)
 											: it.custom
 											? `${it.name || it.alt}  ${it.alt}  ·  ${it.packTitle}${it.kw?.length ? '\n' + it.kw.slice(0, 6).join(', ') : ''}`
 											: it.e}
@@ -1064,10 +1208,11 @@
 										     that is already in memory, in the same frame it
 										     mounts. -->
 										{#if it.upload}
-											<!-- Class upload: a plain image, no Lottie pipeline. -->
+											<!-- Class upload or WeChat built-in: a plain image, no
+											     Lottie pipeline. -->
 											<img class="tg-upload-img" src={it.url} alt={':' + it.shortcode + ':'}
 												width={STICKER_PX} height={STICKER_PX} loading="lazy" decoding="async" />
-											{#if onDeleteUpload}
+											{#if onDeleteUpload && !it.builtin}
 												<!-- The picker is the ONLY place an uploaded emote can be
 												     deleted, so this has to survive the merge. Hover on
 												     desktop; on touch it's always shown, since there is no
@@ -1185,8 +1330,6 @@
 	.tg-pack-header { flex-shrink: 0; padding: 0.45rem 0.65rem 0.35rem; border-bottom: 1px solid var(--border); background: var(--paper); font-size: 0.82rem; font-weight: 600; color: var(--ink, var(--ink)); display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
 	.tg-pack-title { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 	.tg-pack-count { color: var(--muted-fg); font-weight: 400; font-size: 0.72rem; }
-	.tg-cldr-toggle { display: flex; align-items: center; gap: 0.3rem; font-weight: 400; font-size: 0.68rem; color: var(--muted-fg); cursor: pointer; user-select: none; flex-shrink: 0; }
-	.tg-cldr-toggle input[type="checkbox"] { margin: 0; accent-color: var(--ink, var(--ink)); cursor: pointer; }
 
 	/* `overflow: clip` on both axes enforces a hard clipping region for
 	   the WebGL stage canvas inside — `overflow-y: auto` alone lets a

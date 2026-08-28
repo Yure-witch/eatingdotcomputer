@@ -27,7 +27,7 @@
 	import { onMount, tick } from 'svelte';
 	import { createContentRenderer } from '$lib/message-render.js';
 	import { mountStaticEmotes } from '$lib/emote-mount.js';
-	import { getCustomEmojiMap, getCachedCustomEmojiMap } from '$lib/custom-emoji-store.js';
+	import { getCustomEmojiMap, getCachedCustomEmojiMap, isCustomEmojiLoaded } from '$lib/custom-emoji-store.js';
 	import { genPalette } from '$lib/avatar-gen.js';
 
 	let {
@@ -61,7 +61,10 @@
 	let _ceVer = $state(0);
 	$effect(() => {
 		if (avatarKind !== 'expr' || !avatarValue || !String(avatarValue).includes('[ce:')) return;
-		if (Object.keys(getCachedCustomEmojiMap()).length) return;
+		// `isCustomEmojiLoaded`, not map-emptiness: the map is seeded with the
+		// built-in WeChat set, so it is never empty and emptiness would mean
+		// the class's uploads never get fetched at all.
+		if (isCustomEmojiLoaded()) return;
 		getCustomEmojiMap().then(() => _ceVer++).catch(() => {});
 	});
 

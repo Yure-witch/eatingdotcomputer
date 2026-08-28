@@ -316,6 +316,104 @@ Each entry includes:
 
 ---
 
+### 2026-08-27 — WeChat emoticon set added to the emote library
+- **Status**: `attempted` (built + verified in-browser, pending user confirmation)
+- **What**: All 114 WeChat emoticons (the proprietary `[Smile]` / `[Doge]`
+  stickers, catalogued at https://emojipedia.org/wechat) are now a built-in
+  emote set — a **WeChat** section at the bottom of the Telegram picker's flow,
+  inserting the same `[ce:…]` token a class upload does, so they render inline
+  everywhere custom emotes already do.
+- **Art**: WeChat 8.0.2 for iOS (the crisper of the two sets Emojipedia lists;
+  the Android 7.0.21 art is 80px against iOS's 97–128px). Normalised to
+  128x128 webp in `static/wechat/` — 1.34 MB of mixed-size PNG down to 0.56 MB.
+  Bundled rather than uploaded to R2 so there is no per-class setup and no
+  network hop before the first paint.
+- **Shortcodes**: `wc_` + slug (`wc_smile`, `wc_pooh_pooh`, `wc_bah_l`). The
+  prefix means they can never collide with an instructor upload, and `:wc_` in
+  the compose box lists the whole set.
+- **`src/lib/wechat-emoji.js`** (new) — the table, plus `WECHAT_BY_SHORTCODE`
+  and `isWechatShortcode`.
+- **`custom-emoji-store.js` is the whole trick.** The shortcode→url map now has
+  two layers: the WeChat set as a synchronous BASE (present from module load,
+  so no `[ce:wc_…]` ever renders as a `:shortcode:` fallback while a fetch is
+  in flight), with `/api/custom-emoji` uploads applied on top so the database
+  still wins any collision. ~40 call sites read this map and none of them
+  changed.
+  - Two of them had to: `Avatar.svelte` and `ExpressionPicker.svelte` used
+    **map-emptiness** as their "uploads not fetched yet" signal. With built-ins
+    seeded the map is never empty, so uploads would never have loaded at all.
+    Both now call the new `isCustomEmojiLoaded()`.
+  - `invalidateCustomEmojiCache()` drops only the uploads layer — clearing the
+    built-ins would blank every WeChat emote on screen until the refetch landed.
+- **`TelegramEmojiPanel.svelte`** — the set is a library the panel owns (like
+  the Telegram packs), not a prop each host supplies. It reuses the existing
+  `upload: true` image-cell shape, since it inserts the same token and needs the
+  same plain `<img>`; a new `builtin` flag suppresses the delete affordance
+  (there is no row to delete). Placed **last** in `flowingCats`, so every pack's
+  position is unchanged from before it existed.
+- **Search now reaches image cells at all**, which is a pre-existing bug this
+  surfaced: `_searchPool` keyed uploads as `u:${it.cp}` and uploads have no
+  `cp`, so all of them collapsed onto the single key `u:undefined` — and the
+  filter below then dropped even that one. Image cells get their own `i:${shortcode}`
+  key space and match on shortcode **or** display name, so the set answers to
+  "smile" and "Pooh-pooh", not only "wc_smile". The flat search grid grew an
+  `{#if it.upload}` branch to render them (its one branch — noted inline why the
+  remount cost is acceptable where the sticker's is not).
+- **Held behind `isTgHidden()`** — the per-user hide-third-party-emotes switch
+  the App Store review account uses. That flag is named for Telegram because
+  Telegram packs were the only vendor emote art when it was added; this is 114
+  more pieces of it. Class uploads deliberately stay visible under the flag.
+  Note `message-render` still does **not** strip `[ce:]` under the flag, so a
+  WeChat emote inside an existing message would still render for that account —
+  same as any class upload does today.
+- **Verified** in-browser on a throwaway `ssr=false` route (since the picker is
+  login-gated), then deleted: 114 cells in a WeChat section at the bottom of the
+  flow, WeChat last in the tab rail, click fires `[ce:wc_worship]`, no delete
+  button even with `onDeleteUpload` passed, `contentHtml('[ce:wc_smile]')` emits
+  the same `<img class="ce-img">` an upload does (and an unknown `wc_` code still
+  falls back to `:shortcode:`), search on "pooh" → `wc_pooh_pooh`, search on
+  "doge" → 40 Doge-pack canvases + the one WeChat image together, all
+  `/wechat/*.webp` 200, no console errors.
+- **Licensing**: the artwork is Tencent's, same footing as the Telegram packs
+  already bundled.
+
+**Follow-up (same day) — the whole library is searchable by name now.**
+- **What was broken**: a unicode Telegram emote matched only `it.e.includes(q)`
+  — the emoji *character* — so "smile" found no 😀 at all, and a pack emote's
+  CLDR name sat behind a per-pack "emoji-name search" checkbox that defaulted
+  off. The naming data was already loaded the whole time; nothing read it.
+- **`emoji-data.js`** — `buildByCp`'s meta now also carries `st`, emoji-data's
+  pre-tokenised, pre-**lowercased** search terms (name words + shortcodes +
+  aliases like ":d" + keywords). By reference, so no copy and no per-item
+  `toLowerCase()` on the hot path.
+- **`metaByCp` is now component state** on the panel, not an onMount local —
+  a unicode emote has no name of its own (the TG manifest is glyph + codepoint
+  + category), so scoring one means looking its CLDR entry up at search time.
+- **Ranked, not just filtered** — `searchScore` in three bands, each ordered
+  exact → prefix → substring:
+  1. the emote's OWN name/shortcode/keywords (unicode CLDR, upload shortcode,
+     WeChat display name), or the pasted glyph;
+  2. the emote's PACK title ("cursed" → all 100 Cursed Emoji);
+  3. a pack emote's name INHERITED from the emoji it's keyed to.
+  Ties break on flow position, so within a band the picker's own order
+  (Effects, Smileys, …, packs, WeChat) survives — which also keeps each *kind*
+  of cell arriving in a run, which is what the flat grid's one `{#if}` wants.
+- **Band 3 is why the per-pack toggle could go.** It existed because a pack's
+  art often has nothing to do with its alt emoji (a cat filed under 😀), so the
+  inherited name is a guess. Guesses now show but sort last, instead of being
+  hidden behind a checkbox nobody would find. `cldrEnabled`, `togglePackCldr`,
+  the `.tg-cldr-toggle` markup + CSS and the pack-header control are all
+  removed; the `tgCldrEnabled` localStorage key is abandoned, nothing reads it.
+- **Verified** in-browser: "smile" → 162 hits, 23 animated unicode smileys, then
+  WeChat *Smile*, then 138 inherited pack matches — bands in exactly that order;
+  "rose" → 🌹, WeChat *Rose*, FlowersFont rose, and nothing else; "happy"
+  (a keyword in no name) → 193 led by 😁😂🤣🥳😇😀; "cursed" → the 100-emote
+  pack; "zzqqxx" → the empty state. One broad keystroke ("fac", 279 hits over
+  ~2400 items) logs no long task; ten rapid ones batch into a single 75 ms
+  frame. No console errors.
+
+---
+
 ### 2026-08-20 — iPhone-only + portrait lock (App Store prep)
 - **Status**: `attempted` (built + verified in the bundle, pending user confirmation)
 - **What**: `UISupportedInterfaceOrientations` in `ios/App/App/Info.plist` cut from

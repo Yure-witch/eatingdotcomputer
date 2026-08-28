@@ -107,7 +107,12 @@ export function buildByCp(d) {
 	eachItem(d, (it) => {
 		const k = cpKeySeg(it.cp);
 		orderMap[k] = i++;
-		metaByCp[k] = { name: it.n || '', kw: it.kw || [] };
+		// `st` is emoji-data's pre-tokenised, pre-LOWERCASED search terms —
+		// name words + shortcodes + aliases (":d") + keywords, already flat.
+		// Carried by reference (no copy): the Telegram panel scores every
+		// emote in the library on each keystroke, and matching against these
+		// costs no `toLowerCase()` allocation per item.
+		metaByCp[k] = { name: it.n || '', kw: it.kw || [], st: it.st || [] };
 	});
 	_byCp = { orderMap, metaByCp };
 	return _byCp;

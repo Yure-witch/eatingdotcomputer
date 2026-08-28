@@ -20,7 +20,7 @@
 		engineMode, setEngineManual, rasterEngineFor
 	} from '$lib/telegram-emoji-store.js';
 	import { getExprRecents, addExprRecent, exprRecentKey } from '$lib/expr-recents.js';
-	import { getCustomEmojiMap, getCachedCustomEmojiMap } from '$lib/custom-emoji-store.js';
+	import { getCustomEmojiMap, getCachedCustomEmojiMap, isCustomEmojiLoaded } from '$lib/custom-emoji-store.js';
 	import { ekTokenToUrl } from '$lib/message-render.js';
 	import { onScrollGesture } from '$lib/scroll-bus.js';
 
@@ -46,7 +46,10 @@
 		// picked during onboarding had nothing to render against.
 		// NOT gated on tgHidden — class uploads have nothing to do with whether
 		// the Telegram surfaces are shown.
-		if (!Object.keys(getCachedCustomEmojiMap()).length) {
+		// `isCustomEmojiLoaded`, not map-emptiness: the map is seeded with the
+		// built-in WeChat set, so it is never empty and emptiness would mean
+		// the class's uploads never get fetched at all.
+		if (!isCustomEmojiLoaded()) {
 			getCustomEmojiMap().then(() => _packVer++).catch(() => {});
 		}
 		return () => {
