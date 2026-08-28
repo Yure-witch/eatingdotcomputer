@@ -109,6 +109,26 @@
       "refreshNeeded": {
         ".write": "false"
       }
+    },
+    "marquee": {
+      "$room": {
+        ".read": true,
+        "host": {
+          ".write": "auth != null"
+        },
+        "now": {
+          ".write": "auth != null"
+        },
+        "idle": {
+          ".write": "auth != null"
+        },
+        "queue": {
+          ".write": "auth != null",
+          "$item": {
+            ".validate": "newData.hasChildren(['text','holdMs','at'])"
+          }
+        }
+      }
     }
   }
 }

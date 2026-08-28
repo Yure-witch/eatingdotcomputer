@@ -11,6 +11,13 @@
 			ready: true
 		},
 		{
+			href: '/app/lab/marquee',
+			title: 'Marquee',
+			blurb: 'Put the ricky.now kinetic-type set on the projector, and let the room change the words by QR code.',
+			icon: 'qr_code_2',
+			ready: true
+		},
+		{
 			href: '/app/lab/text-gifs',
 			title: 'Text GIFs',
 			blurb: 'Type a word, pick an animated text effect — rainbow, neon, wave, glitch — and export a looping GIF.',

@@ -4,6 +4,104 @@ This document is a running record of what has been attempted, what is in progres
 
 ---
 
+### 2026-08-28 — Lab: Marquee (the ricky.now reel, with the room holding the pen)
+- **Status**: `attempted` (queue, rules, submit page and all eight looks
+  verified in dev — 18/18 on the end-to-end script, every look rendered and
+  screenshotted; the display page itself was driven through a temporary
+  unauthenticated harness, so it wants one pass while signed in)
+- **What it is**: `/app/lab/marquee` puts the eight ricky.now kinetic-type
+  looks on a loop and overlays a QR code. Anyone who scans it lands on the
+  public `/m/{code}`, types a phrase, and picks 30s or 60s with one
+  checkbox. The display owns the playback clock and pulls from a queue.
+- **Live, not pre-rendered**: the reel on ricky.now is eight MP4s, and a
+  video can't have its words changed. `$lib/marquee-set.js` pins the
+  render-true opts per look (from `artifacts/kinetic-type/variations.json`)
+  and runs them through the same gen-art engine the studio uses, so the
+  animation is the reel's and the text is the room's. Casing is left to the
+  scenes — Clouds/Coin/Type Orbit/Sphere upper-case, the rest render as
+  typed, which is the reel's own mixed-case look.
+- **Two things that are looks, not settings**: `duration` is a loop PERIOD
+  that the flip scenes divide by their SEGMENT count, so Coin and Sphere
+  derive it from the submitted text at 1.5s a word instead of holding
+  variations.json's fixed number. And Garble's 4fps is the effect: run its
+  shuffle at display rate and it turns to fizz, so the loop steps it in
+  250ms chunks.
+- **variations.json is wrong about Coin and Sphere** (raised by the
+  rickydotnow session, which read duration 3 and 6 there and derived 3s a
+  word). The reel's files are 1.5s and 3.0s. Stepping both scenes settles
+  it: at duration 1.5/3 the frame at the file's length is bit-identical to
+  frame 0; at 3/6 it differs as much as any unrelated frame (max channel
+  delta 255, same 4.8% of pixels as the control). Coin's `pitch` also swings
+  over the FULL period (gen-art.js:4859), so the half-period-trim theory
+  that would have justified 3s a word can't hold for it either. 1.5s a word
+  stands, which is also the cadence recorded as approved in the render-
+  pipeline notes.
+- **Type Orbit counts GROUPS, not words** (their catch, and correct —
+  gen-art.js:5493: a `|` anywhere makes the pipe-separated groups the unit
+  and `/` a line break inside one). Its duration is now a flat 8s over two
+  groups — 4s a hand-off whatever the phrase — instead of scaling with word
+  count, which would have given a nine-word submission an 8s hand-off. And
+  the reel put the SAME phrase in both pipe slots, so the marquee packs the
+  submission into a 2–3 line lockup and duplicates it: the whole phrase
+  stays readable, and the hand-off reads as one lockup rotating through
+  itself rather than a content change.
+- **Slots are whole loops**: these animations are built to return to frame
+  0, so cutting mid-period throws away the one frame where the cut is
+  invisible. Each look now holds for as many complete loops as fit in 8–16s
+  — a one-word Coin gets six 1.5s flips, an eight-word Coin gets its single
+  12s pass.
+- **Socket layer**: RTDB `marquee/{room}` — `host` (with a heartbeat),
+  `queue/{pushId}`, `now`, `idle`. Read is public so a stranger's phone can
+  watch its own position live; writes need auth, and submissions go through
+  `POST /api/marquee/{room}` (length cap, whitespace collapse, per-IP
+  cooldown and pending cap, queue cap, stale-screen 410). A room code on a
+  projector is visible to anyone who photographs the screen, which is why
+  the write rule is not open.
+- **The transaction gotcha**: claiming the head of the queue as
+  `(cur) => cur === null ? undefined : null` never worked — Firebase runs
+  the update function against the LOCAL cache first, and returning
+  undefined there aborts without ever asking the server. It aborted on
+  every cold cache. The claim now stamps `claimedBy` (with a 10s staleness
+  window so a screen that dies mid-claim can't wedge the queue).
+- **Scenes with async init**: Type Orbit loads three.js and the font, and
+  handing it to the render loop before `ready()` paints an empty stage for
+  the first seconds of its slot. The outgoing look now holds until the
+  incoming one is ready.
+- **Rules deploy**: the globally-installed firebase CLI is broken under
+  Node 26, so `database.rules.json` went up through the RTDB REST API
+  (`PUT /.settings/rules.json`) with the service account from .env. Live
+  rules were byte-identical to the repo file first, so the push only added
+  the marquee node.
+
+---
+
+### 2026-08-28 — Picker search: lift the sheet off the keyboard
+- **Status**: `attempted` (geometry verified in dev by resolving the new
+  rules against synthetic viewports; pending user confirmation on device)
+- **Symptom**: the emoji / emote / GIF pickers dock exactly where the
+  keyboard goes. Tap one of their OWN search fields and the real keyboard
+  comes up on top of that sheet, so you can see the field you're typing in
+  and almost none of the results you're typing for.
+- **Fix**: `$lib/kb-lift.js` — a `use:kbLift` action on the picker roots
+  (ExpressionPicker's `.expr-panel`, MediaPicker's `.media-panel`) that
+  flags `html.expr-search-kb` from focusin/focusout of any keyboard-raising
+  field, refcounted so two mounted pickers can't fight over it. app.css
+  ("Searching inside a docked picker") does the move: the compose sheet
+  lifts by `--kb-h` and the compose bar's `margin-bottom` lift grows by the
+  same amount, so the two travel together; the reaction dock and the thread
+  panel's sheets just lift.
+- **Fits, or gives back**: a lifted stack is two keyboards plus the compose
+  bar, which overruns a phone. `--picker-h` was split into
+  `--picker-h-base` (what the picker wants) and `--picker-h` (what it
+  gets) so the lift can shrink the sheet down to the header's bottom edge —
+  floor 8rem — without restating the height formula in two places.
+- **Not transitioned**: the sheet and the bar have to land in the same
+  frame or a gap opens between them mid-flight, and the bar's move can't be
+  a transform (a transformed `.input-area` becomes the containing block for
+  the fixed sheet inside it — see the native-keyboard note in app.css).
+
+---
+
 ### 2026-08-24 — Scroll jumps on resized text: the un-skip the anchor can't fix
 - **Status**: `attempted` (mechanism verified in dev: resized rows get
   class big-text and stay painted; pending user confirmation on device)
