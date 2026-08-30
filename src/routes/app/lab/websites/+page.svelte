@@ -1,5 +1,6 @@
 <script>
 	import { onMount } from 'svelte';
+	import TagOrbit from '$lib/components/TagOrbit.svelte';
 
 	// Lab → Inspiration. The instructor's hand-picked websites, as a gallery.
 	// (Route is /websites so it doesn't collide with /app/inspiration, which is
@@ -12,6 +13,14 @@
 	let loading = $state(true);
 	let loadError = $state('');
 	let vocabulary = $state([]);
+
+	// grid | list | orbit. Remembered, because which one you want is a
+	// standing preference, not a per-visit decision.
+	let view = $state('grid');
+	function setView(v) {
+		view = v;
+		try { localStorage.setItem('ec:websites:view', v); } catch {}
+	}
 	let untagged = $state(0);
 	let tagging = $state(false);
 
@@ -179,6 +188,10 @@
 	};
 
 	onMount(() => {
+		try {
+			const saved = localStorage.getItem('ec:websites:view');
+			if (saved === 'grid' || saved === 'list' || saved === 'orbit') view = saved;
+		} catch {}
 		load().then(() => {
 			// Anything left pending from an interrupted session (a closed tab
 			// mid-paste) gets picked up here rather than sitting as a skeleton
@@ -198,7 +211,20 @@
 				<h1>Inspiration</h1>
 				<p class="subtitle">Websites and pages worth your time. Collected for the class.</p>
 			</div>
-			<a class="back" href="/app/lab">← Lab</a>
+			<div class="header-right">
+				<div class="views" role="group" aria-label="View">
+					<button class:on={view === 'grid'} onclick={() => setView('grid')} title="Grid">
+						<span class="msi">grid_view</span>
+					</button>
+					<button class:on={view === 'list'} onclick={() => setView('list')} title="List">
+						<span class="msi">view_list</span>
+					</button>
+					<button class:on={view === 'orbit'} onclick={() => setView('orbit')} title="Tag orbit">
+						<span class="msi">bubble_chart</span>
+					</button>
+				</div>
+				<a class="back" href="/app/lab">← Lab</a>
+			</div>
 		</div>
 
 		{#if canEdit}
@@ -221,7 +247,21 @@
 			</div>
 		{/if}
 
-		{#if inUse.length}
+		{#if view === 'orbit'}
+			<!-- The orbit IS the filter bar in this view, so the chips would be
+			     a redundant second copy of the same control. -->
+			<TagOrbit tags={inUse} {active} ontoggle={toggle} />
+			<p class="orbit-readout">
+				{#if active.size}
+					<strong>{shown.length}</strong>
+					{shown.length === 1 ? 'link' : 'links'} tagged {[...active].join(' or ')}
+					<button class="linky" onclick={() => setView('grid')}>see them</button>
+					<button class="linky" onclick={() => (active = new Set())}>clear</button>
+				{:else}
+					Click a tag to filter. Bigger and closer in means more links carry it.
+				{/if}
+			</p>
+		{:else if inUse.length}
 			<div class="filters">
 				<button class="chip" class:on={active.size === 0} onclick={() => (active = new Set())}>
 					Everything <span class="n">{sites.length}</span>
@@ -245,7 +285,9 @@
 			</div>
 		{/if}
 
-		{#if loading}
+		{#if view === 'orbit'}
+			<!-- tags only, by design — the cards live in the other two views -->
+		{:else if loading}
 			<p class="state">Loading…</p>
 		{:else if loadError}
 			<p class="state error">{loadError}</p>
@@ -258,6 +300,45 @@
 				Nothing tagged {[...active].join(' or ')}.
 				<button class="linky" onclick={() => (active = new Set())}>Show everything</button>
 			</p>
+		{:else if view === 'list'}
+			<ul class="listing">
+				{#each shown as s (s.id)}
+					<li>
+						<a class="row" href={s.url} target="_blank" rel="noopener noreferrer">
+							<span class="thumb" style:--accent={s.accent || '#3a3a42'}>
+								{#if s.image}<img src={s.image} alt="" loading="lazy" />{/if}
+							</span>
+							<span class="row-main">
+								<span class="row-title">{s.title || host(s.url)}</span>
+								<span class="row-sub">
+									{#if s.icon}<img class="favicon" src={s.icon} alt="" loading="lazy" />{/if}
+									{s.siteName || host(s.url)}
+								</span>
+								{#if s.note}<span class="row-note">{s.note}</span>{/if}
+							</span>
+						</a>
+						<span class="row-tags">
+							{#each s.tags ?? [] as t (t)}
+								<button class="tag" class:on={active.has(t)} onclick={() => toggle(t)}>{t}</button>
+							{/each}
+						</span>
+						{#if canEdit}
+							<span class="row-tools">
+								<button onclick={() => openNote(s)} title="Note">{s.note ? 'Edit note' : 'Note'}</button>
+								<button onclick={() => retag(s.id)} title="Re-tag">Re-tag</button>
+								<button class="danger" onclick={() => remove(s.id)} title="Remove">×</button>
+							</span>
+						{/if}
+						{#if noteFor === s.id}
+							<span class="note-edit wide">
+								<input bind:value={noteDraft} maxlength="500" placeholder="Why this one?"
+									onkeydown={(e) => e.key === 'Enter' && saveNote()} />
+								<button onclick={saveNote}>Save</button>
+							</span>
+						{/if}
+					</li>
+				{/each}
+			</ul>
 		{:else}
 			<div class="gallery">
 				{#each shown as s (s.id)}
@@ -385,6 +466,80 @@
 		animation: spin 0.7s linear infinite;
 	}
 	@keyframes spin { to { transform: rotate(360deg); } }
+
+	.header-right { display: flex; align-items: center; gap: 0.85rem; }
+	.views { display: flex; gap: 0.15rem; padding: 0.15rem; border: 1.5px solid var(--border); border-radius: 99px; }
+	.views button {
+		display: grid;
+		place-items: center;
+		width: 30px;
+		height: 26px;
+		border: 0;
+		border-radius: 99px;
+		background: transparent;
+		color: var(--muted-fg);
+		cursor: pointer;
+		padding: 0;
+	}
+	.views button:hover { color: var(--ink); }
+	.views button.on { background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--ink); }
+	.views .msi { font-size: 1.05rem; }
+
+	.orbit-readout { font-size: 0.8rem; color: var(--muted-fg); margin: 0.75rem 0 0; text-align: center; }
+	.orbit-readout strong { color: var(--ink); }
+	.orbit-readout .linky { margin-left: 0.5rem; }
+
+	/* ── list ── */
+	.listing { list-style: none; margin: 0; padding: 0; width: 100%; display: flex; flex-direction: column; }
+	.listing li {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.75rem;
+		padding: 0.6rem 0.25rem;
+		border-bottom: 1px solid var(--border);
+	}
+	.listing li:hover { background: color-mix(in srgb, var(--ink) 4%, transparent); }
+	.row { display: flex; align-items: center; gap: 0.75rem; flex: 1; min-width: 240px; text-decoration: none; color: var(--ink); }
+	.thumb {
+		flex: none;
+		width: 76px;
+		height: 48px;
+		border-radius: 7px;
+		overflow: hidden;
+		background: linear-gradient(150deg,
+			color-mix(in srgb, var(--accent) 85%, #000 15%),
+			color-mix(in srgb, var(--accent) 45%, #000 55%));
+	}
+	.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+	.row-main { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
+	.row-title { font-family: 'Avara', serif; font-size: 0.98rem; line-height: 1.25; }
+	.row:hover .row-title { text-decoration: underline; }
+	.row-sub {
+		display: flex;
+		align-items: center;
+		gap: 0.3rem;
+		font-size: 0.68rem;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: var(--muted-fg);
+	}
+	.row-note { font-size: 0.76rem; font-style: italic; color: var(--muted-fg); }
+	.row-tags { display: flex; flex-wrap: wrap; gap: 0.25rem; }
+	.row-tools { display: flex; gap: 0.3rem; }
+	.row-tools button {
+		font: inherit;
+		font-size: 0.7rem;
+		padding: 0.2rem 0.5rem;
+		border-radius: 99px;
+		border: 1.5px solid var(--border);
+		background: transparent;
+		color: var(--muted-fg);
+		cursor: pointer;
+	}
+	.row-tools button:hover { border-color: var(--accent); color: var(--ink); }
+	.row-tools .danger:hover { border-color: #d66; color: #d66; }
+	.note-edit.wide { flex-basis: 100%; }
 
 	.filters {
 		display: flex;
