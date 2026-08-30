@@ -11,6 +11,28 @@
 	let sites = $state([]);
 	let loading = $state(true);
 	let loadError = $state('');
+	let vocabulary = $state([]);
+	let untagged = $state(0);
+	let tagging = $state(false);
+
+	// Filter: an OR across selected tags. Browsing a reading list is
+	// "show me art OR fun", not "show me things that are both".
+	let active = $state(new Set());
+	const shown = $derived(
+		active.size === 0 ? sites : sites.filter((s) => (s.tags ?? []).some((t) => active.has(t)))
+	);
+	// Only offer chips for tags something actually has — a filter bar of
+	// sixteen when four are in use is a wall, not a control.
+	const inUse = $derived.by(() => {
+		const counts = new Map();
+		for (const s of sites) for (const t of s.tags ?? []) counts.set(t, (counts.get(t) ?? 0) + 1);
+		return vocabulary.filter((t) => counts.has(t)).map((t) => ({ tag: t, n: counts.get(t) }));
+	});
+	function toggle(tag) {
+		const next = new Set(active);
+		next.has(tag) ? next.delete(tag) : next.add(tag);
+		active = next;
+	}
 
 	// Adding
 	let paste = $state('');
@@ -29,6 +51,8 @@
 			const out = await res.json();
 			sites = out.sites ?? [];
 			building = out.pending ?? 0;
+			untagged = out.untagged ?? 0;
+			vocabulary = out.vocabulary ?? [];
 			loadError = '';
 		} catch (e) {
 			loadError = e?.message || 'Could not load';
@@ -56,6 +80,41 @@
 		building = 0;
 	}
 
+	// Gemma tags in small batches for the same reason previews are built in
+	// small batches: one round trip per link, and a big paste would otherwise
+	// be one very long request.
+	async function drainTags() {
+		if (tagging) return;
+		tagging = true;
+		try {
+			for (let guard = 0; guard < 40; guard++) {
+				const res = await fetch('/api/lab/websites', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ action: 'tag' })
+				});
+				if (!res.ok) break;
+				const out = await res.json();
+				await load();
+				// Gemma unreachable — stop rather than spinning. The rows stay
+				// untagged and the button is still there to try again later.
+				if (out.unreachable || !out.remaining) break;
+			}
+		} finally {
+			tagging = false;
+		}
+	}
+
+	async function retag(id) {
+		await fetch('/api/lab/websites', {
+			method: 'PATCH',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ id, retag: true })
+		});
+		await load();
+		await drainTags();
+	}
+
 	async function add() {
 		const text = paste.trim();
 		if (!text || adding) return;
@@ -75,6 +134,7 @@
 				: `Added ${out.added}`;
 			await load();
 			await drainQueue();
+			await drainTags();
 		} catch (e) {
 			addMsg = e?.message || 'That did not go in';
 		} finally {
@@ -124,6 +184,7 @@
 			// mid-paste) gets picked up here rather than sitting as a skeleton
 			// for ever.
 			if (building && canEdit) drainQueue();
+			if (untagged && canEdit) drainTags();
 		});
 	});
 </script>
@@ -160,6 +221,30 @@
 			</div>
 		{/if}
 
+		{#if inUse.length}
+			<div class="filters">
+				<button class="chip" class:on={active.size === 0} onclick={() => (active = new Set())}>
+					Everything <span class="n">{sites.length}</span>
+				</button>
+				{#each inUse as { tag, n } (tag)}
+					<button class="chip" class:on={active.has(tag)} onclick={() => toggle(tag)}>
+						{tag} <span class="n">{n}</span>
+					</button>
+				{/each}
+				{#if canEdit && untagged}
+					<button class="chip ask" onclick={drainTags} disabled={tagging}>
+						{tagging ? 'Gemma is tagging…' : `Tag ${untagged} more with Gemma`}
+					</button>
+				{/if}
+			</div>
+		{:else if canEdit && untagged && !loading}
+			<div class="filters">
+				<button class="chip ask" onclick={drainTags} disabled={tagging}>
+					{tagging ? 'Gemma is tagging…' : `Tag ${untagged} with Gemma`}
+				</button>
+			</div>
+		{/if}
+
 		{#if loading}
 			<p class="state">Loading…</p>
 		{:else if loadError}
@@ -168,9 +253,14 @@
 			<p class="state">
 				{canEdit ? 'Nothing here yet — paste some links above.' : 'Nothing here yet.'}
 			</p>
+		{:else if !shown.length}
+			<p class="state">
+				Nothing tagged {[...active].join(' or ')}.
+				<button class="linky" onclick={() => (active = new Set())}>Show everything</button>
+			</p>
 		{:else}
 			<div class="gallery">
-				{#each sites as s (s.id)}
+				{#each shown as s (s.id)}
 					<article class="card" class:pending={s.status === 'pending'}>
 						<a class="shot" href={s.url} target="_blank" rel="noopener noreferrer">
 							{#if s.image}
@@ -199,6 +289,14 @@
 								<p class="desc">{s.description}</p>
 							{/if}
 
+							{#if s.tags?.length}
+								<div class="tags">
+									{#each s.tags as t (t)}
+										<button class="tag" class:on={active.has(t)} onclick={() => toggle(t)}>{t}</button>
+									{/each}
+								</div>
+							{/if}
+
 							{#if canEdit}
 								{#if noteFor === s.id}
 									<div class="note-edit">
@@ -214,6 +312,7 @@
 									<div class="tools">
 										<button onclick={() => openNote(s)}>{s.note ? 'Edit note' : 'Add note'}</button>
 										<button onclick={() => refetch(s.id)}>Re-fetch</button>
+									<button onclick={() => retag(s.id)}>Re-tag</button>
 										<button class="danger" onclick={() => remove(s.id)}>Remove</button>
 									</div>
 								{/if}
@@ -286,6 +385,62 @@
 		animation: spin 0.7s linear infinite;
 	}
 	@keyframes spin { to { transform: rotate(360deg); } }
+
+	.filters {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.4rem;
+		margin-bottom: 1.25rem;
+		width: 100%;
+	}
+	.chip {
+		font: inherit;
+		font-size: 0.78rem;
+		padding: 0.3rem 0.7rem;
+		border-radius: 99px;
+		border: 1.5px solid var(--border);
+		background: transparent;
+		color: var(--muted-fg);
+		cursor: pointer;
+		transition: border-color 0.12s, color 0.12s, background 0.12s;
+	}
+	.chip:hover:not(:disabled) { border-color: var(--accent); color: var(--ink); }
+	.chip.on {
+		border-color: var(--accent);
+		background: color-mix(in srgb, var(--accent) 16%, transparent);
+		color: var(--ink);
+	}
+	.chip .n { opacity: 0.5; font-size: 0.72rem; }
+	.chip.ask { margin-left: auto; }
+	.chip:disabled { opacity: 0.55; cursor: default; }
+
+	/* Tags on a card are themselves filters — clicking one is the fastest way
+	   to say "more like this". */
+	.tags { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.45rem; }
+	.tag {
+		font: inherit;
+		font-size: 0.65rem;
+		letter-spacing: 0.02em;
+		padding: 0.1rem 0.4rem;
+		border-radius: 5px;
+		border: 1px solid var(--border);
+		background: transparent;
+		color: var(--muted-fg);
+		cursor: pointer;
+	}
+	.tag:hover { border-color: var(--accent); color: var(--ink); }
+	.tag.on { border-color: var(--accent); color: var(--ink); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+
+	.linky {
+		font: inherit;
+		font-size: inherit;
+		background: none;
+		border: 0;
+		padding: 0;
+		color: var(--accent);
+		text-decoration: underline;
+		cursor: pointer;
+	}
 
 	.state { font-size: 0.85rem; color: var(--muted-fg); padding: 2rem 0; }
 	.state.error { color: #d66; }

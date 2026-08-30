@@ -2,6 +2,7 @@ import { json, error } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
 import { getDb } from '$lib/server/turso.js';
 import { buildPreview, dropPreviewAssets } from '$lib/server/site-preview.js';
+import { tagSite, normalizeTags, TAGS } from '$lib/server/site-tags.js';
 
 // Lab → Inspiration: the instructor's curated website gallery.
 //
@@ -16,6 +17,7 @@ import { buildPreview, dropPreviewAssets } from '$lib/server/site-preview.js';
 // itself.
 
 const BATCH = 4; // previews built per process call — each is a page fetch plus an image
+const TAG_BATCH = 6; // tags per call — one small-model round trip each, done in series
 
 /**
  * Queue a rendered screenshot for a link that publishes no og:image.
@@ -55,6 +57,9 @@ function row(r) {
 		icon: assetUrl(r.icon_key),
 		accent: r.accent ? String(r.accent) : null,
 		note: r.note ? String(r.note) : null,
+		// null = never tagged (the backfill will pick it up); [] = tagged, and
+		// Gemma found nothing in the vocabulary that fit.
+		tags: r.tags == null ? null : normalizeTags(String(r.tags)),
 		status: String(r.status),
 		error: r.error ? String(r.error) : null,
 		addedBy: r.added_by ? String(r.added_by) : null,
@@ -102,6 +107,10 @@ export async function GET({ locals }) {
 	return json({
 		sites,
 		pending: sites.filter((s) => s.status === 'pending').length,
+		untagged: sites.filter((s) => s.status === 'ready' && s.tags === null).length,
+		// The filter bar is built from the vocabulary, not from what happens to
+		// be in the gallery, so it's stable as links come and go.
+		vocabulary: TAGS.map((t) => t.id),
 		canEdit: session.user.role === 'instructor'
 	});
 }
@@ -146,6 +155,20 @@ export async function POST({ request, locals }) {
 				// couldn't read at all gets nothing — a 403 or a dead host
 				// won't screenshot any better than it unfurled.
 				if (out.status === 'ready' && !out.imageKey) await queueShot(db, url).catch(() => {});
+
+				// Tag it while we have the title and description in hand.
+				// A null back means Gemma is unreachable — leave tags NULL so
+				// the backfill retries, rather than recording "no tags".
+				const tags = await tagSite(
+					{ url, title: out.title, description: out.description, siteName: out.siteName },
+					session.user.id
+				).catch(() => null);
+				if (tags) {
+					await db.execute({
+						sql: 'UPDATE lab_websites SET tags = ? WHERE id = ?',
+						args: [tags.join(','), Number(p.id)]
+					}).catch(() => {});
+				}
 			})
 		);
 
@@ -153,6 +176,41 @@ export async function POST({ request, locals }) {
 			(await db.execute(`SELECT COUNT(*) AS n FROM lab_websites WHERE status = 'pending'`)).rows[0].n
 		);
 		return json({ processed: pending.length, remaining: left });
+	}
+
+	// ── Tag whatever hasn't been tagged ───────────────────────────────────
+	// Separate from `process` so the gallery can be filled first and tagged
+	// after, and so links added before tagging existed get picked up.
+	if (body?.action === 'tag') {
+		const rows = (await db.execute({
+			sql: `SELECT id, url, title, description, site_name FROM lab_websites
+			      WHERE tags IS NULL AND status = 'ready' ORDER BY position ASC, id ASC LIMIT ?`,
+			args: [TAG_BATCH]
+		})).rows;
+
+		let tagged = 0;
+		let unreachable = false;
+		for (const r of rows) {
+			const tags = await tagSite({
+				url: String(r.url),
+				title: r.title ? String(r.title) : null,
+				description: r.description ? String(r.description) : null,
+				siteName: r.site_name ? String(r.site_name) : null
+			}, session.user.id).catch(() => null);
+			// Gemma down: stop the batch rather than burning through every row
+			// writing nothing.
+			if (!tags) { unreachable = true; break; }
+			await db.execute({
+				sql: 'UPDATE lab_websites SET tags = ? WHERE id = ?',
+				args: [tags.join(','), Number(r.id)]
+			});
+			tagged++;
+		}
+
+		const left = Number(
+			(await db.execute(`SELECT COUNT(*) AS n FROM lab_websites WHERE tags IS NULL AND status = 'ready'`)).rows[0].n
+		);
+		return json({ tagged, remaining: left, unreachable });
 	}
 
 	// ── Add links ─────────────────────────────────────────────────────────
@@ -203,6 +261,20 @@ export async function PATCH({ request, locals }) {
 			args: [id]
 		});
 		return json({ ok: true, status: 'pending' });
+	}
+
+	// Re-tag one link: clear it and let the backfill pass pick it up again.
+	if (body?.retag) {
+		await db.execute({ sql: 'UPDATE lab_websites SET tags = NULL WHERE id = ?', args: [id] });
+		return json({ ok: true, tags: null });
+	}
+
+	// A wrong tag on a projector-facing gallery should be fixable by hand,
+	// not only by asking the model again.
+	if (body?.tags !== undefined) {
+		const tags = normalizeTags(body.tags);
+		await db.execute({ sql: 'UPDATE lab_websites SET tags = ? WHERE id = ?', args: [tags.join(','), id] });
+		return json({ ok: true, tags });
 	}
 
 	if (typeof body?.note === 'string') {
