@@ -4,6 +4,56 @@ This document is a running record of what has been attempted, what is in progres
 
 ---
 
+### 2026-08-30 — Term reset: one Fall 2026 class, one channel, enrollment open to 9/11
+- **Status**: `attempted` (applied to prod Turso + RTDB; wants one pass through
+  the signed-in app to confirm the channel and the enrollment picker read right)
+- **Why**: three classes were live and two of them said "Interactive Design
+  Concepts — Fall 2026" (`idc-fall-2026` and the App Store demo class
+  `idc-review`), plus a leftover `idc-fall-2027`. The real channel also carried
+  six months of development traffic — perf dumps, `192.168.x.x` probe links,
+  effect tests — which is what a new student would have walked into.
+- **What changed** (`scripts/reset-fall-2026.js`, dry-run by default, `--apply`
+  to write; dumps everything it deletes to a JSON backup first):
+  - `class` emptied: 776 archived messages, 8 thread replies, 86 reactions, 3
+    stars, 47 notifications, 7 file rows, and the RTDB `channels/channelMeta/
+    threads` nodes plus 88 per-user `lastRead`/`unreadCounts`/notification leaves.
+  - `newchannel` and `newnewchannel` deleted outright — Fall 2026 has exactly
+    one channel again.
+  - `idc-fall-2027` deleted: class row, `class-2027` channel and its chat, the
+    one membership, and the RTDB syllabus/pendingRequests nodes.
+  - `idc-review` term is now **Demo** (was "Fall 2026"), so the enrollment
+    picker no longer lists two identical-looking classes. It stays open with
+    `auto_approve = 1` because the App Store reviewer registers into it.
+  - `idc-fall-2026`: `enrollment_open = 1`, no start bound, `enrollment_end =
+    2026-09-11`. Approval scopes the student to the class and the sidebar lists
+    channels by `class_id`, so an approved student lands in the real `class`
+    channel with nothing else to pick.
+- **R2 objects behind the 7 deleted file rows were left in place** — the backup
+  carries their `r2_key`s, so the rows are restorable. Unreferenced, not gone.
+- **Then: the demo class was pulled out of the picker too** (`idc-review`
+  `enrollment_open = 0`). A new student now sees exactly one option, Fall 2026,
+  and the POST guard in `onboarding/class` refuses a stale form that names the
+  demo class. This does not touch the reviewer path: the demo-credentials
+  accounts are already approved members, and the Apple-native fallback below
+  keys off the class row existing, not off `enrollment_open`.
+- **Known gap, deliberately left open until the app is approved**:
+  `src/auth.js` (the `apple-native` provider only) inserts an *approved*
+  `idc-review` membership for any account with no membership at all, so native
+  "Sign in with Apple" skips the enrollment gate entirely. That exists so an App
+  Reviewer testing the Apple button doesn't hit the approval wall (Guideline
+  2.1), but it means a real student signing up on iOS with Apple lands in the
+  demo class instead of Fall 2026 — and because they arrive already approved,
+  they never see the picker to correct it. Web Google and credentials sign-ups
+  are unaffected. Fix after approval: gate the fallback on "no listed class is
+  open to join" rather than "no membership". Only one relay account has hit this
+  so far (`John Apple`, 2026-08-25, a review/test account, not a student).
+- **Two loose ends**: 9 `gemma_goals` cite messages in `class` that no longer
+  exist, so those citation links dead-end; and Sam Keene (Fall 2027's only
+  member) lost his membership, so his `onboarding_step` was set back to `class`
+  to send him to the picker rather than back through the profile form.
+
+---
+
 ### 2026-08-29 — Lab: Inspiration (curated websites, with cached previews)
 - **Status**: `attempted` (preview pipeline, API and gallery verified against
   real sites, the real Turso table and real R2; the page was driven through a
@@ -79,6 +129,20 @@ This document is a running record of what has been attempted, what is in progres
   saying so in the hint and naming the counter-case. Worth remembering when
   adding any tag whose name describes an era or a feeling rather than a
   subject — the hint has to rule out the aesthetic reading explicitly.
+- **Three views** (grid / list / WebGL tag orbit), switcher in the header,
+  remembered in localStorage. Selection is shared across all three, so you can
+  pick tags in the orbit and hit "see them" to land on a filtered grid.
+- **The orbit is three.js, dynamically imported** — 600KB that only this view
+  needs. Each tag is a body under gravity: mass is its link count and radius is
+  inverse in the count, so the busiest tags settle into a tight core and the
+  one-offs orbit the rim. Mutual repulsion stops labels stacking, which is the
+  usual failure of a moving tag cloud. Labels are canvas textures drawn once in
+  white and tinted per state, so hover/selection cost nothing.
+  Two things it needed: constants as accelerations in units/s² with dt in
+  seconds (identical motion at 60Hz and 120Hz — the first pass used per-frame
+  nudges and flung everything out of frame), and zeroing the system's net
+  momentum at startup, without which the whole cloud sails off to one side over
+  a couple of minutes.
 - **Migration bookkeeping fixed in passing**: `065_terms_acceptance.sql` had
   been applied to the schema but never recorded in `_migrations`, so the
   runner retried it, hit "duplicate column" and refused to run anything after
