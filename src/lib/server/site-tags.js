@@ -20,10 +20,14 @@ export const TAGS = [
 	{ id: 'archive', hint: 'collections, museums, libraries, preserved material' },
 	{ id: 'interactive', hint: 'you play with it in the browser — toys, demos, games' },
 	{ id: 'weird', hint: 'experimental, surprising, hard to categorise, net-art strange' },
+	{ id: 'surveillance', hint: 'watching, tracking, monitoring, privacy and being observed' },
+	{ id: 'data-mining', hint: 'harvesting, scraping, datasets built from people and their traces' },
 	{ id: 'fun', hint: 'delightful, playful, makes you smile' },
 	{ id: 'nerdy', hint: 'deep enthusiast territory, obsessive detail, niche' },
 	{ id: 'nourishing', hint: 'emotionally warm, kind, calming, restorative' },
-	{ id: 'old-web', hint: 'nostalgic or long-standing early-web site, still going (Akinator, Space Jam)' },
+	// Gemma read "skeuomorphic turntable app" as old-web. This tag is about a
+	// site's AGE, not its styling — say so, or every retro aesthetic lands here.
+	{ id: 'old-web', hint: 'genuinely OLD: built long ago and still standing (Akinator, Space Jam 1996). NOT a new site with a retro or nostalgic look' },
 	{ id: 'academic', hint: 'papers, research, universities, scholarship' },
 	{ id: 'technical', hint: 'engineering depth, systems, hard technical detail' }
 ];
