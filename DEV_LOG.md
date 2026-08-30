@@ -62,6 +62,23 @@ This document is a running record of what has been attempted, what is in progres
   `display: grid; place-items: center`, so `display:block` plus an explicit
   `width:100%` on grid children is needed or the layout collapses to a ~200px
   centred column. Second time this has bitten (see the Marquee entry).
+- **Gemma tags it, and the tags are the filter** (added same day): a FIXED
+  vocabulary of eighteen — Richard's list (art, design, tools, fun, academic,
+  technical, nerdy, nourishing, old-web, surveillance, data-mining) plus the
+  ones a design class kept implying (typography, code, reference, reading,
+  archive, interactive, weird). Free-form tags from a small model drift —
+  "type"/"typography"/"fonts" would all appear within a dozen links and the
+  filter bar would be useless. Closed list = every tag is a clickable filter,
+  and a wrong tag is visibly wrong. Links are tagged as previews are built;
+  `{action:'tag'}` backfills, six per call. A null back means the model is
+  unreachable, which leaves tags NULL for a retry rather than recording "no
+  tags". Filtering is an OR — browsing is "art or fun", not "both" — and the
+  tags on a card are themselves filters.
+- **The `old-web` lesson**: Gemma tagged Vinyl for Mac (a current app with a
+  skeuomorphic turntable) as old-web, reading retro STYLING as age. Fixed by
+  saying so in the hint and naming the counter-case. Worth remembering when
+  adding any tag whose name describes an era or a feeling rather than a
+  subject — the hint has to rule out the aesthetic reading explicitly.
 - **Migration bookkeeping fixed in passing**: `065_terms_acceptance.sql` had
   been applied to the schema but never recorded in `_migrations`, so the
   runner retried it, hit "duplicate column" and refused to run anything after
