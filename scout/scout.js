@@ -11,8 +11,22 @@
 // Politeness rules baked in: identified User-Agent, ≥1s between requests
 // to the same host, 12s timeouts, official/public APIs only.
 
+import { spawn } from 'node:child_process';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 const APP = (process.env.EATING_URL ?? 'https://eating.computer').replace(/\/$/, '');
 const TOKEN = process.env.SCOUT_TOKEN;
+
+// Page rendering (Lab → Inspiration screenshots). Optional: with no CHROME_BIN
+// the worker still does everything else, and `shot` jobs come back as errors
+// rather than taking the worker down.
+const CHROME_BIN = process.env.CHROME_BIN ?? '';
+const CHROME_LIBS = process.env.CHROME_LIBS ?? '';
+const SHOT_W = Number(process.env.SHOT_W ?? 1280);
+const SHOT_H = Number(process.env.SHOT_H ?? 800);
+const SHOT_TIMEOUT_MS = Number(process.env.SHOT_TIMEOUT_MS ?? 45000);
 const POLL_MS = Number(process.env.POLL_MS ?? 15000);
 const UA = 'eating.computer-scout/1.0 (Cooper Union class project; contact: richardyurewitch@gmail.com)';
 
@@ -513,6 +527,91 @@ async function runSearch(query) {
 	return out.filter((r) => r.url && !seen.has(r.url) && seen.add(r.url)).slice(0, 40);
 }
 
+// ── page rendering ───────────────────────────────────────────────────────
+// Chromium here runs with --no-sandbox: Ubuntu 24.04 restricts unprivileged
+// user namespaces through AppArmor, so without root its own sandbox refuses
+// to start. That is only tolerable because of what this renders — URLs an
+// instructor curated by hand, never anything a student or a stranger submits.
+// Keep it that way. Everything below is the compensating fence: no local
+// addresses, no file://, a fresh throwaway profile per run, and a hard kill.
+
+const BLOCKED_HOSTS =
+	/^(localhost|127\.|0\.|10\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|\[?::1\]?|.*\.local)$/i;
+
+function assertRenderable(target) {
+	let u;
+	try { u = new URL(target); } catch { throw new Error('not a url'); }
+	if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new Error(`refusing ${u.protocol}`);
+	if (BLOCKED_HOSTS.test(u.hostname)) throw new Error('refusing a local address');
+	return u.toString();
+}
+
+async function renderShot(target) {
+	if (!CHROME_BIN) throw new Error('no CHROME_BIN configured');
+	const url = assertRenderable(target);
+	const dir = await mkdtemp(join(tmpdir(), 'shot-'));
+	const out = join(dir, 'shot.png');
+	try {
+		await new Promise((resolve, reject) => {
+			const child = spawn(
+				CHROME_BIN,
+				[
+					'--no-sandbox',
+					'--disable-gpu',
+					'--disable-dev-shm-usage',
+					'--disable-extensions',
+					'--hide-scrollbars',
+					'--no-first-run',
+					'--force-device-scale-factor=1',
+					`--user-data-dir=${dir}/profile`,
+					`--window-size=${SHOT_W},${SHOT_H}`,
+					`--screenshot=${out}`,
+					url
+				],
+				{
+					env: {
+						...process.env,
+						...(CHROME_LIBS ? { LD_LIBRARY_PATH: CHROME_LIBS } : {}),
+						// npm/Chromium both fall over on the broken AFS home.
+						HOME: process.env.CHROME_HOME ?? process.env.HOME ?? dir
+					},
+					stdio: ['ignore', 'ignore', 'pipe']
+				}
+			);
+			let err = '';
+			child.stderr.on('data', (d) => { err += d.toString().slice(0, 400); });
+			// A page that never settles must not wedge the worker: kill it and
+			// let the job come back as an error.
+			const killer = setTimeout(() => child.kill('SIGKILL'), SHOT_TIMEOUT_MS);
+			child.on('error', (e) => { clearTimeout(killer); reject(e); });
+			child.on('close', (code) => {
+				clearTimeout(killer);
+				code === 0 ? resolve() : reject(new Error(`chrome exited ${code}: ${err.trim().slice(0, 200)}`));
+			});
+		});
+		const png = await readFile(out);
+		if (!png.length) throw new Error('empty screenshot');
+		return png;
+	} finally {
+		await rm(dir, { recursive: true, force: true }).catch(() => {});
+	}
+}
+
+// The app holds the R2 and DB credentials, so the worker just hands over bytes.
+async function deliverShot(jobId, png) {
+	const r = await fetch(`${APP}/api/lab/websites/shot?job=${jobId}`, {
+		method: 'POST',
+		headers: {
+			Authorization: `Bearer ${TOKEN}`,
+			'Content-Type': 'image/png',
+			'User-Agent': UA
+		},
+		body: png
+	});
+	if (!r.ok) throw new Error(`deliver ${r.status}`);
+	return r.json().catch(() => ({}));
+}
+
 // ── job loop ─────────────────────────────────────────────────────────────
 async function poll() {
 	const r = await fetch(`${APP}/api/scout/jobs`, {
@@ -524,6 +623,14 @@ async function poll() {
 		console.log(`[${new Date().toISOString()}] job #${job.id} (${job.kind}): ${job.query}`);
 		let payload;
 		try {
+			if (job.kind === 'shot') {
+				// Screenshots are delivered as raw bytes to their own endpoint,
+				// which also closes the job out — nothing to post back here.
+				const png = await renderShot(job.query);
+				const res = await deliverShot(job.id, png);
+				console.log(`  → shot ${png.length}b → ${res?.key ?? 'stored'}`);
+				continue;
+			}
 			if (job.kind !== 'search') throw new Error(`unknown kind: ${job.kind}`);
 			payload = { id: job.id, result: await runSearch(job.query) };
 			console.log(`  → ${payload.result.length} results`);

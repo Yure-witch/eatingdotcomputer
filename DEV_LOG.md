@@ -4,11 +4,64 @@ This document is a running record of what has been attempted, what is in progres
 
 ---
 
+### 2026-08-29 — Lab: Inspiration (curated websites, with cached previews)
+- **Status**: `attempted` (preview pipeline, API and gallery verified against
+  real sites, the real Turso table and real R2; the page was driven through a
+  temporary unauthenticated harness, so it wants one pass while signed in)
+- **What it is**: `/app/lab/websites`, titled "Inspiration" — the instructor
+  pastes links (a list, or a page of prose with URLs in it) and they become a
+  gallery. Everyone signed in reads it; only instructors change it. The route
+  is `/websites`, NOT `/inspiration`: `/app/inspiration` is already the
+  Scout/Gemma per-student feed, and they're two different things.
+- **Previews are cached, not hotlinked**: `site-preview.js` reads the Open
+  Graph card, re-encodes the image itself and puts it in R2 under
+  `site-previews/{hash}.webp`. Hotlinked OG images rot, and a gallery of
+  thirty links would otherwise fan a whole class's browsers out to thirty
+  third parties on every load.
+- **Built in batches the client drives**: pasting thirty links would mean
+  thirty page fetches in one serverless invocation — past the timeout, and
+  all-or-nothing. The add returns immediately with rows `pending`; the client
+  calls `{action:'process'}` (4 at a time, concurrent) until nothing is
+  pending, so the gallery fills in visibly and one slow site holds up only
+  itself.
+- **What the OG tier can't do**: a screenshot. `.ico` favicons can't be
+  decoded by sharp at all, which is worked around (prefer apple-touch-icon,
+  and unwrap the PNG that modern .ico files carry), but a site that publishes
+  no og:image has no picture to find. Those get a typographic card painted in
+  the site's own brand colour instead — see below.
+- **Brand colour, not `dominant`**: sharp's dominant counts every pixel, and
+  an apple-touch-icon is a small mark on a big white square, so Codrops' blue
+  logo came back white. Scoring 32×32 buckets by saturation as well as
+  frequency (dropping white padding, transparent pixels, and near-black
+  outlines unless that's all there is) gets Codrops #2135c9, Processing
+  #005eea, p5.js #d9124c. Lightness is then clamped to 0.20–0.46 so a
+  near-white or near-black mark still yields a card white type can sit on.
+- **Sites that block crawlers**: a 403/401 to the unfurl UA is usually
+  bot-blocking rather than refusal, so it retries once as a browser.
+  openprocessing.org refuses both and lands as a `failed` card that still
+  shows its hostname — a dead or walled link is a normal thing to find in a
+  reading list and shouldn't look like a bug.
+- **`<main>` shrink-wrap, again**: app.css gives every bare `<main>`
+  `display: grid; place-items: center`, so `display:block` plus an explicit
+  `width:100%` on grid children is needed or the layout collapses to a ~200px
+  centred column. Second time this has bitten (see the Marquee entry).
+- **Migration bookkeeping fixed in passing**: `065_terms_acceptance.sql` had
+  been applied to the schema but never recorded in `_migrations`, so the
+  runner retried it, hit "duplicate column" and refused to run anything after
+  it. It's a single ADD COLUMN and the column was present, so recording it was
+  bookkeeping, not schema — `npm run migrate` works again for everyone.
+
+---
+
 ### 2026-08-28 — Lab: Marquee (the ricky.now reel, with the room holding the pen)
-- **Status**: `attempted` (queue, rules, submit page and all eight looks
-  verified in dev — 18/18 on the end-to-end script, every look rendered and
-  screenshotted; the display page itself was driven through a temporary
-  unauthenticated harness, so it wants one pass while signed in)
+- **Status**: `attempted` — DEPLOYED (61ad277). Queue, rules, submit page and
+  all eight looks verified in dev (18/18 on the end-to-end script, every look
+  rendered and screenshotted), and the public half re-verified against
+  production: /m/{code} serves and subscribes live over HTTPS, the endpoint
+  returns 404 / 200 / 429 correctly, and a POST to the apex domain survives
+  the 307 to www with its body intact. The display page was driven through a
+  temporary unauthenticated harness, so it still wants one pass while signed
+  in — that's the only untested surface.
 - **What it is**: `/app/lab/marquee` puts the eight ricky.now kinetic-type
   looks on a loop and overlays a QR code. Anyone who scans it lands on the
   public `/m/{code}`, types a phrase, and picks 30s or 60s with one

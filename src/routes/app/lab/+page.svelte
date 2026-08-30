@@ -11,6 +11,16 @@
 			ready: true
 		},
 		{
+			// Route is /websites, not /inspiration — /app/inspiration is already
+			// the Scout-generated per-student feed, and these are two different
+			// things wearing one name.
+			href: '/app/lab/websites',
+			title: 'Inspiration',
+			blurb: 'Websites and pages worth your time, collected for the class — with previews.',
+			icon: 'gallery_thumbnail',
+			ready: true
+		},
+		{
 			href: '/app/lab/marquee',
 			title: 'Marquee',
 			blurb: 'Put the ricky.now kinetic-type set on the projector, and let the room change the words by QR code.',
