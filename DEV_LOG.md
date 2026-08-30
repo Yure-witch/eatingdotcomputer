@@ -24,11 +24,28 @@ This document is a running record of what has been attempted, what is in progres
   calls `{action:'process'}` (4 at a time, concurrent) until nothing is
   pending, so the gallery fills in visibly and one slow site holds up only
   itself.
-- **What the OG tier can't do**: a screenshot. `.ico` favicons can't be
-  decoded by sharp at all, which is worked around (prefer apple-touch-icon,
-  and unwrap the PNG that modern .ico files carry), but a site that publishes
-  no og:image has no picture to find. Those get a typographic card painted in
-  the site's own brand colour instead — see below.
+- **Screenshot tier: BUILT, and kahan can do it after all.** The box has no
+  browser and no root, but `apt-get download` + `dpkg -x` need neither: the
+  twenty missing library packages went into `/zooper2/richard.yurewitch/chrome/
+  root` (5MB), and Chrome-for-Testing's `chrome-headless-shell` 152.0.7977.64
+  came straight from Google's bucket (119MB). Pointed at those libs with
+  `LD_LIBRARY_PATH`, zero unresolved symbols and it renders. A link with no
+  og:image now queues a `shot` job; the worker renders it and POSTs the PNG to
+  `/api/lab/websites/shot`, which resizes it into the same R2 shape as the OG
+  images. Measured end to end: queued → running → done in 30s for two links.
+- **It runs `--no-sandbox`, and that's a real tradeoff.** Ubuntu 24.04
+  restricts unprivileged user namespaces via AppArmor, so Chromium's sandbox
+  refuses to start without root (verified: "No usable sandbox", core dumped).
+  The compensating fence is in the worker: instructor-curated URLs only, a
+  hostname blocklist for localhost/link-local/RFC1918, http(s) only, a fresh
+  throwaway profile per render, and a hard SIGKILL at 45s. This is only
+  defensible while nothing student- or stranger-submitted reaches it — if that
+  ever changes, this needs revisiting first.
+- **`.ico` can't be decoded by sharp at all**, which is worked around (prefer
+  apple-touch-icon, and unwrap the PNG that modern .ico files carry). Sites
+  that are unreachable rather than pictureless get no screenshot attempt — a
+  403 or a dead host won't render any better than it unfurled — and keep the
+  typographic card painted in the site's own brand colour.
 - **Brand colour, not `dominant`**: sharp's dominant counts every pixel, and
   an apple-touch-icon is a small mark on a big white square, so Codrops' blue
   logo came back white. Scoring 32×32 buckets by saturation as well as
