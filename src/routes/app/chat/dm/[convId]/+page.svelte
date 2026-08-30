@@ -4918,6 +4918,10 @@
 		background: #1e1e2e; color: #cdd6f4; overflow: hidden;
 		white-space: normal; word-break: normal;
 		width: 100%;
+		/* max-width as well as width: inside a fit-content bubble, `width: 100%`
+		   resolves against a parent that already grew to the code's intrinsic
+		   width, so one long line dragged the whole PAGE sideways on a phone. */
+		max-width: 100%;
 	}
 	:global(.code-block-header) {
 		display: flex; align-items: center; justify-content: space-between;
@@ -4942,7 +4946,7 @@
 		border-radius: 4px; transition: color 0.1s, background 0.1s;
 	}
 	:global(.code-copy-btn:hover) { color: #cdd6f4; background: #313244; }
-	:global(.code-body) { display: grid; grid-template-columns: auto 1fr; overflow: auto; }
+	:global(.code-body) { display: grid; grid-template-columns: auto minmax(0, 1fr); overflow: auto; }
 	:global(.code-lines) {
 		margin: 0; padding: 0.65rem 0; padding-left: 0.65rem; padding-right: 0.5rem;
 		font-size: 0.78rem; line-height: 1.55; text-align: right;

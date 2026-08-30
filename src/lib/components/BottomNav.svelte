@@ -248,6 +248,28 @@
 		.bottom-nav.five-up { --nav-inset: 8px; --nav-pad: 5px; --nav-pad-r: var(--nav-pad); }
 	}
 
+	/* Narrow phones (320-400px), EVERY slot count — not just the instructor's
+	   five. A slot needs ~66px (25px glyph + the icon-wrap's 14px-a-side pill +
+	   item padding); the 56px inset leaves 52px on a 320px screen, so the row
+	   overflowed its own bar by 66px.
+	   The approach is the one a platform tab bar uses: keep the touch targets,
+	   give the bar more of the screen, and let the decorative padding be what
+	   yields. The inset and the icon pill shrink; the glyph never does. The
+	   sliding indicator is derived from --nav-inset/--nav-pad/--slot-count, so
+	   it follows on its own — only its fixed width needs to come down with the
+	   slot it sits in. */
+	@media (max-width: 400px) {
+		.bottom-nav { --nav-inset: 12px; --nav-pad: 6px; --nav-pad-r: var(--nav-pad); }
+		.bottom-nav .icon-wrap { padding: 3px 10px; }
+		.bottom-nav .nav-item { padding: 0 0.15rem; }
+		.bottom-nav .nav-indicator { width: 64px; }
+	}
+	@media (max-width: 340px) {
+		.bottom-nav, .bottom-nav.five-up { --nav-inset: 8px; }
+		.bottom-nav .icon-wrap { padding: 3px 7px; }
+		.bottom-nav .nav-indicator { width: 54px; }
+	}
+
 	@media (max-width: 640px) {
 		.bottom-nav {
 			display: flex;
@@ -367,6 +389,9 @@
 			position: relative;
 			z-index: 1;
 			flex: 1;
+			/* Without this a flex item can't shrink past its min-content width,
+			   so the slots pushed the bar wider instead of sharing what's there. */
+			min-width: 0;
 			display: flex;
 			flex-direction: column;
 			align-items: center;

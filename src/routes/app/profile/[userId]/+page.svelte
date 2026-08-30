@@ -7,9 +7,16 @@
 	import { mountStaticEmotes } from '$lib/emote-mount.js';
 	import { popoverPos } from '$lib/popover-pos.js';
 	import { GRADIENTS, FONTS, EFFECTS, sanitizeStyle } from '$lib/profile-style.js';
+	import { getConvId } from '$lib/convId.js';
 
 	let { data } = $props();
 	const { profile, isOwnProfile, currentUserId } = data;
+
+	// Built with getConvId, never by hand: the DM route parses the id back
+	// into participants on an UNDERSCORE, and UUIDs are full of hyphens —
+	// joining with '-' produced a convId whose parse yielded neither user,
+	// so the route 403'd. (App Store rejection, 2026-08-30.)
+	const dmHref = $derived(`/app/chat/dm/${getConvId(currentUserId, profile.id)}`);
 	const { contentHtml } = createContentRenderer({ getCeMap: getCachedCustomEmojiMap });
 
 	// The live style. Starts from what the server loaded; the owner's
@@ -427,7 +434,7 @@
 				{#if isOwnProfile}
 					<button class="btn-secondary sm" onclick={() => (customizing = true)}>✨ Customize</button>
 				{:else}
-					<a class="btn-primary sm" href="/app/chat/dm/{[currentUserId, profile.id].sort().join('-')}">Message</a>
+					<a class="btn-primary sm" href={dmHref}>Message</a>
 				{/if}
 			</span>
 		</div>
@@ -481,7 +488,7 @@
 						</button>
 						<a class="btn-secondary" href="/app/profile/edit">Edit profile</a>
 					{:else}
-						<a class="btn-primary" href="/app/chat/dm/{[currentUserId, profile.id].sort().join('-')}">Message</a>
+						<a class="btn-primary" href={dmHref}>Message</a>
 					{/if}
 				</div>
 			</div>
@@ -789,7 +796,13 @@
 	}
 
 	.profile-meta {
-		flex: 1;
+		/* A flex-BASIS, not just `flex: 1`: with a bare `flex: 1` + `min-width: 0`
+		   this column shrinks without limit, so on a narrow phone the avatar and
+		   the Message button ate the row and left the name ~86px to render 145px
+		   of text — which spilled straight across the button (App Store
+		   rejection, 2026-08-30). With a basis, .profile-top's flex-wrap kicks in
+		   first and the actions drop to their own line instead. */
+		flex: 1 1 12rem;
 		min-width: 0;
 		display: flex;
 		flex-direction: column;
@@ -801,6 +814,7 @@
 		align-items: center;
 		gap: 0.75rem;
 		flex-wrap: wrap;
+		min-width: 0;
 	}
 
 	h1 {
@@ -809,6 +823,10 @@
 		margin: 0;
 		color: var(--ink);
 		line-height: 1.15;
+		/* Belt and braces for the case a basis can't fix: one unbroken
+		   name longer than the column breaks mid-word rather than spilling. */
+		min-width: 0;
+		overflow-wrap: anywhere;
 	}
 
 	/* Signature expression: emotes inside size at 1.4em of the wrapper,
@@ -865,6 +883,11 @@
 		gap: 0.5rem;
 		flex-shrink: 0;
 		flex-wrap: wrap;
+		/* flex-shrink: 0 keeps the buttons their natural size, which on a 320px
+		   phone made the pair ("✨ Customize" + "Edit profile") 270px wide
+		   starting at x=65 — 15px past the screen. Capping at the row width lets
+		   the pair wrap internally instead of running off the edge. */
+		max-width: 100%;
 	}
 
 	.btn-primary {

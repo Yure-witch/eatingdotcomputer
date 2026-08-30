@@ -424,7 +424,13 @@
 		margin: 0 auto;
 		box-sizing: border-box;
 	}
-	.page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 1.25rem; }
+	/* wrap + min-width: the title block and the view toggles together need
+	   346px, so on a 320px phone the toggles ran 50px off the right edge and
+	   took the whole page's horizontal scroll with them. Wrapping drops them
+	   under the title instead; min-width:0 lets the title column shrink rather
+	   than holding the row open at its content width. */
+	.page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 1.25rem; flex-wrap: wrap; }
+	.page-header > div { min-width: 0; }
 	h1 { font-family: 'Avara', serif; font-size: 2rem; font-weight: 400; margin: 0 0 0.25rem; color: var(--ink); }
 	.subtitle { font-size: 0.85rem; color: var(--muted-fg); margin: 0; }
 	.back { font-size: 0.8rem; color: var(--muted-fg); text-decoration: none; white-space: nowrap; }
