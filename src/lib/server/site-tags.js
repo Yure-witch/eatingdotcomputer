@@ -11,7 +11,11 @@ import { resolveAiCreds } from '$lib/server/ai-creds.js';
 
 export const TAGS = [
 	{ id: 'art', hint: 'artwork, artists, exhibitions, net art as art' },
-	{ id: 'design', hint: 'graphic/interaction/product design, studios, portfolios' },
+	{ id: 'design', hint: 'graphic/interaction/product design as a subject or field' },
+	// Sits next to `design` and has to be told apart from it: design is the
+	// field, portfolio is someone showing their OWN work. Half the gallery was
+	// collapsing into a single `design` tag without this.
+	{ id: 'portfolio', hint: "a person's or studio's own work — personal site, portfolio, CV" },
 	{ id: 'typography', hint: 'type design, foundries, lettering, typesetting' },
 	{ id: 'code', hint: 'creative coding, programming, generative work' },
 	{ id: 'tools', hint: 'something you USE to make or do something' },
