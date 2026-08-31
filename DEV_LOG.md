@@ -157,6 +157,52 @@ This document is a running record of what has been attempted, what is in progres
 
 ---
 
+### 2026-08-31 — Rank It: realtime over RTDB, write-ins on, and the signed-in visual pass
+- **Status**: `attempted` (shipped and driven end-to-end in production; awaiting
+  the user's own confirmation)
+- **Write-ins default ON** for the favorites format (migration 072 switches
+  existing open polls over). A pool people can add to is the normal case; an
+  instructor who doesn't want it unticks the box.
+- **Everything is realtime now**, not just the response count. Ballots,
+  write-ins, removals and open/close all announce themselves.
+  - TWO nodes, because the two audiences can't share one. `pollLive/{pollId}`
+    is `auth != null` for the app; `pollRoom/{shareCode}` is world-readable so a
+    phone that scanned the QR — which has no Firebase auth at all — can watch.
+  - The public node is keyed by SHARE CODE, not poll id: ids are sequential, so
+    a world-readable `pollLive/1,2,3…` would let anyone walk every poll's
+    response count. The code is unguessable and already grants REST access to
+    the same poll, so keying on it publishes nothing new.
+  - Both carry a REVISION, not the tally. Scores stay server-computed so there
+    is one implementation of the scoring, and so "no tally until you've ranked"
+    is still applied per-viewer rather than published to the room. Polling drops
+    to a 45s floor for when RTDB is unreachable.
+  - Verified: exactly one push per mutation, revisions strictly increasing, so
+    a watcher never refetches twice for one change.
+- **The signed-in visual pass found two real bugs**, which is why it was worth
+  doing:
+  1. **Write-ins were invisible to anyone who hadn't submitted.** `keepOrder`
+     froze the POOL along with the picks. In the favorites format the working
+     answer is `favItems`/`leastItems` and `order` is only the pool, so the pool
+     can always refresh; only the full format needs its order held mid-drag.
+     Caught by adding a write-in from a phone and watching it never arrive on
+     the instructor's screen.
+  2. **The least-favorite bar was near-white.** It used the theme's error
+     colour, which in a dark theme is a light pink intended for TEXT — as a
+     filled bar beside the equally light accent, two pale bars read as the same
+     thing pointing opposite ways. Now a dimmed ink fill, which is the accent's
+     counterpart in both themes. (Error TEXT keeps the theme colour: light-on-
+     dark is correct there.)
+- **Confirmed working in production** with three guest ballots and a guest
+  write-in against a throwaway poll: live count climbing without a reload,
+  results ordered 1st–7th with ♥/✕ counts, the write-in ranked 4th and labelled
+  "added by Grace Hopper", and the per-person panel listing each ballot with
+  numbered picks and a QR tag. Header offset holds in both the normal and
+  Present views (measured `--header-h` 70px, content at 102px). Throwaway poll
+  deleted; no orphan rows or RTDB nodes left.
+- **Still unconfirmed**: nobody has run this with a real class yet.
+
+---
+
 ### 2026-08-30 — Lab hidden from App Store review accounts
 - **Status**: `attempted` (gate query checked against every account in prod;
   not yet seen through a signed-in reviewer session)
