@@ -157,6 +157,45 @@ This document is a running record of what has been attempted, what is in progres
 
 ---
 
+### 2026-08-31 — Universal Links: web half live, app half deferred
+- **Status**: `attempted` (AASA file live and verified in production; the app
+  side is deliberately NOT built — waiting on App Store approval)
+- **Question**: can an eating.computer link open in the iOS app? Today, no. A
+  link opens Safari. Three pieces are needed and none were present: the
+  `apple-app-site-association` file, the `com.apple.developer
+  .associated-domains` entitlement, and an `appUrlOpen` handler.
+- **Done now**: `static/.well-known/apple-app-site-association`, served with an
+  explicit `application/json` content type via a `vercel.json` header (a file
+  with no extension goes out as octet-stream otherwise, and Apple requires
+  JSON). Claims `/app/*`, `/r/*` and `/m/*`; explicitly excludes `/api/*`,
+  `/.well-known/*`, and `/privacy` + `/terms` — App Review opens those two from
+  the store listing and they belong in a browser. Inert until an app claims it,
+  and Apple's CDN caches it, so it's better live before the build than after.
+- **The trap, verified by curl**: `www.eating.computer` serves it 200 as
+  `application/json`, but the APEX `eating.computer` answers **307 → www**, and
+  **Apple does not follow redirects when fetching AASA**. So the entitlement
+  must read `applinks:www.eating.computer`. Writing the apex would fail
+  validation silently, with nothing logged anywhere to explain it.
+- **Deferred until the app is approved** (the user's call, and the right one):
+  adding Associated Domains changes the provisioning profile and needs the
+  capability enabled on the App ID in the developer portal — a misconfiguration
+  there breaks signing on the very build being pushed through review.
+- **When it's time, three steps**:
+  1. `ios/App/App/App.entitlements` → add
+     `com.apple.developer.associated-domains` = `["applinks:www.eating.computer"]`,
+     and enable Associated Domains on App ID `computer.eating.app`
+     (team `2DA4GWZYAS`) in the developer portal, then refresh the profile.
+  2. Add an `App.addListener('appUrlOpen', …)` handler that pulls the path off
+     the incoming URL and navigates. **This shell is unusual**: it loads the
+     live site through `server.url`, so the webview is already on
+     eating.computer — the handler only has to route, not boot anything.
+  3. While in there, check `WKAppBoundDomains` in Info.plist. It currently
+     lists `eating.computer` while `server.url` and the applinks domain are
+     both `www.eating.computer`. It evidently works as-is, so this is a
+     look-don't-touch, but it's the kind of host mismatch that bites.
+
+---
+
 ### 2026-08-31 — Rank It: touch drag, animation, and first-vs-live answers
 - **Status**: `attempted` (shipped and driven on production; awaiting the
   user's own confirmation)
