@@ -1,5 +1,19 @@
 <script>
 	import RankList from './RankList.svelte';
+	import { flip } from 'svelte/animate';
+	import { cubicOut } from 'svelte/easing';
+	import { haptic } from '$lib/native.js';
+
+	// Movement is animated with FLIP only — deliberately NOT a crossfade
+	// between the pool and the two lists.
+	//
+	// A crossfade flies an absolutely-positioned CLONE between the lists, and
+	// if that animation never finishes it leaves the row stranded at opacity 0
+	// — which is what a backgrounded tab, a phone locking mid-tap, or a
+	// throttled rAF all produce. FLIP only ever animates an element from a
+	// transform back to the position it already occupies, so an interrupted
+	// one leaves a visible row in the right place. Same readable motion, and
+	// the failure mode is "not animated" rather than "gone".
 
 	// Pick your favorites and your least favorites out of a pool, and rank each
 	// end. Shared by the signed-in poll page and the public QR page.
@@ -50,23 +64,33 @@
 	const favMet = $derived(favItems.length >= minFav);
 	const leastMet = $derived(leastItems.length >= minLeast);
 
+	// `chosen` guard, not just `disabled`. Two taps landing on the same pick
+	// button before the list re-renders would add the item twice and blow up
+	// the keyed each with each_key_duplicate — and double-tapping a small
+	// target is exactly what a phone invites. (Found the hard way: an earlier
+	// crossfade kept the leaving row in the DOM long enough to make this easy
+	// to hit.)
 	function addFav(item) {
-		if (disabled) return;
+		if (disabled || chosen.has(item.id)) return;
 		favItems = [...favItems, item];
 		onchange();
+		haptic('light');
 	}
 	function addLeast(item) {
-		if (disabled) return;
+		if (disabled || chosen.has(item.id)) return;
 		leastItems = [...leastItems, item];
 		onchange();
+		haptic('light');
 	}
 	function dropFav(item) {
 		favItems = favItems.filter((x) => x.id !== item.id);
 		onchange();
+		haptic('light');
 	}
 	function dropLeast(item) {
 		leastItems = leastItems.filter((x) => x.id !== item.id);
 		onchange();
+		haptic('light');
 	}
 </script>
 
@@ -78,7 +102,7 @@
 	{#if pool.length}
 		<ul class="pool">
 			{#each pool as item (item.id)}
-				<li>
+				<li animate:flip={{ duration: 220, easing: cubicOut }}>
 					<span class="label">
 						{item.label}
 						{#if item.addedByName}<span class="by">added by {item.addedByName}</span>{/if}
@@ -186,7 +210,10 @@
 		background: transparent; color: var(--muted-fg); cursor: pointer;
 		transition: border-color 0.12s, color 0.12s;
 	}
-	.pick .msi { font-size: 1.05rem; }
+	.pick .msi { font-size: 1.05rem; transition: transform 0.12s cubic-bezier(0.22, 1, 0.36, 1); }
+	.pick:active { transform: scale(0.9); }
+	.pick.fav:active { border-color: var(--accent); color: var(--accent); }
+	.pick.least:active { border-color: var(--ink); color: var(--ink); }
 	.pick.fav:hover { border-color: var(--accent); color: var(--accent); }
 	.pick.least:hover { border-color: var(--md-sys-color-error, #b3261e); color: var(--md-sys-color-error, #b3261e); }
 	.pick:disabled { opacity: 0.4; cursor: default; }
