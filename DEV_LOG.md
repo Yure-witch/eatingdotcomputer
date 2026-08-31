@@ -114,7 +114,42 @@ This document is a running record of what has been attempted, what is in progres
   shape), then the public picker driven at 375px: pool shrinking, both floors
   gating the submit button, × returning an item to the pool and re-locking
   submit, send, and the results order. All test rows and beacons removed.
+- **Follow-ups the same session**:
+  - **Rank position is explicit.** The favorites tally sorted correctly but
+    showed no position, so "which one is number 1" was implicit in the order.
+    Added an ordinal column, accented first place, and numbered every pick in
+    the per-person panel. On the public page the numbers needed to be explicit
+    spans: `display:flex` on an `<li>` drops `display:list-item`, and takes the
+    `<ol>` marker with it.
+  - **Present mode sat under the header.** `.presenting main` overrode
+    `padding-top` to `2rem`, but the app header is `position:fixed` and still
+    there in present mode — so the title and the QR were behind it. Restored
+    the `--header-h` offset and anchored the QR below it. Base fallback raised
+    52px → 64px, which is nearer the real height once a class is in the header.
+  - **Write-ins** (`allow_write_ins`, migration 071): participants add their
+    own things to the pool. Duplicates fold on case and spacing — a room of
+    thirty produces "Blue Train"/"blue train"/"Blue  Train " within a minute,
+    and three bars that should be one make the tally wrong, not just untidy;
+    a duplicate quietly reuses the existing item rather than erroring, since
+    from the adder's side their thing IS in the pool either way. Pool capped at
+    40. Instructor can bin junk, and the item records who added it.
+  - **Returning visitors**: the guest ballot already came back from the server,
+    but only after the fetch. `ec:rank:answered` now records the code, name and
+    title locally so the page can say "you already answered this" on the first
+    paint. The ballot itself is still server-side; this is only what makes it
+    visible immediately.
+  - Public page polls every 15s while open, so other people's write-ins appear
+    without disturbing picks in progress.
+- **Shipped to prod** (56796a2): pushed to main, Vercel deployed, and the RTDB
+  rules released with `firebase deploy --only database` (the Firebase CLI
+  crashes on the local Node v26 — `buffer-equal-constant-time` reads
+  `SlowBuffer.prototype`; run it under nvm's v22.16.0). Verified against
+  production: the public route serves, the public API 404s an unknown code
+  without auth, `/app/lab/polls` still redirects and `/api/lab/polls` still
+  401s, and a read-only fetch of the real poll returned a shuffled pool with
+  results correctly withheld.
 - **Files**: `migrations/070_lab_poll_favorites.sql`,
+  `migrations/071_lab_poll_write_ins.sql`,
   `src/lib/server/{lab-polls.js,poll-live.js}`,
   `src/lib/components/{RankList.svelte,FavoritesPicker.svelte}`,
   `database.rules.json`, both poll API routes, `src/routes/api/rank/[code]/`,
