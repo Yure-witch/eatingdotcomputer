@@ -135,6 +135,12 @@
         ".read": "auth != null",
         ".write": "false"
       }
+    },
+    "pollRoom": {
+      "$shareCode": {
+        ".read": true,
+        ".write": false
+      }
     }
   }
 }

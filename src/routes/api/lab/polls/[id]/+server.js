@@ -307,8 +307,12 @@ export async function PATCH({ params, request, locals }) {
 			args: [body?.on ? 1 : 0, id]
 		});
 	} else if (body?.action === 'unshare') {
-		// The code stops working; ballots already cast through it stay.
+		// The code stops working; ballots already cast through it stay. The
+		// public room goes with it — otherwise a phone still holding the code
+		// keeps a live node to watch.
+		const old = (await db.execute({ sql: `SELECT share_code FROM lab_polls WHERE id = ?`, args: [id] })).rows[0];
 		await db.execute({ sql: `UPDATE lab_polls SET share_code = NULL WHERE id = ?`, args: [id] });
+		await clearPollLive(id, old?.share_code ? String(old.share_code) : null);
 	}
 
 	if (typeof body?.title === 'string' && body.title.trim()) {
@@ -326,6 +330,10 @@ export async function PATCH({ params, request, locals }) {
 	if (body?.reveal === 'always' || body?.reveal === 'closed') {
 		await db.execute({ sql: `UPDATE lab_polls SET reveal = ? WHERE id = ?`, args: [body.reveal, id] });
 	}
+	// One announcement covering whatever this request changed — status, reveal,
+	// text, items — so every open page refetches rather than only the changes
+	// that happen to move the ballot count.
+	await bumpPollLive(id);
 
 	// Item edits keep the ids of rows that survive, so ballots already cast
 	// stay meaningful — a typo fix must not reset the class's answers.
@@ -370,6 +378,7 @@ export async function DELETE({ params, locals }) {
 	if (!db) error(503, 'Database unavailable');
 
 	const id = Number(params.id);
+	const gone = (await db.execute({ sql: `SELECT share_code FROM lab_polls WHERE id = ?`, args: [id] })).rows[0];
 	// Explicit child deletes: ON DELETE CASCADE only fires with the
 	// foreign_keys pragma on, which we can't count on over libsql.
 	await db.batch([
@@ -377,6 +386,6 @@ export async function DELETE({ params, locals }) {
 		{ sql: `DELETE FROM lab_poll_items   WHERE poll_id = ?`, args: [id] },
 		{ sql: `DELETE FROM lab_polls        WHERE id = ?`,      args: [id] }
 	]);
-	await clearPollLive(id);
+	await clearPollLive(id, gone?.share_code ? String(gone.share_code) : null);
 	return json({ ok: true });
 }

@@ -2,6 +2,8 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import RankList from '$lib/components/RankList.svelte';
+	import { db as rtdb } from '$lib/firebase.js';
+	import { ref, onValue } from 'firebase/database';
 	import FavoritesPicker from '$lib/components/FavoritesPicker.svelte';
 
 	// PUBLIC — no account, no login. Someone scanned a QR off a screen, so the
@@ -142,16 +144,37 @@
 	}
 
 	let refresh;
+	let unsubLive;
+	let lastRev = 0;
 	onMount(() => {
 		guestId = deviceId();
 		remembered = readMemory();
 		load();
-		// Guests aren't signed in to Firebase, so there's no live wire here —
-		// a slow poll is enough to notice other people's write-ins.
+
+		// `pollRoom/{code}` is world-readable precisely so a phone with no
+		// account can watch it. It carries a revision, not the tally: when
+		// anything changes — someone's ballot, a write-in, a removal, the poll
+		// closing — the revision moves and we refetch, which keeps the
+		// results-gating server-side instead of publishing scores to the room.
+		try {
+			unsubLive = onValue(ref(rtdb, `pollRoom/${code}`), (snap) => {
+				const v = snap.val();
+				if (!v) return;
+				const rev = Number(v.rev ?? 0);
+				if (rev && rev !== lastRev) {
+					lastRev = rev;
+					// keepPicks: someone else's ballot landing must never disturb
+					// the picks this person is still making.
+					load({ keepPicks: true });
+				}
+			});
+		} catch { /* no RTDB — the floor below still catches up */ }
+
+		// A floor, not the mechanism: covers RTDB being unreachable.
 		refresh = setInterval(() => {
 			if (document.visibilityState === 'visible' && poll?.status === 'open') load({ keepPicks: true });
-		}, 15000);
-		return () => clearInterval(refresh);
+		}, 45000);
+		return () => { clearInterval(refresh); unsubLive?.(); };
 	});
 </script>
 

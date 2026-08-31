@@ -1,35 +1,67 @@
 import { getAdminDb } from '$lib/server/firebase-admin.js';
 import { getDb } from '$lib/server/turso.js';
 
-// Live response counts for Lab → Rank It.
+// Live state for Lab → Rank It, over RTDB.
 //
-// RTDB carries a BEACON, not the tally: `pollLive/{pollId}` is just the
-// response count and a timestamp. The instructor's page watches it, shows the
-// number as it climbs, and refetches the real results from the API when it
-// moves.
+// TWO nodes, because the two audiences can't share one:
 //
-// The scores stay server-side deliberately. Putting them in RTDB would mean a
-// second implementation of the tally to keep in step with the first, and it
-// would publish results to every signed-in client regardless of whether the
-// instructor has revealed them — the one thing the reveal rule exists to stop.
+//   pollLive/{pollId}    .read: auth != null   — the signed-in app
+//   pollRoom/{shareCode} .read: true           — phones that scanned the QR
+//
+// Guests have no Firebase auth at all, so they can't read an authed path; and
+// the public node can't be keyed by poll id, because ids are sequential and a
+// world-readable `pollLive/1,2,3…` would let anyone walk every poll's response
+// count. The share code is unguessable and is already the thing that grants
+// access to the poll over REST, so keying the public node by it grants nothing
+// new.
+//
+// Both carry a REVISION, not the tally: `rev` moves on every change — a
+// ballot, a write-in, a removal, opening or closing — and watchers refetch.
+// The scores stay server-computed so there's ONE implementation of the
+// scoring, and so the "no tally until you've ranked" rule is still applied
+// per-viewer by the endpoint instead of being published to the room.
+async function publish(pollId) {
+	const db = getDb();
+	if (!db) return;
+	const row = (await db.execute({
+		sql: `SELECT p.share_code, p.status,
+		             (SELECT COUNT(*) FROM lab_poll_ballots b WHERE b.poll_id = p.id) AS n,
+		             (SELECT COUNT(*) FROM lab_poll_items  i WHERE i.poll_id = p.id) AS items
+		      FROM lab_polls p WHERE p.id = ?`,
+		args: [pollId]
+	})).rows[0];
+	if (!row) return;
+
+	const rtdb = getAdminDb();
+	const state = {
+		rev: Date.now(),
+		n: Number(row.n),
+		items: Number(row.items),
+		status: String(row.status)
+	};
+	const writes = [rtdb.ref(`pollLive/${pollId}`).set(state)];
+	// Only shared polls get a public room, and unsharing tears it down.
+	if (row.share_code) writes.push(rtdb.ref(`pollRoom/${String(row.share_code)}`).set(state));
+	await Promise.all(writes);
+}
+
+/** Announce that something about this poll changed. Never throws. */
 export async function bumpPollLive(pollId) {
 	try {
-		const db = getDb();
-		if (!db) return;
-		const n = Number((await db.execute({
-			sql: `SELECT COUNT(*) AS n FROM lab_poll_ballots WHERE poll_id = ?`,
-			args: [pollId]
-		})).rows[0].n);
-		await getAdminDb().ref(`pollLive/${pollId}`).set({ n, at: Date.now() });
+		await publish(pollId);
 	} catch {
-		// A ballot that counted is not allowed to fail because the beacon
-		// didn't. The page's poll-every-few-seconds fallback covers this.
+		// A ballot that counted is not allowed to fail because the announcement
+		// didn't. Every page keeps a slow refetch as a floor.
 	}
 }
 
-/** Drop a deleted poll's beacon, so RTDB doesn't accumulate nodes for polls that no longer exist. */
-export async function clearPollLive(pollId) {
+/** Drop a poll's live nodes — on delete, or when sharing is turned off. */
+export async function clearPollLive(pollId, shareCode = null) {
 	try {
-		await getAdminDb().ref(`pollLive/${pollId}`).remove();
-	} catch { /* the poll is already gone from Turso; a stale beacon is harmless */ }
+		const rtdb = getAdminDb();
+		await Promise.all([
+			rtdb.ref(`pollLive/${pollId}`).remove(),
+			shareCode ? rtdb.ref(`pollRoom/${shareCode}`).remove() : Promise.resolve()
+		]);
+	} catch { /* a stale node is harmless; nothing reads it without the poll */ }
 }

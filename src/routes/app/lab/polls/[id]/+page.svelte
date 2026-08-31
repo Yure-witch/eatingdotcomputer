@@ -194,19 +194,22 @@
 				const v = snap.val();
 				if (!v) return;
 				liveCount = Number(v.n ?? 0);
-				const at = Number(v.at ?? 0);
-				if (at && at !== lastBeacon) {
-					lastBeacon = at;
+				// `rev` moves on ANY change — a ballot, a write-in, a removal,
+				// the poll opening or closing — not just the ones that shift
+				// the count.
+				const rev = Number(v.rev ?? v.at ?? 0);
+				if (rev && rev !== lastBeacon) {
+					lastBeacon = rev;
 					if (!ranker?.dragging()) load({ keepOrder: dirty });
 				}
 			});
 		} catch { /* no RTDB — the fallback below still keeps it moving */ }
 
-		// Slow fallback for when RTDB is unreachable, and for changes that don't
-		// move the ballot count (someone reopening or closing the poll).
+		// A floor, not the mechanism: RTDB now announces every change, so this
+		// only covers RTDB being unreachable.
 		timer = setInterval(() => {
 			if (!ranker?.dragging() && document.visibilityState === 'visible') load({ keepOrder: dirty });
-		}, 20000);
+		}, 45000);
 		window.addEventListener('keydown', onKey);
 	});
 	onDestroy(() => {
