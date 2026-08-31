@@ -77,15 +77,25 @@
 			responseCount = out.responseCount ?? 0;
 			respondents = out.respondents;
 			canEdit = !!out.canEdit;
-			// A background refresh must never yank the list out from under
-			// someone mid-drag — their arrangement is unsaved work.
-			if (!keepOrder) {
+			// What `keepOrder` protects differs by format, because the two
+			// formats keep the viewer's work in different places.
+			//
+			// 'favorites': the working answer is favItems/leastItems, and `order`
+			// is just the POOL. The pool must always refresh, or a write-in
+			// someone else adds never appears for anyone who hasn't submitted
+			// yet — which is most of the room, most of the time.
+			//
+			// 'full': the working answer IS `order`, so a refresh mid-drag would
+			// throw away an arrangement they haven't sent.
+			if (out.poll?.format === 'favorites') {
 				order = out.items ?? [];
-				if (out.poll?.format === 'favorites') {
+				if (!keepOrder) {
 					const byId = new Map((out.items ?? []).map((i) => [i.id, i]));
 					favItems = (out.myRanking ?? []).map((id) => byId.get(id)).filter(Boolean);
 					leastItems = (out.myLeast ?? []).map((id) => byId.get(id)).filter(Boolean);
 				}
+			} else if (!keepOrder) {
+				order = out.items ?? [];
 			}
 			loadError = '';
 		} catch (e) {
