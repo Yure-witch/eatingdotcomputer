@@ -176,13 +176,17 @@ export async function POST({ params, request }) {
 		const least = Array.isArray(body?.rankingLeast) ? body.rankingLeast.map(Number) : [];
 		const bad = checkFavoritesBallot(sent, least, itemIds, Number(poll.min_favorites), Number(poll.min_least));
 		if (bad) error(400, bad);
+		// first_* on INSERT only — never in DO UPDATE. See migration 073.
 		await db.execute({
-			sql: `INSERT INTO lab_poll_ballots (poll_id, user_id, ranking, ranking_least, guest_name, submitted_at)
-			      VALUES (?, ?, ?, ?, ?, datetime('now'))
+			sql: `INSERT INTO lab_poll_ballots
+			        (poll_id, user_id, ranking, ranking_least, first_ranking, first_ranking_least,
+			         first_at, guest_name, submitted_at)
+			      VALUES (?, ?, ?, ?, ?, ?, datetime('now'), ?, datetime('now'))
 			      ON CONFLICT (poll_id, user_id)
 			      DO UPDATE SET ranking = excluded.ranking, ranking_least = excluded.ranking_least,
 			                    guest_name = excluded.guest_name, submitted_at = excluded.submitted_at`,
-			args: [pollId, guestId, JSON.stringify(sent), JSON.stringify(least), name]
+			args: [pollId, guestId, JSON.stringify(sent), JSON.stringify(least),
+			       JSON.stringify(sent), JSON.stringify(least), name]
 		});
 		await bumpPollLive(pollId);
 		return json({ ok: true });
@@ -196,12 +200,13 @@ export async function POST({ params, request }) {
 	if (!complete) error(409, 'This poll changed — reload and rank it again');
 
 	await db.execute({
-		sql: `INSERT INTO lab_poll_ballots (poll_id, user_id, ranking, guest_name, submitted_at)
-		      VALUES (?, ?, ?, ?, datetime('now'))
+		sql: `INSERT INTO lab_poll_ballots
+		        (poll_id, user_id, ranking, first_ranking, first_at, guest_name, submitted_at)
+		      VALUES (?, ?, ?, ?, datetime('now'), ?, datetime('now'))
 		      ON CONFLICT (poll_id, user_id)
 		      DO UPDATE SET ranking = excluded.ranking, guest_name = excluded.guest_name,
 		                    submitted_at = excluded.submitted_at`,
-		args: [pollId, guestId, JSON.stringify(sent), name]
+		args: [pollId, guestId, JSON.stringify(sent), JSON.stringify(sent), name]
 	});
 	await bumpPollLive(pollId);
 

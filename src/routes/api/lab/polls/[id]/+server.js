@@ -60,7 +60,8 @@ export async function GET({ params, locals }) {
 	const isFavorites = String(poll.format ?? 'full') === 'favorites';
 
 	const ballots = (await db.execute({
-		sql: `SELECT user_id, ranking, ranking_least FROM lab_poll_ballots WHERE poll_id = ?`,
+		sql: `SELECT user_id, ranking, ranking_least, first_ranking, first_ranking_least
+		      FROM lab_poll_ballots WHERE poll_id = ?`,
 		args: [id]
 	})).rows;
 
@@ -98,23 +99,37 @@ export async function GET({ params, locals }) {
 		isInstructor || poll.status === 'closed' || (poll.reveal === 'always' && !!mineRow);
 
 	let results = null;
+	let firstResults = null;
+	let changedCount = 0;
 	if (canSeeResults) {
-		const parsed = [];
-		for (const b of ballots) {
-			try {
-				// [] fallback here, unlike the student's own ballot above: an
-				// item added after some people voted must NOT be appended to
-				// their ballots, or every earlier voter is recorded as ranking
-				// it last. `votes`/`mentions` reports what it actually stands on.
-				const fav = reconcile(JSON.parse(String(b.ranking)), itemIds, []);
-				if (isFavorites) {
-					parsed.push({ fav, least: reconcile(JSON.parse(String(b.ranking_least ?? '[]')), itemIds, []) });
-				} else {
-					parsed.push(fav);
-				}
-			} catch { /* skip a corrupt ballot */ }
-		}
-		results = isFavorites ? tallyFavorites(items, parsed) : tally(items, parsed);
+		// Two tallies from the same rows: where the room landed, and what it
+		// said before anyone could see where it was landing.
+		const read = (rankCol, leastCol) => {
+			const parsed = [];
+			for (const b of ballots) {
+				try {
+					// [] fallback here, unlike the student's own ballot above: an
+					// item added after some people voted must NOT be appended to
+					// their ballots, or every earlier voter is recorded as ranking
+					// it last. `votes`/`mentions` reports what it actually stands on.
+					const fav = reconcile(JSON.parse(String(b[rankCol] ?? '[]')), itemIds, []);
+					if (isFavorites) {
+						parsed.push({ fav, least: reconcile(JSON.parse(String(b[leastCol] ?? '[]')), itemIds, []) });
+					} else {
+						parsed.push(fav);
+					}
+				} catch { /* skip a corrupt ballot */ }
+			}
+			return parsed;
+		};
+		const now = read('ranking', 'ranking_least');
+		const first = read('first_ranking', 'first_ranking_least');
+		results = isFavorites ? tallyFavorites(items, now) : tally(items, now);
+		firstResults = isFavorites ? tallyFavorites(items, first) : tally(items, first);
+		const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+		changedCount = ballots.filter(
+			(b) => !same(b.ranking, b.first_ranking) || !same(b.ranking_least, b.first_ranking_least)
+		).length;
 	}
 
 	// So the instructor knows whether to keep waiting or close it.
@@ -133,11 +148,16 @@ export async function GET({ params, locals }) {
 		})).rows;
 		const label = (ids) => ids.map((i) => byId.get(i)?.label).filter(Boolean);
 		respondents = rows.map((r) => {
-			let fav = [], least = [];
-			try { fav = label(reconcile(JSON.parse(String(r.ranking)), itemIds, [])); } catch { /* corrupt ballot */ }
-			if (isFavorites) {
-				try { least = label(reconcile(JSON.parse(String(r.ranking_least ?? '[]')), itemIds, [])); } catch { /* corrupt ballot */ }
-			}
+			const read = (col) => {
+				try { return label(reconcile(JSON.parse(String(r[col] ?? '[]')), itemIds, [])); }
+				catch { return []; }
+			};
+			const fav = read('ranking');
+			const least = isFavorites ? read('ranking_least') : [];
+			const firstFav = read('first_ranking');
+			const firstLeast = isFavorites ? read('first_ranking_least') : [];
+			const same = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+			const changed = !same(fav, firstFav) || (isFavorites && !same(least, firstLeast));
 			return {
 				name: String(r.account_name ?? r.guest_name ?? 'Someone'),
 				guest: String(r.user_id).startsWith('guest:'),
@@ -145,7 +165,14 @@ export async function GET({ params, locals }) {
 				// In 'full' format this is the whole ordering; in 'favorites'
 				// it's their favorites, with `least` alongside.
 				ranked: fav,
-				least: isFavorites ? least : null
+				least: isFavorites ? least : null,
+				// Only sent when it differs — the interesting case is the person
+				// who moved after seeing the room, and sending an identical copy
+				// for everyone else just makes that harder to spot.
+				changed,
+				firstRanked: changed ? firstFav : null,
+				firstLeast: changed && isFavorites ? firstLeast : null,
+				firstAt: r.first_at ? String(r.first_at) : null
 			};
 		});
 	}
@@ -157,6 +184,8 @@ export async function GET({ params, locals }) {
 		myLeast,
 		responseCount: ballots.length,
 		results,
+		firstResults,
+		changedCount,
 		respondents,
 		canEdit: isInstructor
 	});
@@ -181,13 +210,17 @@ export async function POST({ params, request, locals }) {
 		const least = Array.isArray(body?.rankingLeast) ? body.rankingLeast.map(Number) : [];
 		const bad = checkFavoritesBallot(sent, least, itemIds, Number(poll.min_favorites), Number(poll.min_least));
 		if (bad) error(400, bad);
+		// first_* is set on INSERT and deliberately absent from DO UPDATE, so a
+		// revision never overwrites what they said before they saw the tally.
 		await db.execute({
-			sql: `INSERT INTO lab_poll_ballots (poll_id, user_id, ranking, ranking_least, submitted_at)
-			      VALUES (?, ?, ?, ?, datetime('now'))
+			sql: `INSERT INTO lab_poll_ballots
+			        (poll_id, user_id, ranking, ranking_least, first_ranking, first_ranking_least, first_at, submitted_at)
+			      VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
 			      ON CONFLICT (poll_id, user_id)
 			      DO UPDATE SET ranking = excluded.ranking, ranking_least = excluded.ranking_least,
 			                    submitted_at = excluded.submitted_at`,
-			args: [id, session.user.id, JSON.stringify(sent), JSON.stringify(least)]
+			args: [id, session.user.id, JSON.stringify(sent), JSON.stringify(least),
+			       JSON.stringify(sent), JSON.stringify(least)]
 		});
 		await bumpPollLive(id);
 		return json({ ok: true });
@@ -203,11 +236,11 @@ export async function POST({ params, request, locals }) {
 	if (!complete) error(409, 'This poll changed — reload and rank it again');
 
 	await db.execute({
-		sql: `INSERT INTO lab_poll_ballots (poll_id, user_id, ranking, submitted_at)
-		      VALUES (?, ?, ?, datetime('now'))
+		sql: `INSERT INTO lab_poll_ballots (poll_id, user_id, ranking, first_ranking, first_at, submitted_at)
+		      VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
 		      ON CONFLICT (poll_id, user_id)
 		      DO UPDATE SET ranking = excluded.ranking, submitted_at = excluded.submitted_at`,
-		args: [id, session.user.id, JSON.stringify(sent)]
+		args: [id, session.user.id, JSON.stringify(sent), JSON.stringify(sent)]
 	});
 	await bumpPollLive(id);
 

@@ -21,6 +21,9 @@
 	let myRanking = $state(null);  // what's on file, so "changed" is distinguishable from "not sent"
 	let myLeast = $state(null);
 	let results = $state(null);
+	let firstResults = $state(null);   // what the room said before it saw the tally
+	let changedCount = $state(0);
+	let showFirst = $state(false);
 	let responseCount = $state(0);
 	let respondents = $state(null);
 	let canEdit = $state(false);
@@ -74,6 +77,8 @@
 			myRanking = out.myRanking;
 			myLeast = out.myLeast;
 			results = out.results;
+			firstResults = out.firstResults;
+			changedCount = out.changedCount ?? 0;
 			responseCount = out.responseCount ?? 0;
 			respondents = out.respondents;
 			canEdit = !!out.canEdit;
@@ -231,8 +236,8 @@
 	// A bar is only readable if it spans the range — best item full, worst item
 	// a stub — so scale across the actual spread rather than from zero.
 	function barWidth(r) {
-		if (r.averageRank == null || !results?.length) return 0;
-		const ranks = results.map((x) => x.averageRank).filter((x) => x != null);
+		if (r.averageRank == null || !shownResults?.length) return 0;
+		const ranks = shownResults.map((x) => x.averageRank).filter((x) => x != null);
 		const best = Math.min(...ranks), worst = Math.max(...ranks);
 		if (worst === best) return 100;
 		return 12 + 88 * (1 - (r.averageRank - best) / (worst - best));
@@ -370,7 +375,15 @@
 			{#if results}
 				<section class="results">
 					<div class="results-head">
-						<h2>{presenting ? poll.title : 'The class ranking'}</h2>
+						<h2>{presenting ? poll.title : showFirst ? 'First answers' : 'The class ranking'}</h2>
+						{#if !presenting && changedCount > 0}
+							<!-- Only worth offering once somebody has actually revised:
+							     with no changes the two tallies are identical. -->
+							<span class="firsts">
+								<button class:on={!showFirst} onclick={() => (showFirst = false)}>Now</button>
+								<button class:on={showFirst} onclick={() => (showFirst = true)}>First</button>
+							</span>
+						{/if}
 						{#if presenting}
 							<span class="present-count">{shownCount}</span>
 							<button class="ghost" onclick={() => (presenting = false)}>Exit</button>
@@ -380,7 +393,7 @@
 						<p class="muted">No responses yet{poll.shareCode ? ' — the QR is live.' : '.'}</p>
 					{:else if isFavorites}
 						<ol class="result-list">
-							{#each results as r, i (r.id)}
+							{#each shownResults as r, i (r.id)}
 								<li class="result diverging" class:top={i === 0}>
 									<span class="place">{ordinal(i + 1)}</span>
 									<span class="d-label">{r.label}</span>
@@ -405,10 +418,16 @@
 							Most loved at the top. Each ballot is weighted to itself, so ranking ten things
 							doesn't outvote ranking three — across {responseCount}
 							{responseCount === 1 ? 'ballot' : 'ballots'}.
+							{#if showFirst}
+								These are everyone's first answers, before they could see the tally.
+							{:else if changedCount}
+								{changedCount} {changedCount === 1 ? 'person has' : 'people have'} changed since
+								first answering — “First” shows what they said before seeing this.
+							{/if}
 						</p>
 					{:else}
 						<ol class="result-list">
-							{#each results as r, i (r.id)}
+							{#each shownResults as r, i (r.id)}
 								<li class="result">
 									<span class="place">{ordinal(i + 1)}</span>
 									<div class="bar-wrap">
@@ -461,6 +480,7 @@
 									<p class="who-name">
 										<span class:guest={r.guest}>{r.name}</span>
 										{#if r.guest}<span class="tag">QR</span>{/if}
+										{#if r.changed}<span class="tag changed">changed</span>{/if}
 									</p>
 									{#if isFavorites}
 										<p class="who-line">
@@ -476,6 +496,16 @@
 									{:else}
 										<p class="who-line">
 											{#each r.ranked as label, n}<span class="pick-n">{n + 1}.</span> {label}{#if n < r.ranked.length - 1}<span class="sep">·</span>{/if}{/each}
+										</p>
+									{/if}
+									{#if r.changed}
+										<p class="who-line first-line">
+											<span class="who-key was">First</span>
+											{#each r.firstRanked ?? [] as label, n}<span class="pick-n">{n + 1}.</span> {label}{#if n < (r.firstRanked?.length ?? 0) - 1}<span class="sep">·</span>{/if}{/each}
+											{#if isFavorites && r.firstLeast?.length}
+												<span class="who-key was least-key">/ least</span>
+												{#each r.firstLeast as label, n}<span class="pick-n">{n + 1}.</span> {label}{#if n < r.firstLeast.length - 1}<span class="sep">·</span>{/if}{/each}
+											{/if}
 										</p>
 									{/if}
 								</li>
@@ -661,6 +691,16 @@
 	.who-key.down { color: var(--md-sys-color-error, #b3261e); }
 	.pick-n { color: var(--ink); opacity: 0.5; font-variant-numeric: tabular-nums; }
 	.sep { opacity: 0.35; margin: 0 0.15rem; }
+	.firsts { display: inline-flex; border: 1.5px solid var(--border); border-radius: 999px; overflow: hidden; }
+	.firsts button {
+		font-family: inherit; font-size: 0.72rem; padding: 0.2rem 0.6rem;
+		border: none; background: transparent; color: var(--muted-fg); cursor: pointer;
+	}
+	.firsts button.on { background: var(--accent); color: var(--paper); }
+	.tag.changed { border-color: var(--accent); color: var(--accent); }
+	.first-line { opacity: 0.7; }
+	.who-key.was { color: var(--muted-fg); }
+	.least-key { margin-left: 0.3rem; }
 	.who-note { font-size: 0.72rem; color: var(--muted-fg); opacity: 0.75; margin: 0.8rem 0 0; }
 	.muted { font-size: 0.85rem; color: var(--muted-fg); }
 	.error { font-size: 0.82rem; color: var(--md-sys-color-error, #b3261e); }
