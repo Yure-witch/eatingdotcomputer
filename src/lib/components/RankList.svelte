@@ -38,9 +38,16 @@
 		return () => mq.removeEventListener?.('change', on);
 	});
 
-	// No FLIP mid-drag: the rows are already following the finger, and animating
-	// them as well makes the list feel like it's lagging behind the gesture.
-	const flipMs = $derived(reduced || dragId != null ? 0 : 220);
+	// The row under the FINGER must not animate — it belongs wherever the finger
+	// is, and sliding it there would put it behind the gesture. Every OTHER row
+	// animates, so the list opens a gap and closes one as you drag through it.
+	//
+	// (First cut disabled FLIP for the whole list mid-drag, on the assumption
+	// that the dragged row tracks the pointer. It doesn't — rows swap in flow —
+	// so that just made the others jump.)
+	const flipMs = $derived(reduced ? 0 : 220);
+	const dragFlipMs = $derived(reduced ? 0 : 150); // snappier, to keep up with a moving finger
+	const flipFor = (id) => (dragId == null ? flipMs : id === dragId ? 0 : dragFlipMs);
 
 	function apply(next) {
 		items = next;
@@ -213,7 +220,7 @@
 			class:lifting={liftId === item.id && dragId !== item.id}
 			class:disabled
 			bind:this={rowEls[item.id]}
-			animate:flip={{ duration: flipMs, easing: cubicOut }}
+			animate:flip={{ duration: flipFor(item.id), easing: cubicOut }}
 			onpointerdown={(e) => onPointerDown(e, item.id)}
 			ontouchstart={(e) => touchStart(e, item.id)}
 		>
