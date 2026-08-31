@@ -129,6 +129,12 @@
           }
         }
       }
+    },
+    "pollLive": {
+      "$pollId": {
+        ".read": "auth != null",
+        ".write": "false"
+      }
     }
   }
 }

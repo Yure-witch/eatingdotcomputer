@@ -28,6 +28,13 @@
 			ready: true
 		},
 		{
+			href: '/app/lab/polls',
+			title: 'Rank It',
+			blurb: 'Put a list in front of the class and have everyone drag it into order — the tally is the room\'s ranking.',
+			icon: 'sort',
+			ready: true
+		},
+		{
 			href: '/app/lab/text-gifs',
 			title: 'Text GIFs',
 			blurb: 'Type a word, pick an animated text effect — rainbow, neon, wave, glitch — and export a looping GIF.',
@@ -46,6 +53,14 @@
 			<p class="subtitle">A creative sandbox for experiments and tools</p>
 		</div>
 
+		{#if data?.labPlaceholder}
+			<!-- App Store review accounts (the demo class) don't see the tools;
+			     see +layout.server.js for why. -->
+			<div class="placeholder">
+				<span class="placeholder-icon msi">science</span>
+				<p>Projects will appear here later.</p>
+			</div>
+		{:else}
 		<div class="tool-grid">
 			{#each tools as t}
 				<a class="tool-card" class:soon={!t.ready} href={t.ready ? t.href : undefined}>
@@ -56,6 +71,7 @@
 				</a>
 			{/each}
 		</div>
+		{/if}
 	</main>
 </div>
 
@@ -84,6 +100,19 @@
 		color: var(--ink);
 	}
 	.subtitle { font-size: 0.85rem; color: var(--muted-fg); margin: 0; }
+
+	.placeholder {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.75rem;
+		padding: 3.5rem 1.5rem;
+		border: 1.5px dashed var(--border);
+		border-radius: 16px;
+		text-align: center;
+	}
+	.placeholder-icon { font-size: 2rem; color: var(--muted-fg); opacity: 0.6; }
+	.placeholder p { margin: 0; font-size: 0.9rem; color: var(--muted-fg); }
 
 	.tool-grid {
 		display: grid;

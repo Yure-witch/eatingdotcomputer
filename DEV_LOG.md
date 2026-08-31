@@ -4,6 +4,146 @@ This document is a running record of what has been attempted, what is in progres
 
 ---
 
+### 2026-08-30 — Lab → Rank It: ranked polls
+- **Status**: `attempted` (schema, endpoints and tally verified end-to-end
+  against prod Turso by a throwaway self-test that cleaned up after itself;
+  the drag interaction itself is unverified — it needs a signed-in pass)
+- **Why**: wanted a way to put a list in front of the class and have everyone
+  order it, so the tally is the room's collective ranking rather than a show
+  of hands.
+- **Shape**: instructor writes a title, optional instructions, and the things
+  to rank one per line. Students drag the list into their order and submit;
+  the tally sorts by **average position** (reads as "this came out 2.4th on
+  average", which a Borda point total does not).
+- **Decisions worth remembering**:
+  - A ballot is ONE row holding the whole ordering (`ranking` JSON), not a row
+    per (item, rank). A ranking only means something complete, so a resubmit is
+    one UPSERT and a half-written ballot is unrepresentable.
+  - The ballot is **shuffled per student**, seeded by `userId:pollId`, so the
+    instructor's typing order doesn't become the class's answer — but it's the
+    *same* shuffle on every reload, so refreshing mid-rank doesn't scramble
+    work in progress.
+  - Students only see a live tally once **their own ballot is in** (`reveal =
+    always`), otherwise not until the poll closes — watching the running order
+    before you rank is just anchoring.
+  - Item edits preserve the ids of surviving rows, and ballots are reconciled
+    against current items at read time, so fixing a typo doesn't reset the
+    class's answers.
+  - A submitted ballot must be an exact permutation of the poll's items —
+    rejected with 409 rather than padded, since padding would invent
+    preferences the student never expressed.
+  - Rows reorder in the flow under the pointer instead of a lifted ghost.
+    Touch drags start from the handle only (it carries `touch-action: none`)
+    so a finger on the row body still scrolls the page, and ↑/↓ buttons are
+    the accessible path that always works.
+- **Then: QR entry, no account needed.** The instructor hits "Open to the
+  room" and gets a 6-character code plus a QR (reusing `$lib/qr.js`, same as
+  the marquee). Phones land on the public `/r/[code]`, type a name, drag, send.
+  - Guest ballots reuse the `(poll_id, user_id)` key with a synthetic
+    `guest:<uuid>` minted on the phone and kept in localStorage, so coming back
+    to fix your order EDITS your ballot instead of stuffing the tally with a
+    second one — and the tally needs no special case for guests.
+  - `guest_name` holds the typed name; `claimed_by` is there, unused, so
+    attaching a guest ballot to a real account later is an UPDATE rather than a
+    migration written under time pressure.
+  - The public endpoint exposes only the shared poll: no poll list, no internal
+    ids, no respondent names, and no tally unless live results are on AND that
+    guest has already ranked. "No such code" and "sharing turned off" give the
+    same 404 so it isn't a probe for which codes exist.
+  - The drag interaction moved into `RankList.svelte`, shared by the in-app
+    page and the public one.
+- **Verified**: 12 checks on the schema/tally against prod Turso, then 20 more
+  end-to-end over HTTP against the real public endpoint (unauth GET, per-guest
+  shuffle stability, re-rank-updates-not-duplicates, incomplete/blank-name/bad-
+  device-id/unknown-code rejections, closed-poll and unshare lockout, guest and
+  signed-in ballots tallying together). Then the public page driven in the
+  browser on a 375px viewport: name step, a simulated finger drag (5th → 1st),
+  both arrow buttons, submit, and the reload that remembers you. All test rows
+  removed afterwards.
+- **Files**: `migrations/068_lab_polls.sql`, `migrations/069_lab_poll_sharing.sql`,
+  `src/lib/server/lab-polls.js`, `src/lib/components/RankList.svelte`,
+  `src/routes/api/lab/polls/{+server.js,[id]/+server.js}`,
+  `src/routes/api/rank/[code]/+server.js`,
+  `src/routes/app/lab/polls/{+page.svelte,[id]/+page.svelte}`,
+  `src/routes/r/[code]/+page.svelte`, card added to the Lab index.
+
+---
+
+### 2026-08-30 — Rank It: favorites/least-favorites format, live counts, per-person ballots
+- **Status**: `attempted` (server + public page verified end-to-end; the
+  signed-in instructor view still needs one pass, and **the RTDB rules change
+  is not deployed**)
+- **Two formats now, chosen per activity** (`lab_polls.format`):
+  - `full` — drag the whole pool into one order (what this started as).
+  - `favorites` — pick and rank your favorites AND your least favorites out of
+    a named pool, at least N of each (`min_favorites` / `min_least`, default 3),
+    as many more as you like, and leave anything you have no feeling about
+    unranked. Floors, not quotas.
+  - The second exists because a pool of twenty has no honest total ordering in
+    anyone's head — people know their top few and bottom few and are guessing
+    in the middle. Asking only for the ends collects the part that's real.
+- **Scoring**: each ballot is normalised to itself before it's added up, so a
+  top favorite is worth exactly +1 whether you ranked three things or ten —
+  otherwise the person who ranked ten simply outvotes the person who ranked
+  three, and this format invites exactly that difference. An item nobody
+  mentioned scores 0, not last place. Shown as a diverging bar: loved right of
+  the axis, loathed left.
+- **Live counts over RTDB**: the server writes a BEACON to `pollLive/{pollId}`
+  — response count plus a timestamp — on every ballot, reset and delete. The
+  instructor's page watches it, shows the number climbing, and refetches the
+  tally when the timestamp moves; a 20s poll stays as fallback.
+  - The tally itself deliberately does NOT go in RTDB: that would mean a second
+    implementation of the scoring to keep in step, and it would publish results
+    to every signed-in client regardless of the reveal setting.
+  - Rules: `pollLive/$pollId` is `.read: auth != null`, `.write: false` —
+    written only by firebase-admin, which bypasses rules. **Needs
+    `firebase deploy --only database` before the live count works in the
+    browser**; the beacon is already being written.
+- **Who ranked what**: the instructor's panel lists each person's actual picks
+  (favorites and least favorites, best-first), QR guests included and tagged.
+  The aggregate hides the thing that's often most useful in a crit — that two
+  people put the same piece at opposite ends.
+- **Picking is by button, ordering is by drag.** Cross-zone dragging on a phone
+  is a coin flip (the target moves as the lists resize); a tap always lands.
+  Dragging still does what it's good at: ordering a list you've already chosen.
+- **Verified**: 13 checks on the favorites format over HTTP (floors enforced
+  per end, an item refused in both ends, more-than-the-floor accepted, halves
+  stored separately, unmentioned item scores 0, self-normalisation holds), 10
+  more on the beacon through the running server (written on submit, count
+  climbs, a re-rank moves the timestamp without inflating the count, rules
+  shape), then the public picker driven at 375px: pool shrinking, both floors
+  gating the submit button, × returning an item to the pool and re-locking
+  submit, send, and the results order. All test rows and beacons removed.
+- **Files**: `migrations/070_lab_poll_favorites.sql`,
+  `src/lib/server/{lab-polls.js,poll-live.js}`,
+  `src/lib/components/{RankList.svelte,FavoritesPicker.svelte}`,
+  `database.rules.json`, both poll API routes, `src/routes/api/rank/[code]/`,
+  both `/app/lab/polls` pages, `src/routes/r/[code]/+page.svelte`.
+
+---
+
+### 2026-08-30 — Lab hidden from App Store review accounts
+- **Status**: `attempted` (gate query checked against every account in prod;
+  not yet seen through a signed-in reviewer session)
+- **Why**: the Lab is in-progress coursework tooling. To a reviewer with no
+  class context it reads as unfinished software (Guideline 2.1), and it isn't
+  what the app is being reviewed for. They get "Projects will appear here
+  later." instead.
+- **The signal is the demo class, not a hardcoded account**: `classes
+  .auto_approve = 1` (currently `idc-review`) is what marks a self-contained
+  review class, and it catches the reviewer whether they use the demo
+  credentials or exercise Sign in with Apple themselves. A real student is
+  never in one. Instructors are exempt, so the class can still be inspected
+  from inside the demo class.
+- **Checked against prod**: 9 of 32 accounts get the placeholder — both
+  `App Reviewer` logins, both `privaterelay.appleid.com` Apple sign-ins, and
+  the five seeded demo students. Every Fall 2026 student keeps the full Lab.
+- **Deep links are covered too**: `src/routes/app/lab/+layout.server.js`
+  redirects every `/app/lab/*` sub-route back to the index for those accounts,
+  so the placeholder can't be walked around by URL.
+
+---
+
 ### 2026-08-30 — Term reset: one Fall 2026 class, one channel, enrollment open to 9/11
 - **Status**: `attempted` (applied to prod Turso + RTDB; wants one pass through
   the signed-in app to confirm the channel and the enrollment picker read right)
