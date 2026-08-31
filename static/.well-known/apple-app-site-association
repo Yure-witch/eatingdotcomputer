@@ -1,0 +1,18 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["2DA4GWZYAS.computer.eating.app"],
+        "components": [
+          { "/": "/api/*", "exclude": true, "comment": "Never hand an API call to the app" },
+          { "/": "/.well-known/*", "exclude": true, "comment": "Including this file" },
+          { "/": "/privacy", "exclude": true, "comment": "App Review opens these from the listing; they belong in a browser" },
+          { "/": "/terms", "exclude": true },
+          { "/": "/app/*", "comment": "The signed-in app" },
+          { "/": "/r/*", "comment": "Public ranking pages (Rank It QR codes)" },
+          { "/": "/m/*", "comment": "Public marquee join pages" }
+        ]
+      }
+    ]
+  }
+}

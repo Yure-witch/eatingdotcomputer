@@ -12,5 +12,16 @@
 			"path": "/api/gemma/digest",
 			"schedule": "0 13 * * *"
 		}
+	],
+	"headers": [
+		{
+			"source": "/.well-known/apple-app-site-association",
+			"headers": [
+				{
+					"key": "Content-Type",
+					"value": "application/json"
+				}
+			]
+		}
 	]
 }
