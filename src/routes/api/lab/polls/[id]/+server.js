@@ -112,9 +112,14 @@ export async function GET({ params, locals }) {
 					// item added after some people voted must NOT be appended to
 					// their ballots, or every earlier voter is recorded as ranking
 					// it last. `votes`/`mentions` reports what it actually stands on.
-					const fav = reconcile(JSON.parse(String(b[rankCol] ?? '[]')), itemIds, []);
+					// Fall back to the live answer when there's no recorded first,
+					// so the "First" tally still counts that person rather than
+					// silently dropping them out of the denominator.
+					const rawFav = b[rankCol] ?? b.ranking;
+					const rawLeast = b[leastCol] ?? b.ranking_least;
+					const fav = reconcile(JSON.parse(String(rawFav ?? '[]')), itemIds, []);
 					if (isFavorites) {
-						parsed.push({ fav, least: reconcile(JSON.parse(String(b[leastCol] ?? '[]')), itemIds, []) });
+						parsed.push({ fav, least: reconcile(JSON.parse(String(rawLeast ?? '[]')), itemIds, []) });
 					} else {
 						parsed.push(fav);
 					}
@@ -128,7 +133,8 @@ export async function GET({ params, locals }) {
 		firstResults = isFavorites ? tallyFavorites(items, first) : tally(items, first);
 		const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 		changedCount = ballots.filter(
-			(b) => !same(b.ranking, b.first_ranking) || !same(b.ranking_least, b.first_ranking_least)
+			(b) => b.first_ranking != null
+				&& (!same(b.ranking, b.first_ranking) || !same(b.ranking_least, b.first_ranking_least))
 		).length;
 	}
 
@@ -141,7 +147,10 @@ export async function GET({ params, locals }) {
 		// LEFT JOIN, not JOIN: a QR guest has no users row, and an inner join
 		// would silently drop every one of them.
 		const rows = (await db.execute({
-			sql: `SELECT u.name AS account_name, b.guest_name, b.user_id, b.ranking, b.ranking_least, b.submitted_at
+			sql: `SELECT u.name AS account_name, b.guest_name, b.user_id,
+			             b.ranking, b.ranking_least,
+			             b.first_ranking, b.first_ranking_least, b.first_at,
+			             b.submitted_at
 			      FROM lab_poll_ballots b LEFT JOIN users u ON u.id = b.user_id
 			      WHERE b.poll_id = ? ORDER BY b.submitted_at ASC`,
 			args: [id]
@@ -154,10 +163,15 @@ export async function GET({ params, locals }) {
 			};
 			const fav = read('ranking');
 			const least = isFavorites ? read('ranking_least') : [];
-			const firstFav = read('first_ranking');
-			const firstLeast = isFavorites ? read('first_ranking_least') : [];
+			// A ballot written before first answers were recorded has no first
+			// to compare against. That's "we weren't measuring yet", NOT "they
+			// changed their mind" — treating it as a change would mark the whole
+			// room as having revised.
+			const hasFirst = r.first_ranking != null;
+			const firstFav = hasFirst ? read('first_ranking') : [];
+			const firstLeast = hasFirst && isFavorites ? read('first_ranking_least') : [];
 			const same = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
-			const changed = !same(fav, firstFav) || (isFavorites && !same(least, firstLeast));
+			const changed = hasFirst && (!same(fav, firstFav) || (isFavorites && !same(least, firstLeast)));
 			return {
 				name: String(r.account_name ?? r.guest_name ?? 'Someone'),
 				guest: String(r.user_id).startsWith('guest:'),
