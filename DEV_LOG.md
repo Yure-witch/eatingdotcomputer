@@ -157,6 +157,57 @@ This document is a running record of what has been attempted, what is in progres
 
 ---
 
+### 2026-08-31 — Rank It: touch drag, animation, and first-vs-live answers
+- **Status**: `attempted` (shipped and driven on production; awaiting the
+  user's own confirmation)
+- **Hold-and-drag on touch.** A finger on a row body has to stay free to
+  scroll, and it can only say which it means by WAITING: hold 200ms and the row
+  lifts into a drag, move first and it stays a scroll. The handle skips the
+  wait. The page is held still by `preventDefault` on a NON-PASSIVE touchmove,
+  attached by hand — Svelte registers touchmove as passive and a passive
+  listener cannot preventDefault, which is the whole mechanism. It only works
+  because the finger was stationary through the press: no scroll has begun, so
+  there is still something to prevent. Verified with real TouchEvents: a flick
+  left the order untouched and did NOT preventDefault; a hold-then-drag lifted
+  the row, suppressed the scroll, and moved 4th → 1st.
+- **Every move is FLIPped** — drag, arrow tap, pick landing from the pool.
+  Deliberately NOT a crossfade: that flies an absolutely-positioned clone, and
+  an animation that never finishes leaves the row stranded at `opacity: 0`
+  (backgrounded tab, phone locking mid-tap, throttled rAF). FLIP only animates
+  an element back to where it already is. Built the crossfade first, watched it
+  strand rows in a hidden pane, and backed it out.
+  - It did expose a real crash on the way out: the leaving row sat in the DOM
+    for ~260ms, so a double-tap added the same item twice and blew up the keyed
+    each with `each_key_duplicate`. The guard stays regardless.
+- **First answers are kept, not overwritten** (migration 073). `first_ranking`
+  / `first_ranking_least` / `first_at` are written on INSERT and deliberately
+  absent from the UPSERT's DO UPDATE, so no revision can touch them. The first
+  answer is what someone thought before the room's tally was in front of them;
+  every later one is a revision made with it visible, and the first cannot be
+  reconstructed later. Instructor gets a First/Now toggle (offered only once
+  somebody has actually revised) and each person's original picks under their
+  current ones where they differ.
+- **Two bugs found while verifying, both mine:**
+  1. The respondents query never SELECTed the first_* columns it then read, so
+     every row compared against `undefined` and the whole room looked
+     "changed", each with an empty first answer.
+  2. **Shipped a crash to production.** The First/Now toggle added
+     `shownResults` to the template but the `$derived` never landed — the
+     python edit had no assertion on that replace. Svelte treats an unknown
+     template identifier as a global reference, so it compiles clean and
+     svelte-check reports nothing; every poll detail page threw
+     `shownResults is not defined` and sat on "Loading…". Live for roughly
+     twelve minutes between two deploys. **Lesson: assert every scripted edit,
+     and svelte-check passing is not evidence a Svelte page renders.**
+- **Verified on production** afterwards: two guest ballots, one of them revised
+  into the exact opposite answer. "First" shows A/B/C unanimous at 2♥; "Now"
+  shows every item tied 1♥/1✕. The revising person carries a CHANGED tag with
+  their original picks beneath; the one who didn't, doesn't. Test polls deleted.
+- Poll #7 carries one real response (the user's own, via the QR path) — left
+  in place.
+
+---
+
 ### 2026-08-31 — Rank It: realtime over RTDB, write-ins on, and the signed-in visual pass
 - **Status**: `attempted` (shipped and driven end-to-end in production; awaiting
   the user's own confirmation)
