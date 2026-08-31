@@ -60,6 +60,10 @@
 
 	// The count in the header: RTDB while it's talking, the API's number otherwise.
 	const shownCount = $derived(liveCount ?? responseCount);
+	// Which tally is on screen. `results` is where the room is now; `firstResults`
+	// is what it said before anyone could see where it was heading. Falls back to
+	// `results` so the toggle can never render an undefined list.
+	const shownResults = $derived(showFirst ? (firstResults ?? results) : results);
 
 	// The public join link, built from the code the server minted.
 	const joinUrl = $derived(
