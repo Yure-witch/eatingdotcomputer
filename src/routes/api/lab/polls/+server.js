@@ -65,9 +65,11 @@ export async function POST({ request, locals }) {
 	const reveal = body?.reveal === 'always' ? 'always' : 'closed';
 	const classId = body?.classId ? String(body.classId) : null;
 	const format = FORMATS.includes(body?.format) ? body.format : 'full';
-	// Only offered for 'favorites' — see migration 071 for why a 'full' poll
-	// can't absorb a new item without invalidating every ballot already cast.
-	const allowWriteIns = format === 'favorites' && !!body?.allowWriteIns ? 1 : 0;
+	// On by DEFAULT for 'favorites' — a pool people can add to is the normal
+	// case, and an instructor who doesn't want it unticks the box. Only offered
+	// for that format: see migration 071 for why a 'full' poll can't absorb a
+	// new item without invalidating every ballot already cast.
+	const allowWriteIns = format === 'favorites' && body?.allowWriteIns !== false ? 1 : 0;
 
 	const clampMin = (v) => Math.min(MIN_CEIL, Math.max(MIN_FLOOR, Number(v) || MIN_FLOOR));
 	const minFavorites = format === 'favorites' ? clampMin(body?.minFavorites ?? 3) : 0;

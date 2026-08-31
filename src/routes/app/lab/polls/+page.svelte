@@ -20,7 +20,7 @@
 	let format = $state('favorites');
 	let minFavorites = $state(3);
 	let minLeast = $state(3);
-	let allowWriteIns = $state(false);
+	let allowWriteIns = $state(true);
 	let saving = $state(false);
 	let saveError = $state('');
 
@@ -61,7 +61,7 @@
 			const out = await res.json().catch(() => ({}));
 			if (!res.ok) throw new Error(out?.message || 'That did not save');
 			title = ''; prompt = ''; itemText = ''; reveal = 'closed';
-			format = 'favorites'; minFavorites = 3; minLeast = 3; allowWriteIns = false;
+			format = 'favorites'; minFavorites = 3; minLeast = 3; allowWriteIns = true;
 			composing = false;
 			await load();
 		} catch (e) {
