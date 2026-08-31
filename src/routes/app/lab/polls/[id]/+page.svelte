@@ -625,7 +625,12 @@
 	.d-axis { width: 1.5px; height: 100%; background: color-mix(in srgb, var(--ink) 22%, transparent); flex: none; }
 	.d-bar { height: 100%; transition: width 0.45s cubic-bezier(0.22, 1, 0.36, 1); }
 	.d-bar.fav { background: var(--accent); border-radius: 0 999px 999px 0; }
-	.d-bar.least { background: var(--md-sys-color-error, #b3261e); border-radius: 999px 0 0 999px; opacity: 0.75; }
+	/* NOT the theme's error colour: in a dark theme that's a light pink meant
+	   for TEXT, and as a filled bar it sits right next to the equally light
+	   accent — two pale bars that read as the same thing pointing opposite
+	   ways. A dimmed ink fill is unambiguously the accent's counterpart in
+	   both themes. */
+	.d-bar.least { background: color-mix(in srgb, var(--ink) 42%, transparent); border-radius: 999px 0 0 999px; }
 	.d-stat { font-size: 0.72rem; color: var(--muted-fg); white-space: nowrap; display: flex; gap: 0.4rem; }
 	.presenting .d-stat { font-size: 0.95rem; }
 	.d-stat .up { color: var(--accent); }
