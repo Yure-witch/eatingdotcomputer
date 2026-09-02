@@ -4,6 +4,32 @@ This document is a running record of what has been attempted, what is in progres
 
 ---
 
+### 2026-09-02 — Highlight dialog: ⌫ key, and formatting beside the effects
+- **Status**: `attempted`
+- **⌫ in the expression keyboard's spot.** Same position and size as
+  `.expr-del` in ExpressionPicker.svelte, read off its variables rather than
+  eyeballed: 4rem wide, `3rem + 8px` tall, 14px corners, 25px glyph, 6px above
+  the safe-area edge, 2px in from the side. Swapping between the expression
+  keyboard and this dialog shouldn't move it.
+  - It is a SIBLING of a new `.text-fx-scroll` wrapper rather than a child, so
+    the rows scroll under it and it holds its spot — "fixed in position"
+    without `position: fixed` and the viewport arithmetic that comes with it
+    (see the revert two entries down for why that matters here).
+  - Both rows get a right-hand gutter of `4rem + 0.6rem` so nothing — wrapped
+    effect pill or slider — can run under the key, in either state.
+- **⌫ deletes the HIGHLIGHT.** While docked the compose is blurred and there is
+  no live selection, so `composeBackspace` would have trimmed the last
+  character instead. It now acts on `_savedCeSel` via a new `savedSelRange()`
+  (factored out of `paintSavedSel`, which built the same range). The dialog
+  stays open afterward so repeated presses keep deleting.
+- **Formatting beside the effects (mobile).** Bold / italic / underline /
+  strike plus every `TEXT_COLORS` swatch and rainbow, as their own full-size
+  buttons in the effects row — nothing behind a popover. They exist on the
+  compose toolbar too, but at 30px and easy to miss once a selection is made.
+  Mobile only (`_isMobileWidth`); desktop's roomy toolbar is unchanged.
+
+---
+
 ### 2026-09-02 — Highlight dialog: freeze the compose, unhook the list padding
 - **Status**: `attempted`
 - **Symptoms**: (1) tapping the Aa pill to open the size/weight/width sliders

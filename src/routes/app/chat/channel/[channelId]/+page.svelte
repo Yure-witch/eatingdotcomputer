@@ -516,16 +516,23 @@
 	// range ourselves. The Custom Highlight API draws over the live DOM without
 	// touching it — no wrapper span for serializeCe to trip over. Browsers
 	// without it just show no tint.
-	function paintSavedSel() {
-		if (!inputEl || !_savedCeSel || _savedCeSel.start >= _savedCeSel.end) { clearSelPaint(); return; }
-		let r;
+	// The saved highlight as a live Range against the compose's current DOM.
+	// Shared by the painter and the ⌫ key, which both need to act on the
+	// selection after the browser has forgotten it.
+	function savedSelRange() {
+		if (!inputEl || !_savedCeSel || _savedCeSel.start >= _savedCeSel.end) return null;
 		try {
 			const sp = findDomPos(inputEl, _savedCeSel.start);
 			const ep = findDomPos(inputEl, _savedCeSel.end);
-			r = document.createRange();
+			const r = document.createRange();
 			r.setStart(sp.node, sp.offset);
 			r.setEnd(ep.node, ep.offset);
-		} catch { clearSelPaint(); return; }
+			return r;
+		} catch { return null; }
+	}
+	function paintSavedSel() {
+		const r = savedSelRange();
+		if (!r) { clearSelPaint(); return; }
 		revealRange(r);
 		if (typeof Highlight === 'undefined' || !CSS?.highlights) return;
 		try { CSS.highlights.set('compose-sel', new Highlight(r)); } catch { clearSelPaint(); }
@@ -2468,7 +2475,16 @@
 	function composeBackspace() {
 		if (!inputEl) { input = Array.from(input).slice(0, -1).join(''); return; }
 		const sel = window.getSelection();
-		if (sel && sel.rangeCount && !sel.isCollapsed && inputEl.contains(sel.anchorNode)) {
+		// Docked: the compose is blurred, so there is no live selection to
+		// delete — the highlight the dialog is acting on lives in _savedCeSel.
+		// Without this, ⌫ next to a full selection would quietly trim the last
+		// character instead of deleting what's highlighted.
+		const savedRange = _fxBlurred ? savedSelRange() : null;
+		if (savedRange) {
+			savedRange.deleteContents();
+			_savedCeSel = null;
+			clearSelPaint();
+		} else if (sel && sel.rangeCount && !sel.isCollapsed && inputEl.contains(sel.anchorNode)) {
 			sel.getRangeAt(0).deleteContents();
 		} else if (!_deleteLastUnit(inputEl)) {
 			return; // nothing to delete
@@ -4737,6 +4753,10 @@
 		     slot; on desktop it's display:contents and the two bars sit in
 		     the compose stack exactly as before. -->
 		<div class="text-fx-dock">
+		<!-- The rows scroll; the ⌫ key does not. It is a sibling of the
+		     scroller, anchored to the dialog's own bottom-right, so it holds
+		     the spot the expression keyboard's delete key occupies. -->
+		<div class="text-fx-scroll">
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div class="text-typo-bar" onfocusin={() => { showTextFxBar = true; }}>
 			<!-- Dismiss sits at the dialog's top-left in BOTH states: the
@@ -4810,6 +4830,21 @@
 				</button>
 			{/if}
 			<span class="text-fx-divider"></span>
+			<!-- Mobile: bold/italic/underline/strike and the colours live on the
+			     compose toolbar, where they are 30px and easy to miss with a
+			     selection already made. Repeat them here as full-size buttons,
+			     every one visible — nothing behind a popover. -->
+			{#if _isMobileWidth}
+				<button class="text-fmt-btn" onmousedown={(e) => { e.preventDefault(); applyTextFx('bold'); }} title="Bold"><span class="msi msi-20">format_bold</span></button>
+				<button class="text-fmt-btn" onmousedown={(e) => { e.preventDefault(); applyTextFx('italic'); }} title="Italic"><span class="msi msi-20">format_italic</span></button>
+				<button class="text-fmt-btn" onmousedown={(e) => { e.preventDefault(); applyTextFx('underline'); }} title="Underline"><span class="msi msi-20">format_underlined</span></button>
+				<button class="text-fmt-btn" onmousedown={(e) => { e.preventDefault(); applyTextFx('strike'); }} title="Strikethrough"><span class="msi msi-20">format_strikethrough</span></button>
+				{#each TEXT_COLORS as c}
+					<button class="text-fmt-swatch" style="background:{c.hex}" onmousedown={(e) => { e.preventDefault(); applyTextFx(c.name); }} title={c.name.replace('color-', '')} aria-label={c.name.replace('color-', '')}></button>
+				{/each}
+				<button class="text-fmt-swatch text-fmt-rainbow" onmousedown={(e) => { e.preventDefault(); applyTextFx('rainbow'); }} title="Rainbow" aria-label="Rainbow"></button>
+				<span class="text-fx-divider"></span>
+			{/if}
 			{#each TEXT_FXS as fx}
 				<button class="text-fx-btn" onmousedown={(e) => { e.preventDefault(); applyTextFx(fx.name); }}>
 					{#if fx.name === 'ripple'}
@@ -4820,6 +4855,13 @@
 				</button>
 			{/each}
 		</div>
+		</div><!-- /.text-fx-scroll -->
+		{#if _fxDocked}
+			<button type="button" class="text-fx-del" title="Delete" aria-label="Delete"
+				onmousedown={(e) => { e.preventDefault(); composeBackspace(); }}>
+				<span class="msi msi-20">backspace</span>
+			</button>
+		{/if}
 		</div><!-- /.text-fx-dock -->
 	{/if}
 	<div class="input-bar">
@@ -6518,6 +6560,9 @@
 	/* Desktop: the dock is a no-op wrapper and the two bars stay in the
 	   compose stack. The 640px block turns it into a docked sheet. */
 	.text-fx-dock { display: contents; }
+	/* Desktop: transparent too — the docked mobile rule turns it into the
+	   scrolling half of the dialog, beside the fixed ⌫ key. */
+	.text-fx-scroll { display: contents; }
 	.text-fx-bar {
 		display: flex; align-items: center; gap: 0.45rem;
 		padding: 0.45rem 1.1rem 0.6rem; background: var(--surface-2);
@@ -6668,7 +6713,9 @@
 		.input-area.fx-dock { flex-shrink: 1; min-height: 0; }
 		.input-area.fx-dock > * { flex-shrink: 0; }
 		.input-area.fx-dock .text-fx-dock {
-			display: block;
+			display: flex;
+			flex-direction: column;
+			position: relative;   /* containing block for the ⌫ key */
 			order: 1;
 			flex-shrink: 1;
 			min-height: 0;
@@ -6677,13 +6724,58 @@
 			padding-bottom: env(safe-area-inset-bottom, 0px);
 			/* Bounded twice on purpose: half the visible height, and a hard
 			   26rem ceiling in case --vvh is ever nonsense on a platform we
-			   can't measure. Past that it scrolls. */
+			   can't measure. Past that the rows scroll. */
 			max-height: min(calc(var(--vvh, 100dvh) * 0.5), 26rem);
+			overflow: hidden;     /* .text-fx-scroll does the scrolling */
+			animation: fx-menu-in 0.18s ease-out;
+		}
+		/* Only the ROWS scroll. The ⌫ key is outside this box, so it holds its
+		   spot however far the rows are scrolled — "fixed in position" without
+		   position:fixed and the viewport arithmetic that comes with it. */
+		.input-area.fx-dock .text-fx-scroll {
+			display: block;
+			flex: 1 1 auto;
+			min-height: 0;
 			overflow-y: auto;
 			overscroll-behavior: contain;
 			-webkit-overflow-scrolling: touch;
-			animation: fx-menu-in 0.18s ease-out;
 		}
+		/* The delete key, in the expression keyboard's spot and at its size.
+		   Every number here is read off .expr-del / .expr-panel in
+		   ExpressionPicker.svelte — 4rem wide, a 3rem row plus its 8px of
+		   padding and border tall, 14px corners, 25px glyph, 6px up from the
+		   safe-area edge and 2px in from the side. Swapping between the
+		   expression keyboard and this dialog should not move it. */
+		.input-area.fx-dock .text-fx-del {
+			position: absolute;
+			right: 2px;
+			bottom: calc(6px + env(safe-area-inset-bottom, 0px));
+			width: 4rem;
+			height: calc(3rem + 8px);
+			box-sizing: border-box;
+			display: inline-flex;
+			align-items: center;
+			justify-content: center;
+			padding: 0;
+			border-radius: 14px;
+			background: var(--sidebar-bg, var(--paper));
+			border: 1px solid var(--sidebar-border, var(--border));
+			box-shadow:
+				0 6px 16px rgba(0, 0, 0, 0.13),
+				0 1px 4px rgba(0, 0, 0, 0.06),
+				inset 0 1px 0 rgba(255, 255, 255, 0.4);
+			color: var(--ink);
+			cursor: pointer;
+			z-index: 2;
+		}
+		.input-area.fx-dock .text-fx-del :global(.msi) { font-size: 25px; }
+		/* Make room for it rather than letting rows run under it: a gutter down
+		   the right of BOTH rows, so neither a wrapped effect button nor a
+		   slider can reach the key's column in either state. */
+		.input-area.fx-dock .text-typo-bar,
+		.input-area.fx-dock .text-fx-bar { padding-right: calc(4rem + 0.6rem); }
+		/* The last row of effects still has to clear the key's height. */
+		.input-area.fx-dock .text-fx-bar { padding-bottom: 1rem; }
 		@media (prefers-reduced-motion: reduce) {
 			.input-area.fx-dock .text-fx-dock { animation: none; }
 		}
@@ -6700,6 +6792,22 @@
 		   the highlighted words in view) and the layout simply doesn't react.
 		   A plain length — no percentage, nothing resolved against an ancestor. */
 		.input-area.fx-dock .compose-ce { height: 200px; max-height: none; }
+		/* Formatting, repeated here at full size (see the markup note). Sized
+		   like the effect pills beside them so the row reads as one set. */
+		.text-fmt-btn {
+			display: inline-flex; align-items: center; justify-content: center;
+			width: 2.4rem; height: 2.4rem; flex-shrink: 0;
+			background: var(--paper); border: 1px solid var(--border);
+			border-radius: 999px; color: var(--ink); cursor: pointer; padding: 0;
+		}
+		.text-fmt-swatch {
+			width: 1.9rem; height: 1.9rem; flex-shrink: 0; padding: 0;
+			border: 1px solid color-mix(in srgb, var(--ink) 22%, transparent);
+			border-radius: 999px; cursor: pointer;
+		}
+		.text-fmt-rainbow {
+			background: linear-gradient(90deg, #ff0040, #ff8c00, #ffd500, #22c55e, #3b82f6, #a855f7);
+		}
 		/* An expression picker wants the same strip; it wins while it's open. */
 		.input-area.picker-open .text-fx-dock { display: none; }
 	}
