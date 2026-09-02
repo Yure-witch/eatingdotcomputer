@@ -4,6 +4,34 @@ This document is a running record of what has been attempted, what is in progres
 
 ---
 
+### 2026-09-02 — Highlight dialog under the message bar, ✕ top-left
+- **Status**: `attempted` (needs a phone pass — native shell especially)
+- **Spec (user)**: dialog UNDER the message, in the strip the text input
+  occupied; the message bar expands UPWARD, away from the controls, as things
+  shift; ✕ at the dialog's top-left in both the slider state and the animation
+  state.
+- **How the upward growth works**: the dialog is the last child of `.input-area`
+  (`order: 1`), and `.input-area` is the last flex item in `.chat-wrap`, so its
+  bottom edge is pinned to the chat column's bottom. A taller compose therefore
+  takes its space from the conversation ABOVE and the dialog underneath never
+  moves — which is the actual fix for the slider running out from under your
+  finger, since every control in the dialog resizes the box directly above it.
+- **No fixed or percentage heights this time.** That is the lesson from the
+  revert above: sizes are content-derived with bounded maxima (compose 200px,
+  dialog `min(50% of --vvh, 26rem)`), `.input-area.fx-dock` is the only thing
+  allowed to shrink at the `.chat-wrap` level and the dialog the only thing
+  allowed to shrink inside it. Worst case is a dialog that scrolls its own
+  rows; nothing can land under the bottom edge.
+- **✕**: moved out of the end of `.text-fx-bar` (where `margin-left: auto` put
+  it bottom-right) to the first child of `.text-typo-bar`, which is the
+  dialog's top row whether the sliders are open or shut behind the Aa pill.
+- **Native keyboard**: `scheduleFxDock` now calls `Keyboard.hide()` from the
+  Capacitor plugin alongside the blur, gated on `isNativeApp()`. A blur should
+  dismiss it in WKWebView, but the entire layout depends on the keyboard
+  actually leaving, so it asks outright instead of assuming.
+
+---
+
 ### 2026-09-02 — Reverted: the fixed-height compose column broke the native app
 - **Status**: `reverted` (chat pages back to 79cc426; scripts/force-refresh.js kept)
 - **Symptom**: on the native shell at e6e885f the highlight menu rendered below

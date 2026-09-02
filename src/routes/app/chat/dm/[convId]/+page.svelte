@@ -19,7 +19,7 @@
 	import ExpressionPicker from '$lib/components/ExpressionPicker.svelte';
 	import { prewarmPicker } from '$lib/picker-prewarm.js';
 	import MediaPicker from '$lib/components/MediaPicker.svelte';
-	import { haptic } from '$lib/native.js';
+	import { haptic, isNativeApp } from '$lib/native.js';
 	import { decodeReactionKey } from '$lib/reaction-key.js';
 	import { positionReactionTooltip } from '$lib/reaction-tooltip.js';
 	import MentionAutocomplete from '$lib/components/MentionAutocomplete.svelte';
@@ -468,6 +468,14 @@
 			if (document.activeElement === inputEl && (!sel || sel.isCollapsed)) return;
 			_fxBlurred = true;
 			try { inputEl?.blur(); } catch {}
+			// Native shell: the web view is resize:'none' and the keyboard is the
+			// plugin's to own — a blur SHOULD dismiss it, but ask outright rather
+			// than assume, because the whole layout below depends on it leaving.
+			if (isNativeApp()) {
+				import('@capacitor/keyboard')
+					.then((m) => m.Keyboard?.hide?.()?.catch?.(() => {}))
+					.catch(() => {});
+			}
 			paintSavedSel();
 		}, 220);
 	}
@@ -4514,6 +4522,10 @@
 		<div class="text-fx-dock">
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div class="text-typo-bar" onfocusin={() => { showTextFxBar = true; }}>
+			<!-- Dismiss sits at the dialog's top-left in BOTH states: the
+			     typography bar is the top row whether the sliders are open or
+			     shut behind the Aa pill. -->
+			<button class="text-fx-close" onmousedown={(e) => { e.preventDefault(); showTextFxBar = false; undockFxBar(); }} title="Close">✕</button>
 			<!-- Mobile: typography sliders hide behind an "Aa" pill (see the
 			     channel page for rationale). -->
 			{#if _isMobileWidth}
@@ -4586,7 +4598,6 @@
 					{/if}
 				</button>
 			{/each}
-			<button class="text-fx-close" onmousedown={(e) => { e.preventDefault(); showTextFxBar = false; undockFxBar(); }}>✕</button>
 		</div>
 		</div><!-- /.text-fx-dock -->
 	{/if}
@@ -6241,7 +6252,8 @@
 	.text-fx-btn:active { transform: translateY(0); }
 	.text-fx-bar :global(.tfx) { animation-iteration-count: infinite !important; }
 	.text-fx-close {
-		margin-left: auto; background: var(--paper); border: 1px solid var(--border);
+		background: var(--paper); border: 1px solid var(--border);
+		align-self: flex-start; order: -1;
 		width: 1.75rem; height: 1.75rem; border-radius: 50%; flex-shrink: 0;
 		display: flex; align-items: center; justify-content: center;
 		font-size: 0.78rem; color: var(--muted-fg); cursor: pointer; line-height: 1;
@@ -6319,42 +6331,58 @@
 
 		/* The docked highlight menu — see `_fxDocked` in the script.
 
-		   The menu is simply the LAST thing in the compose column: .input-area
-		   becomes a flex column and the menu takes `order: 1`, so it lands under
-		   the compose bar — where the keyboard was — in normal flow.
+		   The dialog is the LAST thing in the compose column (`order: 1`), so it
+		   sits UNDER the message bar, in the strip the text input occupied. The
+		   message bar then grows UPWARD as the type scales: .input-area's bottom
+		   edge is pinned to .chat-wrap's, and the dialog is its last child, so a
+		   taller compose takes its space from the conversation above and the
+		   dialog underneath does not move. That is what keeps a slider still
+		   under your finger — every control in here resizes the box right above
+		   it, so the growth has to go the other way.
 
-		   It was briefly a `position: fixed` sheet with the compose bar lifted
-		   by the menu's MEASURED height. That works right up until the two
-		   numbers disagree — a row rewrapping, a frame before the resize
-		   observer catches up — and then the compose bar sits BEHIND the menu
-		   and you can't see the message you're restyling. In flow they cannot
-		   disagree, and there is nothing to measure. The chat column is already
-		   sized from --vvh, so its bottom edge IS the visible bottom; no
-		   browser-chrome arithmetic either. */
+		   NOTHING here is a fixed or percentage HEIGHT. An earlier pass gave the
+		   column `height: calc(100% - 7rem)` and it put the dialog below the
+		   viewport on the native shell: the conversation renders inside
+		   .fwd-host.conv-layer (absolute, top:0, height:100dvh) which sits
+		   outside body.native-app .app-shell's notch padding, while .chat-wrap
+		   is sized from --vvh on the assumption that padding still applies. Any
+		   disagreement between those lands on a percentage-height child, and it
+		   has nowhere to go but off the bottom. Sizes here are content-derived
+		   with bounded maxima, so the worst case is a dialog that scrolls. */
 		.input-area { display: flex; flex-direction: column; }
+		/* Let the column be clamped to the chat rather than overrun it. At the
+		   .chat-wrap level the message list's flex-basis is 0, so all of any
+		   negative free space lands here; inside, only the dialog gives ground,
+		   and it scrolls its own rows. Nothing ends up under the bottom edge. */
+		.input-area.fx-dock { flex-shrink: 1; min-height: 0; }
+		.input-area.fx-dock > * { flex-shrink: 0; }
 		.input-area.fx-dock .text-fx-dock {
 			display: block;
 			order: 1;
+			flex-shrink: 1;
+			min-height: 0;
 			background: var(--surface-2);
-			/* The menu covers the bottom strip, home indicator included. */
+			/* The dialog is at the bottom now — it covers the home indicator. */
 			padding-bottom: env(safe-area-inset-bottom, 0px);
-			/* Never crowd the conversation out entirely — the menu gives back
-			   what it can't have and scrolls its own rows. 45% is comfortably
-			   more than the keyboard it replaces, so it rarely comes to that. */
-			max-height: calc(var(--vvh, 100dvh) * 0.45);
+			/* Bounded twice on purpose: half the visible height, and a hard
+			   26rem ceiling in case --vvh is ever nonsense on a platform we
+			   can't measure. Past that it scrolls. */
+			max-height: min(calc(var(--vvh, 100dvh) * 0.5), 26rem);
 			overflow-y: auto;
 			overscroll-behavior: contain;
 			-webkit-overflow-scrolling: touch;
-			animation: sheet-rise 0.24s cubic-bezier(0.32, 0.72, 0, 1);
+			animation: fx-menu-in 0.18s ease-out;
 		}
 		@media (prefers-reduced-motion: reduce) {
 			.input-area.fx-dock .text-fx-dock { animation: none; }
 		}
-		/* The menu owns the safe area now, so the compose bar above it must not
-		   also reserve it — the same rule the docked pickers get. */
+		/* The dialog owns the safe area now, so the message bar above it must
+		   not also reserve it — the same rule the docked pickers get. */
 		.input-area.fx-dock .input-bar { padding-bottom: var(--compose-dock-gap); }
-		/* Room to actually READ what you're restyling. 120px is a sane cap for a
-		   compose you type into; it is not one for text you just scaled to 7x. */
+		/* Room to actually READ what you're restyling — 120px is a cap for a box
+		   you type into, not for text at 7x. Bounded, because this is the growth
+		   that pushes upward, and past this it scrolls (revealRange keeps the
+		   highlighted words in view). */
 		.input-area.fx-dock .compose-ce { max-height: 200px; }
 		/* An expression picker wants the same strip; it wins while it's open. */
 		.input-area.picker-open .text-fx-dock { display: none; }
