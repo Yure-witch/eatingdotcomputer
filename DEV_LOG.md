@@ -4,6 +4,29 @@ This document is a running record of what has been attempted, what is in progres
 
 ---
 
+### 2026-09-02 — Highlight menu: compose takes the keyboard's space
+- **Status**: `attempted` (follow-up to the entry below, from a phone test)
+- **Symptom**: with the menu docked BELOW the compose, dragging the size /
+  weight / width sliders moved the slider out from under your finger.
+- **Root cause**: the compose grew with its content, and everything under it
+  moved when it did. Every control in the menu resizes the very box it sits
+  next to, so any layout that lets that box push the menu around is a slider
+  that runs away mid-drag.
+- **Fix**: menu ABOVE the compose (natural DOM order — no `order` at all), and
+  `.input-area.fx-dock` gets `height: calc(100% - 7rem)` — a % of `.chat-wrap`,
+  which already ends at the visible bottom on every platform, so no --vvh or
+  browser-chrome arithmetic. The compose is `flex: 1` inside that fixed box, so
+  it expands DOWN into the space the keyboard gave up and its height no longer
+  tracks its content: the text scales inside a box that never moves. 7rem of
+  conversation stays visible above. The menu is the only child allowed to
+  shrink (and scrolls) when the column is tight; the send button opts out of
+  the bar's new `align-items: stretch` or it stands 400px tall.
+- **Deploy**: from here on, every push is followed by
+  `node scripts/force-refresh.js` once the new build is actually live, so the
+  phone doesn't sit on an old bundle. Script added this round.
+
+---
+
 ### 2026-09-02 — Highlight menu docks where the keyboard was (mobile)
 - **Status**: `attempted` (type-checks clean and the CSS compiles; the on-screen
   keyboard can't be reproduced in a desktop browser, so this needs a pass on a
