@@ -431,16 +431,15 @@
 	// stack — and keyboard + two toolbars + compose bar is taller than the
 	// visible strip on a phone, so the menu ended up off the screen. It now
 	// behaves like every other sheet here: the keyboard is dismissed and the
-	// menu takes the slot it vacates: `.fx-dock` in the mobile CSS gives the
-	// compose column a fixed height, so the menu sits at a constant offset from
-	// the header and the compose grows DOWN into the keyboard's old space. That
-	// fixed height is also what keeps a slider still under your finger — see
-	// the CSS for why. This is the state behind it.
+	// menu takes the slot it vacates: `.fx-dock` in the mobile CSS reorders it
+	// BELOW the compose bar, so the message you highlighted sits right above
+	// it. This is the state behind that.
 	//
 	// Gated on `_fxBlurred`, not merely on being open: until the keyboard is
-	// actually on its way down there is no space to grow into, and resizing
-	// early would just throw the compose bar around behind the keys. So nothing
-	// moves until the keyboard leaves.
+	// actually on its way down there is no slot to move into, and reordering
+	// early would just throw the compose bar around behind the keys. So the
+	// menu stays above the compose for those few hundred milliseconds and drops
+	// below it the moment the keyboard leaves.
 	const _fxDocked = $derived(showTextFxBar && _isMobileWidth && _fxBlurred);
 	// True once the compose has been blurred FOR the dock. From then on there
 	// is no live selection: applies work off `_savedCeSel`, and the highlight
@@ -5762,10 +5761,6 @@
 		}
 	}
 	@keyframes faux-caret-blink { 0%, 50% { opacity: 1; } 50.01%, 100% { opacity: 0; } }
-	/* The menu appears in the middle of the compose column, not from the
-	   screen edge, so it fades in place — a slide would read as the sheet
-	   arriving from somewhere it never was. */
-	@keyframes fx-menu-in { from { opacity: 0; } to { opacity: 1; } }
 
 	/* Inline Emoji Kitchen images */
 	:global(.ek-img) {
@@ -6324,67 +6319,45 @@
 
 		/* The docked highlight menu — see `_fxDocked` in the script.
 
-		   Menu on top, compose below it, and the compose grows DOWN into the
-		   space the keyboard just gave up. `.input-area` becomes a flex column
-		   with a height fixed to the chat's, less a strip of conversation, so
-		   the menu sits at a constant offset from the header and the compose
-		   takes everything under it.
+		   The menu is simply the LAST thing in the compose column: .input-area
+		   becomes a flex column and the menu takes `order: 1`, so it lands under
+		   the compose bar — where the keyboard was — in normal flow.
 
-		   The fixed height is the point, not a detail. Everything in the menu is
-		   ABOVE the thing it resizes, so if the compose's height tracked its
-		   content, dragging the size slider would move the slider — out from
-		   under your finger, mid-drag. With the box fixed the text scales inside
-		   a compose that never changes size, and nothing above it moves.
-
-		   (Two earlier passes: the menu as a `position: fixed` sheet with the
-		   compose lifted by its MEASURED height — two numbers for one edge, and
-		   when they disagree the compose hides behind the menu; then the menu
-		   in flow BELOW the compose — same slider problem, since a compose that
-		   grows with its content pushes everything under it around.) */
+		   It was briefly a `position: fixed` sheet with the compose bar lifted
+		   by the menu's MEASURED height. That works right up until the two
+		   numbers disagree — a row rewrapping, a frame before the resize
+		   observer catches up — and then the compose bar sits BEHIND the menu
+		   and you can't see the message you're restyling. In flow they cannot
+		   disagree, and there is nothing to measure. The chat column is already
+		   sized from --vvh, so its bottom edge IS the visible bottom; no
+		   browser-chrome arithmetic either. */
 		.input-area { display: flex; flex-direction: column; }
-		.input-area.fx-dock {
-			/* % of .chat-wrap, which already ends at the visible bottom on every
-			   platform — no --vvh or browser-chrome arithmetic to get wrong. The
-			   7rem it leaves behind is the last message or two, still in view. */
-			height: calc(100% - 7rem);
-		}
-		/* Only the menu gives ground when the column is tight; the reply bar,
-		   suggestion rows and attachment previews keep their size. */
-		.input-area.fx-dock > * { flex-shrink: 0; }
 		.input-area.fx-dock .text-fx-dock {
 			display: block;
-			flex-shrink: 1;
-			min-height: 0;
+			order: 1;
+			background: var(--surface-2);
+			/* The menu covers the bottom strip, home indicator included. */
+			padding-bottom: env(safe-area-inset-bottom, 0px);
+			/* Never crowd the conversation out entirely — the menu gives back
+			   what it can't have and scrolls its own rows. 45% is comfortably
+			   more than the keyboard it replaces, so it rarely comes to that. */
+			max-height: calc(var(--vvh, 100dvh) * 0.45);
 			overflow-y: auto;
 			overscroll-behavior: contain;
 			-webkit-overflow-scrolling: touch;
-			animation: fx-menu-in 0.18s ease-out;
+			animation: sheet-rise 0.24s cubic-bezier(0.32, 0.72, 0, 1);
 		}
 		@media (prefers-reduced-motion: reduce) {
 			.input-area.fx-dock .text-fx-dock { animation: none; }
 		}
-		/* The compose takes the rest of the column — the keyboard's old space.
-		   `align-items: stretch` so the box actually fills it (the bar is
-		   flex-end normally, to bottom-align a one-line compose against the send
-		   button); the send button opts back out, or it stands 400px tall. */
-		.input-area.fx-dock .input-bar {
-			flex: 1 1 auto;
-			min-height: 8rem;
-			align-items: stretch;
-		}
-		.input-area.fx-dock .send-wrap { align-self: flex-end; }
-		.input-area.fx-dock .compose-ce {
-			flex: 1;
-			min-height: 0;
-			/* The 120px cap is for a box you type into. This one is a canvas for
-			   text you may have just scaled to 7x — let it fill, and scroll
-			   (revealRange keeps the highlighted words in view). */
-			max-height: none;
-		}
-		/* An expression picker wants the same strip; it wins while it's open,
-		   and the compose goes back to its own height above the picker sheet. */
+		/* The menu owns the safe area now, so the compose bar above it must not
+		   also reserve it — the same rule the docked pickers get. */
+		.input-area.fx-dock .input-bar { padding-bottom: var(--compose-dock-gap); }
+		/* Room to actually READ what you're restyling. 120px is a sane cap for a
+		   compose you type into; it is not one for text you just scaled to 7x. */
+		.input-area.fx-dock .compose-ce { max-height: 200px; }
+		/* An expression picker wants the same strip; it wins while it's open. */
 		.input-area.picker-open .text-fx-dock { display: none; }
-		.input-area.picker-open.fx-dock { height: auto; }
 	}
 
 	/* Noto Color Emoji: bubble needs an explicit override since it has its own font-family */

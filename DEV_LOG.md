@@ -4,6 +4,29 @@ This document is a running record of what has been attempted, what is in progres
 
 ---
 
+### 2026-09-02 — Reverted: the fixed-height compose column broke the native app
+- **Status**: `reverted` (chat pages back to 79cc426; scripts/force-refresh.js kept)
+- **Symptom**: on the native shell at e6e885f the highlight menu rendered below
+  the viewport and the compose was, in the user's words, "very broken".
+- **What was reverted**: `.input-area.fx-dock { height: calc(100% - 7rem) }`
+  plus the flex stretching under it (`.input-bar { flex: 1; align-items:
+  stretch }`, `.compose-ce { flex: 1 }`, the send-button opt-out).
+- **Why it's suspect**: that height is a PERCENTAGE of `.chat-wrap`, and on
+  mobile the conversation renders inside `.fwd-host.conv-layer` — an absolutely
+  positioned `top: 0; height: 100dvh` layer that deliberately sits OUTSIDE
+  `body.native-app .app-shell`'s `padding-top: --native-top-inset`. The chat's
+  own height is `calc(var(--vvh) - var(--header-h))` on the assumption that
+  inset is still applied. Any disagreement between --vvh, 100dvh and the notch
+  inset in the native web view lands entirely on a percentage-height child,
+  where it had nowhere to go but past the bottom edge. The previous layout was
+  content-sized and simply couldn't overrun.
+- **Standing lesson**: don't ship chat layout that depends on the native shell's
+  viewport arithmetic without numbers off a real device. `?vvdbg` (see
+  `src/lib/keyboard-metrics.js`) prints innerHeight / vv.height / offsetTop /
+  dvh / svh / lvh / --vvh live — get that FIRST.
+
+---
+
 ### 2026-09-02 — Highlight menu: compose takes the keyboard's space
 - **Status**: `attempted` (follow-up to the entry below, from a phone test)
 - **Symptom**: with the menu docked BELOW the compose, dragging the size /
