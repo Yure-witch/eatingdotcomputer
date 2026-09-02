@@ -4,6 +4,37 @@ This document is a running record of what has been attempted, what is in progres
 
 ---
 
+### 2026-09-02 — Underline / strikethrough never toggled off
+- **Status**: `attempted` (root cause REPRODUCED in a script and the fix
+  verified against it — not inferred)
+- **Symptom**: underline and strikethrough didn't toggle. Pressing again
+  re-applied instead of clearing.
+- **Root cause**: `fxSplitWords` ("Per word", on by default) makes each WORD
+  its own fx node so it animates on its own beat — and emits the whitespace
+  BETWEEN words as a BARE text node. `serializeCe` rebuilds the fx stack from
+  the DOM, so those spaces come back with an EMPTY stack. `applyTextFx`'s
+  toggle-off test asks whether EVERY overlapping segment already carries the
+  effect; a space never does, so on any multi-word selection the answer was
+  permanently "no" and every press re-applied. Reproduced: three presses of
+  underline on "hello big world", `allHaveIt` false every time.
+- Underline and strike are simply where it SHOWS. Bold and italic broke
+  identically, but a non-bold space looks like a bold one — a gap in an
+  underline does not.
+- **Fixes** (all three needed):
+  - `fxSpaceNode` / `fxSpaceHtml`: whitespace between words keeps the
+    DECORATIONS (underline/strike, not the animations — per-word animation is
+    the point of the split). The rule now runs through the gaps, and the round
+    trip through the DOM is lossless for them.
+  - `applyTextFx` judges "already applied?" on the segments with INK in them,
+    so whitespace can't cast the deciding vote. Whitespace still decides when
+    the selection is nothing but whitespace. This repairs toggling for bold,
+    italic and the animations too.
+  - `nestedFxHtml`'s decoration span was the ONE fx span with no `data-fx`.
+    Since `serializeCe` reads only that attribute, copying an underlined run
+    out of a bubble silently dropped the decoration. Now it has one.
+
+---
+
 ### 2026-09-02 — Highlight dialog: ⌫ key, and formatting beside the effects
 - **Status**: `attempted`
 - **⌫ in the expression keyboard's spot.** Same position and size as

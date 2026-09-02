@@ -834,6 +834,16 @@
 	}
 
 	// Build a nested fx DOM node (innermost text → outermost span)
+	// Whitespace between per-word/per-grapheme runs. It is emitted as its own
+	// node so each WORD animates on its own beat — but a decoration has to run
+	// THROUGH the gaps or the rule breaks at every space, and, worse, a bare
+	// text node comes back from serializeCe with an EMPTY fx stack, so
+	// "is this already applied?" answered no every other press. That is what
+	// made underline and strike look like they wouldn't toggle.
+	function fxSpaceNode(text, fxStack) {
+		const decor = fxStack.filter((fx) => fx === 'underline' || fx === 'strike');
+		return decor.length ? makeFxNode(decor, text) : document.createTextNode(text);
+	}
 	function makeFxNode(fxStack, text, delay = null) {
 		const decorFx = fxStack.filter(fx => fx === 'underline' || fx === 'strike');
 		const wdthFx = fxStack.find(fx => fx.startsWith('wdth-'));
@@ -1109,7 +1119,7 @@
 			if (fxStack.includes('ripple')) {
 				const gs = [..._segmenter.segment(text)].map(g => g.segment);
 				gs.forEach((g, i) => {
-					if (/^\s+$/.test(g)) nodes.push(document.createTextNode(g));
+					if (/^\s+$/.test(g)) nodes.push(fxSpaceNode(g, fxStack));
 					else nodes.push(makeFxNode(fxStack, g, `-${((globalWi + i) * 0.08).toFixed(2)}s`));
 				});
 				globalWi += gs.filter(g => !/^\s+$/.test(g)).length;
@@ -1124,7 +1134,7 @@
 				const toks = text.split(/(\s+)/);
 				if (toks.length > 1) {
 					toks.forEach(tok => {
-						if (/^\s+$/.test(tok)) nodes.push(document.createTextNode(tok));
+						if (/^\s+$/.test(tok)) nodes.push(fxSpaceNode(tok, fxStack));
 						else nodes.push(makeFxNode(fxStack, tok, `${(globalWi++ * 0.06).toFixed(2)}s`));
 					}); return;
 				}
@@ -1646,13 +1656,23 @@
 		const isFormatFx = name === 'bold' || name === 'italic' || name === 'underline' || name === 'strike' || name === 'flip' || isColorFx;
 		const isFmtFx = (fx) => fx === 'bold' || fx === 'italic' || fx === 'underline' || fx === 'strike' || fx === 'flip' || fx === 'rainbow' || fx.startsWith('color-') || fx.startsWith('wdth-') || fx.startsWith('wght-') || fx.startsWith('sz-');
 
-		// Check if every selected segment already has this effect → toggle off
-		let p0 = 0, allHaveIt = true;
+		// Every selected segment already carries this effect → the press means
+		// "remove it". Judged on the segments with INK in them: per-word
+		// splitting can hand the whitespace back with a thinner stack than its
+		// neighbours (fxSpaceNode keeps the decorations through a gap, but not
+		// the animations), and letting a space cast a vote made every other
+		// press re-apply instead of clearing. Whitespace still decides when the
+		// selection is nothing but whitespace.
+		let p0 = 0;
+		const overlapping = [];
 		for (const seg of segs) {
 			const sEnd = p0 + seg.text.length;
-			if (sEnd > selStart && p0 < selEnd && !seg.fxStack.includes(name)) { allHaveIt = false; break; }
+			if (sEnd > selStart && p0 < selEnd) overlapping.push(seg);
 			p0 += seg.text.length;
 		}
+		const inked = overlapping.filter(seg => !/^\s+$/.test(seg.text));
+		const judges = inked.length ? inked : overlapping;
+		const allHaveIt = judges.length > 0 && judges.every(seg => seg.fxStack.includes(name));
 
 		let plain = 0;
 		const newSegs = [];

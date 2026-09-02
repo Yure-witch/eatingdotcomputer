@@ -92,6 +92,18 @@ export function escapeHtml(s) {
 	return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+// The decorations, and only those. Per-word/per-grapheme splitting emits the
+// whitespace BETWEEN words as bare text so each word animates on its own beat —
+// but a decoration has to run THROUGH those gaps or the rule breaks at every
+// space. It also has to survive the round trip: serializeCe rebuilds the fx
+// stack from the DOM, so a bare space comes back with an EMPTY stack, and
+// "is this already applied?" then answers no every other press — which is what
+// made underline and strike look like they wouldn't toggle.
+export function fxSpaceHtml(tok, fxStack) {
+	const decor = fxStack.filter((fx) => fx === 'underline' || fx === 'strike');
+	return decor.length ? nestedFxHtml(decor, escapeHtml(tok)) : escapeHtml(tok);
+}
+
 export function nestedFxHtml(fxStack, innerHtml, delay = null) {
 	const decorFx = fxStack.filter(fx => fx === 'underline' || fx === 'strike');
 	const wdthFx = fxStack.find(fx => fx.startsWith('wdth-'));
@@ -113,7 +125,10 @@ export function nestedFxHtml(fxStack, innerHtml, delay = null) {
 	}
 	if (decorFx.length) {
 		const tdLine = decorFx.map(fx => fx === 'underline' ? 'underline' : 'line-through').join(' ');
-		html = `<span class="tfx ${decorFx.map(fx => `tfx-${fx}`).join(' ')}" style="text-decoration-line:${tdLine};text-underline-offset:2px">${html}</span>`;
+		// data-fx like every other fx span: serializeCe rebuilds the fx stack
+		// from that attribute alone, so without it copying an underlined or
+		// struck-through run out of a bubble quietly lost the decoration.
+		html = `<span class="tfx ${decorFx.map(fx => `tfx-${fx}`).join(' ')}" data-fx="${decorFx.join(' ')}" style="text-decoration-line:${tdLine};text-underline-offset:2px">${html}</span>`;
 	}
 	for (let i = animStack.length - 1; i >= 0; i--) {
 		const fx = animStack[i];
@@ -562,7 +577,7 @@ export function createContentRenderer({ hljs = null, codeIcons = {}, getCeMap = 
 				}
 				const tokens = chunk.split(/(\s+)/);
 				if (tokens.length > 1) {
-					return tokens.map(tok => /^\s+$/.test(tok) ? escapeHtml(tok) : nestedFxHtml(fxStack, escapeHtml(tok), `${(globalWi++ * 0.06).toFixed(2)}s`)).join('');
+					return tokens.map(tok => /^\s+$/.test(tok) ? fxSpaceHtml(tok, fxStack) : nestedFxHtml(fxStack, escapeHtml(tok), `${(globalWi++ * 0.06).toFixed(2)}s`)).join('');
 				}
 				return nestedFxHtml(fxStack, escapeHtml(chunk), `${(globalWi++ * 0.06).toFixed(2)}s`);
 			}
