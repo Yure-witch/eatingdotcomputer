@@ -4079,7 +4079,13 @@
 <!-- chat-header removed — partner name now publishes to the global
      AppHeader via pageTitle. On mobile, BottomNav's Chat button opens
      the chat sidebar, replacing what the local sidebar-toggle did. -->
-<div class="message-list" bind:this={listEl} style:padding-bottom="{inputAreaHeight}px" onscroll={onListScroll} oncopy={onMsgListCopy} ondragenter={onDragEnter} ondragover={onDragOver} ondragleave={onDragLeave} ondrop={onDrop}>
+<!-- padding-bottom mirrors the compose so the last message clears it when the
+     native keyboard transform lifts the bar OVER the list. While the highlight
+     dialog is docked there is no transform (body.expr-picker-open pins it) and
+     the bar is a plain flex sibling, so the padding would only add a screenful
+     of dead scroll — and every change to it jolts the scroll anchor, which is
+     what made opening the typography sliders flash. -->
+<div class="message-list" bind:this={listEl} style:padding-bottom="{_fxDocked ? 0 : inputAreaHeight}px" onscroll={onListScroll} oncopy={onMsgListCopy} ondragenter={onDragEnter} ondragover={onDragOver} ondragleave={onDragLeave} ondrop={onDrop}>
 	{#if loadingMore}
 		<div class="load-more-spinner"><span class="sending-spinner"></span></div>
 	{/if}
@@ -6379,11 +6385,16 @@
 		/* The dialog owns the safe area now, so the message bar above it must
 		   not also reserve it — the same rule the docked pickers get. */
 		.input-area.fx-dock .input-bar { padding-bottom: var(--compose-dock-gap); }
-		/* Room to actually READ what you're restyling — 120px is a cap for a box
-		   you type into, not for text at 7x. Bounded, because this is the growth
-		   that pushes upward, and past this it scrolls (revealRange keeps the
-		   highlighted words in view). */
-		.input-area.fx-dock .compose-ce { max-height: 200px; }
+		/* The message bar takes its full height the moment the dialog opens —
+		   expanding UPWARD, since its bottom is pinned to the dialog's top —
+		   and then HOLDS it. A fixed height, not a max: scaling the type has to
+		   move nothing at all, and the surest way to guarantee that is a box
+		   whose size never depends on what is inside it. Two passes tried to
+		   let it grow and keep the dialog still by arithmetic; both pushed the
+		   sliders around. The text scales and scrolls inside (revealRange keeps
+		   the highlighted words in view) and the layout simply doesn't react.
+		   A plain length — no percentage, nothing resolved against an ancestor. */
+		.input-area.fx-dock .compose-ce { height: 200px; max-height: none; }
 		/* An expression picker wants the same strip; it wins while it's open. */
 		.input-area.picker-open .text-fx-dock { display: none; }
 	}

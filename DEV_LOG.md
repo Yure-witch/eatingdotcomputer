@@ -4,6 +4,32 @@ This document is a running record of what has been attempted, what is in progres
 
 ---
 
+### 2026-09-02 — Highlight dialog: freeze the compose, unhook the list padding
+- **Status**: `attempted`
+- **Symptoms**: (1) tapping the Aa pill to open the size/weight/width sliders
+  flashed erratically; (2) resizing the text still pushed the sliders DOWN.
+- **Fix 1 — the compose's height stops changing at all while docked.**
+  `height: 200px` (plain length, not a max, nothing resolved against an
+  ancestor) instead of `max-height`. The bar expands upward once, when the
+  dialog opens, then holds; the type scales and scrolls INSIDE it and the
+  layout doesn't react. Two previous passes tried to let it grow while keeping
+  the dialog still by arithmetic — pin the column's bottom, bound the maxima,
+  make only the dialog shrink — and both still pushed the sliders. A box whose
+  size never depends on its contents cannot push anything, which is the only
+  version of this that doesn't need a device to verify.
+- **Fix 2 — the flash.** `.message-list` had
+  `style:padding-bottom="{inputAreaHeight}px"`: its scroll padding tracked the
+  compose's measured height. That padding exists for the NATIVE keyboard
+  transform, which lifts the bar OVER the list — while the dialog is docked
+  there is no transform (body.expr-picker-open pins it to none) and the bar is
+  a plain flex sibling, so the padding was only adding a screenful of dead
+  scroll. Worse, opening the sliders grew the input area ~160px, which moved
+  the padding by the same amount, which jolted the scroll anchor and forced the
+  `content-visibility: auto` rows to re-resolve — the flash. Now 0 while
+  docked.
+
+---
+
 ### 2026-09-02 — Highlight dialog under the message bar, ✕ top-left
 - **Status**: `attempted` (needs a phone pass — native shell especially)
 - **Spec (user)**: dialog UNDER the message, in the strip the text input
