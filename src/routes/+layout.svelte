@@ -1,6 +1,7 @@
 <script>
 	import '../app.css';
 	import { updated, navigating } from '$app/stores';
+	import { version, browser } from '$app/environment';
 	import { onMount } from 'svelte';
 	import {
 		loadSpriteSheet,
@@ -82,6 +83,17 @@
 	});
 
 	onMount(() => {
+		// If the page was busy when the update landed, try again the moment it
+		// isn't: when they leave the field, and when they come back to the tab.
+		const retry = () => { if ($updated) autoRefresh(); };
+		window.addEventListener('focusout', retry);
+		document.addEventListener('visibilitychange', retry);
+		_refreshCleanup = () => {
+			window.removeEventListener('focusout', retry);
+			document.removeEventListener('visibilitychange', retry);
+			clearTimeout(refreshTimer);
+		};
+
 		// A page loaded from an older build can't fetch chunk names that no longer
 		// exist, so the first route it lazily imports fails and silently never
 		// renders — which looks exactly like "the change didn't ship". Recover by
@@ -335,6 +347,7 @@
 			window.removeEventListener('native-resume', onAppResume);
 			document.removeEventListener('visibilitychange', onVisible);
 			window.removeEventListener('native-background', onBackground);
+			_refreshCleanup?.();
 		};
 	});
 
@@ -398,6 +411,79 @@
 			console.warn('[layout] skottie-worker prewarm failed', e);
 		}
 	}
+
+	// ——— New version: refresh first, tell them after ————————————————
+	//
+	// The old banner asked you to press Reload. This reloads for you and then
+	// says so, because the update is not optional — the version you are looking
+	// at is already gone — and a banner you have to act on just sits there.
+	//
+	// Saying "refreshed" has to survive the reload that it is reporting, so the
+	// decision is written to sessionStorage BEFORE reloading and read back on
+	// the way up.
+	const REFRESH_MARK = 'ec:auto-refreshed';
+	const REFRESH_MS = 10000;
+
+	let refreshed = $state(false);
+	let refreshFailed = $state(false); // reloaded and the build didn't change
+	let refreshTimer;
+	let _refreshCleanup;
+
+	function dismissRefreshed() {
+		refreshed = false;
+		clearTimeout(refreshTimer);
+	}
+
+	function readRefreshMark() {
+		try {
+			const raw = sessionStorage.getItem(REFRESH_MARK);
+			if (!raw) return;
+			sessionStorage.removeItem(REFRESH_MARK);
+			const from = JSON.parse(raw)?.from;
+			if (from && from !== version) {
+				// The build really did change — this is the one case where saying
+				// "refreshed" is true.
+				refreshed = true;
+				// setTimeout owns the dismissal, not the bar's animationend: a
+				// backgrounded tab throttles animations, and the banner would
+				// still be sitting there on return.
+				refreshTimer = setTimeout(() => (refreshed = false), REFRESH_MS);
+			} else {
+				// We reloaded and came back on the SAME build. Reloading again
+				// would do the same thing forever, so stop and let them choose.
+				refreshFailed = true;
+			}
+		} catch { /* private mode — no marker, no banner, no loop */ }
+	}
+
+	// Runs during component INIT — before any effect body, and before onMount.
+	// That ordering IS the loop guard: the $updated effect below must not be
+	// able to fire an auto-refresh before this has had its chance to set
+	// `refreshFailed`.
+	if (browser) readRefreshMark();
+
+	// $updated flips when a version check finds a newer build — on resume, on
+	// navigation, or from SvelteKit's own polling.
+	$effect(() => {
+		if ($updated) autoRefresh();
+	});
+
+	let _refreshArmed = false;
+	function autoRefresh() {
+		if (_refreshArmed || refreshFailed) return;
+		// Never yank the page out from under someone mid-sentence. A chat draft
+		// or a half-filled form is unsaved work, and this is not urgent enough
+		// to cost it — the retry hooks below pick it up the moment they stop.
+		const el = document.activeElement;
+		const busy =
+			el &&
+			(el.tagName === 'TEXTAREA' || el.tagName === 'INPUT' || el.isContentEditable) &&
+			String(el.value ?? el.textContent ?? '').trim().length > 0;
+		if (busy) return;
+		_refreshArmed = true;
+		try { sessionStorage.setItem(REFRESH_MARK, JSON.stringify({ from: version })); } catch {}
+		location.reload();
+	}
 </script>
 
 
@@ -405,7 +491,23 @@
 
 <GetAppBanner />
 
-{#if $updated}
+{#if refreshed}
+	<div class="refreshed-banner" role="status">
+		<span class="msi tick">check_circle</span>
+		<span class="refreshed-text">Updated to the latest version — refreshed for you.</span>
+		<button class="refreshed-x" onclick={dismissRefreshed} aria-label="Dismiss">
+			<span class="msi">close</span>
+		</button>
+		<!-- Purely the visual half of the countdown; the setTimeout in
+		     readRefreshMark is what actually dismisses it, so a throttled
+		     animation in a background tab can't leave the banner stuck. -->
+		<div class="refreshed-countdown"></div>
+	</div>
+{/if}
+
+<!-- Fallback: we reloaded and came back on the same build, so refreshing again
+     would just loop. Hand it back to them rather than pretending. -->
+{#if $updated && refreshFailed}
 	<div class="update-banner">
 		<span>A new version is available.</span>
 		<button onclick={() => window.location.reload()}>Reload</button>
@@ -496,6 +598,47 @@
 		.offline-banner { animation: none; }
 		.offline-dot { animation: none; }
 	}
+	.refreshed-banner {
+		position: fixed; top: 0; left: 0; right: 0;
+		/* Above the fixed app header (z-index 10) and the bottom nav (1000). */
+		z-index: 1002;
+		display: flex; align-items: center; gap: 0.6rem;
+		padding: 0.7rem 1rem;
+		padding-top: calc(0.7rem + env(safe-area-inset-top, 0px));
+		background: var(--ink); color: var(--paper);
+		font-size: 0.85rem; line-height: 1.35;
+		box-shadow: 0 2px 16px rgba(0, 0, 0, 0.25);
+		/* No slide-in. A transform entrance starts the banner OFF-SCREEN, so any
+		   frame the browser declines to run — a throttled tab, a busy first paint
+		   right after the reload this is reporting — leaves the message parked
+		   above the fold with nothing to say it's there. The countdown bar
+		   supplies the motion; the banner itself is simply present. */
+	}
+	.refreshed-banner .tick { font-size: 1.1rem; flex: none; opacity: 0.9; }
+	.refreshed-text { flex: 1; min-width: 0; }
+	.refreshed-x {
+		flex: none; background: transparent; border: none; cursor: pointer;
+		color: var(--paper); opacity: 0.7; padding: 0.15rem; line-height: 0;
+		border-radius: 6px;
+	}
+	.refreshed-x:hover { opacity: 1; background: rgba(255, 255, 255, 0.12); }
+	.refreshed-x .msi { font-size: 1.1rem; }
+	.refreshed-countdown {
+		position: absolute; left: 0; bottom: 0; height: 2px;
+		background: var(--accent);
+		width: 100%;
+		transform-origin: left center;
+		animation: refreshed-countdown 10s linear forwards;
+	}
+	/* Scale, not width: it runs on the compositor, so the bar stays smooth even
+	   while the freshly-loaded page is still doing its start-up work. */
+	@keyframes refreshed-countdown { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+	@media (prefers-reduced-motion: reduce) {
+		/* The bar keeps running: it's the countdown, information rather than
+		   decoration, and it is what makes the 10 seconds legible. */
+		.refreshed-countdown { animation-timing-function: linear; }
+	}
+
 	.update-banner {
 		position: fixed; bottom: 1rem; left: 50%; transform: translateX(-50%);
 		/* Above the mobile bottom nav, which is 60px tall, sits at
