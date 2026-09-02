@@ -4,6 +4,60 @@ This document is a running record of what has been attempted, what is in progres
 
 ---
 
+### 2026-09-02 — Highlight menu docks where the keyboard was (mobile)
+- **Status**: `attempted` (type-checks clean and the CSS compiles; the on-screen
+  keyboard can't be reproduced in a desktop browser, so this needs a pass on a
+  phone to confirm)
+- **Symptom**: highlighting text in the chat compose on a phone dismissed the
+  keyboard, and the highlight menu that popped up ended up off the screen.
+- **Root cause**: the menu (`.text-typo-bar` + `.text-fx-bar`) lived in the
+  compose stack, so it stacked ON TOP of the keyboard. Keyboard + two toolbars +
+  compose bar is taller than the visible strip on a phone, so the menu was
+  pushed off the top edge. Every other sheet in the app (expression, media,
+  reaction pickers) instead DOCKS in the keyboard's slot via `--kb-h-last`; the
+  highlight menu was the one that didn't.
+- **Fix** (both `chat/channel/[channelId]` and `chat/dm/[convId]`):
+  - The two bars are wrapped in a `.text-fx-dock` element. On mobile
+    `.input-area` becomes a flex column and the menu takes `order: 1`, so it
+    lands BELOW the compose bar — where the keyboard was — in normal flow.
+  - The compose is blurred deliberately once the selection GESTURE is over
+    (`scheduleFxDock`, 220ms + a pointer-down check) rather than mid-drag —
+    blurring while a selection handle is down fights iOS's own teardown. Touch
+    devices only: a narrow desktop window has no keyboard to replace.
+  - `_fxDocked` is gated on that blur, so the menu only moves once the keyboard
+    is actually leaving — no lurch behind the keys in between.
+  - With no live selection left, `applyTextFx` falls back to `_savedCeSel`
+    (otherwise every button in the docked menu is a no-op), and it no longer
+    re-focuses the compose on apply — that was summoning the keyboard back over
+    the menu. `applyInlineTypo` skips its `addRange` for the same reason.
+  - A blurred contenteditable stops painting its selection, so the saved range
+    is re-painted through the Custom Highlight API —
+    `::highlight(compose-sel)` in `app.css`. No DOM wrapper, nothing for
+    `serializeCe` to trip over; unsupported browsers just get no tint.
+    `revealRange` scrolls the compose to follow it, since scaling type up
+    pushes the highlighted words out of the compose's scroll window and with no
+    caret in there nothing brings them back.
+  - `.compose-ce`'s 120px cap goes to 200px while docked — a sane cap for a
+    compose you type into is not one for text you just scaled to 7x.
+  - `body.expr-picker-open` is set while docked, so the bottom nav gets out of
+    the way and `.chat-wrap` reclaims its strip — the same signal the pickers
+    use. Tapping back into the compose, or sending, stands the menu down.
+- **First attempt, and why it was wrong**: the menu was a `position: fixed`
+  sheet pinned to the visible bottom edge (like the expression pickers), with
+  the compose bar lifted by `margin-bottom: var(--fx-dock-h)` — the sheet's
+  height, measured via `bind:offsetHeight`. User report: *"when I change the
+  size weight or width of the text the whole panel actually moves down, and
+  that's bad I can't actually see the message"*. Two numbers describing one
+  edge can disagree — a row rewrapping, a frame before the resize observer
+  catches up, any moment the docked state flips — and when they do, the compose
+  bar drops behind the menu. Also the sheet was hard-capped at the keyboard's
+  height (`--picker-h`), which suits the pickers (fixed grids that fill their
+  sheet) but not a toolbar whose height is whatever its rows come to: open the
+  typography sliders and the content outgrew the cap, so the panel scrolled its
+  own contents. In flow there is nothing to measure and nothing to disagree.
+
+---
+
 ### 2026-08-30 — Lab → Rank It: ranked polls
 - **Status**: `attempted` (schema, endpoints and tally verified end-to-end
   against prod Turso by a throwaway self-test that cleaned up after itself;

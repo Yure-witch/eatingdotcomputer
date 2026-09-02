@@ -658,6 +658,20 @@ body.native-app.expr-picker-open .message-list::after {
 }
 
 /* ──────────────────────────────────────────────────────────────────────
+   The compose selection, painted by us.
+
+   The mobile highlight menu docks where the keyboard was, which means the
+   compose has to be blurred — and a blurred contenteditable stops painting
+   its selection, so you would be styling text with no visible highlight. The
+   chat pages re-paint the saved range through the Custom Highlight API
+   (CSS.highlights.set('compose-sel', …)); this is what it looks like. The rule
+   is simply ignored where ::highlight() isn't supported.
+   ────────────────────────────────────────────────────────────────────── */
+::highlight(compose-sel) {
+	background-color: color-mix(in srgb, var(--accent) 34%, transparent);
+}
+
+/* ──────────────────────────────────────────────────────────────────────
    Native notch handling. The status bar OVERLAYS the web view (overlay:true),
    so the header's cream background paints up into the notch — a tan strip
    that matches the header. The header + app shell pad DOWN by the notch

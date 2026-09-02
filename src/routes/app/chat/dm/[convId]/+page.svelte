@@ -230,7 +230,10 @@
 	// bottom area). Cross-component signal via a body class.
 	$effect(() => {
 		if (typeof document === 'undefined') return;
-		document.body.classList.toggle('expr-picker-open', _anyComposePicker);
+		// `_fxDocked` too: the highlight menu docks in the same strip, so the
+		// nav has to clear out for it as well — and .chat-wrap reclaims the
+		// 56px the nav was reserving (see chat/+layout.svelte).
+		document.body.classList.toggle('expr-picker-open', _anyComposePicker || _fxDocked);
 		return () => document.body.classList.remove('expr-picker-open');
 	});
 
@@ -422,6 +425,118 @@
 	}
 	let _isMobileWidth = $state(false);
 	let _aaMq = null, _onAaMq = null;
+
+	// ── Highlight menu: dock it where the keyboard was (mobile) ─────────
+	// The menu used to stack ON TOP of the keyboard, inside the compose
+	// stack — and keyboard + two toolbars + compose bar is taller than the
+	// visible strip on a phone, so the menu ended up off the screen. It now
+	// behaves like every other sheet here: the keyboard is dismissed and the
+	// menu takes the slot it vacates: `.fx-dock` in the mobile CSS reorders it
+	// BELOW the compose bar, so the message you highlighted sits right above
+	// it. This is the state behind that.
+	//
+	// Gated on `_fxBlurred`, not merely on being open: until the keyboard is
+	// actually on its way down there is no slot to move into, and reordering
+	// early would just throw the compose bar around behind the keys. So the
+	// menu stays above the compose for those few hundred milliseconds and drops
+	// below it the moment the keyboard leaves.
+	const _fxDocked = $derived(showTextFxBar && _isMobileWidth && _fxBlurred);
+	// True once the compose has been blurred FOR the dock. From then on there
+	// is no live selection: applies work off `_savedCeSel`, and the highlight
+	// is painted by us rather than by the browser.
+	let _fxBlurred = $state(false);
+	let _fxDockTimer = 0;
+	let _pointerDown = false;
+
+	// Hand the keyboard's slot to the menu — but only once the selection
+	// GESTURE is over. Blurring mid-drag fights iOS's own selection teardown
+	// and throws the layout around (the same reason the Aa pill blurs on tap
+	// rather than on a slider's pointerdown). selectionchange re-arms this on
+	// every handle move; the pointer check covers a finger held still.
+	function scheduleFxDock() {
+		// Touch only: a narrow desktop window is phone-WIDTH but has no soft
+		// keyboard, so there'd be no slot to move into — dismissing its compose
+		// would be pure loss. Same test BottomNav uses for the keyboard.
+		if (!_isMobileWidth || _fxBlurred) return;
+		if (!window.matchMedia?.('(pointer: coarse)')?.matches) return;
+		clearTimeout(_fxDockTimer);
+		_fxDockTimer = setTimeout(() => {
+			if (!showTextFxBar || !_isMobileWidth || _fxBlurred) return;
+			if (_pointerDown) { scheduleFxDock(); return; }
+			const sel = window.getSelection();
+			// Back to typing before we got here — leave the keyboard alone.
+			if (document.activeElement === inputEl && (!sel || sel.isCollapsed)) return;
+			_fxBlurred = true;
+			try { inputEl?.blur(); } catch {}
+			paintSavedSel();
+		}, 220);
+	}
+	// The keyboard is coming back, or the menu is done.
+	function undockFxBar() {
+		clearTimeout(_fxDockTimer);
+		_fxBlurred = false;
+		clearSelPaint();
+	}
+	function onCeFocus() {
+		keyboardOpen = true;
+		// Tapping into the compose means "I want to type": the keyboard is on
+		// its way up and would bury the docked menu, so stand it down. A fresh
+		// selection brings it straight back.
+		if (_fxBlurred) { showTextFxBar = false; undockFxBar(); }
+	}
+
+	// A blurred contenteditable stops painting its selection, so the docked
+	// menu would be styling text you can no longer see marked. Paint the saved
+	// range ourselves. The Custom Highlight API draws over the live DOM without
+	// touching it — no wrapper span for serializeCe to trip over. Browsers
+	// without it just show no tint.
+	function paintSavedSel() {
+		if (!inputEl || !_savedCeSel || _savedCeSel.start >= _savedCeSel.end) { clearSelPaint(); return; }
+		let r;
+		try {
+			const sp = findDomPos(inputEl, _savedCeSel.start);
+			const ep = findDomPos(inputEl, _savedCeSel.end);
+			r = document.createRange();
+			r.setStart(sp.node, sp.offset);
+			r.setEnd(ep.node, ep.offset);
+		} catch { clearSelPaint(); return; }
+		revealRange(r);
+		if (typeof Highlight === 'undefined' || !CSS?.highlights) return;
+		try { CSS.highlights.set('compose-sel', new Highlight(r)); } catch { clearSelPaint(); }
+	}
+	// Scaling type up pushes the highlighted words out of the compose's scroll
+	// window — and with no caret in there, nothing scrolls them back, so you end
+	// up dragging a size slider at text you can't see. Follow the highlight.
+	function revealRange(r) {
+		try {
+			const rr = r.getBoundingClientRect();
+			if (!rr.height || !inputEl) return;
+			const cr = inputEl.getBoundingClientRect();
+			if (rr.top < cr.top) inputEl.scrollTop -= (cr.top - rr.top) + 6;
+			else if (rr.bottom > cr.bottom) inputEl.scrollTop += (rr.bottom - cr.bottom) + 6;
+		} catch {}
+	}
+	function clearSelPaint() {
+		try { CSS.highlights?.delete('compose-sel'); } catch {}
+	}
+	// Every apply rebuilds the compose DOM, detaching the painted range — the
+	// offsets are unchanged, so repaint from them whenever the content moves.
+	$effect(() => { void input; if (_fxBlurred) paintSavedSel(); });
+	$effect(() => () => clearSelPaint());
+	// Pointer bookkeeping for scheduleFxDock (above).
+	$effect(() => {
+		if (typeof document === 'undefined') return;
+		const down = () => { _pointerDown = true; };
+		const up = () => { _pointerDown = false; };
+		document.addEventListener('pointerdown', down, true);
+		document.addEventListener('pointerup', up, true);
+		document.addEventListener('pointercancel', up, true);
+		return () => {
+			document.removeEventListener('pointerdown', down, true);
+			document.removeEventListener('pointerup', up, true);
+			document.removeEventListener('pointercancel', up, true);
+		};
+	});
 
 	// Largest type in a message as a multiple of base size — see the channel
 	// page for the full rationale (content-visibility + iOS momentum).
@@ -1322,6 +1437,15 @@
 	}
 	let _selRaf = 0;
 	function onCeSelectNow() {
+		// Docked: the compose was blurred ON PURPOSE, so there is no live
+		// selection. Everything below would read that as "nothing selected"
+		// and clear the emote highlights + the Flip toggle out from under the
+		// open menu — bail until a real selection comes back.
+		if (_fxBlurred) {
+			const s = window.getSelection();
+			if (!s || s.isCollapsed || !inputEl?.contains(s.anchorNode)) return;
+			undockFxBar();
+		}
 		const sel = window.getSelection();
 		// Show the bar on non-collapsed selection in the compose. Don't
 		// auto-HIDE when the selection collapses — users want the menu
@@ -1330,6 +1454,7 @@
 		// mid-edit).
 		if (sel && !sel.isCollapsed && inputEl?.contains(sel.anchorNode)) {
 			showTextFxBar = true;
+			scheduleFxDock();   // mobile: give the menu the keyboard's slot
 		}
 		if (sel && !sel.isCollapsed && inputEl?.contains(sel.anchorNode)) {
 			const range = sel.getRangeAt(0);
@@ -1404,12 +1529,17 @@
 
 	function applyTextFx(name) {
 		const sel = window.getSelection();
-		if (!sel || sel.isCollapsed || !inputEl || !inputEl.contains(sel.anchorNode)) return;
+		// A live selection is the normal case. With the mobile menu docked the
+		// keyboard is down and there is none, so fall back to the offsets saved
+		// when the highlight was made — otherwise every button in the docked
+		// menu is a no-op.
+		const _live = !!(sel && !sel.isCollapsed && inputEl && inputEl.contains(sel.anchorNode));
+		if (!_live && !(inputEl && _savedCeSel)) return;
 		undoStack = [...undoStack.slice(-99), input];
 		redoStack = [];
-		const range = sel.getRangeAt(0);
-		const selStart = cePlainOffset(inputEl, range.startContainer, range.startOffset);
-		const selEnd = cePlainOffset(inputEl, range.endContainer, range.endOffset);
+		const range = _live ? sel.getRangeAt(0) : null;
+		const selStart = _live ? cePlainOffset(inputEl, range.startContainer, range.startOffset) : _savedCeSel.start;
+		const selEnd = _live ? cePlainOffset(inputEl, range.endContainer, range.endOffset) : _savedCeSel.end;
 		if (selStart >= selEnd) return;
 
 		const markup = serializeCe(inputEl);
@@ -1490,11 +1620,17 @@
 		const newRange = document.createRange();
 		newRange.setStart(startPos.node, startPos.offset);
 		newRange.setEnd(endPos.node, endPos.offset);
-		sel.removeAllRanges();
-		sel.addRange(newRange);
+		// Docked: re-selecting would re-focus the compose and bring the keyboard
+		// back up over the menu. The offsets haven't moved (only the markup
+		// around them), so keep working off the saved ones and repaint instead.
+		if (_live) {
+			sel.removeAllRanges();
+			sel.addRange(newRange);
+		}
 
 		input = newMarkup;
-		inputEl.focus();
+		if (_live) inputEl.focus();
+		else paintSavedSel();
 	}
 
 	let _lastInlineTypo = {};
@@ -1545,8 +1681,8 @@
 			newRange.setStart(startPos.node, startPos.offset);
 			newRange.setEnd(endPos.node, endPos.offset);
 			const sel = window.getSelection();
-			sel.removeAllRanges();
-			sel.addRange(newRange);
+			// See applyTextFx: while docked, re-selecting summons the keyboard.
+			if (!_fxBlurred) { sel.removeAllRanges(); sel.addRange(newRange); }
 			showTextFxBar = true;
 		} catch {}
 		input = newMarkup;
@@ -1583,6 +1719,8 @@
 		}
 		if (_szLive) _szLive.style.fontSize = val !== 1.0 ? `${(val * 0.9).toFixed(3)}rem` : '';
 		else applyInlineSize(val);
+		// The live drag never touches `input`, so the repaint effect can't fire.
+		if (_fxBlurred) paintSavedSel();
 	}
 	function _unwrapLive() {
 		if (!_szLive) return;
@@ -3293,6 +3431,8 @@
 		setCeInput('');
 		undoStack = []; redoStack = [];
 		_savedCeSel = null; _lastInlineTypo = {};
+		// The message is gone, and so is anything it had highlighted.
+		showTextFxBar = false; undockFxBar();
 		replyingTo = null;
 		resetLinkChips();
 		pendingAttachment = null;
@@ -4285,7 +4425,7 @@
 	{/key}
 {/if}
 
-<div class="input-area" class:kb-open={keyboardOpen} class:picker-open={_anyComposePicker} class:from-kb={_anyComposePicker && _pickerFromKb} bind:clientHeight={inputAreaHeight} style:--input-area-h="{inputAreaHeight}px" ondragenter={onDragEnter} ondragover={onDragOver} ondragleave={onDragLeave} ondrop={onDrop}>
+<div class="input-area" class:kb-open={keyboardOpen} class:picker-open={_anyComposePicker} class:fx-dock={_fxDocked} class:from-kb={_anyComposePicker && _pickerFromKb} bind:clientHeight={inputAreaHeight} style:--input-area-h="{inputAreaHeight}px" ondragenter={onDragEnter} ondragover={onDragOver} ondragleave={onDragLeave} ondrop={onDrop}>
 	{#if replyingTo}
 		<div class="reply-bar">
 			<div class="reply-bar-content">
@@ -4368,6 +4508,10 @@
 		</div>
 	{/if}
 	{#if showTextFxBar}
+		<!-- On mobile this wrapper IS the sheet that takes the keyboard's
+		     slot; on desktop it's display:contents and the two bars sit in
+		     the compose stack exactly as before. -->
+		<div class="text-fx-dock">
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div class="text-typo-bar" onfocusin={() => { showTextFxBar = true; }}>
 			<!-- Mobile: typography sliders hide behind an "Aa" pill (see the
@@ -4442,8 +4586,9 @@
 					{/if}
 				</button>
 			{/each}
-			<button class="text-fx-close" onmousedown={(e) => { e.preventDefault(); showTextFxBar = false; }}>✕</button>
+			<button class="text-fx-close" onmousedown={(e) => { e.preventDefault(); showTextFxBar = false; undockFxBar(); }}>✕</button>
 		</div>
+		</div><!-- /.text-fx-dock -->
 	{/if}
 	<div class="input-bar">
 		<!-- Attach + emoji moved into .compose-fmt-row below so the
@@ -4488,7 +4633,7 @@
 			}}
 			onmouseup={onCeSelect}
 			onkeyup={onCeSelect}
-			onfocus={() => keyboardOpen = true}
+			onfocus={onCeFocus}
 			onblur={() => { keyboardOpen = false; /* text fx bar stays until ✕ is pressed */ }}
 			oncopy={onCeCopy}
 			onpaste={onCePaste}
@@ -6055,6 +6200,9 @@
 		transition: background 0.12s, color 0.12s, border-color 0.12s;
 	}
 	.typo-default-btn:hover { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+	/* Desktop: the dock is a no-op wrapper and the two bars stay in the
+	   compose stack. The 640px block turns it into a docked sheet. */
+	.text-fx-dock { display: contents; }
 	.text-fx-bar {
 		display: flex; align-items: center; gap: 0.45rem;
 		padding: 0.45rem 1.1rem 0.6rem; background: var(--surface-2);
@@ -6168,6 +6316,48 @@
 		.text-fx-btn { padding: 0.45rem 0.85rem; font-size: 0.82rem; }
 		.text-fx-layer-toggle { font-size: 0.76rem; }
 		.text-fx-close { width: 2.1rem; height: 2.1rem; }
+
+		/* The docked highlight menu — see `_fxDocked` in the script.
+
+		   The menu is simply the LAST thing in the compose column: .input-area
+		   becomes a flex column and the menu takes `order: 1`, so it lands under
+		   the compose bar — where the keyboard was — in normal flow.
+
+		   It was briefly a `position: fixed` sheet with the compose bar lifted
+		   by the menu's MEASURED height. That works right up until the two
+		   numbers disagree — a row rewrapping, a frame before the resize
+		   observer catches up — and then the compose bar sits BEHIND the menu
+		   and you can't see the message you're restyling. In flow they cannot
+		   disagree, and there is nothing to measure. The chat column is already
+		   sized from --vvh, so its bottom edge IS the visible bottom; no
+		   browser-chrome arithmetic either. */
+		.input-area { display: flex; flex-direction: column; }
+		.input-area.fx-dock .text-fx-dock {
+			display: block;
+			order: 1;
+			background: var(--surface-2);
+			/* The menu covers the bottom strip, home indicator included. */
+			padding-bottom: env(safe-area-inset-bottom, 0px);
+			/* Never crowd the conversation out entirely — the menu gives back
+			   what it can't have and scrolls its own rows. 45% is comfortably
+			   more than the keyboard it replaces, so it rarely comes to that. */
+			max-height: calc(var(--vvh, 100dvh) * 0.45);
+			overflow-y: auto;
+			overscroll-behavior: contain;
+			-webkit-overflow-scrolling: touch;
+			animation: sheet-rise 0.24s cubic-bezier(0.32, 0.72, 0, 1);
+		}
+		@media (prefers-reduced-motion: reduce) {
+			.input-area.fx-dock .text-fx-dock { animation: none; }
+		}
+		/* The menu owns the safe area now, so the compose bar above it must not
+		   also reserve it — the same rule the docked pickers get. */
+		.input-area.fx-dock .input-bar { padding-bottom: var(--compose-dock-gap); }
+		/* Room to actually READ what you're restyling. 120px is a sane cap for a
+		   compose you type into; it is not one for text you just scaled to 7x. */
+		.input-area.fx-dock .compose-ce { max-height: 200px; }
+		/* An expression picker wants the same strip; it wins while it's open. */
+		.input-area.picker-open .text-fx-dock { display: none; }
 	}
 
 	/* Noto Color Emoji: bubble needs an explicit override since it has its own font-family */
