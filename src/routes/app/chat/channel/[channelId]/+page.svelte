@@ -35,6 +35,8 @@
 	import ExpressionTip from '$lib/components/ExpressionTip.svelte';
 	import ThreadPanel from '$lib/components/ThreadPanel.svelte';
 	import MessageAttachment from '$lib/components/MessageAttachment.svelte';
+	import SpotifyCard from '$lib/components/SpotifyCard.svelte';
+	import { parseSpotifyUrl } from '$lib/spotify.js';
 	import Avatar from '$lib/components/Avatar.svelte';
 	import UserMenu from '$lib/components/UserMenu.svelte';
 	import { loadEmojiNames, getEmojiName } from '$lib/emoji-names.js';
@@ -3587,6 +3589,33 @@
 		linkSuggestion = null; _dismissedLinks = new Set();
 	}
 
+
+	// A Spotify link in a message, whether it was left as a bare URL or turned
+	// into a link chip by the composer — the chip stores the URL base64'd inside
+	// a [lk:…] token, so a plain regex over the content would miss exactly the
+	// messages someone took the trouble to tidy up.
+	// Memoised on the message text. Chat re-renders constantly — a reaction, a
+	// presence tick, a new message — and this is called twice per message per
+	// render; without the cache that's a regex sweep over the whole scrollback
+	// every time anything moves.
+	const _spotifyCache = new Map();
+	function spotifyIn(content) {
+		const text = String(content ?? '');
+		if (_spotifyCache.has(text)) return _spotifyCache.get(text);
+		let hit = parseSpotifyUrl(text);
+		if (!hit) {
+			for (const m of text.matchAll(/\[lk:([A-Za-z0-9_-]+)\]/g)) {
+				hit = parseSpotifyUrl(decodeLinkToken(m[1])?.url ?? '');
+				if (hit) break;
+			}
+		}
+		// Bounded: a long-lived channel would otherwise hold every message text
+		// it has ever rendered.
+		if (_spotifyCache.size > 500) _spotifyCache.clear();
+		_spotifyCache.set(text, hit ?? null);
+		return hit ?? null;
+	}
+
 	function formatSize(bytes) {
 		if (!bytes) return '';
 		if (bytes < 1024) return `${bytes} B`;
@@ -4208,6 +4237,14 @@
 					<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 					<p class="bubble" use:scallopedClip={{ active: msg.fx === 'scalloped', ws: msg.wiggleSize || 6 }} use:starburstClip={{ active: msg.fx === 'starburst', ws: msg.wiggleSize || 6 }} class:fx-rainbow={msg.fx === 'rainbow'} class:fx-rainbow-fill={msg.fx === 'rainbow-fill'} class:fx-hearts={msg.fx === 'hearts'} class:fx-slam={msg.fx === 'slam'} class:fx-loud={msg.fx === 'loud'} class:fx-gentle={msg.fx === 'gentle'} class:fx-invisible={msg.fx === 'invisible'} class:fx-shake={msg.fx === 'shake'} class:fx-bounce={msg.fx === 'bounce'} class:fx-wave={msg.fx === 'wave'} class:fx-jitter={msg.fx === 'jitter'} class:fx-big={msg.fx === 'big'} class:fx-small={msg.fx === 'small'} class:fx-wiggly={msg.fx === 'wiggly'} class:fx-cursed={msg.fx === 'cursed'} class:fx-scalloped={msg.fx === 'scalloped'} class:fx-starburst={msg.fx === 'starburst'} class:revealed={revealedInvisible.has(msg.id)} class:jumbo-emoji={jumboEmojiCountM(msg.content) > 0 && !msg.replyTo} class:has-reply={!!msg.replyTo} style:font-size={bubbleFontSize(msg.content, msg.fontSize)} style:font-weight={msg.fontWeight && msg.fontWeight !== 400 ? msg.fontWeight : null} style:font-stretch={msg.fontStretch && msg.fontStretch !== 100 ? `${msg.fontStretch}%` : null} style:--ws={msg.fx === 'wiggly' && msg.wiggleSize ? `${msg.wiggleSize}px` : msg.fx === 'cursed' && msg.wiggleSize ? msg.wiggleSize : null} data-font-size={msg.fontSize && msg.fontSize !== 1 ? msg.fontSize : null} data-font-weight={msg.fontWeight && msg.fontWeight !== 400 ? msg.fontWeight : null} data-font-stretch={msg.fontStretch && msg.fontStretch !== 100 ? msg.fontStretch : null} onclick={msg.fx === 'invisible' && !revealedInvisible.has(msg.id) ? () => revealInvisible(msg.id) : undefined}>{#if msg.replyTo}<button class="reply-quote" onclick={(e) => { e.stopPropagation(); scrollToMessage(msg.replyTo.id); }}><span class="reply-author">{msg.replyTo.userName}</span><span class="reply-text">{@html contentHtmlM(stripFormatting(msg.replyTo.content))}</span></button>{/if}{@html bubbleHtmlM(msg.content, msg.mentions, !msg.noSplit)}{#if msg.edited}<span class="edited-tag"> (edited)</span>{/if}</p>
 					{/key}
+				{/if}
+				<!-- Spotify links render as a card under the bubble, the way they do
+				     in a messaging app. The raw URL stays in the message text: the
+				     card is an addition, so a message is never worse off if the
+				     metadata can't be fetched. -->
+				{#if spotifyIn(msg.content)}
+					{@const sp = spotifyIn(msg.content)}
+					<SpotifyCard link={sp} mine={isMine} />
 				{/if}
 				{#if !msg.pending}
 				<div class="msg-actions-bar">
@@ -5757,11 +5794,17 @@
 			   (ExpressionPicker writes it on <html>). It rides inside the same
 			   clamp, so the input bar's margin-bottom lift and the sheet grow
 			   together from this one number. 86dvh cap = the expanded state. */
-			--picker-h: clamp(
+			/* Split in two so the search lift can shrink the sheet without
+			   restating this formula: --picker-h-base is the height the picker
+			   WANTS, --picker-h is what it gets. app.css ("Searching inside a
+			   docked picker") re-derives the second from the first when the
+			   keyboard is up and the lifted stack no longer fits. */
+			--picker-h-base: clamp(
 				15rem,
 				calc(var(--kb-h-last, calc(22rem + env(safe-area-inset-bottom, 0px))) + var(--expr-grow, 0px)),
 				86dvh
 			);
+			--picker-h: var(--picker-h-base);
 		}
 		.input-area.picker-open { margin-bottom: var(--picker-h); }
 		/* The input area must NEVER be transformed while the picker is open.
