@@ -157,6 +157,50 @@ This document is a running record of what has been attempted, what is in progres
 
 ---
 
+### 2026-09-02 — Chat: Spotify links render as a card
+- **Status**: `attempted` (shipped; metadata path verified against live Spotify
+  pages, the rendered card NOT yet seen in a signed-in browser — the Chrome
+  extension dropped mid-verification)
+- **Ask**: a Spotify link in chat should look like it does in Instagram.
+- **A native card, not Spotify's iframe player — deliberately.** The iOS shell
+  runs `limitsNavigationsToAppBoundDomains: true` with only `eating.computer`
+  in `WKAppBoundDomains`, so a subframe to `open.spotify.com` is blocked by
+  WKWebView: the player would render blank in the app, which is where most of
+  the class reads chat. Adding `open.spotify.com` as a second app-bound domain
+  is possible but needs a new binary — and iOS changes are parked until the App
+  Store review resolves. A card works everywhere today.
+- **No API credentials.** Every field comes from the Open Graph tags Spotify
+  publishes publicly: `og:title`, `og:image` (640²), and `og:description` —
+  "Rick Astley · Whenever You Need Somebody · Song · 1987". `/api/link-meta`
+  already fetched and cached `og:title` for the composer's link chip; it now
+  extracts image, description and site name too (migration 074 adds the
+  columns). Backward compatible — existing callers only read `.title`.
+- **Details that took a second pass**:
+  - The URL is canonicalised from kind+id, so the `?si=` tracking param two
+    people paste doesn't create two cache rows for one song. Locale prefixes
+    (`/intl-de/track/…`) too.
+  - Detection also decodes `[lk:…]` chips — otherwise it would miss exactly the
+    messages someone tidied up in the composer.
+  - `og:title` boilerplate is trimmed. Albums arrive as "Whenever You Need
+    Somebody - Album by Rick Astley | Spotify"; the artist is already on the
+    subtitle and the site name is already on the badge.
+  - No metadata renders NOTHING, not an empty card. The raw URL is still in the
+    message text, so a failed fetch never leaves a message worse off.
+  - Detection is memoised per message text and bounded at 500 entries: chat
+    re-renders on every reaction and presence tick, and this runs twice per
+    message per render.
+- **Verified**: extraction against live track / album / playlist pages (title,
+  art URL, subtitle line all correct for each); the rich columns round-trip
+  through `link_previews`; `/api/link-meta` still 401s without a session;
+  `i.scdn.co` art serves 200.
+- **NOT verified**: the card as rendered in a real chat. Needs a signed-in
+  session, and posting a test Spotify link into a live class channel isn't
+  free — a DM to a demo-class account and then deleting it is the cheap way in.
+  Also worth confirming on an actual iPhone that `i.scdn.co` art loads under
+  app-bound domains (it should — that restricts navigation, not subresources).
+
+---
+
 ### 2026-09-02 — New version: refresh first, tell them after
 - **Status**: `attempted` (shipped; banner verified in a browser, the reload
   trigger itself only reasoned about — see the gap below)
