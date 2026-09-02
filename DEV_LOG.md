@@ -4,6 +4,38 @@ This document is a running record of what has been attempted, what is in progres
 
 ---
 
+### 2026-09-02 — Size reset by weight/width; formatting toolbar hidden on mobile
+- **Status**: `attempted` (cause isolated by test — the segment math was proved
+  innocent before touching anything)
+- **Symptom**: set a size, then change weight or width, and the size snapped
+  back to default.
+- **Not the maths.** A script ran `applyInlineTypo`'s segment math over a
+  committed `sz-137`: weight and width both preserved it
+  (`[sz-137, wght-500, wdth-125]`). The size was gone BEFORE any of that ran.
+- **Root cause**: `applyLiveSize` wraps the selection in a `.sz-live` span
+  carrying a continuous `font-size` and NO `data-fx` — and `data-fx` is the
+  only thing `serializeCe` reads an fx stack from. So while a size drag is in
+  flight the size is invisible to serialisation, and `applyInlineTypo`'s first
+  act is `serializeCe(inputEl)`. `commitLiveSize` bakes a real `sz-N` span, but
+  it only runs on the slider's `change`; anything that re-read the compose
+  before then dropped the size.
+- **Fixes**:
+  - `.sz-live` now carries `data-fx="sz-N"` on every tick of the drag, so the
+    wrapper is never invisible to serialisation in the first place.
+  - `applyInlineTypo` bakes any in-flight size before reading the compose.
+    Also necessary for a second reason: its rebuild replaces the compose's DOM
+    wholesale, which left `_szLive` pointing at a detached node, so the next
+    size drag wrote to something no longer in the document.
+- **Formatting toolbar hidden on mobile.** Bold / italic / underline / strike /
+  colour all live in the highlight dialog now, so `.btn-fmt-more` and
+  `.fmt-tools` are `display: none` on phones — they were no-ops without a
+  selection anyway (`applyTextFx` bails on a collapsed one). The code-block
+  group moves OUT of `.fmt-tools` first: it's the one control in there with no
+  equivalent in the dialog. Desktop is untouched (`.fmt-tools` is
+  `display: contents` there, so the code group keeps its position).
+
+---
+
 ### 2026-09-02 — Underline / strikethrough never toggled off
 - **Status**: `attempted` (root cause REPRODUCED in a script and the fix
   verified against it — not inferred)

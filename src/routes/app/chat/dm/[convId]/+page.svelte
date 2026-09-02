@@ -1677,6 +1677,12 @@
 		const fxName = step !== defaultVal ? (fxMap[step] ?? null) : null;
 		const { start: selStart, end: selEnd } = _savedCeSel;
 		if (selStart >= selEnd) return;
+		// Bake any in-flight size drag before reading the compose. Two reasons:
+		// the live wrapper is a continuous font-size that belongs in the markup,
+		// and the rebuild below replaces the compose's DOM wholesale — leaving
+		// `_szLive` pointing at a node that is no longer in the document, so the
+		// next size drag would write to nothing.
+		if (!prefix.startsWith('sz') && _szLive) commitLiveSize(messageFontSize);
 		if (undoStack.length >= 50) undoStack.shift();
 		undoStack.push(input);
 		redoStack.length = 0;
@@ -1752,7 +1758,16 @@
 				mountStaticEmotes(inputEl);
 			} catch { _szLive = null; }
 		}
-		if (_szLive) _szLive.style.fontSize = val !== 1.0 ? `${(val * 0.9).toFixed(3)}rem` : '';
+		if (_szLive) {
+			_szLive.style.fontSize = val !== 1.0 ? `${(val * 0.9).toFixed(3)}rem` : '';
+			// Keep the wrapper SERIALISABLE while the drag is in flight. Without
+			// a data-fx, serializeCe walks straight through it (that is the only
+			// thing it reads an fx stack from), so anything that re-read the
+			// compose before commitLiveSize ran — changing weight or width, say —
+			// silently dropped the size back to default.
+			if (val !== 1.0) _szLive.dataset.fx = `sz-${Math.round(val * 100)}`;
+			else delete _szLive.dataset.fx;
+		}
 		else applyInlineSize(val);
 		// The live drag never touches `input`, so the repaint effect can't fire.
 		if (_fxBlurred) paintSavedSel();
@@ -4803,6 +4818,12 @@
 						</div>
 					{/if}
 				</div>
+				</div><!-- /.fmt-tools -->
+				<!-- Code lives OUTSIDE .fmt-tools: that group is hidden wholesale on
+				     mobile (it duplicates the highlight dialog) and a code block is
+				     the one thing in it that has no equivalent there. On desktop
+				     .fmt-tools is display:contents, so this sits exactly where it
+				     did. -->
 				<div class="compose-format-wrap code-btn-group">
 					<button class="btn-fmt btn-fmt-code" onmousedown={(e) => { e.preventDefault(); toggleCodeBlock(); }} title="Toggle code block"><span class="msi msi-18">code</span></button>
 					<button class="btn-fmt btn-fmt-code-arrow" class:active={showCodePanel} onmousedown={(e) => { e.preventDefault(); showCodePanel = !showCodePanel; showFormatPanel = false; }} title="Choose language"><span class="msi msi-18">arrow_drop_down</span></button>
@@ -4816,7 +4837,6 @@
 						</div>
 					{/if}
 				</div>
-				</div><!-- /.fmt-tools -->
 			</div>
 		</div>
 		{#if tgFxEligible}
@@ -6028,9 +6048,14 @@
 	.fmt-tools { display: contents; }
 	.btn-fmt-more { display: none; }
 	@media (max-width: 640px) {
-		.btn-fmt-more { display: inline-flex; }
-		.fmt-tools { display: none; }
-		.fmt-tools.open { display: contents; }
+		/* Gone on phones. Bold / italic / underline / strike / colour all live
+		   in the highlight dialog now, where a selection exists to apply them
+		   to — and they were no-ops without one anyway, since applyTextFx bails
+		   on a collapsed selection. Keeping a second copy behind a disclosure
+		   button was just two places to look for one control. */
+		.btn-fmt-more,
+		.fmt-tools,
+		.fmt-tools.open { display: none; }
 	}
 	.code-lang-pop {
 		display: flex; flex-wrap: wrap; gap: 0.2rem; padding: 0.45rem; width: 200px;
