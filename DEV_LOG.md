@@ -157,6 +157,46 @@ This document is a running record of what has been attempted, what is in progres
 
 ---
 
+### 2026-09-02 — New version: refresh first, tell them after
+- **Status**: `attempted` (shipped; banner verified in a browser, the reload
+  trigger itself only reasoned about — see the gap below)
+- **Was**: a bottom banner reading "A new version is available / Reload". The
+  update isn't optional — the build you're looking at is already gone — so a
+  banner you have to act on just sits there.
+- **Now**: it reloads for you and reports it afterwards. Top bar, dismisses
+  itself after 10s, shrinking countdown bar, × to close.
+- **The banner has to survive the reload it is reporting**, so the decision is
+  written to sessionStorage before reloading and read back on the way up.
+- **Three refusals, each one a failure mode worth naming**:
+  1. **Never claim a refresh that didn't happen.** If the reload comes back on
+     the SAME build, nothing is claimed and the old manual banner returns —
+     reloading again would repeat forever.
+  2. **Never reload out from under someone mid-sentence.** A focused
+     input/textarea with content defers it; `focusout` and `visibilitychange`
+     retry the moment they stop. A chat draft is unsaved work.
+  3. **Never depend on an animation to be visible.** Built it with a
+     `translateY(-100%)` slide-in first, which means the banner STARTS
+     off-screen — any frame the browser declines to run leaves the message
+     parked above the fold. Removed it. The countdown bar is visual only; a
+     `setTimeout` owns the dismissal, so a throttled background tab can't
+     strand the banner on screen either. (Third time this session that an
+     animation-dependent resting state bit — see the crossfade and the drag
+     settle.)
+- The marker is read during component **init**, not `onMount`: effects can run
+  before onMount callbacks, and that ordering is the loop guard.
+- **Verified in a browser**: banner renders full-width pinned to top at
+  z-index 1002 above the fixed header; countdown measured mid-flight at
+  `scaleX(0.799)` shrinking from the left origin; × dismisses; the 10s timeout
+  dismisses; the marker is cleared on read; a no-change marker correctly
+  claims nothing. Had to widen the window to 60s to measure at all — 10s is
+  shorter than the tool round-trip — then restored it and confirmed no test
+  constants were left behind.
+- **Gap**: the auto-reload *trigger* (`$updated` firing on a real deploy) was
+  not exercised — that needs an actual version change mid-session. The
+  post-reload half is what's verified.
+
+---
+
 ### 2026-08-31 — Universal Links: web half live, app half deferred
 - **Status**: `attempted` (AASA file live and verified in production; the app
   side is deliberately NOT built — waiting on App Store approval)
