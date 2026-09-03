@@ -69,7 +69,7 @@ export const { handle, signIn, signOut } = SvelteKitAuth({
 					// starts without them. An instructor can turn them back on
 					// per user from Manage → Members.
 					await db.execute({
-						sql: `INSERT INTO users (id, email, name, role, hide_tg_emoji) VALUES (?, ?, ?, 'student', 1)`,
+						sql: `INSERT INTO users (id, email, name, role, hide_tg_emoji, gemma_digest, gemma_scan_dms) VALUES (?, ?, ?, 'student', 1, 1, 1)`,
 						args: [crypto.randomUUID(), email, credentials?.name ? String(credentials.name) : '']
 					});
 					result = await db.execute({
@@ -156,7 +156,7 @@ export const { handle, signIn, signOut } = SvelteKitAuth({
 				// (see the signIn callback below).
 				if (result.rows.length === 0) {
 					await db.execute({
-						sql: `INSERT INTO users (id, email, name, role) VALUES (?, ?, ?, 'student')`,
+						sql: `INSERT INTO users (id, email, name, role, gemma_digest, gemma_scan_dms) VALUES (?, ?, ?, 'student', 1, 1)`,
 						args: [crypto.randomUUID(), email, payload.name ?? '']
 					});
 					result = await db.execute({
@@ -229,7 +229,7 @@ export const { handle, signIn, signOut } = SvelteKitAuth({
 
 				if (existing.rows.length === 0) {
 					await db.execute({
-						sql: `INSERT INTO users (id, email, name, role) VALUES (?, ?, ?, 'student')`,
+						sql: `INSERT INTO users (id, email, name, role, gemma_digest, gemma_scan_dms) VALUES (?, ?, ?, 'student', 1, 1)`,
 						args: [crypto.randomUUID(), user.email, user.name ?? '']
 					});
 				}

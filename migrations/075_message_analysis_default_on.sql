@@ -1,0 +1,17 @@
+-- Message analysis is on by default.
+--
+-- The digest opt-in (gemma_digest) and the DM-read scope (gemma_scan_dms)
+-- used to be two separate boxes, both defaulting off. That split asked people
+-- to reason about an internal distinction: there is no useful state where you
+-- want the digest but won't let it read the messages it summarises. They are
+-- now one switch, "Message analysis", and it starts on.
+--
+-- SQLite can't alter a column default in place and it isn't worth a table
+-- rebuild — every INSERT site now writes both columns explicitly, so the
+-- stored default only ever applies to rows made before this. This turns the
+-- existing ones on so current accounts behave like new ones.
+--
+-- Note this DOES widen what Gemma reads for anyone who had the digest on but
+-- had never opted into full-DM scanning. The setting is one checkbox under
+-- Profile → Edit profile, and turning it off clears both columns.
+UPDATE users SET gemma_digest = 1, gemma_scan_dms = 1 WHERE id != 'gemma';

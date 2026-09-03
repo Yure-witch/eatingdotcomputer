@@ -42,49 +42,31 @@
 	// server action reads `data.get('bio')` unchanged.
 	let bioValue = $state(form?.bio ?? data.prefill.bio ?? '');
 
-	// Gemma digest opt-in (instant save, independent of the form). Synced
-	// from the server at mount — page-load data can be stale if the setting
-	// changed elsewhere (e.g. the opt-out button on the Gemma page).
+	// Message analysis (instant save, independent of the form). Synced from
+	// the server at mount — page-load data can be stale if the setting changed
+	// elsewhere (e.g. the opt-out button on the Gemma page). One switch drives
+	// both underlying columns; see /api/gemma/settings.
 	import { onMount } from 'svelte';
-	let gemmaOptIn = $state(data.prefill.gemmaDigest ?? false);
-	let gemmaOptInStatus = $state('');
-	let gemmaScanDms = $state(false);
-	let gemmaScanStatus = $state('');
+	let msgAnalysis = $state(data.prefill.gemmaDigest ?? true);
+	let msgAnalysisStatus = $state('');
 	onMount(async () => {
 		try {
 			const r = await fetch('/api/gemma/settings');
-			if (r.ok) {
-				const j = await r.json();
-				gemmaOptIn = j.optIn;
-				gemmaScanDms = j.scanDms ?? false;
-			}
+			if (r.ok) msgAnalysis = (await r.json()).messageAnalysis;
 		} catch { /* keep prefill */ }
 	});
-	async function toggleGemmaScanDms() {
-		gemmaScanDms = !gemmaScanDms;
-		gemmaScanStatus = 'saving…';
+	async function toggleMsgAnalysis() {
+		msgAnalysis = !msgAnalysis;
+		msgAnalysisStatus = 'saving…';
 		try {
 			const r = await fetch('/api/gemma/settings', {
 				method: 'POST', headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ scanDms: gemmaScanDms })
+				body: JSON.stringify({ messageAnalysis: msgAnalysis })
 			});
-			gemmaScanStatus = r.ok ? 'saved' : 'failed';
-			if (!r.ok) gemmaScanDms = !gemmaScanDms;
-		} catch { gemmaScanStatus = 'failed'; gemmaScanDms = !gemmaScanDms; }
-		setTimeout(() => (gemmaScanStatus = ''), 2000);
-	}
-	async function toggleGemmaOptIn() {
-		gemmaOptIn = !gemmaOptIn;
-		gemmaOptInStatus = 'saving…';
-		try {
-			const r = await fetch('/api/gemma/settings', {
-				method: 'POST', headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ optIn: gemmaOptIn })
-			});
-			gemmaOptInStatus = r.ok ? 'saved' : 'failed';
-			if (!r.ok) gemmaOptIn = !gemmaOptIn;
-		} catch { gemmaOptInStatus = 'failed'; gemmaOptIn = !gemmaOptIn; }
-		setTimeout(() => (gemmaOptInStatus = ''), 2000);
+			msgAnalysisStatus = r.ok ? 'saved' : 'failed';
+			if (!r.ok) msgAnalysis = !msgAnalysis;
+		} catch { msgAnalysisStatus = 'failed'; msgAnalysis = !msgAnalysis; }
+		setTimeout(() => (msgAnalysisStatus = ''), 2000);
 	}
 
 	// ── Notifications ────────────────────────────────────────────────────
@@ -284,21 +266,13 @@
 				</div>
 			</form>
 
-			<!-- Gemma daily digest opt-in — saved instantly, separate from the
-			     profile form (hits /api/gemma/settings directly). -->
+			<!-- Message analysis — saved instantly, separate from the profile
+			     form (hits /api/gemma/settings directly). -->
 			<label class="gemma-optin-row">
-				<input type="checkbox" checked={gemmaOptIn} onchange={toggleGemmaOptIn} />
+				<input type="checkbox" checked={msgAnalysis} onchange={toggleMsgAnalysis} />
 				<span class="gemma-optin-text">
-					<span class="gemma-optin-title">Gemma digest</span>
-					<span class="gemma-optin-sub">Each morning Gemma DMs you a recap of yesterday's class chat, reminders for anything you haven't finished, and a little inspiration. If nothing's changed, you just get a short reminder (or nothing at all). Opt out any time.{gemmaOptInStatus ? ` — ${gemmaOptInStatus}` : ''}</span>
-				</span>
-			</label>
-
-			<label class="gemma-optin-row gemma-optin-sub-row">
-				<input type="checkbox" checked={gemmaScanDms} onchange={toggleGemmaScanDms} />
-				<span class="gemma-optin-text">
-					<span class="gemma-optin-title">Let Gemma read all my DMs</span>
-					<span class="gemma-optin-sub">For goal tracking, Gemma normally only reads class channels and your chats with instructors. Turn this on to let her also pick up goals and requests from your other DMs.{gemmaScanStatus ? ` — ${gemmaScanStatus}` : ''}</span>
+					<span class="gemma-optin-title">Message analysis</span>
+					<span class="gemma-optin-sub">Gemma reads the class channels and your DMs so she can send you a digest: what you missed, what's still unfinished, and something to look at. She writes every couple of days, or daily if you're reading them, and never sends a new one while the last is still unopened. Turn it off any time.{msgAnalysisStatus ? ` — ${msgAnalysisStatus}` : ''}</span>
 				</span>
 			</label>
 
@@ -417,7 +391,6 @@
 		cursor: pointer;
 	}
 	.gemma-optin-row input { margin-top: 0.2rem; accent-color: var(--ink); cursor: pointer; }
-	.gemma-optin-sub-row { margin-top: 0.75rem; padding-top: 0; border-top: none; }
 	.gemma-optin-text { display: flex; flex-direction: column; gap: 0.15rem; }
 	.gemma-optin-title { font-weight: 600; font-size: 0.9rem; }
 	.gemma-optin-sub { font-size: 0.78rem; color: var(--muted-fg); line-height: 1.4; }

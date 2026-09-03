@@ -89,8 +89,8 @@ async function upsertStudent(s) {
 	if (existing.rows[0]) return String(existing.rows[0].id);
 	const id = uuid();
 	await db.execute({
-		sql: `INSERT INTO users (id, email, username, name, role, onboarding_step, year, hide_tg_emoji, emoji_font)
-		      VALUES (?, ?, ?, ?, 'student', 'complete', ?, 1, 'system')`,
+		sql: `INSERT INTO users (id, email, username, name, role, onboarding_step, year, hide_tg_emoji, emoji_font, gemma_digest, gemma_scan_dms)
+		      VALUES (?, ?, ?, ?, 'student', 'complete', ?, 1, 'system', 1, 1)`,
 		args: [id, email, s.key, s.name, s.year]
 	});
 	return id;

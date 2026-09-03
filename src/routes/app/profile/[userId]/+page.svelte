@@ -901,7 +901,13 @@
 		font-weight: 600;
 		cursor: pointer;
 		text-decoration: none;
-		display: inline-block;
+		/* inline-flex, not inline-block: app.css forces min-height:48px on mobile
+		   buttons, and a block box lays its single line of text from the TOP, so
+		   the whole 5px of added height landed under the label and the button
+		   read as bottom-padded. Centring distributes it evenly. */
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
 		transition: opacity 0.15s;
 	}
 	.btn-primary:hover { opacity: 0.8; }
@@ -917,7 +923,13 @@
 		font-weight: 500;
 		cursor: pointer;
 		text-decoration: none;
-		display: inline-block;
+		/* inline-flex, not inline-block: app.css forces min-height:48px on mobile
+		   buttons, and a block box lays its single line of text from the TOP, so
+		   the whole 5px of added height landed under the label and the button
+		   read as bottom-padded. Centring distributes it evenly. */
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
 		transition: border-color 0.15s;
 	}
 	.btn-secondary:hover { border-color: var(--ink); }

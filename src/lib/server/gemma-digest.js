@@ -99,7 +99,7 @@ async function gatherDMLines(userId) {
 	const db = getDb();
 	const adminDb = getAdminDb();
 	if (!db) return [];
-	const usersRes = await db.execute({ sql: 'SELECT id, name, role, gemma_scan_dms FROM users' });
+	const usersRes = await db.execute({ sql: 'SELECT id, name, role, gemma_digest, gemma_scan_dms FROM users' });
 	const names = {};
 	const instructorIds = new Set();
 	let scanAll = false;
@@ -107,11 +107,16 @@ async function gatherDMLines(userId) {
 		const id = String(r.id);
 		names[id] = String(r.name ?? 'Someone');
 		if (String(r.role) === 'instructor') instructorIds.add(id);
-		if (id === userId && Number(r.gemma_scan_dms) === 1) scanAll = true;
+		// BOTH columns, not just the scan one. They are written together by the
+		// single "Message analysis" switch, but older paths (the Manage master
+		// switch writes gemma_digest alone) can still leave them disagreeing —
+		// and the dangerous direction is analysis "off" while Gemma keeps
+		// reading every DM. Requiring both makes any drift fail CLOSED.
+		if (id === userId && Number(r.gemma_scan_dms) === 1 && Number(r.gemma_digest) === 1) scanAll = true;
 	}
 	// DM-scan scope (privacy): by default only conversations WITH AN
-	// INSTRUCTOR are read; users.gemma_scan_dms = 1 is the student's opt-in
-	// for Gemma to read ALL their DMs.
+	// INSTRUCTOR are read. "Message analysis" on (both columns) is the opt-in
+	// for Gemma to read ALL of this user's DMs.
 	const inScope = (convId) => {
 		if (scanAll) return true;
 		const otherId = convId.replace(userId, '').replace(/^_|_$/g, '');
@@ -973,26 +978,43 @@ async function sendGemmaDigestInner({ userId, classId = DEFAULT_CLASS, recapLine
 }
 
 // ── Adaptive cadence ──────────────────────────────────────────────────────
-// Don't overwhelm: pace each user's digest by how they engage. Reading Gemma
-// (unread stays low) → daily. Visiting the app but not opening Gemma (unread
-// creeping up) → every few days. Unreads piling up, or gone from the app →
-// back off further. The daily cron calls this per user; a not-due user is
-// simply skipped that day.
+// Two rules, in order of authority:
+//
+//   1. Never stack. If the last digest is still unread, no new one is sent.
+//      A pile of unopened digests is how a helpful bot becomes spam, and a
+//      second one adds nothing while the first is still sitting there.
+//   2. Earn the frequency. The resting pace is every couple of days. Opening
+//      a digest within a day of it landing says it's worth reading, so that
+//      reader moves to daily; everyone else stays on the slower pace.
+//
+// Someone who has drifted away from the app entirely eases off further still.
+// The daily cron calls this per user; a not-due user is simply skipped.
+//
+// Consequence worth knowing: rule 1 has no long-stop. A user who never opens
+// a digest never receives another one. That is deliberate — the alternative
+// is talking past someone who has already shown they aren't listening.
 const DAY_MS = 24 * 60 * 60 * 1000;
-export function digestDue({ stateAt, gemmaUnread = 0, lastActiveMs = 0, now = Date.now() }) {
-	if (!stateAt) return true; // never sent — always send the first
-	const daysSince = (now - stateAt) / DAY_MS;
-	let minDays;
-	// Stay DAILY for anyone who's even loosely keeping up — only ease off once
-	// a real backlog builds. (The old thresholds treated just 2 unread as
-	// "ignoring Gemma" and tripled the interval, so an engaged user who hadn't
-	// happened to open the Gemma DM twice went quiet for days.)
-	if (gemmaUnread >= 8) minDays = 3;         // genuinely piling up → back off
-	else if (gemmaUnread >= 4) minDays = 2;    // a handful unread → ease off a touch
-	else minDays = 1;                           // keeping up → daily
-	// Gone from the app for a week+ → slow down regardless of unread.
+// The class runs on New York time; the cron fires 13:00 UTC, which is morning
+// there year-round. Weekday is read in that zone so "Monday" means Monday to
+// the people receiving it, not to UTC.
+const CLASS_TZ = 'America/New_York';
+function weekdayIn(ts, tz = CLASS_TZ) {
+	return new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'short' }).format(new Date(ts));
+}
+
+export function digestDue({ stateAt, gemmaUnread = 0, lastActiveMs = 0, lastReadMs = 0, now = Date.now() }) {
+	// First contact waits for Monday morning. Everyone starts opted in, so
+	// without this the next cron run after deploy would cold-open a digest on
+	// the whole class mid-week; a Monday arrival reads as the week's kickoff
+	// instead of a stray notification.
+	if (!stateAt) return weekdayIn(now) === 'Mon';
+	if (gemmaUnread > 0) return false;      // rule 1: don't stack on an unread digest
+	// Rule 2: read it promptly → daily; otherwise every couple of days.
+	const readPromptly = lastReadMs > stateAt && lastReadMs - stateAt <= DAY_MS;
+	let minDays = readPromptly ? 1 : 2;
+	// Gone from the app for a week+ → slow down regardless.
 	if (lastActiveMs && now - lastActiveMs >= 7 * DAY_MS) minDays = Math.max(minDays, 3);
-	return daysSince >= minDays - 0.5; // epsilon for daily-cron time drift
+	return (now - stateAt) / DAY_MS >= minDays - 0.5; // epsilon for cron time drift
 }
 
 // ── Batch entry — the daily cron / instructor "run now" ───────────────────
@@ -1037,13 +1059,17 @@ export async function runDailyDigests({ classId = DEFAULT_CLASS, onlyUserId = nu
 			// Cadence gate (skipped for the manual "run now" path).
 			if (!onlyUserId) {
 				const convId = getConvId(GEMMA_ID, uid);
-				const [stateSnap, unreadSnap] = await Promise.all([
+				const [stateSnap, unreadSnap, lastReadSnap] = await Promise.all([
 					adminDb.ref(`gemmaDigestState/${uid}`).get(),
-					adminDb.ref(`unreadCounts/${uid}/${convId}`).get()
+					adminDb.ref(`unreadCounts/${uid}/${convId}`).get(),
+					adminDb.ref(`lastRead/${uid}/${convId}`).get()
 				]);
 				const stateAt = Number(stateSnap.val()?.at ?? 0);
 				const gemmaUnread = Number(unreadSnap.val() ?? 0);
-				if (!digestDue({ stateAt, gemmaUnread, lastActiveMs: r.lastActiveMs, now })) {
+				// When they last opened the Gemma DM — the signal for whether
+				// the previous digest was actually read, and how promptly.
+				const lastReadMs = Number(lastReadSnap.val() ?? 0);
+				if (!digestDue({ stateAt, gemmaUnread, lastActiveMs: r.lastActiveMs, lastReadMs, now })) {
 					sent.push({ userId: uid, delivered: false, reason: 'cadence-skip' });
 					continue;
 				}

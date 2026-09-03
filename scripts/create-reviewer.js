@@ -36,8 +36,8 @@ if (existing.rows[0]) {
 	console.log(`updated existing user ${userId}`);
 } else {
 	await db.execute({
-		sql: `INSERT INTO users (id, email, username, name, password_hash, role, onboarding_step, hide_tg_emoji)
-		      VALUES (?, ?, ?, 'App Reviewer', ?, 'student', 'complete', 1)`,
+		sql: `INSERT INTO users (id, email, username, name, password_hash, role, onboarding_step, hide_tg_emoji, gemma_digest, gemma_scan_dms)
+		      VALUES (?, ?, ?, 'App Reviewer', ?, 'student', 'complete', 1, 1, 1)`,
 		args: [userId, email, username, passwordHash]
 	});
 	console.log(`created user ${userId}`);

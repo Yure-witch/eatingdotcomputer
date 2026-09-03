@@ -14,7 +14,12 @@ export async function GET({ locals }) {
 	const db = getDb();
 	if (!db) error(500, 'No database');
 	const row = (await db.execute({ sql: 'SELECT gemma_digest, gemma_scan_dms FROM users WHERE id = ?', args: [session.user.id] })).rows[0];
-	return json({ optIn: Number(row?.gemma_digest) === 1, scanDms: Number(row?.gemma_scan_dms) === 1 });
+	const optIn = Number(row?.gemma_digest) === 1;
+	const scanDms = Number(row?.gemma_scan_dms) === 1;
+	// `messageAnalysis` is the single user-facing switch (see POST). The two
+	// underlying columns are still reported because Manage drives the
+	// instructor master switch through `optIn` alone.
+	return json({ optIn, scanDms, messageAnalysis: optIn });
 }
 
 export async function POST({ request, locals }) {
@@ -23,6 +28,20 @@ export async function POST({ request, locals }) {
 	const db = getDb();
 	if (!db) error(500, 'No database');
 	const body = await request.json().catch(() => ({}));
+
+	// Message analysis — the one switch a student sees. Digest delivery and
+	// the scope Gemma reads were two separate boxes, which asked people to
+	// reason about an internal split: there is no useful state where you want
+	// the digest but won't let it read the messages it summarises. One toggle,
+	// both columns.
+	if (typeof body.messageAnalysis === 'boolean') {
+		const v = body.messageAnalysis ? 1 : 0;
+		await db.execute({
+			sql: 'UPDATE users SET gemma_digest = ?, gemma_scan_dms = ? WHERE id = ?',
+			args: [v, v, session.user.id]
+		});
+		return json({ ok: true, messageAnalysis: body.messageAnalysis });
+	}
 
 	if (typeof body.optIn === 'boolean') {
 		await db.execute({

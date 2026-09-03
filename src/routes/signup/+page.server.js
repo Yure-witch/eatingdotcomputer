@@ -62,8 +62,8 @@ export const actions = {
 			// terms_accepted_at is set here because the form's required
 			// agreement checkbox (validated above) IS the acceptance — these
 			// accounts skip the /terms/accept gate.
-			sql: `INSERT INTO users (id, email, username, name, password_hash, role, onboarding_step, hide_tg_emoji, emoji_font, terms_accepted_at)
-			      VALUES (?, ?, ?, ?, ?, 'student', 'profile', 1, 'system', datetime('now'))`,
+			sql: `INSERT INTO users (id, email, username, name, password_hash, role, onboarding_step, hide_tg_emoji, emoji_font, terms_accepted_at, gemma_digest, gemma_scan_dms)
+			      VALUES (?, ?, ?, ?, ?, 'student', 'profile', 1, 'system', datetime('now'), 1, 1)`,
 			args: [crypto.randomUUID(), finalEmail, username, name, passwordHash]
 		});
 
