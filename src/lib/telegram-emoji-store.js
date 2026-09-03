@@ -342,12 +342,22 @@ export const tgcToToken = (short, id) => `[tgc:${short}:${id}]`;
 
 let _custom = null;
 let _customPromise = null;
+let _customRetryAt = 0;
+// Handed to callers when the manifest isn't available. Deliberately NOT
+// assigned to `_custom` — see the catch below.
+const EMPTY_CUSTOM = { base: '', packs: [], byId: {}, flatAll: [] };
 const _adaptivePacks = new Set();
 export function loadCustomPacks() {
 	if (_custom) return Promise.resolve(_custom);
 	if (!_customPromise) {
+		// Back off briefly after a failure so a real outage doesn't turn every
+		// render pass into a fetch storm.
+		if (Date.now() < _customRetryAt) return Promise.resolve(EMPTY_CUSTOM);
 		_customPromise = fetch(CUSTOM_MANIFEST_URL)
-			.then((r) => r.json())
+			.then((r) => {
+				if (!r.ok) throw new Error('manifest ' + r.status);
+				return r.json();
+			})
 			.then((d) => {
 				const byId = {};
 				const flatAll = [];
@@ -364,8 +374,17 @@ export function loadCustomPacks() {
 				return _custom;
 			})
 			.catch(() => {
-				_custom = { base: '', packs: [], byId: {}, flatAll: [] };
-				return _custom;
+				// Never cache the failure. Assigning an empty manifest to
+				// `_custom` here made one transient fetch error PERMANENT: the
+				// guard at the top of this function only tests truthiness, so
+				// every later call short-circuited to the empty object and
+				// tgcUrl() built a broken URL for the rest of the page's life.
+				// That is how a [tgc:] avatar stayed blank until a manual hard
+				// refresh. Clear the in-flight promise so the next caller
+				// retries, and hand this one an empty shape so nothing crashes.
+				_customPromise = null;
+				_customRetryAt = Date.now() + 10000;
+				return EMPTY_CUSTOM;
 			});
 	}
 	return _customPromise;
