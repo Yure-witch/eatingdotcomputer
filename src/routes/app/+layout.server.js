@@ -116,10 +116,16 @@ export async function load({ locals, cookies }) {
 		channels = channelsResult.rows.map((c) => ({ id: String(c.id), name: String(c.name) }));
 	}
 
-	// Pull the current user's avatar so the sidebar / user menu /
-	// own-message bubbles can render it without falling back to a
-	// generic chip. session.user doesn't carry this — it's set via
-	// the profile flow after auth.
+	// Pull the current user's name + avatar so the sidebar / user menu /
+	// own-message bubbles can render them without falling back to a
+	// generic chip. session.user doesn't carry the avatar at all — it's set
+	// via the profile flow after auth — and the name it DOES carry is the
+	// one baked into the JWT at sign-in, which never changes when the user
+	// renames themselves. Everyone else reads them out of `users` (Turso,
+	// refetched on membersRev), so a rename showed up for the whole class
+	// and not for the person who made it. Read our own row the same way
+	// they do.
+	let myName = null;
 	let myAvatarKind = 'gen';
 	let myAvatarValue = null;
 	let myMemberOrder = [];
@@ -130,10 +136,11 @@ export async function load({ locals, cookies }) {
 	if (db) {
 		try {
 			const r = await db.execute({
-				sql: 'SELECT avatar_kind, avatar_value, member_order, hide_tg_emoji, emoji_font FROM users WHERE id = ?',
+				sql: 'SELECT name, avatar_kind, avatar_value, member_order, hide_tg_emoji, emoji_font FROM users WHERE id = ?',
 				args: [session.user.id]
 			});
 			const row = r.rows[0];
+			if (row?.name) myName = String(row.name);
 			if (row?.avatar_kind) myAvatarKind = String(row.avatar_kind);
 			if (row?.avatar_value) myAvatarValue = String(row.avatar_value);
 			if (row?.member_order) {
@@ -145,7 +152,7 @@ export async function load({ locals, cookies }) {
 	}
 	const currentUser = {
 		id: session.user.id,
-		name: session.user.name || session.user.email || '',
+		name: myName || session.user.name || session.user.email || '',
 		role: session.user.role ?? 'student',
 		avatarKind: myAvatarKind,
 		avatarValue: myAvatarValue,
