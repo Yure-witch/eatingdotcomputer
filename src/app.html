@@ -177,7 +177,11 @@
 			// that, because stale JS still knows its own older build id.
 			(function () {
 				if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') return;
-				var booted = null, inFlight = false;
+				var booted = null, inFlight = false, lastCheck = 0;
+				// Nothing here runs on a timer. A tab nobody is looking at asks
+				// nothing; a tab in use asks at most once per gap, on the way back in
+				// or on the first interaction after a quiet spell.
+				var MIN_GAP = 300000; // 5 min between network checks
 
 				// Never yank the page out from under someone mid-sentence — same rule
 				// the in-app refresh follows. An unsaved draft outranks a new build.
@@ -216,6 +220,9 @@
 
 				function check() {
 					if (inFlight || document.hidden) return;
+					var now = Date.now();
+					if (now - lastCheck < MIN_GAP) return;
+					lastCheck = now;
 					inFlight = true;
 					fetch('/_app/version.json', { cache: 'no-store', credentials: 'omit' })
 						.then(function (r) { return r.ok ? r.json() : null; })
@@ -230,11 +237,13 @@
 				}
 
 				addEventListener('load', check);
-				setInterval(check, 120000);
 				// A desktop tab left open for days only matters when it's looked at
-				// again, so check on the way back in as well as on the timer.
+				// again — so: coming back to it, and touching it. The throttle makes
+				// the keydown listener cost a timestamp compare, not a request.
 				document.addEventListener('visibilitychange', function () { if (!document.hidden) check(); });
 				addEventListener('focus', check);
+				addEventListener('pointerdown', check, { passive: true });
+				addEventListener('keydown', check, { passive: true });
 			})();
 		</script>
 		<div style="display: contents">%sveltekit.body%</div>

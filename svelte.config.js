@@ -11,12 +11,16 @@ const config = {
 		serviceWorker: {
 			register: false
 		},
-		// Poll for a newer deploy. Without this, $updated NEVER becomes true on
-		// its own — it only flips when something calls updated.check(), which
-		// only happened on native resume. So the reload banner never appeared on
-		// the web no matter how many times we shipped.
+		// No interval polling. $updated only flips when something calls
+		// updated.check(), and the app now does that on every resume —
+		// `native-resume` and visibilitychange both route into onAppResume — so
+		// a blind 60s timer was re-asking a question nobody had, forever, in
+		// every open tab. Checks are event-driven instead: on arrival, on
+		// coming back to the tab, and on activity after a quiet spell (the
+		// shell watchdog in app.html covers that last one, and is also the
+		// backstop for when this bundle is too stale to check for itself).
 		version: {
-			pollInterval: 60_000
+			pollInterval: 0
 		}
 	}
 };
