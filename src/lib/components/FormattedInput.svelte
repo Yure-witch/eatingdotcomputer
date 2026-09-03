@@ -798,10 +798,14 @@
 			onpaste={onCePaste}
 			data-placeholder={placeholder}
 		></div>
+		<!-- Every button below is type="button". This component gets used
+		     INSIDE a <form> (the profile edit page), where a button with no
+		     type defaults to type="submit" — tapping bold, or the expression
+		     picker, submitted the profile form and redirected away mid-edit. -->
 		<div class="fi-fmt-row" class:flush={collapseTools}>
 
 
-				<button bind:this={exprBtnEl} class="fi-btn fi-btn-expr" class:active={showExprPicker}
+				<button type="button" bind:this={exprBtnEl} class="fi-btn fi-btn-expr" class:active={showExprPicker}
 					onmousedown={(e) => {
 						e.preventDefault();
 						const opening = !showExprPicker;
@@ -833,27 +837,27 @@
 				{/if}
 			{#if tools}{@render tools()}{/if}
 			{#if collapseTools}
-				<button class="fi-btn fi-btn-more" class:active={showTools}
+				<button type="button" class="fi-btn fi-btn-more" class:active={showTools}
 					onmousedown={(e) => { e.preventDefault(); showTools = !showTools; }}
 					title="Formatting" aria-expanded={showTools}><span class="msi msi-18">text_format</span></button>
 			{/if}
 			<div class="fi-tools" class:collapsible={collapseTools} class:open={showTools}>
-			<button class="fi-btn fi-btn-bold" onmousedown={(e) => { e.preventDefault(); applyTextFx('bold'); }} title="Bold (⌘B)"><b>B</b></button>
-			<button class="fi-btn fi-btn-italic" onmousedown={(e) => { e.preventDefault(); applyTextFx('italic'); }} title="Italic (⌘I)"><i>I</i></button>
-			<button class="fi-btn fi-btn-underline" onmousedown={(e) => { e.preventDefault(); applyTextFx('underline'); }} title="Underline (⌘U)"><u>U</u></button>
-			<button class="fi-btn fi-btn-strike" onmousedown={(e) => { e.preventDefault(); applyTextFx('strike'); }} title="Strikethrough"><s>S</s></button>
+			<button type="button" class="fi-btn fi-btn-bold" onmousedown={(e) => { e.preventDefault(); applyTextFx('bold'); }} title="Bold (⌘B)"><b>B</b></button>
+			<button type="button" class="fi-btn fi-btn-italic" onmousedown={(e) => { e.preventDefault(); applyTextFx('italic'); }} title="Italic (⌘I)"><i>I</i></button>
+			<button type="button" class="fi-btn fi-btn-underline" onmousedown={(e) => { e.preventDefault(); applyTextFx('underline'); }} title="Underline (⌘U)"><u>U</u></button>
+			<button type="button" class="fi-btn fi-btn-strike" onmousedown={(e) => { e.preventDefault(); applyTextFx('strike'); }} title="Strikethrough"><s>S</s></button>
 			<div class="fi-color-wrap">
-				<button bind:this={colorBtnEl} class="fi-btn fi-btn-color" class:active={showFormatPanel} onmousedown={(e) => { e.preventDefault(); showFormatPanel = !showFormatPanel; }} title="Text color">A</button>
+				<button type="button" bind:this={colorBtnEl} class="fi-btn fi-btn-color" class:active={showFormatPanel} onmousedown={(e) => { e.preventDefault(); showFormatPanel = !showFormatPanel; }} title="Text color">A</button>
 				{#if showFormatPanel}
 					<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 					<div class="fi-backdrop" onclick={() => showFormatPanel = false}></div>
 					<div class="fi-color-pop" use:popoverPos={{ anchor: colorBtnEl, side: 'top' }}>
 						<div class="fi-color-grid">
 							{#each TEXT_COLORS as c}
-								<button class="fi-swatch" style="background:{c.hex}" onmousedown={(e) => { e.preventDefault(); applyTextFx(c.name); showFormatPanel = false; }} title={c.name.replace('color-', '')}></button>
+								<button type="button" class="fi-swatch" style="background:{c.hex}" onmousedown={(e) => { e.preventDefault(); applyTextFx(c.name); showFormatPanel = false; }} title={c.name.replace('color-', '')}></button>
 							{/each}
 						</div>
-						<button class="fi-rainbow-btn" onmousedown={(e) => { e.preventDefault(); applyTextFx('rainbow'); showFormatPanel = false; }}>Rainbow</button>
+						<button type="button" class="fi-rainbow-btn" onmousedown={(e) => { e.preventDefault(); applyTextFx('rainbow'); showFormatPanel = false; }}>Rainbow</button>
 					</div>
 				{/if}
 			</div>
@@ -877,7 +881,7 @@
 					<input class="fi-typo-range" type="range" min="0.55" max="5" step="0.05"
 						bind:value={messageFontSize}
 						oninput={() => { if (_savedCeSel) { applyInlineSize(messageFontSize); showTextFxBar = true; } }} />
-					<button class="fi-typo-reset" class:fi-reset-off={messageFontSize === 1.0} onmousedown={(e) => { e.preventDefault(); messageFontSize = 1.0; _lastInlineTypo['sz-'] = null; if (_savedCeSel) applyInlineSize(1.0); }}>↺</button>
+					<button type="button" class="fi-typo-reset" class:fi-reset-off={messageFontSize === 1.0} onmousedown={(e) => { e.preventDefault(); messageFontSize = 1.0; _lastInlineTypo['sz-'] = null; if (_savedCeSel) applyInlineSize(1.0); }}>↺</button>
 				</div>
 			{/if}
 			<div class="fi-typo-row">
@@ -885,16 +889,16 @@
 				<input class="fi-typo-range" type="range" min="100" max="700" step="50"
 					bind:value={messageFontWeight}
 					oninput={() => { if (_savedCeSel) { applyInlineWeight(messageFontWeight); showTextFxBar = true; } }} />
-				<button class="fi-typo-reset" class:fi-reset-off={messageFontWeight === 400} onmousedown={(e) => { e.preventDefault(); messageFontWeight = 400; _lastInlineTypo['wght-'] = null; if (_savedCeSel) applyInlineWeight(400); }}>↺</button>
+				<button type="button" class="fi-typo-reset" class:fi-reset-off={messageFontWeight === 400} onmousedown={(e) => { e.preventDefault(); messageFontWeight = 400; _lastInlineTypo['wght-'] = null; if (_savedCeSel) applyInlineWeight(400); }}>↺</button>
 			</div>
 			<div class="fi-typo-row">
 				<span class="fi-typo-label">Width</span>
 				<input class="fi-typo-range" type="range" min="25" max="150" step="1"
 					bind:value={messageFontStretch}
 					oninput={() => { if (_savedCeSel) { applyInlineWidth(messageFontStretch); showTextFxBar = true; } }} />
-				<button class="fi-typo-reset" class:fi-reset-off={messageFontStretch === 100} onmousedown={(e) => { e.preventDefault(); messageFontStretch = 100; _lastInlineTypo['wdth-'] = null; if (_savedCeSel) applyInlineWidth(100); }}>↺</button>
+				<button type="button" class="fi-typo-reset" class:fi-reset-off={messageFontStretch === 100} onmousedown={(e) => { e.preventDefault(); messageFontStretch = 100; _lastInlineTypo['wdth-'] = null; if (_savedCeSel) applyInlineWidth(100); }}>↺</button>
 			</div>
-			<button class="fi-default-btn" onmousedown={(e) => {
+			<button type="button" class="fi-default-btn" onmousedown={(e) => {
 				e.preventDefault();
 				messageFontSize = 1.0; messageFontWeight = 400; messageFontStretch = 100;
 				_lastInlineTypo = {};
@@ -903,23 +907,23 @@
 		</div>
 		<div class="fi-fx-bar">
 			<div class="fi-fx-toggles">
-				<button class="fi-layer-toggle" class:fi-layer-on={allowFxNesting} onmousedown={(e) => { e.preventDefault(); allowFxNesting = !allowFxNesting; }} title="Stack different effects on the same text">
+				<button type="button" class="fi-layer-toggle" class:fi-layer-on={allowFxNesting} onmousedown={(e) => { e.preventDefault(); allowFxNesting = !allowFxNesting; }} title="Stack different effects on the same text">
 					<span class="fi-toggle-track"><span class="fi-toggle-knob"></span></span>
 					Layer
 				</button>
-				<button class="fi-layer-toggle" class:fi-layer-on={allowFxMultiply} onmousedown={(e) => { e.preventDefault(); allowFxMultiply = !allowFxMultiply; }} title="Apply the same effect multiple times on the same text">
+				<button type="button" class="fi-layer-toggle" class:fi-layer-on={allowFxMultiply} onmousedown={(e) => { e.preventDefault(); allowFxMultiply = !allowFxMultiply; }} title="Apply the same effect multiple times on the same text">
 					<span class="fi-toggle-track"><span class="fi-toggle-knob"></span></span>
 					Multiply
 				</button>
-				<button class="fi-layer-toggle" class:fi-layer-on={fxSplitWords} onmousedown={(e) => { e.preventDefault(); fxSplitWords = !fxSplitWords; }} title="Apply effect to each word separately">
+				<button type="button" class="fi-layer-toggle" class:fi-layer-on={fxSplitWords} onmousedown={(e) => { e.preventDefault(); fxSplitWords = !fxSplitWords; }} title="Apply effect to each word separately">
 					<span class="fi-toggle-track"><span class="fi-toggle-knob"></span></span>
 					Per word
 				</button>
-				<button class="fi-fx-close" onmousedown={(e) => { e.preventDefault(); showTextFxBar = false; }}>✕</button>
+				<button type="button" class="fi-fx-close" onmousedown={(e) => { e.preventDefault(); showTextFxBar = false; }}>✕</button>
 			</div>
 			<div class="fi-fx-list">
 				{#each TEXT_FXS as fx}
-					<button class="fi-fx-btn" onmousedown={(e) => { e.preventDefault(); applyTextFx(fx.name); }}>
+					<button type="button" class="fi-fx-btn" onmousedown={(e) => { e.preventDefault(); applyTextFx(fx.name); }}>
 						{#if fx.name === 'ripple' || fx.name === 'grow' || fx.name === 'shrink'}
 							<!-- per-grapheme effects preview their own letter-by-letter stagger -->
 							{@html [...fx.label].map((c, i) => `<span class="tfx tfx-${fx.name}" style="animation-delay:${(i * 0.08).toFixed(2)}s;display:inline-block">${c}</span>`).join('')}
