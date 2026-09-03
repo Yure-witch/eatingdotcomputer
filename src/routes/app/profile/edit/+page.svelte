@@ -459,13 +459,13 @@
 
 	.btn-ghost { padding: 0.6rem 0.75rem; background: none; border: none; font-family: inherit; font-size: 0.9rem; color: var(--muted-fg); cursor: pointer; text-decoration: none; }
 	.btn-ghost:hover { color: var(--ink); }
-	/* Bio wrapper mirrors the visual weight of the textarea this
-	   replaced so the rich-text field sits naturally next to the
-	   other inputs. FormattedInput owns the inner contenteditable. */
+	/* No border/background here: FormattedInput's own `.fi-editor` already
+	   draws the 1.5px box and paper fill. Painting a second one around it
+	   stacked two rounded rectangles — and because this radius was 8px while
+	   the inner one is 10px, the inner corners bulged THROUGH the outer box.
+	   The wrapper is now just a positioning box; the field owns its own look. */
 	.bio-fi {
-		border: 1.5px solid var(--border);
-		border-radius: 8px;
-		background: var(--paper);
+		display: block;
 	}
 	.bio-fi :global(.fi-wrap) { padding: 0; }
 	.bio-fi :global(.fi-ce) {
