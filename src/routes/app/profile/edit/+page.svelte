@@ -266,13 +266,14 @@
 				</div>
 			</form>
 
-			<!-- Message analysis — saved instantly, separate from the profile
-			     form (hits /api/gemma/settings directly). -->
+			<!-- Gemma digests — saved instantly, separate from the profile form
+			     (hits /api/gemma/settings directly). One switch; it writes both
+			     gemma_digest and gemma_scan_dms. -->
 			<label class="gemma-optin-row">
 				<input type="checkbox" checked={msgAnalysis} onchange={toggleMsgAnalysis} />
 				<span class="gemma-optin-text">
-					<span class="gemma-optin-title">Message analysis</span>
-					<span class="gemma-optin-sub">Gemma reads the class channels and your DMs so she can send you a digest: what you missed, what's still unfinished, and something to look at. She writes every couple of days, or daily if you're reading them, and never sends a new one while the last is still unopened. Turn it off any time.{msgAnalysisStatus ? ` — ${msgAnalysisStatus}` : ''}</span>
+					<span class="gemma-optin-title">Gemma Digests</span>
+					<span class="gemma-optin-sub">Gemma sends you digests and reminders about upcoming assignments, things you mentioned, inspiration, etc. Digests happen more often the quicker you check them.{msgAnalysisStatus ? ` — ${msgAnalysisStatus}` : ''}</span>
 				</span>
 			</label>
 
