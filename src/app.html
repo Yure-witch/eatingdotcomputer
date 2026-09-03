@@ -161,6 +161,82 @@
 				}, 150);
 			});
 		</script>
+		<script>
+			// Update watchdog — deliberately in the SHELL, not in the app.
+			//
+			// SvelteKit already polls its version and $updated triggers an auto
+			// reload (see the root layout), but that machinery lives inside the very
+			// bundle it is meant to replace: if the app's JS has wedged, or is
+			// holding stale module state (a cached-empty custom-emoji manifest is the
+			// case that prompted this), the thing that would notice a new deploy is
+			// the thing that is already broken. This runs independently of all of it.
+			//
+			// It answers "did a deploy land while this tab was open" — the version
+			// seen at boot vs the version being served now. It cannot detect a page
+			// that was ALREADY stale when it loaded; SvelteKit's own check covers
+			// that, because stale JS still knows its own older build id.
+			(function () {
+				if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') return;
+				var booted = null, inFlight = false;
+
+				// Never yank the page out from under someone mid-sentence — same rule
+				// the in-app refresh follows. An unsaved draft outranks a new build.
+				function busy() {
+					var el = document.activeElement;
+					if (!el) return false;
+					var typing = el.tagName === 'TEXTAREA' || el.tagName === 'INPUT' || el.isContentEditable;
+					if (!typing) return false;
+					var v = el.value != null ? el.value : (el.textContent || '');
+					return String(v).trim().length > 0;
+				}
+
+				// location.reload() is a SOFT reload: it will happily re-serve
+				// whatever the service worker still has. Drop the caches and let the
+				// worker re-check itself first, so the next load is really from the
+				// network — the manual hard-refresh, automated.
+				function hardReload() {
+					var go = function () { location.reload(); };
+					var jobs = [];
+					try {
+						if (window.caches && caches.keys) {
+							jobs.push(caches.keys().then(function (keys) {
+								return Promise.all(keys.map(function (k) { return caches.delete(k); }));
+							}));
+						}
+						if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+							jobs.push(navigator.serviceWorker.getRegistrations().then(function (rs) {
+								return Promise.all(rs.map(function (r) { return r.update(); }));
+							}));
+						}
+					} catch (e) { /* fall through to a plain reload */ }
+					if (!jobs.length) return go();
+					Promise.all(jobs).then(go, go);
+					setTimeout(go, 3000); // never strand the tab on a hung cache op
+				}
+
+				function check() {
+					if (inFlight || document.hidden) return;
+					inFlight = true;
+					fetch('/_app/version.json', { cache: 'no-store', credentials: 'omit' })
+						.then(function (r) { return r.ok ? r.json() : null; })
+						.then(function (j) {
+							inFlight = false;
+							var v = j && j.version;
+							if (!v) return;
+							if (booted === null) { booted = v; return; }   // first sighting
+							if (v !== booted && !busy()) hardReload();
+						})
+						.catch(function () { inFlight = false; });
+				}
+
+				addEventListener('load', check);
+				setInterval(check, 120000);
+				// A desktop tab left open for days only matters when it's looked at
+				// again, so check on the way back in as well as on the timer.
+				document.addEventListener('visibilitychange', function () { if (!document.hidden) check(); });
+				addEventListener('focus', check);
+			})();
+		</script>
 		<div style="display: contents">%sveltekit.body%</div>
 	</body>
 </html>
