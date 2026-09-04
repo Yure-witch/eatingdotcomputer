@@ -24,6 +24,7 @@
 	import { ekTokenToUrl } from '$lib/message-render.js';
 	import { onScrollGesture } from '$lib/scroll-bus.js';
 	import { kbLift } from '$lib/kb-lift.js';
+	import { containScroll } from '$lib/scroll-contain.js';
 
 	// Per-user switch (users.hide_tg_emoji): drop the Telegram surfaces —
 	// the Animated tab and the Emotes Library sub-tab.
@@ -786,7 +787,7 @@
      gesture anyway. -->
 <!-- use:kbLift — focusing a search field in here opens the real keyboard over
      the docked sheet, so the sheet has to move up off it. See $lib/kb-lift.js. -->
-<div class="expr-panel" use:kbLift
+<div class="expr-panel" use:kbLift use:containScroll
      class:expr-panel-react={mode === 'react'} class:expr-dragging={dragging}
      onpointerdowncapture={() => { if (chrome === 'dim') setChrome('rest'); }}
      onpointerdown={railDown} onpointermove={railMove}
