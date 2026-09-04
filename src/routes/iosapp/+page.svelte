@@ -10,47 +10,18 @@
 <script>
 	import { onMount } from 'svelte';
 	import { APP_STORE_URL } from '$lib/native.js';
+	import DesktopInstallSteps from '$lib/components/DesktopInstallSteps.svelte';
 
 	let isAndroid = $state(false);
 	let isIOS = $state(false);
-	let isMac = $state(false);
 	let checked = $state(false);
-	let installPrompt = $state(null);
-	let installed = $state(false);
 
 	onMount(() => {
 		const ua = navigator.userAgent;
 		isAndroid = /android/i.test(ua);
 		isIOS = /iphone|ipad|ipod/i.test(ua);
-		isMac = /Macintosh|Mac OS X/i.test(ua) && !isIOS;
 		checked = true;
-
-		// Desktop Chrome and Edge fire this too, not just Android — so a laptop
-		// visitor gets the same one-tap install rather than a list of menu items
-		// to hunt through.
-		const onPrompt = (e) => {
-			e.preventDefault();
-			installPrompt = e;
-		};
-		const onInstalled = () => {
-			installed = true;
-			installPrompt = null;
-		};
-		window.addEventListener('beforeinstallprompt', onPrompt);
-		window.addEventListener('appinstalled', onInstalled);
-		return () => {
-			window.removeEventListener('beforeinstallprompt', onPrompt);
-			window.removeEventListener('appinstalled', onInstalled);
-		};
 	});
-
-	async function install() {
-		if (!installPrompt) return;
-		installPrompt.prompt();
-		const { outcome } = await installPrompt.userChoice;
-		if (outcome === 'accepted') installed = true;
-		installPrompt = null;
-	}
 </script>
 
 <svelte:head>
@@ -106,49 +77,23 @@
 		</div>
 	{:else if checked && !isIOS}
 		<!-- "Nothing to install" was wrong: it installs on the desktop too, in
-		     its own window with no browser chrome. Same manifest, same service
-		     worker — the only thing a computer misses is push on Safari. -->
+		     its own window with no browser chrome. Steps come from the shared
+		     component so they can't drift from /pwadesktop. -->
 		<div class="callout">
 			<strong>On a computer?</strong>
 			<p>
 				You can install it here too. It gets its own window and its own icon in the
 				Dock or taskbar, with no browser chrome around it.
 			</p>
-			{#if installed}
-				<p><strong>Installed.</strong> Look for eating.computer in your Dock or Start menu.</p>
-			{:else if installPrompt}
-				<button class="btn" onclick={install}>Install eating.computer</button>
-			{/if}
 		</div>
 
 		<h2>Install on your computer</h2>
-		<!-- Safari only exists on macOS, so Windows and Linux visitors are shown
-		     the Chrome/Edge route alone rather than a step they can't follow. -->
-		{#if isMac}
-			<p class="sub">Safari, on macOS Sonoma or later:</p>
-			<ol>
-				<li>Open <span class="mono">eating.computer</span> in Safari.</li>
-				<li>Choose <strong>File → Add to Dock</strong>, then <strong>Add</strong>.</li>
-			</ol>
-		{/if}
-
-		<p class="sub">Chrome or Edge:</p>
-		<ol>
-			<li>
-				Look for the <strong>install icon</strong> at the right-hand end of the address
-				bar — a small screen with a downward arrow.
-			</li>
-			<li>
-				No icon? Open the <strong>⋮ menu</strong> and choose <strong>Install
-				eating.computer</strong>, or <strong>Cast, save and share → Install page as
-				app</strong> on newer versions.
-			</li>
-			<li>Confirm with <strong>Install</strong>.</li>
-		</ol>
+		<DesktopInstallSteps />
 
 		<p class="foot-note">
-			Prefer a plain tab? Nothing is required — <a href="/login">sign in</a> and it
-			works exactly the same in the browser.
+			Also at <a href="/pwadesktop">eating.computer/pwadesktop</a>. Prefer a plain tab?
+			Nothing is required — <a href="/login">sign in</a> and it works exactly the same
+			in the browser.
 		</p>
 	{/if}
 
@@ -229,13 +174,6 @@
 	.mono {
 		font-family: ui-monospace, 'SF Mono', Menlo, monospace;
 		font-size: 0.9em;
-	}
-
-	.sub {
-		margin: 1.25rem 0 0.4rem;
-		font-size: 0.9rem;
-		font-weight: 600;
-		color: #4a4040;
 	}
 
 	.foot-note {

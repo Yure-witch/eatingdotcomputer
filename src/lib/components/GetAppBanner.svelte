@@ -12,7 +12,7 @@
 	const DISMISS_KEY = 'getAppDismissed';
 	// The install pages ARE this banner, at length. Nudging someone toward the
 	// app while they are reading how to install it is just noise in the way.
-	const HIDE_ON = ['/androidpwa', '/iosapp'];
+	const HIDE_ON = ['/androidpwa', '/iosapp', '/pwadesktop'];
 	let show = $state(false);
 	let ios = $state(false);
 

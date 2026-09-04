@@ -158,7 +158,7 @@
 			<p>
 				<strong>On a computer?</strong> It installs there too — Chrome and Edge put an
 				install icon at the right of the address bar, and Safari on macOS Sonoma has
-				<strong>File → Add to Dock</strong>. <a href="/iosapp">Steps here</a>.
+				<strong>File → Add to Dock</strong>. <a href="/pwadesktop">Steps here</a>.
 			</p>
 		</div>
 
