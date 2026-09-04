@@ -13,6 +13,7 @@
 	// Single source of truth — the same constant the in-app install banner and
 	// GetAppBanner use, so a store-URL change lands everywhere at once.
 	import { APP_STORE_URL } from '$lib/native.js';
+	import AppStoreBadge from '$lib/components/AppStoreBadge.svelte';
 
 	let installPrompt = $state(null);
 	let installed = $state(false);
@@ -98,9 +99,7 @@
 						This page is for Android. On iOS, get the real app instead — it has proper
 						notifications that a home-screen web app can't do.
 					</p>
-					<a class="btn" href={APP_STORE_URL} target="_blank" rel="noopener noreferrer">
-						Download on the App Store
-					</a>
+					<AppStoreBadge href={APP_STORE_URL} width={170} />
 				{:else}
 					<!-- No listing yet, so no button — see /iosapp for the same guard. -->
 					<p>
@@ -131,7 +130,7 @@
 			</div>
 		{/if}
 
-		<h2>Chrome</h2>
+		<h2 class="browser">Chrome</h2>
 		<ol>
 			<li>Tap the <strong>⋮ menu</strong> in the top right.</li>
 			<li>
@@ -141,14 +140,14 @@
 			<li>Tap <strong>Install</strong> to confirm.</li>
 		</ol>
 
-		<h2>Samsung Internet</h2>
+		<h2 class="browser">Samsung Internet</h2>
 		<ol>
 			<li>Tap the <strong>☰ menu</strong> at the bottom right.</li>
 			<li>Tap <strong>Add page to</strong>, then <strong>Home screen</strong>.</li>
 			<li>Tap <strong>Add</strong>.</li>
 		</ol>
 
-		<h2>Firefox</h2>
+		<h2 class="browser">Firefox</h2>
 		<ol>
 			<li>Tap the <strong>⋮ menu</strong>.</li>
 			<li>Tap <strong>Install</strong>, or <strong>Add to Home screen</strong>.</li>
@@ -233,6 +232,18 @@
 		font-size: 1.15rem;
 		margin: 2.25rem 0 0.5rem;
 		letter-spacing: -0.01em;
+	}
+
+	/* The browser name is the thing someone is scanning for — they know which
+	   browser they're in and want to jump straight to that block. Sized to be
+	   findable from across the room rather than to sit politely in the
+	   hierarchy; the section headings around it stay small deliberately. */
+	h2.browser {
+		font-size: 2.6rem;
+		font-weight: 700;
+		line-height: 1.05;
+		letter-spacing: -0.03em;
+		margin: 2.75rem 0 0.75rem;
 	}
 
 	.lede {
@@ -335,6 +346,9 @@
 		}
 		h1 {
 			font-size: 1.9rem;
+		}
+		h2.browser {
+			font-size: 2.1rem;
 		}
 	}
 </style>

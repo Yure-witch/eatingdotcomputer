@@ -11,6 +11,7 @@
 	import { onMount } from 'svelte';
 	import { APP_STORE_URL } from '$lib/native.js';
 	import DesktopInstallSteps from '$lib/components/DesktopInstallSteps.svelte';
+	import AppStoreBadge from '$lib/components/AppStoreBadge.svelte';
 
 	let isAndroid = $state(false);
 	let isIOS = $state(false);
@@ -41,9 +42,7 @@
 	</p>
 
 	{#if APP_STORE_URL}
-		<a class="btn" href={APP_STORE_URL} target="_blank" rel="noopener noreferrer">
-			Download on the App Store
-		</a>
+		<AppStoreBadge href={APP_STORE_URL} width={190} />
 	{:else}
 		<!-- APP_STORE_URL is null until the listing is live (see native.js).
 		     Rendering the button anyway gave a link to nowhere, so while there

@@ -72,14 +72,15 @@
 	<!-- Safari only exists on macOS, so Windows and Linux visitors are shown the
 	     Chrome/Edge route alone rather than a step they cannot follow. -->
 	{#if isMac}
-		<p class="di-sub">Safari, on macOS Sonoma or later:</p>
+		<h3 class="di-browser">Safari</h3>
+		<p class="di-qual">macOS Sonoma or later</p>
 		<ol>
 			<li>Open <span class="di-mono">eating.computer</span> in Safari.</li>
 			<li>Choose <strong>File → Add to Dock</strong>, then <strong>Add</strong>.</li>
 		</ol>
 	{/if}
 
-	<p class="di-sub">Chrome or Edge:</p>
+	<h3 class="di-browser">Chrome <span class="di-or">or</span> Edge</h3>
 	<ol>
 		<li>
 			Look for the <strong>install icon</strong> at the right-hand end of the address bar —
@@ -111,11 +112,32 @@
 		margin-bottom: 0.4rem;
 	}
 
-	.di-sub {
-		margin: 1.25rem 0 0.4rem;
-		font-size: 0.9rem;
-		font-weight: 600;
-		color: #4a4040;
+	/* The browser name is what someone is scanning for — they already know which
+	   browser they're in and want to jump straight to that block. Sized to be
+	   found at a glance rather than to sit politely in the heading hierarchy. */
+	.di-browser {
+		margin: 2.25rem 0 0.15rem;
+		font-size: 2.6rem;
+		font-weight: 700;
+		line-height: 1.05;
+		letter-spacing: -0.03em;
+	}
+	.di-browser:first-child {
+		margin-top: 0;
+	}
+	/* "or" is joinery, not a name — kept small so the two names read as the
+	   two things you can pick between. */
+	.di-or {
+		font-size: 1.2rem;
+		font-weight: 400;
+		letter-spacing: 0;
+		color: #8a7f7d;
+	}
+
+	.di-qual {
+		margin: 0 0 0.6rem;
+		font-size: 0.85rem;
+		color: #8a7f7d;
 	}
 
 	.di-mono {
@@ -160,6 +182,12 @@
 		font-size: 0.95rem;
 		font-weight: 600;
 		cursor: pointer;
+	}
+
+	@media (max-width: 640px) {
+		.di-browser {
+			font-size: 2.1rem;
+		}
 	}
 
 	.di-note {
