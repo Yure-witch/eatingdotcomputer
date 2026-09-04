@@ -16,7 +16,7 @@ export async function load({ locals, params, parent }) {
 	// users had carefully filled out came back blank on the view page —
 	// the data was in the DB, just never queried here.
 	const result = await db.execute({
-		sql: 'SELECT id, name, pronouns, bio, website, year, school, focus, role, created_at, avatar_kind, avatar_value, profile_style, profile_html FROM users WHERE id = ?',
+		sql: 'SELECT id, name, pronouns, bio, website, year, school, focus, role, created_at, avatar_kind, avatar_value, profile_style, profile_html, shadowbanned FROM users WHERE id = ?',
 		args: [params.userId]
 	});
 
@@ -92,6 +92,11 @@ export async function load({ locals, params, parent }) {
 			customHtml: u.profile_html ? String(u.profile_html) : null
 		},
 		isOwnProfile: session.user.id === String(u.id),
-		currentUserId: session.user.id
+		currentUserId: session.user.id,
+		// Instructors only. Nobody else can reach a shadowbanned member's
+		// profile through the UI anyway, but gating the flag here means a
+		// hand-typed URL can't reveal the shadowban either.
+		shadowbanned:
+			String(session.user.role ?? '') === 'instructor' && Number(u.shadowbanned ?? 0) === 1
 	};
 }

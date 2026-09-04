@@ -4399,6 +4399,7 @@
 						</span>
 					</ProfileHover>
 					{#if msg.userRole === 'instructor'}<span class="badge">instructor</span>{/if}
+					{#if userMap[msg.userId]?.shadowbanned}<span class="badge badge-hidden" title="Hidden from the class — only instructors can see this">hidden</span>{/if}
 					<span class="time">{formatTime(msg.createdAt)}</span>
 				</div>
 			{/if}
@@ -5220,6 +5221,13 @@
 	.meta-presence-dot.idle { background: #ffc107; }
 	.name { font-size: 0.78rem; font-weight: 600; color: var(--ink); cursor: pointer; }
 	.name:hover { text-decoration: underline; text-underline-offset: 2px; }
+	/* Shadowbanned author. Only an instructor's payload ever sets the flag,
+	   so this tag is a moderator's marker: everything under it is invisible
+	   to the rest of the class. */
+	.badge-hidden {
+		background: color-mix(in srgb, var(--danger, #c0392b) 15%, transparent);
+		color: var(--danger, #c0392b);
+	}
 	.badge {
 		font-size: 0.65rem; font-weight: 600; background: var(--ink); color: var(--paper);
 		padding: 0.1rem 0.4rem; border-radius: 99px; text-transform: uppercase; letter-spacing: 0.04em;

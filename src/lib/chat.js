@@ -29,7 +29,11 @@ export function buildUserMap(currentUser, users) {
 		name: u.name,
 		role: u.role,
 		avatarKind: u.avatarKind ?? 'gen',
-		avatarValue: u.avatarValue ?? null
+		avatarValue: u.avatarValue ?? null,
+		// Set only in an instructor's payload — it drives the "hidden" tag on
+		// the message row, so a moderator can tell at a glance that what they
+		// are reading is invisible to the rest of the class.
+		shadowbanned: !!u.shadowbanned
 	};
 	return map;
 }

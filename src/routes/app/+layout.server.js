@@ -92,7 +92,7 @@ export async function load({ locals, cookies }) {
 				// member disappears from everyone else's member list, sidebar,
 				// mention autocomplete and userMap, but instructors keep seeing
 				// them because they are the ones moderating.
-				sql: `SELECT u.id, u.name, u.email, u.role, u.avatar_kind, u.avatar_value FROM users u
+				sql: `SELECT u.id, u.name, u.email, u.role, u.avatar_kind, u.avatar_value, u.shadowbanned FROM users u
 				      WHERE (u.role = 'instructor'
 				         OR EXISTS (
 				              SELECT 1 FROM class_memberships cm
@@ -115,7 +115,10 @@ export async function load({ locals, cookies }) {
 				name: String(u.name || u.email),
 				role: String(u.role),
 				avatarKind: u.avatar_kind ? String(u.avatar_kind) : 'gen',
-				avatarValue: u.avatar_value ? String(u.avatar_value) : null
+				avatarValue: u.avatar_value ? String(u.avatar_value) : null,
+				// Only ever true for an instructor: everyone else has these rows
+				// filtered out above, so the flag can't leak the shadowban.
+				shadowbanned: Number(u.shadowbanned ?? 0) === 1
 			}));
 
 		channels = channelsResult.rows.map((c) => ({ id: String(c.id), name: String(c.name) }));

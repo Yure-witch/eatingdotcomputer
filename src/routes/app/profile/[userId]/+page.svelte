@@ -448,6 +448,24 @@
 	<main>
 		<a class="back" href="/app">← Back</a>
 
+		<!-- Instructor-only. `data.shadowbanned` is computed server-side and is
+		     false for everybody else, so this banner cannot leak the shadowban
+		     to the person it applies to (or to anyone who guesses the URL). -->
+		{#if data.shadowbanned}
+			<div class="hidden-banner">
+				<span class="hidden-banner-icon msi">visibility_off</span>
+				<div class="hidden-banner-text">
+					<strong>Hidden from the class</strong>
+					<p>
+						Only instructors can see this member. Their messages, reactions,
+						read receipts, typing and presence are filtered out for everyone
+						else, and they send no notifications. Nothing looks different on
+						their end.
+					</p>
+				</div>
+			</div>
+		{/if}
+
 		<div class="profile-card" class:glassy={gradient.css}>
 			<div class="profile-top">
 				<Avatar
@@ -1207,6 +1225,21 @@
 		border: 1.5px solid var(--border); border-radius: 8px;
 	}
 	.blocked-name { font-size: 0.9rem; font-weight: 600; color: var(--ink); }
+
+	.hidden-banner {
+		display: flex; align-items: flex-start; gap: 0.7rem;
+		margin: 0 0 1.25rem;
+		padding: 0.85rem 1rem;
+		border: 1.5px solid color-mix(in srgb, var(--danger, #c0392b) 35%, transparent);
+		background: color-mix(in srgb, var(--danger, #c0392b) 10%, transparent);
+		border-radius: 12px;
+	}
+	.hidden-banner-icon { color: var(--danger, #c0392b); font-size: 1.2rem; line-height: 1.3; flex: none; }
+	.hidden-banner-text { min-width: 0; }
+	.hidden-banner-text strong {
+		display: block; font-size: 0.9rem; color: var(--danger, #c0392b); margin-bottom: 0.15rem;
+	}
+	.hidden-banner-text p { margin: 0; font-size: 0.8rem; line-height: 1.45; color: var(--muted-fg); }
 
 	.bio {
 		font-size: 0.9rem;
