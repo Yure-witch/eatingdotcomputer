@@ -156,6 +156,14 @@
 
 		<div class="note">
 			<p>
+				<strong>On a computer?</strong> It installs there too — Chrome and Edge put an
+				install icon at the right of the address bar, and Safari on macOS Sonoma has
+				<strong>File → Add to Dock</strong>. <a href="/iosapp">Steps here</a>.
+			</p>
+		</div>
+
+		<div class="note">
+			<p>
 				<strong>Don't see the option?</strong> It only appears on a page served over HTTPS
 				in a normal browser tab — not in private/incognito mode, and not inside another
 				app's browser. Make sure you're on
