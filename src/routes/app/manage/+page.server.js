@@ -548,12 +548,35 @@ export async function load({ locals, parent }) {
 	}
 	for (const m of members) m.emotes = emotesByUser[m.id] ?? [];
 
+	// Colour scheme per member. Themes live in RTDB at `themes/{uid}` (see
+	// theme-sync.js) rather than Turso, because they sync live across a
+	// person's own devices — so this is one admin read of the whole node, not
+	// a join. Only the few fields the table renders are kept; the full record
+	// carries every slider position and the user's saved schemes, none of
+	// which belongs in a page payload.
+	let themesByUser = {};
+	try {
+		const snap = await getAdminDb().ref('themes').get();
+		if (snap.exists()) {
+			for (const [uid, v] of Object.entries(snap.val() ?? {})) {
+				const t = v?.theme;
+				if (!t) continue;
+				themesByUser[String(uid)] = {
+					presetId: t.presetId ? String(t.presetId) : null,
+					seed: typeof t.seed === 'string' ? t.seed : null,
+					dark: !!t.dark,
+					updatedAt: Number(v?.updatedAt ?? 0) || null
+				};
+			}
+		}
+	} catch { /* no themes column rather than no Manage page */ }
+
 	// Install-page traffic. Best-effort: a counter failing must not take the
 	// whole Manage page down with it.
 	let installVisits = [];
 	try { installVisits = await visitSummary(); } catch { /* card renders empty */ }
 
-	return { weeks, maxWeek, members, activityByUser, userDeviceActivity, deviceNotifData, pendingRequests, classId, dmConversations, enrollment, unattributedEmotes, messageReports, installVisits };
+	return { weeks, maxWeek, members, activityByUser, userDeviceActivity, deviceNotifData, pendingRequests, classId, dmConversations, enrollment, unattributedEmotes, messageReports, installVisits, themesByUser };
 }
 
 const ALL_TYPES = ['link', 'image', 'video'];

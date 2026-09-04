@@ -12,6 +12,9 @@
 	import { mountStaticEmotes } from '$lib/emote-mount.js';
 	import SpriteSticker from '$lib/components/SpriteSticker.svelte';
 	import { hiddenEmoteList, unhideEmote, initHiddenEmotes } from '$lib/hidden-emotes.js';
+	// Names for the theme column. Imported rather than re-listed so a renamed
+	// or added preset can't drift out of sync with the picker.
+	import { PRESETS } from '$lib/theme-store.js';
 
 	// Use the layout's rawPresence directly — same signal that drives the sidebar
 	// green dots. No separate Firebase subscription needed for presence here.
@@ -554,6 +557,16 @@
 		const [y, m, d] = bucket.split('-').map(Number);
 		return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 	}
+
+	const PRESET_NAMES = Object.fromEntries(PRESETS.map((p) => [p.id, p.name]));
+	/** What to show in the Theme column: preset name, or the hex for a custom seed. */
+	function themeLabel(t) {
+		if (!t) return null;
+		if (t.presetId && PRESET_NAMES[t.presetId]) return PRESET_NAMES[t.presetId];
+		// No preset id, or one the picker no longer offers — the seed is still
+		// the truthful answer to "what colour did they pick".
+		return t.seed ? t.seed.toUpperCase() : 'Custom';
+	}
 </script>
 
 <svelte:head>
@@ -1026,6 +1039,7 @@
 					<th>Notif</th>
 					<th>Emotes</th>
 					<th>Last seen</th>
+					<th title="The colour scheme this member picked (Profile → Color theme). Syncs across their devices.">Theme</th>
 					<th title="Telegram emote packs + Emoji Kitchen. Apple sign-ups start with these off.">3rd-party</th>
 					<th></th>
 				</tr>
@@ -1033,6 +1047,7 @@
 			<tbody>
 				{#each data.members as m}
 					{@const p = presenceMap[m.id]}
+					{@const th = data.themesByUser?.[m.id]}
 					<tr>
 						<td>
 							<a class="member-link" href="/app/profile/{m.id}">{m.name || '—'}</a>
@@ -1105,6 +1120,24 @@
 							{/if}
 						</td>
 						<td class="muted">{p?.online ? 'just now' : formatLastSeen(p?.lastSeen ?? m.lastSeen ?? null)}</td>
+						<td class="theme-cell">
+							<!-- Dimmed for anyone still on the shipped green, whether or not they
+							     have a synced record. Most accounts get a `default` record written
+							     the first time they open the app, so "has a record" is NOT the same
+							     as "chose something" — dimming by preset is what actually makes the
+							     people who picked a scheme stand out in the column. -->
+							<span
+								class="theme-chip"
+								class:theme-chip-implicit={!th || th.presetId === 'default'}
+								title={th
+									? `${themeLabel(th)} · ${th.dark ? 'dark' : 'light'} mode${th.seed ? ' · seed ' + th.seed.toUpperCase() : ''}`
+									: 'No synced theme — running the shipped default'}
+							>
+								<span class="theme-swatch" style:background={th?.seed || '#00c853'}></span>
+								<span class="theme-name">{th ? themeLabel(th) : 'Default'}</span>
+								{#if th}<span class="theme-mode">{th.dark ? '☾' : '☀'}</span>{/if}
+							</span>
+						</td>
 						<td>
 							<form method="POST" action="?/setThirdPartyEmotes" use:enhance>
 								<input type="hidden" name="user_id" value={m.id} />
@@ -1862,6 +1895,26 @@
 	/* Shadowbanned member. Sits beside the name rather than in the Status
 	   column, which is about presence — being hidden is a property of the
 	   account, not of whether they happen to be online. */
+	/* ── Theme column ── */
+	.theme-cell { white-space: nowrap; }
+	.theme-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
+		font-size: 0.8rem;
+	}
+	/* Implicit default (no saved record) reads dimmer than a deliberate pick,
+	   so the column shows at a glance who has actually chosen something. */
+	.theme-chip-implicit { opacity: 0.55; }
+	.theme-swatch {
+		width: 13px;
+		height: 13px;
+		border-radius: 50%;
+		flex: none;
+		border: 1px solid color-mix(in srgb, var(--ink) 20%, transparent);
+	}
+	.theme-mode { color: var(--muted-fg); font-size: 0.75rem; }
+
 	/* ── Install page visits ── */
 	.iv-hint {
 		margin: 0 0 0.9rem;
