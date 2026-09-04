@@ -6,7 +6,7 @@
 // call loadEmojiNames() once per surface so lookups have data.
 import { escapeHtml, EMOJI_RE_G } from '$lib/message-render.js';
 import { getEmojiName } from '$lib/emoji-names.js';
-import { tgEntry, tgcEntry } from '$lib/telegram-emoji-store.js';
+import { tgEntry, tgcEntry, isStaticPack } from '$lib/telegram-emoji-store.js';
 
 const _isEmojiSeg = s => /\p{Extended_Pictographic}|\p{Regional_Indicator}/u.test(s);
 const _segmenter = new Intl.Segmenter();
@@ -69,6 +69,43 @@ export function emojiDisplayName(g) {
 // token string. Returns null for non-Telegram keys so callers can chain
 // their existing fallbacks. Needs loadTelegramEmoji()/loadCustomPacks()
 // to have resolved (both chat pages do this on mount).
+/**
+ * Which picker menu an expression came from — for the reaction chip tooltip.
+ *
+ * ExpressionTip shows this on hover for expressions inside a MESSAGE, but it is
+ * suppressed inside a reaction chip (two stacked hover cards over one small
+ * chip). The chip's own tooltip carries the same information instead, and this
+ * is where the wording is kept identical to the card's: "Emotes" for static
+ * packs, "Animated emotes" for animated ones, pack title underneath.
+ *
+ * Returns null for a plain unicode emoji — it came from no menu in particular,
+ * and the tooltip already names the glyph.
+ *
+ * @param {string} token — the reaction key
+ * @returns {string|null}
+ */
+export function expressionSource(token) {
+	if (typeof token !== 'string') return null;
+	if (/^\[ek:/i.test(token)) return 'Emoji Kitchen';
+
+	let m = /^\[ce:([a-zA-Z0-9_-]+)\]$/.exec(token);
+	if (m) return `Emotes · :${m[1]}:`;
+
+	m = /^\[tgc:([A-Za-z0-9_]+):(\d+)\]$/.exec(token);
+	if (m) {
+		const short = m[1];
+		const pack = tgcEntry(m[2])?.packTitle ?? short;
+		return `${isStaticPack(short) ? 'Emotes' : 'Animated emotes'} · ${pack}`;
+	}
+
+	m = /^\[tg:([0-9a-f-]+)\]$/i.exec(token);
+	if (m) {
+		const cat = tgEntry(m[1].toLowerCase())?.cat;
+		return cat ? `Animated emotes · ${cat}` : 'Animated emotes';
+	}
+	return null;
+}
+
 export function tgReactionName(token) {
 	if (typeof token !== 'string') return null;
 	let m = /^\[tg:([0-9a-f-]+)\]$/i.exec(token);

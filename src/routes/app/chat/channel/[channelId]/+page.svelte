@@ -41,7 +41,7 @@
 	import Avatar from '$lib/components/Avatar.svelte';
 	import UserMenu from '$lib/components/UserMenu.svelte';
 	import { loadEmojiNames, getEmojiName } from '$lib/emoji-names.js';
-	import { wrapEmojiInText, tgReactionName } from '$lib/emoji-tip.js';
+	import { wrapEmojiInText, tgReactionName, expressionSource } from '$lib/emoji-tip.js';
 	import { initSemanticSearch, searchEmoji, cpToChar, onSemanticReady } from '$lib/emoji-semantic.js';
 	import { getCustomEmojiMap, getCachedCustomEmojiMap } from '$lib/custom-emoji-store.js';
 	import {
@@ -4559,6 +4559,12 @@
 									<div class="reaction-tooltip-text">
 										<span class="reaction-tooltip-names">{Object.keys(users).map(uid => userMap[uid]?.name ?? 'Someone').join(', ')}</span>
 										<span class="reaction-tooltip-label">reacted with {emojiNames[emoji] ?? tgReactionName(emoji) ?? emoji}</span>
+										<!-- Where the expression came from. This used to be a SECOND
+										     hover card (ExpressionTip) firing on the glyph inside the
+										     chip; it now lives here so one hover gives one card. -->
+										{#if expressionSource(emoji)}
+											<span class="reaction-tooltip-src">{expressionSource(emoji)}</span>
+										{/if}
 									</div>
 								</div>
 							</button>
@@ -5810,6 +5816,7 @@
 	.reaction-tooltip-text { display: flex; flex-direction: column; gap: 0.15rem; }
 	.reaction-tooltip-names { font-weight: 600; font-size: 0.78rem; }
 	.reaction-tooltip-label { font-size: 0.7rem; opacity: 0.6; }
+	.reaction-tooltip-src { font-size: 0.68rem; opacity: 0.45; }
 
 	/* Emoji picker */
 	.picker-overlay { position: fixed; inset: 0; z-index: 40; }

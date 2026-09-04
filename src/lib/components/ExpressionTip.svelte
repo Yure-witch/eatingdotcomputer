@@ -35,6 +35,10 @@
 	}
 
 	function onOver(e) {
+		// A reaction chip has its own hover card, which names the expression AND
+		// the menu it came from. Firing this as well stacked two cards over one
+		// small chip — the enlarged glyph appearing twice, once in each.
+		if (e.target.closest?.('.reaction-chip')) { tip = null; return; }
 		const eTip = e.target.closest?.('.e-tip');
 		if (!eTip) return;
 		const pop = eTip.querySelector('.e-tip-pop');
@@ -240,6 +244,9 @@
 		animation: et-pop 0.12s cubic-bezier(0.2, 1.2, 0.4, 1) both;
 	}
 	:global(.e-tip:hover .e-tip-pop) { display: flex; }
+	/* The plain-emoji pop is pure CSS, so the JS guard above can't stop it —
+	   it has to be switched off here too. */
+	:global(.reaction-chip .e-tip:hover .e-tip-pop) { display: none; }
 	:global(.e-tip-char) {
 		font-size: 2.6rem; line-height: 1.1;
 		font-family: 'Google Sans Flex', 'Space Grotesk', sans-serif, 'Noto Color Emoji';
