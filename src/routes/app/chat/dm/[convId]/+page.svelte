@@ -4351,17 +4351,14 @@
 							     handles both shapes consistently. -->
 							<button class="reaction-chip" class:reacted={data.currentUser.id in users} onclick={() => toggleReaction(msg.id, emoji)} onmouseenter={positionReactionTooltip}>
 								<span class="reaction-emoji">{@html reactionHtml(emoji)}</span> <span class="reaction-count">{count}</span>
+								<!-- Same shape as the expression card you get hovering an
+								     expression anywhere else in chat: one centred column,
+								     glyph on top, then a line each for who, what, and where
+								     it came from. -->
 								<div class="reaction-tooltip">
-									<div class="reaction-tooltip-main">
-										<span class="reaction-tooltip-emoji">{@html reactionHtml(emoji)}</span>
-										<div class="reaction-tooltip-text">
-											<span class="reaction-tooltip-names">{Object.keys(users).map(uid => userMap[uid]?.name ?? 'Someone').join(', ')}</span>
-											<span class="reaction-tooltip-label">reacted with {emojiNames[emoji] ?? tgReactionName(emoji) ?? emoji}</span>
-										</div>
-									</div>
-									<!-- The collection, on its own line at the foot of the card —
-									     same icon and wording as the expression card you get
-									     hovering the thing anywhere else in chat. -->
+									<span class="reaction-tooltip-emoji">{@html reactionHtml(emoji)}</span>
+									<span class="reaction-tooltip-names">{Object.keys(users).map(uid => userMap[uid]?.name ?? 'Someone').join(', ')}</span>
+									<span class="reaction-tooltip-label">reacted with {emojiNames[emoji] ?? tgReactionName(emoji) ?? emoji}</span>
 									{#if src}
 										<span class="reaction-tooltip-meta">
 											<span class="msi reaction-tooltip-msi">{src.msi}</span>{src.label}
@@ -5542,29 +5539,24 @@
 		background: var(--paper, var(--paper)); color: var(--ink);
 		border: 1.5px solid var(--border);
 		border-radius: 10px; padding: 0.5rem 0.75rem;
-		font-size: 0.78rem; white-space: nowrap;
+		font-size: 0.78rem; white-space: normal;
 		/* Above everything in the timeline, and matched to ExpressionTip's own
 		   card so the two can never fight for the top. */
 		z-index: 9999; pointer-events: none;
-		flex-direction: column; align-items: stretch; gap: 0.4rem;
+		flex-direction: column; align-items: center; text-align: center; gap: 0.2rem;
 		box-shadow: 0 4px 18px rgba(0,0,0,0.13), 0 1.5px 4px rgba(0,0,0,0.07);
 		font-family: 'Google Sans Flex', 'Space Grotesk', sans-serif;
 	}
 	.reaction-chip:hover .reaction-tooltip { display: flex; }
-	.reaction-tooltip-emoji { font-size: 2rem; line-height: 1; flex-shrink: 0; }
-	.reaction-tooltip-text { display: flex; flex-direction: column; gap: 0.15rem; }
-	.reaction-tooltip-names { font-weight: 600; font-size: 0.78rem; }
-	.reaction-tooltip-label { font-size: 0.7rem; opacity: 0.6; }
-	.reaction-tooltip-main { display: flex; flex-direction: row; align-items: center; gap: 0.55rem; }
-	/* Foot of the card, separated by a rule — it describes the expression
-	   rather than the reaction, so it shouldn't read as part of the sentence
-	   above it. */
+	.reaction-tooltip-emoji { font-size: 2.6rem; line-height: 1.1; flex-shrink: 0; margin-bottom: 0.15rem; }
+	.reaction-tooltip-names { font-weight: 600; font-size: 0.78rem; line-height: 1.3; }
+	.reaction-tooltip-label { font-size: 0.7rem; opacity: 0.6; line-height: 1.3; text-transform: lowercase; }
+	/* Foot of the card. Muted rather than ruled off, matching the expression
+	   card's meta lines — it describes the expression, not the reaction. */
 	.reaction-tooltip-meta {
-		display: flex; align-items: center; gap: 0.25rem;
-		padding-top: 0.35rem;
-		border-top: 1px solid var(--border);
-		font-size: 0.68rem; color: var(--muted-fg);
-		white-space: normal;
+		display: inline-flex; align-items: center; justify-content: center; gap: 0.25rem;
+		margin-top: 0.15rem;
+		font-size: 0.68rem; color: var(--muted-fg); line-height: 1.3;
 	}
 	.reaction-tooltip-msi { font-size: 15px; line-height: 1; flex-shrink: 0; }
 
