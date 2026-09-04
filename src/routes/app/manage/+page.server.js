@@ -58,7 +58,7 @@ export async function load({ locals, parent }) {
 	// All members + online status — scoped to current class (instructors always included)
 	const db = getDb();
 	const usersResult = db ? await db.execute({
-		sql: `SELECT u.id, u.name, u.email, u.role, u.created_at, u.avatar_kind, u.avatar_value, u.gemma_digest, u.interests, u.year, u.hide_tg_emoji FROM users u
+		sql: `SELECT u.id, u.name, u.email, u.role, u.created_at, u.avatar_kind, u.avatar_value, u.gemma_digest, u.interests, u.year, u.hide_tg_emoji, u.shadowbanned FROM users u
 		      WHERE u.role = 'instructor'
 		         OR EXISTS (
 		              SELECT 1 FROM class_memberships cm
@@ -122,6 +122,10 @@ export async function load({ locals, parent }) {
 			avatarKind: r.avatar_kind ? String(r.avatar_kind) : 'gen',
 			avatarValue: r.avatar_value ? String(r.avatar_value) : null,
 			gemmaDigest: Number(r.gemma_digest) === 1,
+			// Only instructors reach this page, so the flag never leaves their
+			// own payload — see the members query in app/+layout.server.js for
+			// the same gate on the class-wide list.
+			shadowbanned: Number(r.shadowbanned ?? 0) === 1,
 			// Inverted on purpose: the column stores "hidden", the UI offers
 			// "enabled", which is the way round an instructor thinks about it.
 			thirdPartyEmotes: Number(r.hide_tg_emoji ?? 0) !== 1,

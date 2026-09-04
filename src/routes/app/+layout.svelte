@@ -2646,6 +2646,7 @@
 							{#if lastMsg}<span class="conv-last">{@html previewHtml(lastMsg)}</span>{:else}<span class="conv-last conv-last-empty">Tap to message</span>{/if}
 						</div>
 						{#if u.role === 'instructor'}<span class="role-badge">instr.</span>{/if}
+						{#if u.shadowbanned}<span class="role-badge hidden-badge" title="Hidden from the class — only instructors see them">hidden</span>{/if}
 						{#if dmUnreadCount > 0}
 							<span class="unread-badge">{dmUnreadCount > 99 ? '99+' : dmUnreadCount}</span>
 						{:else if dmUnreadDot}
@@ -3173,6 +3174,12 @@
 	.gemma-goals-icon {
 		display: inline-flex; align-items: center; justify-content: center;
 		font-size: 1.05rem; width: 26px; height: 26px;
+	}
+	/* Shadowbanned member. The flag only reaches an instructor's payload, so
+	   this can never appear in a student's sidebar. */
+	.hidden-badge {
+		background: color-mix(in srgb, var(--danger, #c0392b) 15%, transparent);
+		color: var(--danger, #c0392b);
 	}
 	.role-badge {
 		/* Inverted sidebar colors — legible in light AND dark themes (the old

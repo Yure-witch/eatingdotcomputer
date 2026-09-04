@@ -1008,7 +1008,10 @@
 				{#each data.members as m}
 					{@const p = presenceMap[m.id]}
 					<tr>
-						<td><a class="member-link" href="/app/profile/{m.id}">{m.name || '—'}</a></td>
+						<td>
+							<a class="member-link" href="/app/profile/{m.id}">{m.name || '—'}</a>
+							{#if m.shadowbanned}<span class="hidden-chip" title="Shadowbanned — hidden from everyone except instructors">hidden</span>{/if}
+						</td>
 						<td class="email">{m.email}</td>
 						<td><span class="role-pill" class:instructor={m.role === 'instructor'}>{m.role}</span></td>
 						<td>
@@ -1830,6 +1833,17 @@
 	.email { font-family: monospace; font-size: 0.82rem; color: var(--muted-fg); }
 	.muted { color: var(--muted-fg); font-size: 0.8rem; }
 
+	/* Shadowbanned member. Sits beside the name rather than in the Status
+	   column, which is about presence — being hidden is a property of the
+	   account, not of whether they happen to be online. */
+	.hidden-chip {
+		display: inline-block; margin-left: 0.4rem;
+		padding: 0.1rem 0.4rem; border-radius: 999px;
+		font-size: 0.68rem; font-weight: 600; text-transform: lowercase;
+		background: color-mix(in srgb, var(--danger, #c0392b) 15%, transparent);
+		color: var(--danger, #c0392b);
+		vertical-align: middle;
+	}
 	.role-pill {
 		font-size: 0.65rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
 		background: var(--surface-2); color: var(--muted-fg); padding: 0.15rem 0.5rem; border-radius: 99px;
