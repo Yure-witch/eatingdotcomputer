@@ -86,22 +86,29 @@ export function emojiDisplayName(g) {
  */
 export function expressionSource(token) {
 	if (typeof token !== 'string') return null;
-	if (/^\[ek:/i.test(token)) return 'Emoji Kitchen';
+	// Icons and wording match ExpressionTip's own meta lines exactly — this is
+	// the same fact shown in a different card, and two vocabularies for it
+	// would read as two different things.
+	if (/^\[ek:/i.test(token)) return { msi: 'blender', label: 'Emoji Kitchen' };
 
 	let m = /^\[ce:([a-zA-Z0-9_-]+)\]$/.exec(token);
-	if (m) return `Emotes · :${m[1]}:`;
+	if (m) return { msi: 'sentiment_very_satisfied', label: `Custom emotes · :${m[1]}:` };
 
 	m = /^\[tgc:([A-Za-z0-9_]+):(\d+)\]$/.exec(token);
 	if (m) {
 		const short = m[1];
 		const pack = tgcEntry(m[2])?.packTitle ?? short;
-		return `${isStaticPack(short) ? 'Emotes' : 'Animated emotes'} · ${pack}`;
+		const isStatic = isStaticPack(short);
+		return {
+			msi: isStatic ? 'sentiment_very_satisfied' : 'animated_images',
+			label: `${isStatic ? 'Emotes' : 'Animated emotes'} · ${pack}`
+		};
 	}
 
 	m = /^\[tg:([0-9a-f-]+)\]$/i.exec(token);
 	if (m) {
 		const cat = tgEntry(m[1].toLowerCase())?.cat;
-		return cat ? `Animated emotes · ${cat}` : 'Animated emotes';
+		return { msi: 'animated_images', label: cat ? `Animated emotes · ${cat}` : 'Animated emotes' };
 	}
 	return null;
 }

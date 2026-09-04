@@ -36,8 +36,24 @@ export function positionReactionTooltip(e) {
 	const sidebarRight = sidebar ? sidebar.getBoundingClientRect().right : 0;
 	// Ignore a sidebar claiming more than half the screen — that's a drawer
 	// mid-animation, not a layout the tooltip has to dodge.
-	const leftBound = Math.max(8, Math.min(sidebarRight + 10, window.innerWidth / 2));
-	const rightBound = window.innerWidth - 8;
+	let leftBound = Math.max(8, Math.min(sidebarRight + 10, window.innerWidth / 2));
+	let rightBound = window.innerWidth - 8;
+
+	// The viewport is not the real boundary. This tooltip is position:absolute
+	// inside the message list, and an ancestor with a non-visible overflow
+	// CLIPS it — no z-index can escape that, which is why on desktop it was
+	// being sliced off at the chat column's left edge rather than merely
+	// overlapping it. Clamp to whatever actually clips us, so the tooltip is
+	// positioned (and capped) inside the box it has to live in.
+	for (let el = chip.parentElement; el; el = el.parentElement) {
+		const cs = getComputedStyle(el);
+		if (!/(auto|hidden|scroll|clip)/.test(cs.overflowX + ' ' + cs.overflowY)) continue;
+		const r = el.getBoundingClientRect();
+		if (r.width < 80) break; // a collapsed/off-screen ancestor tells us nothing
+		leftBound = Math.max(leftBound, r.left + 4);
+		rightBound = Math.min(rightBound, r.right - 4);
+		break;
+	}
 
 	const avail = Math.max(140, rightBound - leftBound);
 	tooltip.style.maxWidth = `${avail}px`;

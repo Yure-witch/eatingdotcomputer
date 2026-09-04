@@ -4543,6 +4543,7 @@
 				<div class="reactions">
 					{#each Object.entries(msgReactions) as [emoji, users]}
 						{@const count = Object.keys(users).length}
+						{@const src = expressionSource(emoji)}
 						{#if count > 0}
 							<!-- The reaction key may be a plain emoji char ('👍')
 							     OR an inline token ('[ce:…]', '[ek:…]', '[tg:…]',
@@ -4555,17 +4556,21 @@
 							<button class="reaction-chip" class:reacted={data.currentUser.id in users} onclick={() => toggleReaction(msg.id, emoji)} onmouseenter={positionReactionTooltip}>
 								<span class="reaction-emoji">{@html reactionHtml(emoji)}</span> <span class="reaction-count">{count}</span>
 								<div class="reaction-tooltip">
-									<span class="reaction-tooltip-emoji">{@html reactionHtml(emoji)}</span>
-									<div class="reaction-tooltip-text">
-										<span class="reaction-tooltip-names">{Object.keys(users).map(uid => userMap[uid]?.name ?? 'Someone').join(', ')}</span>
-										<span class="reaction-tooltip-label">reacted with {emojiNames[emoji] ?? tgReactionName(emoji) ?? emoji}</span>
-										<!-- Where the expression came from. This used to be a SECOND
-										     hover card (ExpressionTip) firing on the glyph inside the
-										     chip; it now lives here so one hover gives one card. -->
-										{#if expressionSource(emoji)}
-											<span class="reaction-tooltip-src">{expressionSource(emoji)}</span>
-										{/if}
+									<div class="reaction-tooltip-main">
+										<span class="reaction-tooltip-emoji">{@html reactionHtml(emoji)}</span>
+										<div class="reaction-tooltip-text">
+											<span class="reaction-tooltip-names">{Object.keys(users).map(uid => userMap[uid]?.name ?? 'Someone').join(', ')}</span>
+											<span class="reaction-tooltip-label">reacted with {emojiNames[emoji] ?? tgReactionName(emoji) ?? emoji}</span>
+										</div>
 									</div>
+									<!-- The collection, on its own line at the foot of the card —
+									     same icon and wording as the expression card you get
+									     hovering the thing anywhere else in chat. -->
+									{#if src}
+										<span class="reaction-tooltip-meta">
+											<span class="msi reaction-tooltip-msi">{src.msi}</span>{src.label}
+										</span>
+									{/if}
 								</div>
 							</button>
 						{/if}
@@ -5806,8 +5811,10 @@
 		border: 1.5px solid var(--border);
 		border-radius: 10px; padding: 0.5rem 0.75rem;
 		font-size: 0.78rem; white-space: nowrap;
-		z-index: 30; pointer-events: none;
-		flex-direction: row; align-items: center; gap: 0.55rem;
+		/* Above everything in the timeline, and matched to ExpressionTip's own
+		   card so the two can never fight for the top. */
+		z-index: 9999; pointer-events: none;
+		flex-direction: column; align-items: stretch; gap: 0.4rem;
 		box-shadow: 0 4px 18px rgba(0,0,0,0.13), 0 1.5px 4px rgba(0,0,0,0.07);
 		font-family: 'Google Sans Flex', 'Space Grotesk', sans-serif;
 	}
@@ -5816,7 +5823,18 @@
 	.reaction-tooltip-text { display: flex; flex-direction: column; gap: 0.15rem; }
 	.reaction-tooltip-names { font-weight: 600; font-size: 0.78rem; }
 	.reaction-tooltip-label { font-size: 0.7rem; opacity: 0.6; }
-	.reaction-tooltip-src { font-size: 0.68rem; opacity: 0.45; }
+	.reaction-tooltip-main { display: flex; flex-direction: row; align-items: center; gap: 0.55rem; }
+	/* Foot of the card, separated by a rule — it describes the expression
+	   rather than the reaction, so it shouldn't read as part of the sentence
+	   above it. */
+	.reaction-tooltip-meta {
+		display: flex; align-items: center; gap: 0.25rem;
+		padding-top: 0.35rem;
+		border-top: 1px solid var(--border);
+		font-size: 0.68rem; color: var(--muted-fg);
+		white-space: normal;
+	}
+	.reaction-tooltip-msi { font-size: 15px; line-height: 1; flex-shrink: 0; }
 
 	/* Emoji picker */
 	.picker-overlay { position: fixed; inset: 0; z-index: 40; }
