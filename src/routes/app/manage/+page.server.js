@@ -6,6 +6,7 @@ import { getDb } from '$lib/server/turso.js';
 import { getAdminDb } from '$lib/server/firebase-admin.js';
 import { notifyInactiveStudents } from '$lib/server/notify-inactive.js';
 import { sendApprovalEmail } from '$lib/server/email.js';
+import { visitSummary } from '$lib/server/visits.js';
 
 export async function load({ locals, parent }) {
 	const parentData = await parent();
@@ -547,7 +548,12 @@ export async function load({ locals, parent }) {
 	}
 	for (const m of members) m.emotes = emotesByUser[m.id] ?? [];
 
-	return { weeks, maxWeek, members, activityByUser, userDeviceActivity, deviceNotifData, pendingRequests, classId, dmConversations, enrollment, unattributedEmotes, messageReports };
+	// Install-page traffic. Best-effort: a counter failing must not take the
+	// whole Manage page down with it.
+	let installVisits = [];
+	try { installVisits = await visitSummary(); } catch { /* card renders empty */ }
+
+	return { weeks, maxWeek, members, activityByUser, userDeviceActivity, deviceNotifData, pendingRequests, classId, dmConversations, enrollment, unattributedEmotes, messageReports, installVisits };
 }
 
 const ALL_TYPES = ['link', 'image', 'video'];

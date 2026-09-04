@@ -750,6 +750,32 @@
 		{/if}
 
 		{#if activeTab === 'activity'}
+	<!-- Install-page traffic. Sits above the class activity chart because it
+	     answers a different question: activity is about people already inside,
+	     this is about whether the links you're handing out get opened. -->
+	<section class="members-section">
+		<h2>Install page visits</h2>
+		<p class="iv-hint">
+			Public pages, countable without an account. Counts are per page load, not
+			per person — someone who opens a link twice counts twice.
+		</p>
+		<div class="iv-grid">
+			{#each data.installVisits ?? [] as v}
+				<a class="iv-card" href={v.path}>
+					<span class="iv-label">{v.label}</span>
+					<span class="iv-total">{v.total.toLocaleString()}</span>
+					<span class="iv-sub">
+						{v.last7.toLocaleString()} this week · {v.today.toLocaleString()} today
+					</span>
+					<span class="iv-path">{v.path}</span>
+				</a>
+			{/each}
+		</div>
+		{#if !(data.installVisits ?? []).length}
+			<p class="iv-hint">No visits recorded yet.</p>
+		{/if}
+	</section>
+
 	<section class="members-section">
 		<div class="chart-header">
 			<h2>Activity</h2>
@@ -1836,6 +1862,51 @@
 	/* Shadowbanned member. Sits beside the name rather than in the Status
 	   column, which is about presence — being hidden is a property of the
 	   account, not of whether they happen to be online. */
+	/* ── Install page visits ── */
+	.iv-hint {
+		margin: 0 0 0.9rem;
+		font-size: 0.82rem;
+		color: var(--muted-fg);
+	}
+	.iv-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+		gap: 0.75rem;
+	}
+	.iv-card {
+		display: flex;
+		flex-direction: column;
+		gap: 0.15rem;
+		padding: 0.9rem 1rem;
+		border: 1.5px solid var(--border);
+		border-radius: 12px;
+		background: var(--paper);
+		color: inherit;
+		text-decoration: none;
+		transition: border-color 0.15s;
+	}
+	.iv-card:hover { border-color: var(--ink); }
+	.iv-label {
+		font-size: 0.78rem;
+		font-weight: 600;
+		color: var(--muted-fg);
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+	}
+	.iv-total {
+		font-size: 2rem;
+		font-weight: 700;
+		line-height: 1.1;
+		letter-spacing: -0.02em;
+	}
+	.iv-sub { font-size: 0.78rem; color: var(--muted-fg); }
+	.iv-path {
+		margin-top: 0.15rem;
+		font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+		font-size: 0.72rem;
+		color: var(--muted-fg);
+	}
+
 	.hidden-chip {
 		display: inline-block; margin-left: 0.4rem;
 		padding: 0.1rem 0.4rem; border-radius: 999px;
