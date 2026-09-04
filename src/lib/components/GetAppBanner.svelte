@@ -6,28 +6,40 @@
 	 * button. Dismissible; the choice persists in localStorage.
 	 */
 	import { onMount } from 'svelte';
+	import { page } from '$app/stores';
 	import { APP_STORE_URL, shouldPromoteApp, isIOSWeb } from '$lib/native.js';
 
 	const DISMISS_KEY = 'getAppDismissed';
+	// The install pages ARE this banner, at length. Nudging someone toward the
+	// app while they are reading how to install it is just noise in the way.
+	const HIDE_ON = ['/androidpwa', '/iosapp'];
 	let show = $state(false);
+	let ios = $state(false);
 
 	onMount(() => {
 		if (!shouldPromoteApp()) return;
 		try {
 			if (localStorage.getItem(DISMISS_KEY) === '1') return;
 		} catch {}
+		ios = isIOSWeb();
 		show = true;
 	});
+
+	// Android has no store listing — it installs from the browser — so sending
+	// an Android visitor to APP_STORE_URL handed them an iPhone-only Apple page
+	// they could do nothing with. They get the install walkthrough instead.
+	const href = $derived(ios ? APP_STORE_URL : '/androidpwa');
+	const external = $derived(ios);
 
 	function dismiss() {
 		show = false;
 		try { localStorage.setItem(DISMISS_KEY, '1'); } catch {}
 	}
 
-	const storeLabel = isIOSWeb() ? 'App Store' : 'Get the app';
+	const storeLabel = $derived(ios ? 'App Store' : 'Install');
 </script>
 
-{#if show}
+{#if show && !HIDE_ON.includes($page.url.pathname)}
 	<div class="get-app" role="region" aria-label="Get the native app">
 		<div class="ga-icon" aria-hidden="true">
 			<span class="msi msi-20">install_mobile</span>
@@ -36,7 +48,7 @@
 			<strong>eating.computer is better as an app</strong>
 			<span>Smoother chat, a proper keyboard, and notifications.</span>
 		</div>
-		<a class="ga-cta" href={APP_STORE_URL} target="_blank" rel="noopener">{storeLabel}</a>
+		<a class="ga-cta" {href} target={external ? '_blank' : null} rel={external ? 'noopener' : null}>{storeLabel}</a>
 		<button class="ga-close" onclick={dismiss} title="Dismiss" aria-label="Dismiss">
 			<span class="msi msi-18">close</span>
 		</button>
