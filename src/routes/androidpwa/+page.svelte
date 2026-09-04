@@ -93,13 +93,22 @@
 		{#if checked && isIOS}
 			<div class="callout">
 				<strong>You're on an iPhone or iPad.</strong>
-				<p>
-					This page is for Android. On iOS, get the real app instead — it has proper
-					notifications that a home-screen web app can't do.
-				</p>
-				<a class="btn" href={APP_STORE_URL} target="_blank" rel="noopener noreferrer">
-					Download on the App Store
-				</a>
+				{#if APP_STORE_URL}
+					<p>
+						This page is for Android. On iOS, get the real app instead — it has proper
+						notifications that a home-screen web app can't do.
+					</p>
+					<a class="btn" href={APP_STORE_URL} target="_blank" rel="noopener noreferrer">
+						Download on the App Store
+					</a>
+				{:else}
+					<!-- No listing yet, so no button — see /iosapp for the same guard. -->
+					<p>
+						This page is for Android. The iPhone app isn't on the App Store yet;
+						until it is, add eating.computer to your home screen from Safari.
+					</p>
+					<a class="btn btn-quiet" href="/iosapp">iPhone instructions →</a>
+				{/if}
 			</div>
 		{/if}
 
@@ -273,6 +282,14 @@
 		font-weight: 600;
 		text-decoration: none;
 		cursor: pointer;
+	}
+
+	.btn-quiet {
+		padding: 0.5rem 0.9rem;
+		font-size: 0.9rem;
+		background: transparent;
+		color: #1a1414;
+		border: 1.5px solid #1a1414;
 	}
 
 	.note {

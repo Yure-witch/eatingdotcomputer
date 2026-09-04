@@ -39,16 +39,38 @@
 		land on your lock screen, even when the app is closed.
 	</p>
 
-	<a class="btn" href={APP_STORE_URL} target="_blank" rel="noopener noreferrer">
-		Download on the App Store
-	</a>
+	{#if APP_STORE_URL}
+		<a class="btn" href={APP_STORE_URL} target="_blank" rel="noopener noreferrer">
+			Download on the App Store
+		</a>
+	{:else}
+		<!-- APP_STORE_URL is null until the listing is live (see native.js).
+		     Rendering the button anyway gave a link to nowhere, so while there
+		     is nothing to download the page has to be useful on its own — the
+		     home-screen route works today and is what people actually need. -->
+		<div class="callout callout-warn">
+			<strong>Not on the App Store yet.</strong>
+			<p>
+				The iPhone app is still in review. Until it lands you can add
+				eating.computer to your home screen — it looks and works the same
+				day to day; the difference is that notifications are less reliable.
+			</p>
+		</div>
+
+		<h2>Add to your home screen</h2>
+		<ol>
+			<li>Open <span class="mono">eating.computer</span> in <strong>Safari</strong> (it has to be Safari).</li>
+			<li>Tap the <strong>Share</strong> button at the bottom of the screen.</li>
+			<li>Scroll down, tap <strong>Add to Home Screen</strong>, then <strong>Add</strong>.</li>
+		</ol>
+	{/if}
 
 	{#if checked && isAndroid}
 		<div class="callout callout-warn">
 			<strong>You're on Android.</strong>
 			<p>
-				That link goes to Apple's store and won't work on this phone. Install the web
-				app instead — it takes about ten seconds and works the same way.
+				This page is about the iPhone app. On Android you install straight from
+				the browser — it takes about ten seconds.
 			</p>
 			<a class="btn btn-quiet" href="/androidpwa">Install on Android →</a>
 		</div>
@@ -127,6 +149,19 @@
 	.lede {
 		font-size: 1.075rem;
 		margin: 0 0 1.75rem;
+	}
+
+	ol {
+		margin: 0;
+		padding-left: 1.25rem;
+	}
+	ol li {
+		margin-bottom: 0.4rem;
+	}
+
+	.mono {
+		font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+		font-size: 0.9em;
 	}
 
 	.btn {
