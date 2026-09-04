@@ -23,6 +23,7 @@
 	import { getCustomEmojiMap, getCachedCustomEmojiMap, isCustomEmojiLoaded } from '$lib/custom-emoji-store.js';
 	import { ekTokenToUrl } from '$lib/message-render.js';
 	import { onScrollGesture } from '$lib/scroll-bus.js';
+	import { kbLift } from '$lib/kb-lift.js';
 
 	// Per-user switch (users.hide_tg_emoji): drop the Telegram surfaces —
 	// the Animated tab and the Emotes Library sub-tab.
@@ -783,7 +784,9 @@
      stopPropagation can eat it; if the touch turns into a downward drag, the
      hysteresis re-dims after 12px, which is the correct outcome for that
      gesture anyway. -->
-<div class="expr-panel"
+<!-- use:kbLift — focusing a search field in here opens the real keyboard over
+     the docked sheet, so the sheet has to move up off it. See $lib/kb-lift.js. -->
+<div class="expr-panel" use:kbLift
      class:expr-panel-react={mode === 'react'} class:expr-dragging={dragging}
      onpointerdowncapture={() => { if (chrome === 'dim') setChrome('rest'); }}
      onpointerdown={railDown} onpointermove={railMove}
@@ -1576,6 +1579,11 @@
 		   row sat under the rail. */
 		padding: 0.5rem 0.5rem 68px;
 		overflow-y: auto;
+		/* Stop the page scrolling once this grid hits its end. Without it a
+		   wheel gesture that runs past the last row chains to the document and
+		   scrolls the whole app out from under the open picker — the horizontal
+		   pane track next door already guards against the same thing. */
+		overscroll-behavior: contain;
 		/* Shares the pane's column with the bar above it, so it takes the
 		   remaining height rather than a full 100% that would overflow. */
 		flex: 1 1 auto;

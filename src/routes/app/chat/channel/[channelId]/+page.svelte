@@ -5238,27 +5238,55 @@
 
 	/* Reply quote — inner bubble inside the message bubble */
 	.bubble.has-reply { display: flex; flex-direction: column; gap: 0.35rem; }
+	/* Tinted with `currentColor`, never a fixed colour. currentColor is the
+	   bubble's own text colour, so a 10% mix darkens a light bubble and
+	   LIGHTENS a dark one — the quote stays a visible step away from its
+	   background on every theme, in light and dark mode alike.
+
+	   This used to be `rgba(0,0,0,0.07)` with a `#5a4e44` author name, tuned
+	   against the one cream bubble the app shipped with. On a dark theme that
+	   is a black tint on an already-dark bubble (invisible) under a fixed brown
+	   name (unreadable). Only `.message.mine` had been converted; incoming
+	   messages — i.e. every reply you look at — had not. */
 	.reply-quote {
 		display: block; width: 100%; text-align: left;
-		background: rgba(0,0,0,0.07); border-radius: 8px;
+		background: color-mix(in srgb, currentColor 10%, transparent);
+		border-radius: 8px;
 		padding: 0.3rem 0.6rem;
 		cursor: pointer; overflow: hidden;
 		border: none; font-family: inherit; white-space: normal;
+		/* `color: inherit` is load-bearing, not tidiness. This is a <button>,
+		   and the UA sheet gives buttons `color: buttontext` — so without it
+		   currentColor here is the browser's button colour, NOT the bubble's
+		   text colour, and every currentColor mix below is computed against
+		   the wrong base. That is what made the quote unreadable on some
+		   themes and fine on others. */
+		color: inherit;
 		transition: background 0.1s;
 	}
-	.reply-quote:hover { background: rgba(0,0,0,0.13); }
-	.reply-author { display: block; font-size: 0.7rem; font-weight: 700; color: #5a4e44; }
-	.reply-text { display: block; font-size: 0.78rem; color: var(--muted-fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-	.reply-text.jumbo-reply { white-space: normal; text-overflow: clip; line-height: 1.15; }
-	/* Overlays inside the sent-bubble are tinted with `currentColor`
-	   so they adapt whether the bubble is dark (ink era) or light
-	   (primary-container era). Mixing currentColor with transparent
-	   produces a darken/lighten effect that always reads as a hint
-	   of the bubble's own text color. */
-	.message.mine .bubble .reply-quote { background: color-mix(in srgb, currentColor 12%, transparent); }
-	.message.mine .bubble .reply-quote:hover { background: color-mix(in srgb, currentColor 20%, transparent); }
-	.message.mine .bubble .reply-author { color: color-mix(in srgb, currentColor 70%, transparent); }
-	.message.mine .bubble .reply-text { color: color-mix(in srgb, currentColor 92%, transparent); }
+	.reply-quote:hover { background: color-mix(in srgb, currentColor 18%, transparent); }
+	.reply-author {
+		display: block; font-size: 0.7rem; font-weight: 700;
+		color: color-mix(in srgb, currentColor 80%, transparent);
+		overflow-wrap: anywhere;
+	}
+	/* Wraps, then clamps at three lines. It was `white-space: nowrap` with an
+	   ellipsis, which on a phone meant a quote of any length collapsed to one
+	   truncated line — the text ran to the bubble's edge instead of flowing
+	   inside it. `overflow-wrap: anywhere` so a pasted URL breaks rather than
+	   forcing the bubble wider than the screen. */
+	.reply-text {
+		display: -webkit-box;
+		-webkit-box-orient: vertical;
+		-webkit-line-clamp: 3;
+		line-clamp: 3;
+		font-size: 0.78rem;
+		color: color-mix(in srgb, currentColor 88%, transparent);
+		white-space: normal;
+		overflow: hidden;
+		overflow-wrap: anywhere;
+	}
+	.reply-text.jumbo-reply { -webkit-line-clamp: 2; line-clamp: 2; line-height: 1.15; }
 
 	/* Bubble row */
 	.bubble-row { position: relative; display: flex; align-items: flex-end; gap: 0.3rem; max-width: 100%; min-width: 0; }
@@ -5760,7 +5788,14 @@
 		position: absolute;
 		top: calc(100% + 6px);
 		left: 50%; transform: translateX(-50%);
-		min-width: max-content;
+		/* `width: max-content`, NOT `min-width: max-content`. min-width beats
+		   max-width in CSS, so the old value made the cap that
+		   positionReactionTooltip sets inert: a chip with several long names
+		   stayed as wide as the unwrapped list, ran off the viewport, and the
+		   clamp was computing against a width the tooltip never had. As a
+		   plain width it still hugs short content, and the cap can bite. */
+		width: max-content;
+		min-width: 0;
 		background: var(--paper, var(--paper)); color: var(--ink);
 		border: 1.5px solid var(--border);
 		border-radius: 10px; padding: 0.5rem 0.75rem;
