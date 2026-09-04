@@ -200,12 +200,20 @@
 		display: none;
 		position: fixed;
 		z-index: 1000;
-		background: var(--ink);
-		color: var(--border);
+		/* A floating card, styled like every other floating card in the app —
+		   the reaction tooltip, the expression pop, the edit bubble all sit on
+		   `--paper` with an `--ink` body and a `--border` edge. This one was
+		   built before the theme system on an inverted, hardcoded palette:
+		   `--ink` as the BACKGROUND with `--border` (a hairline colour) as the
+		   text, plus #333 / #2a2a2a chips. That only ever looked right against
+		   the one dark theme it was written for. */
+		background: var(--paper);
+		color: var(--ink);
+		border: 1.5px solid var(--border);
 		border-radius: 12px;
 		padding: 1rem;
 		width: 220px;
-		box-shadow: 0 8px 32px rgba(0,0,0,0.35);
+		box-shadow: 0 4px 18px rgba(0, 0, 0, 0.13), 0 1.5px 4px rgba(0, 0, 0, 0.07);
 		flex-direction: column;
 		gap: 0.6rem;
 		font-size: 0.82rem;
@@ -234,9 +242,11 @@
 	.hc-sub-row { display: flex; align-items: center; gap: 0.5rem; }
 	.hc-role {
 		font-size: 0.6rem; font-weight: 700; text-transform: uppercase;
-		background: #333; color: var(--muted-fg); padding: 0.1rem 0.35rem; border-radius: 99px;
+		background: var(--surface-2); color: var(--muted-fg); padding: 0.1rem 0.35rem; border-radius: 99px;
 	}
-	.hc-role.instructor { background: var(--paper); color: var(--ink); }
+	/* Instructors get the inverted chip — the one place on the card where a
+	   flipped surface is the point rather than an accident. */
+	.hc-role.instructor { background: var(--inverse-surface); color: var(--inverse-on-surface); }
 
 	/* Live presence line. Colour-coded dot + a relative timestamp;
 	   the row is hidden entirely when no presence has been written
@@ -249,16 +259,19 @@
 	}
 	.hc-status-dot {
 		width: 7px; height: 7px; border-radius: 50%;
-		background: #888; flex-shrink: 0;
+		background: var(--muted-fg); flex-shrink: 0;
 	}
-	.hc-status-active { color: var(--paper); }
+	.hc-status-active { color: var(--ink); }
+	/* Presence stays literal green/amber: these mean "online" and "idle", not
+	   "accent", and #4caf50 is the same green the sidebar's .presence-dot uses
+	   — theming them would desync the two indicators for the same fact. */
 	.hc-status-active .hc-status-dot { background: #4caf50; }
 	.hc-status-idle .hc-status-dot { background: #ffc107; }
-	.hc-status-offline .hc-status-dot { background: #777; }
+	.hc-status-offline .hc-status-dot { background: var(--muted-fg); }
 
 	.hc-details { display: flex; flex-wrap: wrap; gap: 0.3rem; }
 	.hc-tag {
-		font-size: 0.7rem; background: #2a2a2a; color: var(--muted-fg);
+		font-size: 0.7rem; background: var(--surface-2); color: var(--muted-fg);
 		padding: 0.15rem 0.5rem; border-radius: 99px;
 	}
 
@@ -272,5 +285,5 @@
 	.hc-link {
 		font-size: 0.72rem; color: var(--muted-fg); text-decoration: none; margin-top: 0.1rem;
 	}
-	.hc-link:hover { color: var(--paper); }
+	.hc-link:hover { color: var(--ink); }
 </style>
