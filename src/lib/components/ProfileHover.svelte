@@ -149,7 +149,12 @@
 					</div>
 					<div class="hc-sub-row">
 						<span class="hc-role" class:instructor={profile.role === 'instructor'}>{profile.role}</span>
-						{#if presence}
+					</div>
+					<!-- Presence on its own line: "Last online 3 days ago" beside a
+					     role chip pushed the card to wrap mid-phrase, and the two
+					     are unrelated facts anyway. -->
+					{#if presence}
+						<div class="hc-status-row">
 							<span class="hc-status hc-status-{presence.status}">
 								<span class="hc-status-dot"></span>
 								{#if presence.status === 'active'}
@@ -160,8 +165,8 @@
 									Last online {formatRelative(presence.lastInputAt)}
 								{/if}
 							</span>
-						{/if}
-					</div>
+						</div>
+					{/if}
 				</div>
 			</div>
 			{#if profile.year || profile.school || profile.focus}
@@ -236,10 +241,14 @@
 	.hc-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.25rem; }
 
 	.hc-name-row { display: flex; align-items: baseline; gap: 0.4rem; flex-wrap: wrap; }
-	.hc-name { font-weight: 600; color: var(--paper); font-size: 0.88rem; }
+	/* --ink, not --paper. This was the last survivor of the inverted card: a
+	   token, so it read as themed, but the WRONG token — paper on a paper
+	   card, i.e. the name in the background colour, on every theme. */
+	.hc-name { font-weight: 600; color: var(--ink); font-size: 0.88rem; }
 	.hc-pronouns { font-size: 0.72rem; color: var(--muted-fg); }
 
 	.hc-sub-row { display: flex; align-items: center; gap: 0.5rem; }
+	.hc-status-row { display: flex; align-items: center; }
 	.hc-role {
 		font-size: 0.6rem; font-weight: 700; text-transform: uppercase;
 		background: var(--surface-2); color: var(--muted-fg); padding: 0.1rem 0.35rem; border-radius: 99px;
