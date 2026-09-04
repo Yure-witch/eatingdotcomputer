@@ -50,6 +50,11 @@
 	}
 
 	function onMove(e) {
+		// Same guard as onOver, and this is the one that matters for emotes:
+		// onOver only positions the plain-emoji CSS pop, while THIS is what
+		// builds the EK / custom-emote / Telegram cards. Guarding only onOver
+		// left every non-emoji reaction still showing two cards.
+		if (e.target.closest?.('.reaction-chip')) { tip = null; return; }
 		// mousemove fires at pointer-poll rate (60–120Hz). The full
 		// dataset/regex/closest scan below only matters when the cursor has
 		// actually crossed onto a different element — gate it on movement

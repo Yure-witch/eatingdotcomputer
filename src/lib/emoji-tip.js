@@ -6,7 +6,7 @@
 // call loadEmojiNames() once per surface so lookups have data.
 import { escapeHtml, EMOJI_RE_G } from '$lib/message-render.js';
 import { getEmojiName } from '$lib/emoji-names.js';
-import { tgEntry, tgcEntry, isStaticPack } from '$lib/telegram-emoji-store.js';
+import { tgEntry, tgcEntry, isStaticPack, isAdaptivePack, tgcThumbUrl, getCachedCustomPacks } from '$lib/telegram-emoji-store.js';
 
 const _isEmojiSeg = s => /\p{Extended_Pictographic}|\p{Regional_Indicator}/u.test(s);
 const _segmenter = new Intl.Segmenter();
@@ -99,8 +99,15 @@ export function expressionSource(token) {
 		const short = m[1];
 		const pack = tgcEntry(m[2])?.packTitle ?? short;
 		const isStatic = isStaticPack(short);
+		// The pack's own icon, exactly as ExpressionTip's pack line does it:
+		// the picker uses a pack's FIRST emote as its tab icon, so that thumb
+		// is the mark people already associate with the pack. Adaptive packs
+		// are skipped — their art is a white silhouette, invisible on the card.
+		const firstId = getCachedCustomPacks()?.packs
+			?.find((p) => p.short_name === short)?.emoji?.[0]?.id;
 		return {
 			msi: isStatic ? 'sentiment_very_satisfied' : 'animated_images',
+			iconUrl: firstId && !isAdaptivePack(short) ? tgcThumbUrl(short, firstId) : null,
 			label: `${isStatic ? 'Emotes' : 'Animated emotes'} · ${pack}`
 		};
 	}

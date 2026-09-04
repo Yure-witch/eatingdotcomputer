@@ -4361,7 +4361,15 @@
 									<span class="reaction-tooltip-label">reacted with {emojiNames[emoji] ?? tgReactionName(emoji) ?? emoji}</span>
 									{#if src}
 										<span class="reaction-tooltip-meta">
-											<span class="msi reaction-tooltip-msi">{src.msi}</span>{src.label}
+											<!-- A pack shows its own icon (the picker uses the pack's
+											     first emote as its tab icon); everything else falls
+											     back to the tab's Material symbol. -->
+											{#if src.iconUrl}
+												<img class="reaction-tooltip-icon" src={src.iconUrl} alt="" />
+											{:else}
+												<span class="msi reaction-tooltip-msi">{src.msi}</span>
+											{/if}
+											{src.label}
 										</span>
 									{/if}
 								</div>
@@ -5559,6 +5567,7 @@
 		font-size: 0.68rem; color: var(--muted-fg); line-height: 1.3;
 	}
 	.reaction-tooltip-msi { font-size: 15px; line-height: 1; flex-shrink: 0; }
+	.reaction-tooltip-icon { width: 15px; height: 15px; object-fit: contain; flex-shrink: 0; }
 
 	/* Emoji picker */
 	.picker-overlay { position: fixed; inset: 0; z-index: 40; }
