@@ -124,7 +124,9 @@
 		max-width: 40rem;
 		margin: 0 auto;
 		padding: 3.5rem 1.5rem 5rem;
-		font-family: 'Space Grotesk', -apple-system, system-ui, sans-serif;
+		/* Google Sans Flex is the app's face (loaded in app.css); Space Grotesk
+		   stays as the fallback it was before, not as the default. */
+		font-family: 'Google Sans Flex', 'Space Grotesk', system-ui, -apple-system, sans-serif;
 		font-size: 1rem;
 		line-height: 1.65;
 		color: #1a1414;
