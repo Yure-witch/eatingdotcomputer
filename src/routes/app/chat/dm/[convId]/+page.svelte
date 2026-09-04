@@ -2793,13 +2793,30 @@
 	// also swaps in a notice with an inline Unblock.
 	let blockedIds = $state(new Set());
 	const visibleMessages = $derived(blockedIds.size ? messages.filter((m) => !blockedIds.has(m.userId)) : messages);
+
+	// Shadowbanned members arrive in `hidden` and are merged into the same set
+	// as personal blocks, so every filter below covers both. Read receipts,
+	// reactions and typing all NAME people — filtering only the message list
+	// would still leave a hidden member visible as an avatar on a read row or
+	// a name in a reaction tooltip.
+	const visibleReactions = (r) => {
+		if (!blockedIds.size) return r;
+		const out = {};
+		for (const [emoji, users] of Object.entries(r)) {
+			const keep = {};
+			for (const uid of Object.keys(users)) if (!blockedIds.has(uid)) keep[uid] = users[uid];
+			if (Object.keys(keep).length) out[emoji] = keep;
+		}
+		return out;
+	};
+
 	const otherBlocked = $derived(blockedIds.has(otherUser.id));
 	async function loadBlockedIds() {
 		try {
 			const r = await fetch('/api/moderation/block');
 			if (r.ok) {
 				const j = await r.json();
-				blockedIds = new Set(j.blocked.map((b) => b.userId));
+				blockedIds = new Set([...j.blocked.map((b) => b.userId), ...(j.hidden ?? [])]);
 			}
 		} catch { /* unfiltered view until it loads */ }
 	}
@@ -3026,7 +3043,7 @@
 			if (!snap.exists()) { typingUsers = []; return; }
 			const now = Date.now();
 			typingUsers = Object.entries(snap.val())
-				.filter(([uid, v]) => uid !== data.currentUser.id && (now - (v.ts ?? 0)) < 5000)
+				.filter(([uid, v]) => uid !== data.currentUser.id && !blockedIds.has(uid) && (now - (v.ts ?? 0)) < 5000)
 				.map(([, v]) => v.name);
 		});
 
@@ -4153,7 +4170,7 @@
 		{@const prev = visibleMessages[i - 1]}
 		{@const isFirst = !prev || prev.userId !== msg.userId || msg.createdAt - prev.createdAt > 300000}
 		{@const isMine = msg.userId === data.currentUser.id}
-		{@const msgReactions = reactions[msg.id] ?? {}}
+		{@const msgReactions = visibleReactions(reactions[msg.id] ?? {})}
 		{@const hasReactions = Object.values(msgReactions).some(u => Object.keys(u).length > 0)}
 		{@const _szf = msgSizeFactor(msg)}
 		<!-- Resized-text handling for content-visibility — see the channel

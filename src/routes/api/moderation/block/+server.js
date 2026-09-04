@@ -26,12 +26,31 @@ export async function GET({ locals }) {
 		      ORDER BY b.created_at DESC`,
 		args: [session.user.id]
 	});
+
+	// Shadowbanned accounts ride along in a SEPARATE list. The chat clients
+	// merge `hidden` into the same filter they apply to `blocked`, but the
+	// "Blocked users" UI only ever renders `blocked` — listing a shadowbanned
+	// user there would announce the shadowban to everyone in the class.
+	//
+	// Two people are never given the list: the shadowbanned user themself
+	// (the whole point is that nothing looks different to them) and
+	// instructors (they moderate, so they keep seeing what they are moderating).
+	let hidden = [];
+	if (String(session.user.role ?? '') !== 'instructor') {
+		const banned = await db.execute({
+			sql: 'SELECT id FROM users WHERE shadowbanned = 1 AND id != ?',
+			args: [session.user.id]
+		});
+		hidden = banned.rows.map((r) => String(r.id));
+	}
+
 	return json({
 		blocked: result.rows.map((r) => ({
 			userId: String(r.blocked_id),
 			name: r.name ? String(r.name) : 'Deleted user',
 			createdAt: String(r.created_at)
-		}))
+		})),
+		hidden
 	});
 }
 

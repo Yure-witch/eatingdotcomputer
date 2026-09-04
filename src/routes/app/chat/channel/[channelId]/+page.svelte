@@ -2929,12 +2929,38 @@
 	// re-runs. Loaded once per page; block/unblock updates it in place.
 	let blockedIds = $state(new Set());
 	const visibleMessages = $derived(blockedIds.size ? messages.filter((m) => !blockedIds.has(m.userId)) : messages);
+
+	// Shadowbanned members arrive in `hidden` and are merged into the same set
+	// as personal blocks, so every filter below covers both. Read receipts,
+	// reactions and typing all NAME people — filtering only the message list
+	// would still leave a hidden member visible as an avatar on a read row or
+	// a name in a reaction tooltip.
+	const visibleReactions = (r) => {
+		if (!blockedIds.size) return r;
+		const out = {};
+		for (const [emoji, users] of Object.entries(r)) {
+			const keep = {};
+			for (const uid of Object.keys(users)) if (!blockedIds.has(uid)) keep[uid] = users[uid];
+			if (Object.keys(keep).length) out[emoji] = keep;
+		}
+		return out;
+	};
+	const visibleReadMarkers = $derived.by(() => {
+		if (!blockedIds.size) return readMarkers;
+		const out = {};
+		for (const [id, uids] of Object.entries(readMarkers)) {
+			const keep = uids.filter((u) => !blockedIds.has(u));
+			if (keep.length) out[id] = keep;
+		}
+		return out;
+	});
+
 	async function loadBlockedIds() {
 		try {
 			const r = await fetch('/api/moderation/block');
 			if (r.ok) {
 				const j = await r.json();
-				blockedIds = new Set(j.blocked.map((b) => b.userId));
+				blockedIds = new Set([...j.blocked.map((b) => b.userId), ...(j.hidden ?? [])]);
 			}
 		} catch { /* unfiltered view until it loads */ }
 	}
@@ -3161,7 +3187,7 @@
 			if (!snap.exists()) { typingUsers = []; return; }
 			const now = Date.now();
 			typingUsers = Object.entries(snap.val())
-				.filter(([uid, v]) => uid !== data.currentUser.id && (now - (v.ts ?? 0)) < 5000)
+				.filter(([uid, v]) => uid !== data.currentUser.id && !blockedIds.has(uid) && (now - (v.ts ?? 0)) < 5000)
 				.map(([, v]) => v.name);
 		});
 
@@ -4339,7 +4365,7 @@
 		{@const prev = visibleMessages[i - 1]}
 		{@const isFirst = !prev || prev.userId !== msg.userId || msg.createdAt - prev.createdAt > 300000}
 		{@const isMine = msg.userId === data.currentUser.id}
-		{@const msgReactions = reactions[msg.id] ?? {}}
+		{@const msgReactions = visibleReactions(reactions[msg.id] ?? {})}
 		{@const hasReactions = Object.values(msgReactions).some(u => Object.keys(u).length > 0)}
 		{@const _szf = msgSizeFactor(msg)}
 		<!-- Resized-text handling for content-visibility (mobile-only CSS —
@@ -4544,20 +4570,20 @@
 					{#if threadUnread(msg.id)}<span class="thread-chip-dot" aria-label="Unread replies"></span>{/if}
 				</button>
 			{/if}
-			{#if readMarkers[msg.id]?.length}
+			{#if visibleReadMarkers[msg.id]?.length}
 				<!-- Per-user read markers. Each reader's avatar sits at the
 				     last message they've read. position:absolute (see CSS) so
 				     it overlays the row's bottom-right and never changes the
 				     message height — people's read pointers move around the
 				     timeline freely without ever reflowing it. -->
-				<div class="read-row" title={readMarkers[msg.id].map((u) => userMap[u]?.name ?? 'Someone').join(', ')}>
-					{#each readMarkers[msg.id].slice(0, 4) as uid (uid)}
+				<div class="read-row" title={visibleReadMarkers[msg.id].map((u) => userMap[u]?.name ?? 'Someone').join(', ')}>
+					{#each visibleReadMarkers[msg.id].slice(0, 4) as uid (uid)}
 						<span class="read-dot">
 							<Avatar name={userMap[uid]?.name ?? ''} uid={uid} avatarKind={userMap[uid]?.avatarKind ?? 'gen'} avatarValue={userMap[uid]?.avatarValue ?? null} size={16} />
 						</span>
 					{/each}
-					{#if readMarkers[msg.id].length > 4}
-						<span class="read-more">+{readMarkers[msg.id].length - 4}</span>
+					{#if visibleReadMarkers[msg.id].length > 4}
+						<span class="read-more">+{visibleReadMarkers[msg.id].length - 4}</span>
 					{/if}
 				</div>
 			{/if}

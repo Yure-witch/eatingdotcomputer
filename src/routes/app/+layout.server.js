@@ -88,14 +88,19 @@ export async function load({ locals, cookies }) {
 	if (classId && db) {
 		const [usersResult, channelsResult] = await Promise.all([
 			db.execute({
+				// `? = 1` is the viewer-is-instructor escape hatch: a shadowbanned
+				// member disappears from everyone else's member list, sidebar,
+				// mention autocomplete and userMap, but instructors keep seeing
+				// them because they are the ones moderating.
 				sql: `SELECT u.id, u.name, u.email, u.role, u.avatar_kind, u.avatar_value FROM users u
-				      WHERE u.role = 'instructor'
+				      WHERE (u.role = 'instructor'
 				         OR EXISTS (
 				              SELECT 1 FROM class_memberships cm
 				              WHERE cm.user_id = u.id AND cm.status = 'approved' AND cm.class_id = ?
-				            )
+				            ))
+				        AND (u.shadowbanned = 0 OR ? = 1)
 				      ORDER BY u.name ASC`,
-				args: [classId]
+				args: [classId, String(session.user.role ?? '') === 'instructor' ? 1 : 0]
 			}),
 			db.execute({
 				sql: "SELECT id, name, created_at FROM conversations WHERE type = 'channel' AND class_id = ? ORDER BY created_at ASC",

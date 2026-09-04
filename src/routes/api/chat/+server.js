@@ -71,6 +71,12 @@ export async function POST({ request, locals }) {
 	// also hides it at render; this keeps the server-side signals consistent.)
 	// Best-effort: if the query fails, notifications go out as before.
 	let blockersOfSender = new Set();
+	// A shadowbanned sender reaches nobody: no unread ticks, no notification
+	// rows, no push. `senderHidden` short-circuits every fan-out below rather
+	// than filtering recipient by recipient, because the answer is the same
+	// for all of them. Their own client still shows the message sending
+	// normally — that is the point.
+	let senderHidden = false;
 	{
 		const turso = getDb();
 		if (turso) {
@@ -81,6 +87,13 @@ export async function POST({ request, locals }) {
 				});
 				blockersOfSender = new Set(r.rows.map((row) => String(row.blocker_id)));
 			} catch { /* unfiltered fan-out */ }
+			try {
+				const me = await turso.execute({
+					sql: 'SELECT shadowbanned FROM users WHERE id = ?',
+					args: [session.user.id]
+				});
+				senderHidden = Number(me.rows[0]?.shadowbanned ?? 0) === 1;
+			} catch { /* treat as not hidden */ }
 		}
 	}
 
@@ -90,6 +103,7 @@ export async function POST({ request, locals }) {
 	// recipients so a reply that also @mentions the original author
 	// doesn't double-notify.
 	async function fanOutNotifs(convType, convId, msgId) {
+		if (senderHidden) return; // shadowbanned: no mention or reply notifications
 		const recipients = new Map(); // uid -> type ('mention' wins over 'reply')
 		for (const uid of mentionedUids(mentionList.map((m) => ({ uid: m.u })))) {
 			if (uid && uid !== session.user.id && !blockersOfSender.has(uid)) recipients.set(uid, 'mention');
@@ -124,7 +138,7 @@ export async function POST({ request, locals }) {
 		// A recipient who blocked the sender gets NONE of the surfacing: no
 		// chat-list bump, no unread tick, no push. The message itself still
 		// lands in the conversation node, so unblocking restores the history.
-		const recipientBlocked = blockersOfSender.has(to);
+		const recipientBlocked = senderHidden || blockersOfSender.has(to);
 		await Promise.all([
 			db.ref(`userChats/${session.user.id}/${convId}`).update({ otherUserId: to, lastMessage: preview, lastAt: now }),
 			...(recipientBlocked ? [] : [
@@ -173,7 +187,7 @@ export async function POST({ request, locals }) {
 					const unreadUpdates = {};
 					for (const r of membersResult.rows) {
 						const uid = String(r.id);
-						if (uid === session.user.id || blockersOfSender.has(uid)) continue;
+						if (uid === session.user.id || senderHidden || blockersOfSender.has(uid)) continue;
 						unreadUpdates[`unreadCounts/${uid}/${channel}`] = ServerValue.increment(1);
 					}
 					if (Object.keys(unreadUpdates).length > 0) {
@@ -187,7 +201,7 @@ export async function POST({ request, locals }) {
 				sql: 'SELECT DISTINCT user_id FROM push_subscriptions WHERE user_id != ?',
 				args: [session.user.id]
 			});
-			const userIds = usersResult.rows.map((r) => String(r.user_id)).filter((uid) => !blockersOfSender.has(uid));
+			const userIds = senderHidden ? [] : usersResult.rows.map((r) => String(r.user_id)).filter((uid) => !blockersOfSender.has(uid));
 			await notifyUsers(userIds, {
 				title: `New message in #${channel}`,
 				body: `${senderName}: ${preview}`,
