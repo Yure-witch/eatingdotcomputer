@@ -21,7 +21,7 @@ import { noteKeyboardHeight } from '$lib/keyboard-metrics.js';
 // Connect → App Information). While null, iOS web visitors keep the
 // Add-to-Home-Screen instructions; set, they get the App Store callout on
 // the dashboard instead (see /app/+page.svelte's install banner).
-export const APP_STORE_URL = null;
+export const APP_STORE_URL = 'https://apps.apple.com/app/eating-computer/id6789277570';
 
 /** True only inside the Capacitor native shell (iOS/Android app). */
 export function isNativeApp() {
