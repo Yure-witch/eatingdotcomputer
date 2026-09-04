@@ -110,6 +110,13 @@ export function expressionSource(token) {
 		const cat = tgEntry(m[1].toLowerCase())?.cat;
 		return { msi: 'animated_images', label: cat ? `Animated emotes · ${cat}` : 'Animated emotes' };
 	}
+
+	// A plain unicode emoji DOES have a home in the picker — the Emoji tab —
+	// and wrapEmojiInText already labels it exactly this way on the hover pop
+	// ('mood' icon + "Emoji"). Returning null here was wrong: plain emoji are
+	// most of what people react with, so the collection line was missing from
+	// nearly every reaction card.
+	if (_isEmojiSeg(token)) return { msi: 'mood', label: 'Emoji' };
 	return null;
 }
 
