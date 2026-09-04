@@ -1,4 +1,5 @@
 <script>
+	import { attachCodeBlockCopy } from '$lib/code-copy.js';
 	import { onMount, onDestroy, tick, getContext, mount, unmount } from 'svelte';
 	import SpriteSticker from '$lib/components/SpriteSticker.svelte';
 	import { createScrollAnchor } from '$lib/chat-scroll-anchor.js';
@@ -3095,6 +3096,7 @@
 				}
 			}
 		}, true);
+		if (listEl) attachCodeBlockCopy(listEl);
 		if (listEl) listEl.addEventListener('click', (e) => {
 			const tgEl = e.target.closest?.('.tg-emoji.tg-fx');
 			if (tgEl) { playTgInteraction(tgEl); return; }
@@ -5475,6 +5477,15 @@
 		   resolves against a parent that already grew to the code's intrinsic
 		   width, so one long line dragged the whole PAGE sideways on a phone. */
 		max-width: 100%;
+	}
+	/* Code-block chrome is never text. Keeping it out of the selection means
+	   a drag across a block yields code, not " CopyJavaScript\n1234\n…" —
+	   and it stays clean even on the paths that don't reach code-copy.js. */
+	:global(.code-block-header),
+	:global(.code-lines),
+	:global(.code-show-more) {
+		user-select: none;
+		-webkit-user-select: none;
 	}
 	:global(.code-block-header) {
 		display: flex; align-items: center; justify-content: space-between;

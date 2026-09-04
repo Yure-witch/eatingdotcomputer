@@ -503,7 +503,11 @@ export function createContentRenderer({ hljs = null, codeIcons = {}, getCeMap = 
 					const truncated = lineCount > 20;
 					const truncAttr = truncated ? ' data-truncated="1"' : '';
 					const showMore = truncated ? `<button class="code-show-more">Show all ${lineCount} lines</button>` : '';
-					return `<div class="code-block"${truncAttr}><div class="code-block-header">${copyBtn}${langLabel}</div><div class="code-body"><pre class="code-lines" aria-hidden="true">${lineNums}</pre><pre class="code-content"><code>${highlighted}</code></pre></div>${showMore}</div>`;
+					// data-lang is the RAW token (`js`), not the pretty label
+					// (`JavaScript`) — the copy handler rebuilds a ```fence``` from
+					// it, and a fence needs the token a highlighter understands.
+					const langAttr = p.lang ? ` data-lang="${escapeHtml(p.lang)}"` : '';
+					return `<div class="code-block"${truncAttr}${langAttr}><div class="code-block-header">${copyBtn}${langLabel}</div><div class="code-body"><pre class="code-lines" aria-hidden="true">${lineNums}</pre><pre class="code-content"><code>${highlighted}</code></pre></div>${showMore}</div>`;
 				}
 				const trimmed = p.content.replace(/^\n+/, '').replace(/\n+$/, '');
 				if (!trimmed) return '';
