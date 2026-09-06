@@ -7,8 +7,9 @@ import { getAdminDb } from '$lib/server/firebase-admin.js';
 import { notifyInactiveStudents } from '$lib/server/notify-inactive.js';
 import { sendApprovalEmail } from '$lib/server/email.js';
 import { visitSummary } from '$lib/server/visits.js';
+import { sessionRoster, sessionDates, mark as markAttendance, STATUSES, isSessionDate } from '$lib/server/attendance.js';
 
-export async function load({ locals, parent }) {
+export async function load({ locals, parent, url }) {
 	const parentData = await parent();
 	const session = await locals.auth();
 	if (!session || session.user.role !== 'instructor') redirect(303, '/app');
@@ -548,6 +549,21 @@ export async function load({ locals, parent }) {
 	}
 	for (const m of members) m.emotes = emotesByUser[m.id] ?? [];
 
+	// Attendance for one session. The date comes from the query string so the
+	// instructor can page back through sessions with plain links — no client
+	// state to lose when the form posts and the page reloads.
+	const attendanceDate = isSessionDate(url.searchParams.get('date'))
+		? String(url.searchParams.get('date'))
+		: new Date().toISOString().slice(0, 10);
+	let attendanceRoster = [];
+	let attendanceSessions = [];
+	try {
+		[attendanceRoster, attendanceSessions] = await Promise.all([
+			sessionRoster(classId, attendanceDate),
+			sessionDates(classId)
+		]);
+	} catch { /* the tab renders empty rather than taking Manage down */ }
+
 	// Channels in this class, for the create/rename panel.
 	let channels = [];
 	if (db && classId) {
@@ -587,7 +603,7 @@ export async function load({ locals, parent }) {
 	let installVisits = [];
 	try { installVisits = await visitSummary(); } catch { /* card renders empty */ }
 
-	return { weeks, maxWeek, members, activityByUser, userDeviceActivity, deviceNotifData, pendingRequests, classId, dmConversations, enrollment, unattributedEmotes, messageReports, installVisits, themesByUser, channels };
+	return { weeks, maxWeek, members, activityByUser, userDeviceActivity, deviceNotifData, pendingRequests, classId, dmConversations, enrollment, unattributedEmotes, messageReports, installVisits, themesByUser, channels, attendanceDate, attendanceRoster, attendanceSessions };
 }
 
 const ALL_TYPES = ['link', 'image', 'video'];
@@ -629,6 +645,76 @@ export const actions = {
 	// The id is the RTDB path segment (`channels/{id}/messages`) AND the URL
 	// (/app/chat/channel/{id}), so it has to be a slug and it can never change
 	// once messages exist under it — which is why rename only touches `name`.
+	// ── Attendance ────────────────────────────────────────────────────
+	markAttendance: async ({ request, locals, cookies }) => {
+		const session = await locals.auth();
+		if (!session || session.user.role !== 'instructor') return fail(403, { error: 'Forbidden', action: 'attendance' });
+
+		const data = await request.formData();
+		const sessionDate = String(data.get('session_date') ?? '');
+		const userId = String(data.get('user_id') ?? '');
+		const raw = String(data.get('status') ?? '');
+		// '' is the "clear this mark" case, and is NOT the same as absent.
+		const status = raw === '' ? null : raw;
+		if (!isSessionDate(sessionDate)) return fail(400, { error: 'Bad session date.', action: 'attendance' });
+		if (!userId) return fail(400, { error: 'Missing student.', action: 'attendance' });
+		if (status !== null && !STATUSES.includes(status)) return fail(400, { error: 'Unknown status.', action: 'attendance' });
+
+		const db = getDb();
+		if (!db) return fail(503, { error: 'Database unavailable', action: 'attendance' });
+		const selectedId = cookies.get('selected_class_id');
+		const cls = await db.execute({
+			sql: 'SELECT id FROM classes WHERE id = ? OR ? IS NULL LIMIT 1',
+			args: [selectedId ?? null, selectedId ?? null]
+		});
+		const classId = String(cls.rows[0]?.id ?? '');
+		if (!classId) return fail(400, { error: 'No class selected', action: 'attendance' });
+
+		// Re-check on the write. The roster query already excludes hidden and
+		// instructor accounts, but a hand-posted form is not the roster — and
+		// "hidden students are exempt" has to hold at the point of writing, not
+		// only at the point of rendering.
+		const target = await db.execute({
+			sql: `SELECT 1 FROM users u
+			      JOIN class_memberships cm ON cm.user_id = u.id AND cm.status = 'approved' AND cm.class_id = ?
+			      WHERE u.id = ? AND u.role != 'instructor' AND u.shadowbanned = 0`,
+			args: [classId, userId]
+		});
+		if (!target.rows[0]) return fail(400, { error: 'That person is not on this register.', action: 'attendance' });
+
+		await markAttendance({ classId, sessionDate, userId, status, markedBy: session.user.id });
+		return { attendanceMarked: userId };
+	},
+
+	markAllPresent: async ({ request, locals, cookies }) => {
+		const session = await locals.auth();
+		if (!session || session.user.role !== 'instructor') return fail(403, { error: 'Forbidden', action: 'attendance' });
+
+		const data = await request.formData();
+		const sessionDate = String(data.get('session_date') ?? '');
+		if (!isSessionDate(sessionDate)) return fail(400, { error: 'Bad session date.', action: 'attendance' });
+
+		const db = getDb();
+		if (!db) return fail(503, { error: 'Database unavailable', action: 'attendance' });
+		const selectedId = cookies.get('selected_class_id');
+		const cls = await db.execute({
+			sql: 'SELECT id FROM classes WHERE id = ? OR ? IS NULL LIMIT 1',
+			args: [selectedId ?? null, selectedId ?? null]
+		});
+		const classId = String(cls.rows[0]?.id ?? '');
+		if (!classId) return fail(400, { error: 'No class selected', action: 'attendance' });
+
+		// Only fills the BLANKS. Someone already marked late or absent keeps
+		// that mark — this is the "start from everyone here" shortcut, not an
+		// eraser for corrections already made.
+		const roster = await sessionRoster(classId, sessionDate);
+		for (const r of roster) {
+			if (r.status) continue;
+			await markAttendance({ classId, sessionDate, userId: r.id, status: 'present', markedBy: session.user.id });
+		}
+		return { attendanceMarked: 'all' };
+	},
+
 	createChannel: async ({ request, locals, cookies }) => {
 		const session = await locals.auth();
 		if (!session || session.user.role !== 'instructor') return fail(403, { error: 'Forbidden', action: 'createChannel' });

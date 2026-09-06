@@ -624,6 +624,32 @@
 			<!-- Study details: year + school + focus. Rendered together
 			     as a key/value list whenever any of the three is set so
 			     the layout stays cohesive even with partial info. -->
+			<!-- Attendance. Only ever present on your own profile (gated in the
+			     loader), and only once you've actually been marked for a session
+			     — an empty register is noise, not information. -->
+			{#if data.attendance}
+				{@const a = data.attendance}
+				<div class="section">
+					<h2>Attendance</h2>
+					<div class="att-summary">
+						<span class="att-rate">{a.rate}%</span>
+						<span class="att-of">across {a.sessions} session{a.sessions === 1 ? '' : 's'}</span>
+					</div>
+					<div class="att-counts">
+						{#if a.counts.present}<span class="att-count att-present">{a.counts.present} present</span>{/if}
+						{#if a.counts.late}<span class="att-count att-late">{a.counts.late} late</span>{/if}
+						{#if a.counts.absent}<span class="att-count att-absent">{a.counts.absent} absent</span>{/if}
+						{#if a.counts.excused}<span class="att-count att-excused">{a.counts.excused} excused</span>{/if}
+					</div>
+					<div class="att-strip">
+						{#each a.recent as r (r.date)}
+							<span class="att-dot att-dot-{r.status}" title="{r.date} — {r.status}"></span>
+						{/each}
+					</div>
+					<p class="att-note">Most recent {a.recent.length} session{a.recent.length === 1 ? '' : 's'}, newest first.</p>
+				</div>
+			{/if}
+
 			{#if profile.year || profile.school || profile.focus}
 				<div class="section">
 					<h2>Studies</h2>
@@ -1225,6 +1251,28 @@
 		border: 1.5px solid var(--border); border-radius: 8px;
 	}
 	.blocked-name { font-size: 0.9rem; font-weight: 600; color: var(--ink); }
+
+	.att-summary { display: flex; align-items: baseline; gap: 0.5rem; }
+	.att-rate { font-size: 2.2rem; font-weight: 700; line-height: 1; letter-spacing: -0.02em; }
+	.att-of { font-size: 0.85rem; color: var(--muted-fg); }
+	.att-counts { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.6rem; }
+	.att-count {
+		font-size: 0.75rem; padding: 0.15rem 0.5rem; border-radius: 99px;
+		background: var(--surface-2); color: var(--muted-fg);
+	}
+	.att-present { color: #2e7d32; }
+	.att-late { color: #b26a00; }
+	.att-absent { color: var(--danger, #c0392b); }
+	.att-excused { color: var(--muted-fg); }
+	/* One dot per recent session — a shape you can read at a glance without
+	   parsing four numbers. */
+	.att-strip { display: flex; gap: 0.25rem; margin-top: 0.75rem; flex-wrap: wrap; }
+	.att-dot { width: 12px; height: 12px; border-radius: 50%; background: var(--surface-2); }
+	.att-dot-present { background: #4caf50; }
+	.att-dot-late { background: #ffa000; }
+	.att-dot-absent { background: var(--danger, #c0392b); }
+	.att-dot-excused { background: var(--muted-fg); }
+	.att-note { margin: 0.5rem 0 0; font-size: 0.75rem; color: var(--muted-fg); }
 
 	.hidden-banner {
 		display: flex; align-items: flex-start; gap: 0.7rem;

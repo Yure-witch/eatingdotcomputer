@@ -2,6 +2,7 @@ import { redirect, error } from '@sveltejs/kit';
 import { getDb } from '$lib/server/turso.js';
 import { getAdminDb } from '$lib/server/firebase-admin.js';
 import { parseStyle } from '$lib/profile-style.js';
+import { attendanceForUser } from '$lib/server/attendance.js';
 
 export async function load({ locals, params, parent }) {
 	await parent();
@@ -91,6 +92,12 @@ export async function load({ locals, params, parent }) {
 			style: parseStyle(u.profile_style ? String(u.profile_style) : null),
 			customHtml: u.profile_html ? String(u.profile_html) : null
 		},
+		// Own profile only. Attendance is between a student and the instructor —
+		// the instructor has the whole register in Manage, and nobody else has
+		// any business seeing who missed which session. Returns null for a
+		// shadowbanned account (never marked) so the section doesn't render at
+		// all rather than rendering empty.
+		attendance: session.user.id === String(u.id) ? await attendanceForUser(session.user.id) : null,
 		isOwnProfile: session.user.id === String(u.id),
 		currentUserId: session.user.id,
 		// Instructors only. Nobody else can reach a shadowbanned member's

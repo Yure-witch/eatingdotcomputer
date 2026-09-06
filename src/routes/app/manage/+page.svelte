@@ -6,6 +6,7 @@
 	import { getCachedCustomEmojiMap } from '$lib/custom-emoji-store.js';
 	import { onMount, onDestroy, tick, getContext } from 'svelte';
 	import { invalidateAll } from '$app/navigation';
+	import { page } from '$app/stores';
 	import { auth, db as rtdb } from '$lib/firebase.js';
 	import { signInWithCustomToken } from 'firebase/auth';
 	import { ref, onValue, off } from 'firebase/database';
@@ -30,7 +31,10 @@
 	const EMOTE_PREVIEW = 6;
 	const YEARS = ['1st year', '2nd year', '3rd year', '4th year', '5th year', 'Other'];
 
-	let activeTab = $state('assignments');
+	// Seeded from ?tab= so the attendance date picker and the past-session links
+	// — both plain GET navigations, so the session is a shareable URL — come
+	// back to the tab they were fired from instead of resetting to Assignments.
+	let activeTab = $state($page.url.searchParams.get('tab') ?? 'assignments');
 	let syllabusPreviewOpen = $state(false);
 
 	// ── Gemma daily digest tab ──────────────────────────────────────────
@@ -558,6 +562,15 @@
 		return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 	}
 
+	// One letter each so a row of four fits beside a name on a narrow screen;
+	// the full word is the button's title.
+	const ATTENDANCE_STATUSES = [
+		{ id: 'present', short: 'P', label: 'Present' },
+		{ id: 'late',    short: 'L', label: 'Late' },
+		{ id: 'absent',  short: 'A', label: 'Absent' },
+		{ id: 'excused', short: 'E', label: 'Excused' }
+	];
+
 	const PRESET_NAMES = Object.fromEntries(PRESETS.map((p) => [p.id, p.name]));
 	/** What to show in the Theme column: preset name, or the hex for a custom seed. */
 	function themeLabel(t) {
@@ -600,6 +613,7 @@
 				{#if data.pendingRequests.length > 0}<span class="tab-badge">{data.pendingRequests.length}</span>{/if}
 			</button>
 			<button class="manage-tab" class:active={activeTab === 'activity'} onclick={() => activeTab = 'activity'}>Activity</button>
+			<button class="manage-tab" class:active={activeTab === 'attendance'} onclick={() => activeTab = 'attendance'}>Attendance</button>
 			<button class="manage-tab" class:active={activeTab === 'moderation'} onclick={() => activeTab = 'moderation'}>
 				Moderation
 				{#if openReportCount > 0}<span class="tab-badge">{openReportCount}</span>{/if}
@@ -806,6 +820,85 @@
 		</div>
 	</section>
 	{/if}
+		{/if}
+
+		{#if activeTab === 'attendance'}
+	{@const roster = data.attendanceRoster ?? []}
+	{@const marked = roster.filter((r) => r.status).length}
+	<section class="members-section">
+		<div class="at-head">
+			<h2>Attendance</h2>
+			<!-- A plain link, not client state: the date survives the form posts
+			     that marking does, and a session is a shareable URL. -->
+			<form method="GET" class="at-datepick">
+				<input type="hidden" name="tab" value="attendance" />
+				<label>
+					<span>Session</span>
+					<input type="date" name="date" value={data.attendanceDate} onchange={(e) => e.currentTarget.form.requestSubmit()} />
+				</label>
+			</form>
+		</div>
+
+		{#if form?.error && form?.action === 'attendance'}
+			<p class="error small">{form.error}</p>
+		{/if}
+
+		<p class="at-hint">
+			{marked} of {roster.length} marked for {data.attendanceDate}.
+			Hidden members aren't on the register.
+		</p>
+
+		{#if roster.length}
+			<form method="POST" action="?/markAllPresent" use:enhance class="at-all">
+				<input type="hidden" name="session_date" value={data.attendanceDate} />
+				<button type="submit" class="ch-btn-quiet" disabled={marked === roster.length}>
+					Mark the rest present
+				</button>
+			</form>
+
+			<ul class="at-list">
+				{#each roster as r (r.id)}
+					<li class="at-row">
+						<span class="at-who">
+							<Avatar name={r.name} uid={r.id} avatarKind={r.avatarKind} avatarValue={r.avatarValue} size={26} />
+							<span class="at-name">{r.name}</span>
+						</span>
+						<span class="at-rate" title="Across {r.sessions} marked session{r.sessions === 1 ? '' : 's'}">
+							{#if r.rate === null}—{:else}{r.rate}%{/if}
+						</span>
+						<span class="at-marks">
+							{#each ATTENDANCE_STATUSES as st}
+								<form method="POST" action="?/markAttendance" use:enhance>
+									<input type="hidden" name="session_date" value={data.attendanceDate} />
+									<input type="hidden" name="user_id" value={r.id} />
+									<!-- Clicking the mark you already have clears it: a
+									     misclick shouldn't need a separate undo control. -->
+									<input type="hidden" name="status" value={r.status === st.id ? '' : st.id} />
+									<button type="submit" class="at-mark at-{st.id}" class:on={r.status === st.id} title={st.label}>
+										{st.short}
+									</button>
+								</form>
+							{/each}
+						</span>
+					</li>
+				{/each}
+			</ul>
+		{:else}
+			<p class="at-hint">No students on the register yet.</p>
+		{/if}
+
+		{#if (data.attendanceSessions ?? []).length}
+			<h3 class="at-sub">Past sessions</h3>
+			<div class="at-sessions">
+				{#each data.attendanceSessions as sess}
+					<a class="at-sess" class:active={sess.date === data.attendanceDate} href="?tab=attendance&date={sess.date}">
+						<span class="at-sess-date">{sess.date}</span>
+						<span class="at-sess-count">{sess.here}/{sess.marked} here</span>
+					</a>
+				{/each}
+			</div>
+		{/if}
+	</section>
 		{/if}
 
 		{#if activeTab === 'activity'}
@@ -1941,6 +2034,63 @@
 	/* Shadowbanned member. Sits beside the name rather than in the Status
 	   column, which is about presence — being hidden is a property of the
 	   account, not of whether they happen to be online. */
+	/* ── Attendance ── */
+	.at-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+	.at-datepick label { display: flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; color: var(--muted-fg); }
+	.at-datepick input {
+		padding: 0.35rem 0.5rem; border: 1.5px solid var(--border); border-radius: 8px;
+		background: var(--paper); color: var(--ink); font-family: inherit; font-size: 0.85rem;
+	}
+	.at-hint { margin: 0.4rem 0 0.9rem; font-size: 0.82rem; color: var(--muted-fg); }
+	.at-all { margin: 0 0 0.75rem; }
+
+	.at-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.4rem; }
+	.at-row {
+		display: flex; align-items: center; gap: 0.75rem;
+		padding: 0.4rem 0.6rem;
+		border: 1.5px solid var(--border); border-radius: 10px; background: var(--paper);
+	}
+	.at-who { display: flex; align-items: center; gap: 0.5rem; flex: 1; min-width: 0; }
+	.at-name { font-size: 0.9rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	/* The running rate, not this session's mark — deliberately quiet so it
+	   informs without competing with the four buttons you came here to press. */
+	.at-rate { font-size: 0.78rem; color: var(--muted-fg); flex: none; min-width: 2.6rem; text-align: right; }
+
+	.at-marks { display: flex; gap: 0.25rem; flex: none; }
+	.at-mark {
+		width: 28px; height: 28px; padding: 0;
+		border: 1.5px solid var(--border); border-radius: 8px;
+		background: transparent; color: var(--muted-fg);
+		font-family: inherit; font-size: 0.78rem; font-weight: 700; cursor: pointer;
+		transition: background 0.12s, border-color 0.12s, color 0.12s;
+	}
+	.at-mark:hover { border-color: var(--ink); color: var(--ink); }
+	/* Colour only lands on the mark that is SET. An unselected row is four
+	   neutral outlines, so a glance down the list reads as "who is marked". */
+	.at-mark.on { color: var(--paper); border-color: transparent; }
+	.at-present.on { background: #4caf50; }
+	.at-late.on    { background: #ffa000; }
+	.at-absent.on  { background: var(--danger, #c0392b); }
+	.at-excused.on { background: var(--muted-fg); }
+
+	.at-sub { font-size: 0.95rem; margin: 1.75rem 0 0.6rem; }
+	.at-sessions { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+	.at-sess {
+		display: flex; flex-direction: column; gap: 0.1rem;
+		padding: 0.4rem 0.6rem;
+		border: 1.5px solid var(--border); border-radius: 9px;
+		text-decoration: none; color: inherit;
+	}
+	.at-sess:hover { border-color: var(--ink); }
+	.at-sess.active { border-color: var(--ink); background: var(--surface-2); }
+	.at-sess-date { font-size: 0.8rem; font-weight: 600; }
+	.at-sess-count { font-size: 0.72rem; color: var(--muted-fg); }
+
+	@media (max-width: 640px) {
+		.at-row { flex-wrap: wrap; }
+		.at-who { flex-basis: 100%; }
+	}
+
 	/* ── Channels ── */
 	.ch-hint { margin: 0 0 0.9rem; font-size: 0.82rem; color: var(--muted-fg); }
 	.ch-list { list-style: none; margin: 0 0 1.25rem; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
