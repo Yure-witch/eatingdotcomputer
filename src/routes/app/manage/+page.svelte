@@ -680,6 +680,52 @@
 		{/if}
 
 		{#if activeTab === 'members'}
+	<!-- Channels. The address is the RTDB path and the URL, so it is fixed at
+	     creation; the display name is free to change afterwards. -->
+	<section class="members-section">
+		<h2>Channels</h2>
+		<p class="ch-hint">
+			Everyone in the class sees every channel. New ones appear in the sidebar
+			without anyone reloading.
+		</p>
+
+		{#if form?.error && (form?.action === 'createChannel' || form?.action === 'renameChannel')}
+			<p class="error small">{form.error}</p>
+		{/if}
+
+		<ul class="ch-list">
+			{#each data.channels ?? [] as ch (ch.id)}
+				<li class="ch-row">
+					<form method="POST" action="?/renameChannel" use:enhance class="ch-rename">
+						<input type="hidden" name="channel_id" value={ch.id} />
+						<input class="ch-name-input" type="text" name="name" value={ch.name} maxlength="40" aria-label="Channel name" />
+						<button type="submit" class="ch-btn-quiet">Rename</button>
+					</form>
+					<a class="ch-addr" href="/app/chat/channel/{ch.id}">#{ch.id}</a>
+				</li>
+			{/each}
+			{#if !(data.channels ?? []).length}
+				<li class="ch-empty">No channels yet.</li>
+			{/if}
+		</ul>
+
+		<form method="POST" action="?/createChannel" use:enhance class="ch-new">
+			<label class="ch-field">
+				<span>Name</span>
+				<input type="text" name="name" placeholder="e.g. Critique" maxlength="40" required />
+			</label>
+			<label class="ch-field">
+				<span>Address <span class="ch-opt">(optional)</span></span>
+				<input type="text" name="slug" placeholder="critique" maxlength="32" autocapitalize="none" autocorrect="off" spellcheck="false" />
+			</label>
+			<button type="submit" class="btn-primary ch-create">Create channel</button>
+		</form>
+		<p class="ch-hint">
+			Leave the address blank and it's made from the name. It becomes the URL
+			and can't be changed later — the name can.
+		</p>
+	</section>
+
 	<!-- Enrollment window. Controls whether the student
 	     /onboarding/class picker lists THIS class at all. Toggle off
 	     and the class disappears from the picker — old students stay
@@ -1895,6 +1941,50 @@
 	/* Shadowbanned member. Sits beside the name rather than in the Status
 	   column, which is about presence — being hidden is a property of the
 	   account, not of whether they happen to be online. */
+	/* ── Channels ── */
+	.ch-hint { margin: 0 0 0.9rem; font-size: 0.82rem; color: var(--muted-fg); }
+	.ch-list { list-style: none; margin: 0 0 1.25rem; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+	.ch-row {
+		display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;
+		padding: 0.6rem 0.75rem;
+		border: 1.5px solid var(--border); border-radius: 10px; background: var(--paper);
+	}
+	.ch-rename { display: flex; align-items: center; gap: 0.4rem; flex: 1; min-width: 0; }
+	.ch-name-input {
+		flex: 1; min-width: 0;
+		padding: 0.35rem 0.5rem;
+		border: 1.5px solid transparent; border-radius: 7px;
+		background: transparent; color: var(--ink);
+		font-family: inherit; font-size: 0.9rem; font-weight: 600;
+	}
+	.ch-name-input:hover { border-color: var(--border); }
+	.ch-name-input:focus { outline: none; border-color: var(--ink); background: var(--surface-2); }
+	.ch-btn-quiet {
+		padding: 0.3rem 0.6rem; border: 1.5px solid var(--border); border-radius: 7px;
+		background: transparent; color: var(--muted-fg);
+		font-family: inherit; font-size: 0.78rem; cursor: pointer;
+	}
+	.ch-btn-quiet:hover { border-color: var(--ink); color: var(--ink); }
+	.ch-addr {
+		font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+		font-size: 0.78rem; color: var(--muted-fg); text-decoration: none; flex: none;
+	}
+	.ch-addr:hover { color: var(--ink); }
+	.ch-empty { font-size: 0.85rem; color: var(--muted-fg); }
+
+	.ch-new { display: flex; align-items: flex-end; gap: 0.6rem; flex-wrap: wrap; }
+	.ch-field { display: flex; flex-direction: column; gap: 0.25rem; }
+	.ch-field > span { font-size: 0.78rem; font-weight: 600; color: var(--ink); }
+	.ch-opt { font-weight: 400; color: var(--muted-fg); }
+	.ch-field input {
+		padding: 0.45rem 0.6rem;
+		border: 1.5px solid var(--border); border-radius: 8px;
+		background: var(--paper); color: var(--ink);
+		font-family: inherit; font-size: 0.9rem;
+	}
+	.ch-field input:focus { outline: none; border-color: var(--ink); }
+	.ch-create { flex: none; }
+
 	/* ── Theme column ── */
 	.theme-cell { white-space: nowrap; }
 	.theme-chip {

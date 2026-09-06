@@ -160,10 +160,21 @@ export async function POST({ request, locals }) {
 		const channel = channelId ?? 'class';
 		const msgRef = await db.ref(`channels/${channel}/messages`).push(msg);
 		await fanOutNotifs('channel', channel, msgRef.key);
-		const meta = { lastAt: now, lastMessage: preview, lastUser: senderName };
-		await db.ref(`channels/${channel}`).update(meta);
-		// Lightweight metadata node (used by layout for unread dots — no messages payload)
-		await db.ref(`channelMeta/${channel}`).update(meta);
+		// Channel preview — the "Name: message" line under each channel in the
+		// sidebar and on the mobile chat menu. A shadowbanned sender must not
+		// write it: this node is shared by everyone, so their name and the text
+		// of a message nobody can open were being shown to the whole class in
+		// the one place the message filters don't reach.
+		//
+		// The cost is that their OWN sidebar preview stops advancing on their
+		// own messages. That is a far smaller tell than the alternative, and
+		// per-viewer previews would mean a node per member per channel.
+		if (!senderHidden) {
+			const meta = { lastAt: now, lastMessage: preview, lastUser: senderName };
+			await db.ref(`channels/${channel}`).update(meta);
+			// Lightweight metadata node (used by layout for unread dots — no messages payload)
+			await db.ref(`channelMeta/${channel}`).update(meta);
+		}
 
 		const turso = getDb();
 		if (turso) {

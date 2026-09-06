@@ -548,6 +548,17 @@ export async function load({ locals, parent }) {
 	}
 	for (const m of members) m.emotes = emotesByUser[m.id] ?? [];
 
+	// Channels in this class, for the create/rename panel.
+	let channels = [];
+	if (db && classId) {
+		const r = await db.execute({
+			sql: `SELECT id, name, created_at FROM conversations
+			      WHERE type = 'channel' AND class_id = ? ORDER BY created_at ASC`,
+			args: [classId]
+		});
+		channels = r.rows.map((c) => ({ id: String(c.id), name: String(c.name ?? c.id), createdAt: String(c.created_at ?? '') }));
+	}
+
 	// Colour scheme per member. Themes live in RTDB at `themes/{uid}` (see
 	// theme-sync.js) rather than Turso, because they sync live across a
 	// person's own devices — so this is one admin read of the whole node, not
@@ -576,7 +587,7 @@ export async function load({ locals, parent }) {
 	let installVisits = [];
 	try { installVisits = await visitSummary(); } catch { /* card renders empty */ }
 
-	return { weeks, maxWeek, members, activityByUser, userDeviceActivity, deviceNotifData, pendingRequests, classId, dmConversations, enrollment, unattributedEmotes, messageReports, installVisits, themesByUser };
+	return { weeks, maxWeek, members, activityByUser, userDeviceActivity, deviceNotifData, pendingRequests, classId, dmConversations, enrollment, unattributedEmotes, messageReports, installVisits, themesByUser, channels };
 }
 
 const ALL_TYPES = ['link', 'image', 'video'];
@@ -614,6 +625,97 @@ export const actions = {
 	},
 
 	// Instructor sets a student's Cooper year (year isn't collected in onboarding).
+	// ── Channels ──────────────────────────────────────────────────────
+	// The id is the RTDB path segment (`channels/{id}/messages`) AND the URL
+	// (/app/chat/channel/{id}), so it has to be a slug and it can never change
+	// once messages exist under it — which is why rename only touches `name`.
+	createChannel: async ({ request, locals, cookies }) => {
+		const session = await locals.auth();
+		if (!session || session.user.role !== 'instructor') return fail(403, { error: 'Forbidden', action: 'createChannel' });
+
+		const data = await request.formData();
+		const name = String(data.get('name') ?? '').trim().slice(0, 40);
+		if (!name) return fail(400, { error: 'Give the channel a name.', action: 'createChannel' });
+
+		// Slug from the name, unless one was typed. Kept to the same shape as
+		// the two channels that already exist ('class', 'studio').
+		let id = String(data.get('slug') ?? '').trim().toLowerCase();
+		if (!id) id = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32);
+		if (!/^[a-z0-9][a-z0-9-]{1,31}$/.test(id)) {
+			// A name with no Latin characters ("工作室", "🎨") derives to nothing,
+			// and telling someone their address is invalid when they never typed
+			// one is a dead end — say what to do instead.
+			return fail(400, {
+				error: id
+					? 'Channel address must be 2–32 characters: lowercase letters, numbers or hyphens.'
+					: `Couldn't make an address from "${name}" — type one yourself (lowercase letters, numbers or hyphens).`,
+				action: 'createChannel',
+				name
+			});
+		}
+
+		const db = getDb();
+		if (!db) return fail(503, { error: 'Database unavailable', action: 'createChannel' });
+
+		// Same class the loader pulled: the cookie-resolved one, falling back to
+		// the first class — mirroring setEnrollment so a form posted from a
+		// stale tab can't target a different class.
+		const selectedId = cookies.get('selected_class_id');
+		const cls = await db.execute({
+			sql: 'SELECT id FROM classes WHERE id = ? OR ? IS NULL LIMIT 1',
+			args: [selectedId ?? null, selectedId ?? null]
+		});
+		const classId = String(cls.rows[0]?.id ?? '');
+		if (!classId) return fail(400, { error: 'No class to add a channel to.', action: 'createChannel' });
+
+		// Ids are global, not per-class: `channels/{id}` in RTDB has no class in
+		// its path, so two classes sharing an id would share a message log.
+		const clash = await db.execute({ sql: 'SELECT id FROM conversations WHERE id = ?', args: [id] });
+		if (clash.rows[0]) return fail(409, { error: `"${id}" is taken — pick a different address.`, action: 'createChannel', name });
+
+		await db.execute({
+			sql: `INSERT INTO conversations (id, type, name, created_by, class_id) VALUES (?, 'channel', ?, ?, ?)`,
+			args: [id, name, session.user.id, classId]
+		});
+
+		// Everyone's sidebar builds its channel list from the layout load, and
+		// the layout already refetches on membersRev. Reusing it means a new
+		// channel appears for the class without a reload.
+		try { getAdminDb().ref('membersRev').set(Date.now()); } catch { /* it'll show on next load */ }
+		return { created: id };
+	},
+
+	renameChannel: async ({ request, locals, cookies }) => {
+		const session = await locals.auth();
+		if (!session || session.user.role !== 'instructor') return fail(403, { error: 'Forbidden', action: 'renameChannel' });
+
+		const data = await request.formData();
+		const id = String(data.get('channel_id') ?? '');
+		const name = String(data.get('name') ?? '').trim().slice(0, 40);
+		if (!id || !name) return fail(400, { error: 'Missing channel or name.', action: 'renameChannel' });
+
+		const db = getDb();
+		if (!db) return fail(503, { error: 'Database unavailable', action: 'renameChannel' });
+
+		// Same class the loader pulled: the cookie-resolved one, falling back to
+		// the first class — mirroring setEnrollment so a form posted from a
+		// stale tab can't target a different class.
+		const selectedId = cookies.get('selected_class_id');
+		const cls = await db.execute({
+			sql: 'SELECT id FROM classes WHERE id = ? OR ? IS NULL LIMIT 1',
+			args: [selectedId ?? null, selectedId ?? null]
+		});
+		const classId = String(cls.rows[0]?.id ?? '');
+		// Scoped to the instructor's own class so a stray id can't rename
+		// another class's channel.
+		await db.execute({
+			sql: `UPDATE conversations SET name = ? WHERE id = ? AND type = 'channel' AND class_id = ?`,
+			args: [name, id, classId]
+		});
+		try { getAdminDb().ref('membersRev').set(Date.now()); } catch { /* next load */ }
+		return { renamed: id };
+	},
+
 	setYear: async ({ request, locals }) => {
 		const session = await locals.auth();
 		if (!session || session.user.role !== 'instructor') return fail(403, { error: 'Forbidden' });
