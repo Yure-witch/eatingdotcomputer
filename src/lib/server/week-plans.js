@@ -89,11 +89,16 @@ export async function getStudentCountForClass(classId) {
 	// Approved students enrolled in THIS class. Old implementation
 	// counted every student globally, which gave a wildly wrong
 	// "N/M done" ratio once the system had more than one class.
+	// Shadowbanned students are not in the denominator. The instructor is
+	// reading "how much of the class has turned this in", and a hidden member
+	// is not part of the class for that question — counting them would make a
+	// fully-submitted item read as 12/13 forever.
 	const result = await db.execute({
 		sql: `SELECT COUNT(*) as cnt
 		      FROM class_memberships cm
 		      JOIN users u ON u.id = cm.user_id
-		      WHERE cm.class_id = ? AND cm.status = 'approved' AND u.role = 'student'`,
+		      WHERE cm.class_id = ? AND cm.status = 'approved' AND u.role = 'student'
+		        AND u.shadowbanned = 0`,
 		args: [classId]
 	});
 	return Number(result.rows[0]?.cnt ?? 0);
@@ -103,10 +108,15 @@ export async function getAllProgressForClass(classId) {
 	const db = getDb();
 	if (!db) return {};
 	const result = await db.execute({
-		sql: `SELECT wi.week_plan_id, wi.id as item_id, COUNT(ic.id) as completed
+		// Ticks from hidden members don't count either — the numerator has to
+		// match the denominator above or the ratio is nonsense in the other
+		// direction (14/13 done).
+		sql: `SELECT wi.week_plan_id, wi.id as item_id,
+		             COUNT(CASE WHEN u.shadowbanned = 0 THEN ic.id END) as completed
 		      FROM week_items wi
 		      JOIN week_plans wp ON wi.week_plan_id = wp.id
 		      LEFT JOIN item_completions ic ON wi.id = ic.item_id
+		      LEFT JOIN users u ON u.id = ic.student_id
 		      WHERE wp.class_id = ?
 		      GROUP BY wi.week_plan_id, wi.id`,
 		args: [classId]
@@ -124,8 +134,12 @@ export async function getSubmissionsByItem(classId) {
 	const db = getDb();
 	if (!db) return {};
 	const result = await db.execute({
+		// `hidden` rides along rather than filtering the row out: a hidden
+		// student's text or link submission still shows in the expanded list —
+		// they did the work and the instructor should read it — it just doesn't
+		// add to the N in "N/M done".
 		sql: `SELECT ic.item_id, ic.completed_at, ic.submission_type, ic.submission_value,
-		             u.name as student_name
+		             u.name as student_name, u.shadowbanned
 		      FROM item_completions ic
 		      JOIN week_items wi ON ic.item_id = wi.id
 		      JOIN week_plans wp ON wi.week_plan_id = wp.id
@@ -142,7 +156,8 @@ export async function getSubmissionsByItem(classId) {
 			completedAt: String(r.completed_at),
 			submissionType: r.submission_type ? String(r.submission_type) : null,
 			submissionValue: r.submission_value ? String(r.submission_value) : null,
-			studentName: String(r.student_name)
+			studentName: String(r.student_name),
+			hidden: Number(r.shadowbanned ?? 0) === 1
 		});
 	}
 	return map;
@@ -304,7 +319,16 @@ export async function toggleItemSubmissions(itemId, show) {
 	await db.execute({ sql: 'UPDATE week_items SET show_submissions = ? WHERE id = ?', args: [show == null ? null : (show ? 1 : 0), itemId] });
 }
 
-export async function getVisibleSubmissionsForPlan(weekPlanId) {
+/**
+ * Peer submissions — what STUDENTS see of each other's work.
+ *
+ * `viewerId` is not optional in practice: this is the one submissions query
+ * that renders to the whole class, so a shadowbanned member's name and work
+ * were on every student's dashboard, which is precisely what the shadowban is
+ * for. They still see their OWN row (nothing may look different to them), so
+ * the filter is "hidden, unless it's you".
+ */
+export async function getVisibleSubmissionsForPlan(weekPlanId, viewerId = null) {
 	const db = getDb();
 	if (!db) return {};
 	const result = await db.execute({
@@ -316,8 +340,9 @@ export async function getVisibleSubmissionsForPlan(weekPlanId) {
 		      JOIN users u ON ic.student_id = u.id
 		      WHERE wi.week_plan_id = ?
 		        AND (wi.show_submissions = 1 OR (wi.show_submissions IS NULL AND wp.show_submissions = 1))
+		        AND (u.shadowbanned = 0 OR u.id = ?)
 		      ORDER BY ic.completed_at DESC`,
-		args: [weekPlanId]
+		args: [weekPlanId, viewerId]
 	});
 	const map = {};
 	for (const r of result.rows) {

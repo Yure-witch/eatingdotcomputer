@@ -589,6 +589,12 @@
 										{@const subs = submissionsByItem[item.id] ?? []}
 										{@const isOpen = expandedItemSubs === item.id}
 										{@const total = studentCount ?? 0}
+										<!-- The count is of VISIBLE submitters; the list below still
+										     renders every row. A hidden member's work is there to
+										     read, it just isn't part of "how much of the class has
+										     turned this in" — and studentCount already leaves them
+										     out of the denominator. -->
+										{@const counted = subs.filter((x) => !x.hidden).length}
 										<div class="overview-item-block">
 											<button class="overview-item" class:has-subs={subs.length > 0} onclick={() => expandedItemSubs = isOpen ? null : item.id}>
 												<span class="overview-item-label">{@html contentHtml(item.label, false)}</span>
@@ -602,7 +608,7 @@
 												     isn't available (e.g. classes table unpopulated). -->
 												{#if subs.length > 0}
 													<span class="overview-item-count has-completions">
-														{subs.length}{total > 0 ? `/${total}` : ''} done
+														{counted}{total > 0 ? `/${total}` : ''} done
 													</span>
 													<span class="overview-chevron" class:open={isOpen}>›</span>
 												{:else}
@@ -615,7 +621,11 @@
 												<div class="item-subs-list">
 													{#each subs as sub}
 														<div class="item-sub-row">
-															<span class="sub-name">{sub.studentName}</span>
+															<span class="sub-name">
+																{sub.studentName}
+																<!-- Says why this row isn't in the count above. -->
+																{#if sub.hidden}<span class="sub-hidden" title="Hidden from the class — not counted in the total">hidden</span>{/if}
+															</span>
 															{#if sub.submissionType === 'link'}
 																<a href={sub.submissionUrl} target="_blank" rel="noopener noreferrer" class="sub-link-full">{sub.submissionValue}</a>
 															{:else if sub.submissionType === 'text'}
@@ -1724,7 +1734,15 @@
 		padding: 0.4rem 0; font-size: 0.82rem; border-bottom: 1px solid var(--surface-2);
 	}
 	.item-sub-row:last-child { border-bottom: none; }
-	.sub-name { font-weight: 600; color: var(--ink); flex-shrink: 0; }
+	.sub-name { font-weight: 600; color: var(--ink); flex-shrink: 0; display: inline-flex; align-items: center; gap: 0.35rem; }
+	/* Only ever rendered for an instructor — a student's payload never carries
+	   a hidden member's submissions in the first place. */
+	.sub-hidden {
+		font-size: 0.68rem; font-weight: 600; text-transform: lowercase;
+		padding: 0.1rem 0.4rem; border-radius: 999px;
+		background: color-mix(in srgb, var(--danger, #c0392b) 15%, transparent);
+		color: var(--danger, #c0392b);
+	}
 	.sub-type { font-size: 0.72rem; color: var(--muted-fg); flex-shrink: 0; }
 	.sub-time { font-size: 0.72rem; color: var(--muted-fg); flex-shrink: 0; white-space: nowrap; margin-left: auto; }
 	.sub-link-full {

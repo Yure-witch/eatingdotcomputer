@@ -72,7 +72,7 @@ export async function load({ locals, parent }) {
 			for (const [itemId, subs] of Object.entries(rawSubs)) out.submissionsByItem[itemId] = subs.map(resolveSubmissionUrl);
 			out.studentCount = await getStudentCountForClass(classId);
 		} else if (currentPlan) {
-			const rawPeer = await getVisibleSubmissionsForPlan(currentPlan.id);
+			const rawPeer = await getVisibleSubmissionsForPlan(currentPlan.id, session.user.id);
 			for (const [itemId, subs] of Object.entries(rawPeer)) out.peerSubmissions[itemId] = subs.map(resolveSubmissionUrl);
 		}
 		return out;
