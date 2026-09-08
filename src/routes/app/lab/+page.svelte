@@ -4,6 +4,13 @@
 	// Lab tools. Add new experiments here as they're built.
 	const tools = [
 		{
+			href: '/app/lab/emoji-stretcher',
+			title: 'Emoji Stretcher',
+			blurb: 'Pull an emoji wider or taller, move it around, and export a transparent PNG.',
+			icon: 'open_in_full',
+			ready: true
+		},
+		{
 			href: '/app/lab/gif',
 			title: 'Kinetic Type',
 			blurb: 'Mesmerizing variable-font title animations for slide decks — export as GIF.',
