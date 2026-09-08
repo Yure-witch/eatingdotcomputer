@@ -1,6 +1,8 @@
 import { redirect, fail } from '@sveltejs/kit';
 import { getDb } from '$lib/server/turso.js';
 import { getAdminDb } from '$lib/server/firebase-admin.js';
+import { preApprovedMatch } from '$lib/server/auto-approve-names.js';
+import { notifyUsers } from '$lib/server/push.js';
 
 export async function load({ locals }) {
 	const session = await locals.auth();
@@ -54,7 +56,7 @@ export const actions = {
 
 		// Guard: must have completed profile step
 		const userRow = await db.execute({
-			sql: 'SELECT onboarding_step FROM users WHERE id = ?',
+			sql: 'SELECT onboarding_step, name FROM users WHERE id = ?',
 			args: [session.user.id]
 		});
 		if (String(userRow.rows[0]?.onboarding_step) !== 'class') redirect(303, '/onboarding/profile');
@@ -83,6 +85,45 @@ export const actions = {
 			sql: 'INSERT OR IGNORE INTO class_memberships (id, class_id, user_id) VALUES (?, ?, ?)',
 			args: [crypto.randomUUID(), classId, session.user.id]
 		});
+
+		// Pre-cleared names skip the queue. See auto-approve-names.js — the name
+		// is self-declared, so this is a convenience for people the instructor is
+		// expecting, not an identity check.
+		const matched = preApprovedMatch(userRow.rows[0]?.name);
+		if (matched) {
+			await db.execute({
+				// reviewed_by is an FK into users, so there is no 'auto' sentinel to
+				// write — the same compromise the demo class's auto-approve makes.
+				sql: `UPDATE class_memberships SET status = 'approved', reviewed_at = datetime('now'), reviewed_by = ?
+				      WHERE class_id = ? AND user_id = ?`,
+				args: [session.user.id, classId, session.user.id]
+			});
+			await db.execute({
+				sql: "UPDATE users SET onboarding_step = 'complete' WHERE id = ?",
+				args: [session.user.id]
+			});
+			// The same signal a manual approval sends, so anything listening for
+			// it behaves identically.
+			getAdminDb().ref(`approvals/${session.user.id}`).set(Date.now()).catch(() => {});
+			// New member — open sidebars refetch the roster.
+			getAdminDb().ref('membersRev').set(Date.now()).catch(() => {});
+			// Tell the instructors who came in this way. The rule matches a name
+			// anyone can type, so an auto-approval has to be visible rather than
+			// silent — that notification is most of what makes it safe.
+			try {
+				const instructors = await db.execute(`SELECT id FROM users WHERE role = 'instructor'`);
+				const ids = instructors.rows.map((r) => String(r.id)).filter((uid) => uid !== session.user.id);
+				if (ids.length) {
+					await notifyUsers(ids, {
+						title: 'Student auto-approved',
+						body: `${userRow.rows[0]?.name ?? 'Someone'} joined automatically (name rule: "${matched}")`,
+						url: '/app/manage',
+						tag: 'auto-approve'
+					});
+				}
+			} catch { /* never block a join on the notification */ }
+			redirect(303, '/app');
+		}
 
 		await db.execute({
 			sql: "UPDATE users SET onboarding_step = 'pending' WHERE id = ?",
