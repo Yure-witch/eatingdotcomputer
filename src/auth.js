@@ -5,6 +5,7 @@ import { compare } from 'bcryptjs';
 import { OAuth2Client } from 'google-auth-library';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { getDb } from '$lib/server/turso';
+import { findUserByEmail } from '$lib/server/user-lookup.js';
 import { env } from '$env/dynamic/private';
 import { env as publicEnv } from '$env/dynamic/public';
 
@@ -54,12 +55,11 @@ export const { handle, signIn, signOut } = SvelteKitAuth({
 				if (!db) return null;
 
 				const email = String(payload.email);
-				let result = await db.execute({
-					sql: 'SELECT id, email, name, role FROM users WHERE email = ?',
-					args: [email]
-				});
+				// Alias-aware: an address the instructor has linked to an existing
+				// account resolves to that account instead of creating a second one.
+				let existingUser = await findUserByEmail(db, email);
 
-				if (result.rows.length === 0) {
+				if (!existingUser) {
 					// Apple sends the display name ONCE, on the very first
 					// authorisation, and never again — so take it from the client
 					// when present or we lose it permanently.
@@ -69,16 +69,13 @@ export const { handle, signIn, signOut } = SvelteKitAuth({
 					// starts without them. An instructor can turn them back on
 					// per user from Manage → Members.
 					await db.execute({
-						sql: `INSERT INTO users (id, email, name, role, hide_tg_emoji, gemma_digest, gemma_scan_dms) VALUES (?, ?, ?, 'student', 1, 1, 1)`,
+						sql: `INSERT INTO users (id, email, name, role, auth_provider, hide_tg_emoji, gemma_digest, gemma_scan_dms) VALUES (?, ?, ?, 'student', 'apple', 1, 1, 1)`,
 						args: [crypto.randomUUID(), email, credentials?.name ? String(credentials.name) : '']
 					});
-					result = await db.execute({
-						sql: 'SELECT id, email, name, role FROM users WHERE email = ?',
-						args: [email]
-					});
+					existingUser = await findUserByEmail(db, email);
 				}
 
-				const user = result.rows[0];
+				const user = existingUser;
 				if (!user) return null;
 
 				// Land an Apple sign-in that belongs to NO class in the App Store
@@ -147,25 +144,21 @@ export const { handle, signIn, signOut } = SvelteKitAuth({
 				if (!db) return null;
 
 				const email = String(payload.email);
-				let result = await db.execute({
-					sql: 'SELECT id, email, name, role FROM users WHERE email = ?',
-					args: [email]
-				});
+				// Alias-aware: an address the instructor has linked to an existing
+				// account resolves to that account instead of creating a second one.
+				let existingUser = await findUserByEmail(db, email);
 
 				// Same create-on-first-sign-in behaviour as the web Google flow
 				// (see the signIn callback below).
-				if (result.rows.length === 0) {
+				if (!existingUser) {
 					await db.execute({
-						sql: `INSERT INTO users (id, email, name, role, gemma_digest, gemma_scan_dms) VALUES (?, ?, ?, 'student', 1, 1)`,
+						sql: `INSERT INTO users (id, email, name, role, auth_provider, gemma_digest, gemma_scan_dms) VALUES (?, ?, ?, 'student', 'google', 1, 1)`,
 						args: [crypto.randomUUID(), email, payload.name ?? '']
 					});
-					result = await db.execute({
-						sql: 'SELECT id, email, name, role FROM users WHERE email = ?',
-						args: [email]
-					});
+					existingUser = await findUserByEmail(db, email);
 				}
 
-				const user = result.rows[0];
+				const user = existingUser;
 				if (!user) return null;
 
 				return {
@@ -190,12 +183,14 @@ export const { handle, signIn, signOut } = SvelteKitAuth({
 				// The field is named `email` for historical reasons but accepts
 				// either an email address or a username.
 				const identifier = String(credentials.email);
+				const COLS = 'id, email, name, password_hash, role';
 				const result = await db.execute({
-					sql: 'SELECT id, email, name, password_hash, role FROM users WHERE email = ? OR username = ?',
-					args: [identifier, identifier]
+					sql: `SELECT ${COLS} FROM users WHERE lower(email) = ? OR username = ?`,
+					args: [identifier.toLowerCase(), identifier]
 				});
-
-				const user = result.rows[0];
+				// Fall through to aliases so a linked second address works with the
+				// same password as the primary one.
+				const user = result.rows[0] ?? (await findUserByEmail(db, identifier, COLS));
 				if (!user?.password_hash) return null;
 
 				const valid = await compare(String(credentials.password), String(user.password_hash));
@@ -222,14 +217,11 @@ export const { handle, signIn, signOut } = SvelteKitAuth({
 				const db = getDb();
 				if (!db) return false;
 
-				const existing = await db.execute({
-					sql: 'SELECT id FROM users WHERE email = ?',
-					args: [user.email]
-				});
+				const existing = await findUserByEmail(db, user.email, 'id');
 
-				if (existing.rows.length === 0) {
+				if (!existing) {
 					await db.execute({
-						sql: `INSERT INTO users (id, email, name, role, gemma_digest, gemma_scan_dms) VALUES (?, ?, ?, 'student', 1, 1)`,
+						sql: `INSERT INTO users (id, email, name, role, auth_provider, gemma_digest, gemma_scan_dms) VALUES (?, ?, ?, 'student', 'google', 1, 1)`,
 						args: [crypto.randomUUID(), user.email, user.name ?? '']
 					});
 				}
@@ -242,10 +234,8 @@ export const { handle, signIn, signOut } = SvelteKitAuth({
 			if (account?.provider === 'google') {
 				const db = getDb();
 				if (db) {
-					const result = await db.execute({
-						sql: 'SELECT id, role FROM users WHERE email = ?',
-						args: [token.email]
-					});
+					const found = await findUserByEmail(db, token.email, 'id, role');
+					const result = { rows: found ? [found] : [] };
 					if (result.rows[0]) {
 						token.role = result.rows[0].role;
 						token.userId = result.rows[0].id;
@@ -262,10 +252,8 @@ export const { handle, signIn, signOut } = SvelteKitAuth({
 				const db = getDb();
 				if (db) {
 					try {
-						const result = await db.execute({
-							sql: 'SELECT id, role FROM users WHERE email = ?',
-							args: [token.email]
-						});
+						const found = await findUserByEmail(db, token.email, 'id, role');
+						const result = { rows: found ? [found] : [] };
 						if (result.rows[0]) {
 							token.userId = String(result.rows[0].id);
 							if (!token.role) token.role = String(result.rows[0].role);
@@ -286,10 +274,8 @@ export const { handle, signIn, signOut } = SvelteKitAuth({
 				const db = getDb();
 				if (db) {
 					try {
-						const result = await db.execute({
-							sql: 'SELECT id, role FROM users WHERE email = ?',
-							args: [token.email]
-						});
+						const found = await findUserByEmail(db, token.email, 'id, role');
+						const result = { rows: found ? [found] : [] };
 						if (result.rows[0]) {
 							session.user.id = String(result.rows[0].id);
 							session.user.role = String(result.rows[0].role);
