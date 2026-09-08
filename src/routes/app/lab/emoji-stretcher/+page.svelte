@@ -1,7 +1,7 @@
 <script>
 	import { onMount } from 'svelte';
 	import { loadEmojiData } from '$lib/emoji-data.js';
-	import { dragBox, fitBox, drawStretched, rasterizeEmoji } from '$lib/emoji-stretcher.js';
+	import { dragBox, fitBox, drawStretched, rasterizeEmoji, appendTrail, fitTrail, moveTrail, snakeGeometry, drawSnake } from '$lib/emoji-stretcher.js';
 
 	const QUICK = ['\u{1f600}', '\u{1f642}', '\u{1f62d}', '\u{1f60e}', '\u{1f914}', '\u{1f633}', '\u{1f480}', '\u{1f438}', '\u{1f431}', '\u{1f355}', '\u{1f525}', '\u{2764}\ufe0f'];
 	const HANDLES = [
@@ -12,14 +12,18 @@
 	];
 	let emoji = $state(QUICK[0]);
 	let input = $state(QUICK[0]);
-	let mode = $state('stretch');
+	let mode = $state('snake');
+	let shape = $state('snake');
+	let points = $state.raw([]);
+	let thickness = $state(100);
 	let middle = $state(0.08);
 	let box = $state({ x: 100, y: 90, w: 280, h: 160 });
 	let area = $state({ w: 760, h: 400 });
-	let stage, canvas;
+	let stage;
+	let canvas = $state(null), snakeCanvas = $state(null);
 	let source = $state.raw(null);
-	let drag = $state(null);
-	let past = $state([]);
+	let drag = $state.raw(null);
+	let past = $state.raw([]);
 	let error = $state('');
 	let status = $state('');
 	let exporting = $state(false);
@@ -30,22 +34,43 @@
 	let catalogError = $state('');
 	let alive = false;
 	let statusTimer;
+	let frame = 0;
 	const matches = $derived(catalog.filter((item) => !search.trim() || item.terms.includes(search.toLowerCase().trim())).slice(0, 180));
 	const BASE = 160;
 
-	function snapshot() { return { box: { ...box }, middle }; }
+	const tip = $derived(points.at(-1) || { x: 0, y: 0 });
+	function snapshot() { return { box: { ...box }, points: points.map((p) => ({ ...p })), thickness, shape, middle }; }
 	function remember(before = snapshot()) { past = [...past.slice(-29), before]; }
+	function restore(before) {
+		box = fitBox(before.box, area.w, area.h); middle = before.middle;
+		thickness = Math.min(before.thickness, area.w - 8, area.h - 8);
+		points = fitTrail(before.points, thickness, area.w, area.h);
+		shape = before.shape; mode = shape === 'snake' ? 'snake' : 'stretch';
+	}
 	function undo() {
 		if (!past.length || drag) return;
 		const before = past[past.length - 1];
 		past = past.slice(0, -1);
-		box = fitBox(before.box, area.w, area.h);
-		middle = before.middle;
+		restore(before);
 	}
 	function centerBox(w = Math.min(280, area.w), h = Math.min(BASE, area.h)) {
 		return { x: (area.w - w) / 2, y: (area.h - h) / 2, w, h };
 	}
-	function reset() { remember(); middle = 0.08; box = centerBox(Math.min(BASE, area.w), Math.min(BASE, area.h)); }
+	function initialTrail() {
+		const y = area.h / 2, half = Math.min(thickness * 0.8, (area.w - thickness - 8) / 2);
+		return [{ x: area.w / 2 - half, y }, { x: area.w / 2 + half, y }];
+	}
+	function reset() {
+		if (drag) return;
+		remember(); middle = 0.08;
+		box = centerBox(Math.min(BASE, area.w), Math.min(BASE, area.h));
+		points = initialTrail();
+	}
+	function setMode(next) {
+		if (drag) return;
+		mode = next;
+		if (next !== 'move') shape = next === 'snake' ? 'snake' : 'box';
+	}
 	function choose(value) {
 		const first = [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(value.trim())][0]?.segment;
 		if (!first || !/(\p{Extended_Pictographic}|\p{Regional_Indicator}|\u20e3)/u.test(first)) {
@@ -71,23 +96,40 @@
 		finally { if (alive) loading = false; }
 	}
 
+	function pointerPoint(event) {
+		const rect = stage.getBoundingClientRect();
+		return { x: event.clientX - rect.left - stage.clientLeft - 24, y: event.clientY - rect.top - stage.clientTop - 24 };
+	}
 	function startDrag(event, handle) {
 		if (!source || !event.isPrimary || event.button !== 0 || drag) return;
 		event.preventDefault(); event.stopPropagation();
 		event.currentTarget.focus({ preventScroll: true });
 		event.currentTarget.setPointerCapture(event.pointerId);
-		drag = { id: event.pointerId, x: event.clientX, y: event.clientY, handle, before: snapshot() };
+		const at = pointerPoint(event);
+		drag = { id: event.pointerId, x: event.clientX, y: event.clientY, handle, before: snapshot(), offset: { x: tip.x - at.x, y: tip.y - at.y } };
 	}
 	function moveDrag(event) {
 		if (!drag || event.pointerId !== drag.id) return;
-		box = dragBox(drag.before.box, drag.handle, event.clientX - drag.x, event.clientY - drag.y, area.w, area.h);
+		if (drag.handle === 'snake') {
+			const samples = event.getCoalescedEvents?.() || [];
+			let next = points;
+			for (const sample of samples.length ? samples : [event]) {
+				const at = pointerPoint(sample), padding = thickness / 2 + 2;
+				next = appendTrail(next, { x: Math.max(padding, Math.min(area.w - padding, at.x + drag.offset.x)), y: Math.max(padding, Math.min(area.h - padding, at.y + drag.offset.y)) });
+			}
+			points = next;
+		} else if (drag.handle === 'snake-move') {
+			points = moveTrail(drag.before.points, event.clientX - drag.x, event.clientY - drag.y, thickness, area.w, area.h);
+		} else box = dragBox(drag.before.box, drag.handle, event.clientX - drag.x, event.clientY - drag.y, area.w, area.h);
 	}
 	function endDrag(event, cancel = false) {
 		if (!drag || (event && event.pointerId !== drag.id)) return;
+		if (event?.type === 'pointerup') moveDrag(event);
 		const before = drag.before;
+		const wasSnake = drag.handle.startsWith('snake');
 		drag = null;
-		if (cancel) { box = fitBox(before.box, area.w, area.h); return; }
-		if (Object.keys(box).some((key) => Math.abs(box[key] - before.box[key]) > 0.1)) remember(before);
+		if (cancel) { restore(before); return; }
+		if (wasSnake ? JSON.stringify(points) !== JSON.stringify(before.points) : Object.keys(box).some((key) => Math.abs(box[key] - before.box[key]) > 0.1)) remember(before);
 	}
 	function keyboard(event, handle) {
 		if (event.key === 'Escape') { endDrag(null, true); return; }
@@ -96,7 +138,14 @@
 		event.preventDefault(); event.stopPropagation();
 		remember();
 		const [x, y] = moves[event.key], step = event.shiftKey ? 20 : 4;
-		box = dragBox(box, handle, x * step, y * step, area.w, area.h);
+		if (handle === 'snake') {
+			points = appendTrail(points, { x: Math.max(thickness / 2 + 2, Math.min(area.w - thickness / 2 - 2, tip.x + x * step)), y: Math.max(thickness / 2 + 2, Math.min(area.h - thickness / 2 - 2, tip.y + y * step)) });
+		} else if (handle === 'snake-move') points = moveTrail(points, x * step, y * step, thickness, area.w, area.h);
+		else box = dragBox(box, handle, x * step, y * step, area.w, area.h);
+	}
+	function changeThickness(value) {
+		thickness = Number(value);
+		points = fitTrail(points, thickness, area.w, area.h);
 	}
 	function changeSize(axis, value) {
 		remember();
@@ -109,8 +158,14 @@
 	function pngBlob() {
 		return new Promise((resolve, reject) => {
 			const output = document.createElement('canvas');
-			const scale = Math.min(3, 2048 / Math.max(box.w, box.h));
-			drawStretched(output, source, box.w * scale, box.h * scale, BASE * scale, middle);
+			if (shape === 'snake') {
+				const { bounds } = snakeGeometry(points, source.width, source.height, thickness, middle);
+				const scale = Math.min(3, 2048 / Math.max(bounds.w, bounds.h));
+				drawSnake(output, source, points, thickness, middle, { width: bounds.w, height: bounds.h, scale, offsetX: -bounds.x, offsetY: -bounds.y });
+			} else {
+				const scale = Math.min(3, 2048 / Math.max(box.w, box.h));
+				drawStretched(output, source, box.w * scale, box.h * scale, BASE * scale, middle);
+			}
 			output.toBlob((blob) => blob ? resolve(blob) : reject(new Error('Could not create the PNG.')), 'image/png');
 		});
 	}
@@ -137,18 +192,30 @@
 		alive = true;
 		const measure = () => {
 			const w = Math.max(48, stage.clientWidth - 48), h = Math.max(48, stage.clientHeight - 48);
+			if (w === area.w && h === area.h) return;
+			endDrag(null, true);
 			area = { w, h };
 			box = fitBox(box, w, h);
-			endDrag(null, true);
+			thickness = Math.min(thickness, w - 8, h - 8);
+			points = fitTrail(points, thickness, w, h);
 		};
-		measure(); box = centerBox(); choose(emoji);
+		measure(); box = centerBox(); points = initialTrail(); choose(emoji);
 		const observer = new ResizeObserver(measure); observer.observe(stage);
-		return () => { alive = false; observer.disconnect(); clearTimeout(statusTimer); };
+		return () => { alive = false; observer.disconnect(); clearTimeout(statusTimer); cancelAnimationFrame(frame); };
 	});
 	$effect(() => {
-		if (!source || !canvas) return;
-		const dpr = Math.min(window.devicePixelRatio || 1, 2, 2048 / Math.max(box.w, box.h));
-		drawStretched(canvas, source, box.w * dpr, box.h * dpr, BASE * dpr, middle);
+		if (!source) return;
+		const current = { source, canvas, snakeCanvas, shape, points, thickness, middle, box: { ...box }, area: { ...area } };
+		cancelAnimationFrame(frame);
+		frame = requestAnimationFrame(() => {
+			const c = current;
+			if (c.shape === 'snake' && c.snakeCanvas) {
+				drawSnake(c.snakeCanvas, c.source, c.points, c.thickness, c.middle, { width: c.area.w, height: c.area.h, scale: Math.min(window.devicePixelRatio || 1, 2, 2048 / Math.max(c.area.w, c.area.h)) });
+			} else if (c.canvas) {
+				const dpr = Math.min(window.devicePixelRatio || 1, 2, 2048 / Math.max(c.box.w, c.box.h));
+				drawStretched(c.canvas, c.source, c.box.w * dpr, c.box.h * dpr, BASE * dpr, c.middle);
+			}
+		});
 	});
 </script>
 
@@ -159,7 +226,7 @@
 		<div class="heading"><a class="back" href="/app/lab">Lab</a><h1>Emoji Stretcher</h1></div>
 		<div class="actions">
 			<button onclick={undo} disabled={!past.length || !!drag} title="Undo last change">Undo</button>
-			<button onclick={reset}>Reset</button>
+			<button onclick={reset} disabled={!!drag}>Reset</button>
 			<button onclick={() => exportPng(true)} disabled={!source || exporting}>Copy</button>
 			<button class="primary" onclick={() => exportPng()} disabled={!source || exporting}>Download PNG</button>
 		</div>
@@ -176,8 +243,9 @@
 		</div>
 		<button class="browse" aria-expanded={picker} aria-controls="emoji-picker" onclick={togglePicker}>More emoji</button>
 		<div class="modes" aria-label="Drag behavior">
-			<button aria-pressed={mode === 'stretch'} class:active={mode === 'stretch'} onclick={() => mode = 'stretch'}>Stretch</button>
-			<button aria-pressed={mode === 'move'} class:active={mode === 'move'} onclick={() => mode = 'move'}>Move</button>
+			<button aria-pressed={mode === 'snake'} class:active={mode === 'snake'} onclick={() => setMode('snake')}>Snake</button>
+			<button aria-pressed={mode === 'stretch'} class:active={mode === 'stretch'} onclick={() => setMode('stretch')}>Box</button>
+			<button aria-pressed={mode === 'move'} class:active={mode === 'move'} onclick={() => setMode('move')}>Move</button>
 		</div>
 	</section>
 	{#if picker}
@@ -191,8 +259,16 @@
 	{/if}
 
 	<div class="stage" class:dragging={!!drag} bind:this={stage}>
-		<div class="stage-note" id="drag-help">{mode === 'stretch' ? 'Drag to stretch in any direction. Corners and edges work too.' : 'Drag anywhere inside the emoji to move it.'}</div>
+		<div class="stage-note" id="drag-help">{mode === 'snake' ? 'Pull the tip and draw a curve. Release to keep it; grab it again to keep going.' : mode === 'stretch' ? 'Pull an edge or corner to resize.' : 'Drag to move the whole shape.'}</div>
 		<div class="work-area">
+			{#if shape === 'snake'}
+				<div class="snake-layer" role="group" aria-label="Curved emoji controls" onpointermove={moveDrag} onpointerup={endDrag} onpointercancel={(e) => endDrag(e, true)} onlostpointercapture={endDrag}>
+					<button class="snake-surface" class:moving={mode === 'move'} aria-label={mode === 'move' ? 'Move curved emoji' : 'Pull emoji along a curve'} aria-describedby="drag-help keyboard-help" onpointerdown={(e) => startDrag(e, mode === 'move' ? 'snake-move' : 'snake')} onkeydown={(e) => keyboard(e, mode === 'move' ? 'snake-move' : 'snake')}>
+						<canvas bind:this={snakeCanvas} aria-hidden="true"></canvas>
+					</button>
+					{#if mode === 'snake'}<button class="snake-tip" style:left={`${tip.x}px`} style:top={`${tip.y}px`} aria-label="Pull emoji tip along a path" aria-describedby="drag-help keyboard-help" onpointerdown={(e) => startDrag(e, 'snake')} onkeydown={(e) => keyboard(e, 'snake')}><span></span></button>{/if}
+				</div>
+			{:else}
 			<div class="selection" role="group" aria-label="Emoji transform controls" style:left={`${box.x}px`} style:top={`${box.y}px`} style:width={`${box.w}px`} style:height={`${box.h}px`} onpointermove={moveDrag} onpointerup={endDrag} onpointercancel={(e) => endDrag(e, true)} onlostpointercapture={endDrag}>
 				<button class="emoji-body" class:moving={mode === 'move'} aria-label={mode === 'move' ? 'Move emoji' : 'Stretch emoji'} aria-describedby="drag-help keyboard-help" onpointerdown={(e) => startDrag(e, mode === 'move' ? 'move' : 'se')} onkeydown={(e) => keyboard(e, mode === 'move' ? 'move' : 'se')}>
 					<canvas bind:this={canvas} aria-hidden="true"></canvas>
@@ -201,17 +277,22 @@
 					<button class="handle {handle.id}" style:left={`${handle.x}%`} style:top={`${handle.y}%`} aria-label={`Stretch ${handle.name} edge`} aria-describedby="keyboard-help" onpointerdown={(e) => startDrag(e, handle.id)} onkeydown={(e) => keyboard(e, handle.id)}></button>
 				{/each}
 			</div>
+			{/if}
 		</div>
-		<div class="stage-readout" aria-hidden="true">{Math.round(box.w)} &times; {Math.round(box.h)}</div>
+		<div class="stage-readout" aria-hidden="true">{shape === 'snake' ? `${thickness} px thick` : `${Math.round(box.w)} x ${Math.round(box.h)}`}</div>
 	</div>
 
 	<footer>
-		<div class="sliders">
+		<div class="sliders" class:snake-sliders={shape === 'snake'}>
+			{#if shape === 'snake'}
+				<label>Thickness <output>{thickness} px</output><input type="range" min="20" max={Math.min(180, area.w - 8, area.h - 8)} step="1" value={thickness} onpointerdown={() => remember()} onkeydown={(e) => { if (e.key.startsWith('Arrow')) remember(); }} oninput={(e) => changeThickness(e.currentTarget.value)} /></label>
+			{:else}
 			<label>Width <output>{Math.round(box.w)} px</output><input type="range" min="48" max={Math.floor(area.w)} step="1" value={box.w} oninput={(e) => changeSize('w', e.currentTarget.value)} /></label>
 			<label>Height <output>{Math.round(box.h)} px</output><input type="range" min="48" max={Math.floor(area.h)} step="1" value={box.h} oninput={(e) => changeSize('h', e.currentTarget.value)} /></label>
+			{/if}
 			<label>Stretch area <output>{Math.round(middle * 100)}%</output><input type="range" min="0.02" max="1" step="0.01" bind:value={middle} onpointerdown={() => remember()} onkeydown={(e) => { if (e.key.startsWith('Arrow')) remember(); }} /></label>
 		</div>
-		<div class="footnote"><span id="keyboard-help">Arrow keys adjust the focused control. Shift for bigger steps. Escape cancels a drag.</span><a href="https://websim.com/@maxbittker/emoji-stretcher" target="_blank" rel="noreferrer">Inspired by maxbittker</a></div>
+		<div class="footnote"><span id="keyboard-help">Arrow keys steer the tip or adjust the focused control. Shift for bigger steps. Escape cancels a drag.</span><a href="https://websim.com/@maxbittker/emoji-stretcher" target="_blank" rel="noreferrer">Inspired by maxbittker</a></div>
 		<p class="feedback" class:error={!!error} role="status">{error || status || 'Exports have a transparent background.'}</p>
 	</footer>
 </main>
@@ -249,6 +330,14 @@
 	.emoji-body.moving { cursor: grab; }
 	.dragging .emoji-body.moving { cursor: grabbing; }
 	canvas { display: block; width: 100%; height: 100%; pointer-events: none; }
+	.snake-layer { position: absolute; inset: 0; touch-action: none; }
+	.snake-surface { display: block; width: 100%; height: 100%; padding: 0; border: 0; background: transparent; cursor: crosshair; touch-action: none; user-select: none; -webkit-user-select: none; }
+	.snake-surface:hover { background: transparent; }
+	.snake-surface.moving { cursor: grab; }
+	.dragging .snake-surface.moving { cursor: grabbing; }
+	.snake-tip { position: absolute; transform: translate(-50%, -50%); width: 44px; height: 44px; padding: 0; border: 1px dashed var(--accent); border-radius: 50%; background: color-mix(in srgb, var(--paper) 70%, transparent); cursor: grab; touch-action: none; }
+	.snake-tip span { display: block; margin: auto; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
+	.dragging .snake-tip { cursor: grabbing; }
 	.handle { position: absolute; width: 32px; height: 32px; min-height: 0; padding: 0; transform: translate(-50%, -50%); border: 0; background: transparent; border-radius: 50%; touch-action: none; z-index: 1; }
 	.handle::after { content: ''; position: absolute; inset: 10px; border: 2px solid var(--accent); background: var(--paper); border-radius: 3px; }
 	.handle:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
@@ -257,6 +346,7 @@
 	.handle.nw, .handle.se { cursor: nwse-resize; }
 	.handle.ne, .handle.sw { cursor: nesw-resize; }
 	.sliders { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 30px; padding: 22px 0 16px; }
+	.sliders.snake-sliders { grid-template-columns: 1fr 1fr; }
 	.sliders label { display: grid; grid-template-columns: 1fr auto; gap: 9px; font-size: 0.875rem; }
 	output { color: var(--muted-fg); font-variant-numeric: tabular-nums; }
 	input[type='range'] { width: 100%; margin: 0; grid-column: 1 / -1; accent-color: var(--accent); height: 24px; }
@@ -284,5 +374,6 @@
 		.stage { height: 46dvh; min-height: 300px; border-radius: 12px; }
 		.sliders { gap: 14px; grid-template-columns: 1fr 1fr; padding-top: 16px; }
 		.sliders label:last-child { grid-column: 1 / -1; }
+		.sliders.snake-sliders label:last-child { grid-column: auto; }
 	}
 </style>

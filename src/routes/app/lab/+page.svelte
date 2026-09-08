@@ -6,7 +6,7 @@
 		{
 			href: '/app/lab/emoji-stretcher',
 			title: 'Emoji Stretcher',
-			blurb: 'Pull an emoji wider or taller, move it around, and export a transparent PNG.',
+			blurb: 'Pull an emoji into a winding trail that follows your cursor, then export a transparent PNG.',
 			icon: 'open_in_full',
 			ready: true
 		},
