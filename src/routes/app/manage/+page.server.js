@@ -7,7 +7,7 @@ import { getAdminDb } from '$lib/server/firebase-admin.js';
 import { notifyInactiveStudents } from '$lib/server/notify-inactive.js';
 import { sendApprovalEmail } from '$lib/server/email.js';
 import { visitSummary } from '$lib/server/visits.js';
-import { sessionRoster, sessionDates, mark as markAttendance, STATUSES, isSessionDate } from '$lib/server/attendance.js';
+import { sessionRoster, sessionDates, mark as markAttendance, setLeftEarly, STATUSES, isSessionDate } from '$lib/server/attendance.js';
 
 export async function load({ locals, parent, url }) {
 	const parentData = await parent();
@@ -683,6 +683,35 @@ export const actions = {
 		if (!target.rows[0]) return fail(400, { error: 'That person is not on this register.', action: 'attendance' });
 
 		await markAttendance({ classId, sessionDate, userId, status, markedBy: session.user.id });
+		return { attendanceMarked: userId };
+	},
+
+	toggleLeftEarly: async ({ request, locals, cookies }) => {
+		const session = await locals.auth();
+		if (!session || session.user.role !== 'instructor') return fail(403, { error: 'Forbidden', action: 'attendance' });
+
+		const data = await request.formData();
+		const sessionDate = String(data.get('session_date') ?? '');
+		const userId = String(data.get('user_id') ?? '');
+		const leftEarly = data.get('left_early') === '1';
+		if (!isSessionDate(sessionDate)) return fail(400, { error: 'Bad session date.', action: 'attendance' });
+		if (!userId) return fail(400, { error: 'Missing student.', action: 'attendance' });
+
+		const db = getDb();
+		if (!db) return fail(503, { error: 'Database unavailable', action: 'attendance' });
+		const selectedId = cookies.get('selected_class_id');
+		const cls = await db.execute({
+			sql: 'SELECT id FROM classes WHERE id = ? OR ? IS NULL LIMIT 1',
+			args: [selectedId ?? null, selectedId ?? null]
+		});
+		const classId = String(cls.rows[0]?.id ?? '');
+		if (!classId) return fail(400, { error: 'No class selected', action: 'attendance' });
+
+		// No separate hidden-member check needed: setLeftEarly only touches an
+		// EXISTING present/late row, and markAttendance already refuses to
+		// create one for a hidden member — so there is nothing here to flag.
+		const ok = await setLeftEarly({ classId, sessionDate, userId, leftEarly });
+		if (!ok) return fail(400, { error: 'Mark them present or late first — you can only leave a session you were at.', action: 'attendance' });
 		return { attendanceMarked: userId };
 	},
 

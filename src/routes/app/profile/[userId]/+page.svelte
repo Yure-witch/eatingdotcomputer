@@ -640,10 +640,15 @@
 						{#if a.counts.late}<span class="att-count att-late">{a.counts.late} late</span>{/if}
 						{#if a.counts.absent}<span class="att-count att-absent">{a.counts.absent} absent</span>{/if}
 						{#if a.counts.excused}<span class="att-count att-excused">{a.counts.excused} excused</span>{/if}
+						{#if a.counts.leftEarly}<span class="att-count att-left">{a.counts.leftEarly} left early</span>{/if}
 					</div>
 					<div class="att-strip">
 						{#each a.recent as r (r.date)}
-							<span class="att-dot att-dot-{r.status}" title="{r.date} — {r.status}"></span>
+							<span
+								class="att-dot att-dot-{r.status}"
+								class:att-dot-left={r.leftEarly}
+								title="{r.date} — {r.status}{r.leftEarly ? ', left early' : ''}"
+							></span>
 						{/each}
 					</div>
 					<p class="att-note">Most recent {a.recent.length} session{a.recent.length === 1 ? '' : 's'}, newest first.</p>
@@ -1264,6 +1269,7 @@
 	.att-late { color: #b26a00; }
 	.att-absent { color: var(--danger, #c0392b); }
 	.att-excused { color: var(--muted-fg); }
+	.att-left { color: #7b5ea7; }
 	/* One dot per recent session — a shape you can read at a glance without
 	   parsing four numbers. */
 	.att-strip { display: flex; gap: 0.25rem; margin-top: 0.75rem; flex-wrap: wrap; }
@@ -1272,6 +1278,9 @@
 	.att-dot-late { background: #ffa000; }
 	.att-dot-absent { background: var(--danger, #c0392b); }
 	.att-dot-excused { background: var(--muted-fg); }
+	/* Left early keeps its status colour and gains a ring, so a late-and-left
+	   session still reads as "late" first — the ring is the qualifier. */
+	.att-dot-left { box-shadow: 0 0 0 2px var(--paper), 0 0 0 3.5px #7b5ea7; }
 	.att-note { margin: 0.5rem 0 0; font-size: 0.75rem; color: var(--muted-fg); }
 
 	.hidden-banner {

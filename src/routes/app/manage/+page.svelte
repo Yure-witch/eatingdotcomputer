@@ -867,6 +867,28 @@
 							{#if r.rate === null}—{:else}{r.rate}%{/if}
 						</span>
 						<span class="at-marks">
+							<!-- Left early: a flag on top of the status, not a fifth
+							     status — Isaiah on 9/10 was late AND left, and as an
+							     either/or the register would drop half of that. Only
+							     usable once they're marked present or late, since you
+							     can't leave a session you weren't at. -->
+							<form method="POST" action="?/toggleLeftEarly" use:enhance class="at-le-form">
+								<input type="hidden" name="session_date" value={data.attendanceDate} />
+								<input type="hidden" name="user_id" value={r.id} />
+								<input type="hidden" name="left_early" value={r.leftEarly ? '0' : '1'} />
+								<button
+									type="submit"
+									class="at-mark at-le"
+									class:on={r.leftEarly}
+									disabled={r.status !== 'present' && r.status !== 'late'}
+									title={r.status === 'present' || r.status === 'late'
+										? (r.leftEarly ? 'Left early — click to clear' : 'Mark as left early')
+										: 'Mark present or late first'}
+								>
+									<span class="msi msi-16">logout</span>
+								</button>
+							</form>
+							<span class="at-divider" aria-hidden="true"></span>
 							{#each ATTENDANCE_STATUSES as st}
 								<form method="POST" action="?/markAttendance" use:enhance>
 									<input type="hidden" name="session_date" value={data.attendanceDate} />
@@ -893,7 +915,7 @@
 				{#each data.attendanceSessions as sess}
 					<a class="at-sess" class:active={sess.date === data.attendanceDate} href="?tab=attendance&date={sess.date}">
 						<span class="at-sess-date">{sess.date}</span>
-						<span class="at-sess-count">{sess.here}/{sess.marked} here</span>
+						<span class="at-sess-count">{sess.here}/{sess.marked} here{sess.leftEarly ? ` · ${sess.leftEarly} left early` : ''}</span>
 					</a>
 				{/each}
 			</div>
@@ -2072,6 +2094,15 @@
 	.at-late.on    { background: #ffa000; }
 	.at-absent.on  { background: var(--danger, #c0392b); }
 	.at-excused.on { background: var(--muted-fg); }
+	/* Set apart from P/L/A/E by a hairline, because it isn't one of them —
+	   it qualifies whichever of present/late is chosen. */
+	.at-le-form { display: contents; }
+	.at-le { display: inline-flex; align-items: center; justify-content: center; }
+	.at-le .msi { font-size: 16px; line-height: 1; }
+	.at-le.on { background: #7b5ea7; }
+	.at-le:disabled { opacity: 0.3; cursor: not-allowed; }
+	.at-le:disabled:hover { border-color: var(--border); color: var(--muted-fg); }
+	.at-divider { width: 1px; align-self: stretch; margin: 3px 2px; background: var(--border); }
 
 	.at-sub { font-size: 0.95rem; margin: 1.75rem 0 0.6rem; }
 	.at-sessions { display: flex; flex-wrap: wrap; gap: 0.4rem; }

@@ -28,7 +28,7 @@ export async function sessionRoster(classId, sessionDate) {
 
 	const rows = (await db.execute({
 		sql: `SELECT u.id, u.name, u.email, u.avatar_kind, u.avatar_value,
-		             a.status,
+		             a.status, a.left_early,
 		             (SELECT COUNT(*) FROM attendance x
 		                WHERE x.user_id = u.id AND x.class_id = ?) AS marked_total,
 		             (SELECT COUNT(*) FROM attendance x
@@ -53,6 +53,7 @@ export async function sessionRoster(classId, sessionDate) {
 			avatarKind: r.avatar_kind ? String(r.avatar_kind) : 'gen',
 			avatarValue: r.avatar_value ? String(r.avatar_value) : null,
 			status: r.status ? String(r.status) : null,
+			leftEarly: Number(r.left_early ?? 0) === 1,
 			sessions: total,
 			// null rather than 100% for someone who has never been marked — a
 			// student with no history has no rate, and showing a perfect score
@@ -68,14 +69,16 @@ export async function sessionDates(classId, limit = 60) {
 	if (!db || !classId) return [];
 	return (await db.execute({
 		sql: `SELECT session_date, COUNT(*) AS marked,
-		             SUM(CASE WHEN status IN ('present','late') THEN 1 ELSE 0 END) AS here
+		             SUM(CASE WHEN status IN ('present','late') THEN 1 ELSE 0 END) AS here,
+		             SUM(left_early) AS left_early
 		      FROM attendance WHERE class_id = ?
 		      GROUP BY session_date ORDER BY session_date DESC LIMIT ?`,
 		args: [classId, limit]
 	})).rows.map((r) => ({
 		date: String(r.session_date),
 		marked: Number(r.marked ?? 0),
-		here: Number(r.here ?? 0)
+		here: Number(r.here ?? 0),
+		leftEarly: Number(r.left_early ?? 0)
 	}));
 }
 
@@ -94,12 +97,38 @@ export async function mark({ classId, sessionDate, userId, status, markedBy }) {
 		return;
 	}
 	await db.execute({
+		// Moving to absent or excused clears left_early: you can't leave a
+		// session you weren't at, and a stale flag would outlive the correction
+		// that made it wrong. Present <-> late keeps it — both were in the room.
 		sql: `INSERT INTO attendance (class_id, session_date, user_id, status, marked_by)
 		      VALUES (?, ?, ?, ?, ?)
 		      ON CONFLICT(class_id, session_date, user_id)
-		      DO UPDATE SET status = excluded.status, marked_at = datetime('now'), marked_by = excluded.marked_by`,
+		      DO UPDATE SET status = excluded.status, marked_at = datetime('now'), marked_by = excluded.marked_by,
+		                    left_early = CASE WHEN excluded.status IN ('present','late') THEN attendance.left_early ELSE 0 END`,
 		args: [classId, sessionDate, userId, status, markedBy ?? null]
 	});
+}
+
+/**
+ * Set or clear "left early" on an existing mark.
+ *
+ * Refuses unless the student is already marked present or late. The flag
+ * qualifies an attendance, it isn't one — so there has to be an attendance
+ * to qualify. That also means it can never create a row on its own, which
+ * keeps "no row = not marked" true.
+ *
+ * @returns {Promise<boolean>} whether anything was set
+ */
+export async function setLeftEarly({ classId, sessionDate, userId, leftEarly }) {
+	const db = getDb();
+	if (!db) return false;
+	const r = await db.execute({
+		sql: `UPDATE attendance SET left_early = ?, marked_at = datetime('now')
+		      WHERE class_id = ? AND session_date = ? AND user_id = ?
+		        AND status IN ('present','late')`,
+		args: [leftEarly ? 1 : 0, classId, sessionDate, userId]
+	});
+	return Number(r.rowsAffected ?? 0) > 0;
 }
 
 /**
@@ -127,15 +156,24 @@ export async function attendanceForUser(userId) {
 	if (!classId) return null;
 
 	const rows = (await db.execute({
-		sql: `SELECT session_date, status FROM attendance
+		sql: `SELECT session_date, status, left_early FROM attendance
 		      WHERE user_id = ? AND class_id = ?
 		      ORDER BY session_date DESC`,
 		args: [userId, classId]
-	})).rows.map((r) => ({ date: String(r.session_date), status: String(r.status) }));
+	})).rows.map((r) => ({
+		date: String(r.session_date),
+		status: String(r.status),
+		leftEarly: Number(r.left_early ?? 0) === 1
+	}));
 	if (!rows.length) return null;
 
-	const counts = { present: 0, late: 0, absent: 0, excused: 0 };
-	for (const r of rows) if (r.status in counts) counts[r.status] += 1;
+	const counts = { present: 0, late: 0, absent: 0, excused: 0, leftEarly: 0 };
+	for (const r of rows) {
+		if (r.status in counts) counts[r.status] += 1;
+		// Counted separately and ON TOP of the status: Isaiah's 9/10 is one
+		// "late" AND one "left early", not either/or.
+		if (r.leftEarly) counts.leftEarly += 1;
+	}
 	const here = rows.filter((r) => PRESENT_ISH.has(r.status)).length;
 
 	return {
