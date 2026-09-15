@@ -428,6 +428,19 @@
 	const _seenSlams = new Set();
 
 	let showTextFxBar = $state(false);
+	// Selection alone opens a temporary menu. Interacting with its controls
+	// keeps it open until Close, even when focus clears the native selection.
+	let _fxPinned = false;
+	function pinFxBar(event) {
+		if (event.target?.closest?.('.text-fx-close')) return;
+		_fxPinned = true;
+		scheduleFxDock();
+	}
+	function closeFxBar() {
+		showTextFxBar = false;
+		_fxPinned = false;
+		undockFxBar();
+	}
 	// Mobile: typography sliders hidden behind the "Aa" pill. Defaults
 	// closed so a text selection shows just the clean effects row.
 	let showTypoSliders = $state(false);
@@ -468,20 +481,19 @@
 	let _fxDockTimer = 0;
 	let _pointerDown = false;
 
-	// Hand the keyboard's slot to the menu — but only once the selection
-	// GESTURE is over. Blurring mid-drag fights iOS's own selection teardown
-	// and throws the layout around (the same reason the Aa pill blurs on tap
-	// rather than on a slider's pointerdown). selectionchange re-arms this on
-	// every handle move; the pointer check covers a finger held still.
+	// Dock after the user touches the controls and finishes the gesture.
+	// Blurring mid-drag fights iOS selection handling and moves the layout.
+	// selectionchange re-arms this on every handle move; the pointer check
+	// covers a finger held still.
 	function scheduleFxDock() {
 		// Touch only: a narrow desktop window is phone-WIDTH but has no soft
 		// keyboard, so there'd be no slot to move into — dismissing its compose
 		// would be pure loss. Same test BottomNav uses for the keyboard.
-		if (!_isMobileWidth || _fxBlurred) return;
+		if (!_fxPinned || !_isMobileWidth || _fxBlurred) return;
 		if (!window.matchMedia?.('(pointer: coarse)')?.matches) return;
 		clearTimeout(_fxDockTimer);
 		_fxDockTimer = setTimeout(() => {
-			if (!showTextFxBar || !_isMobileWidth || _fxBlurred) return;
+			if (!showTextFxBar || !_fxPinned || !_isMobileWidth || _fxBlurred) return;
 			if (_pointerDown) { scheduleFxDock(); return; }
 			const sel = window.getSelection();
 			// Back to typing before we got here — leave the keyboard alone.
@@ -507,10 +519,9 @@
 	}
 	function onCeFocus() {
 		keyboardOpen = true;
-		// Tapping into the compose means "I want to type": the keyboard is on
-		// its way up and would bury the docked menu, so stand it down. A fresh
-		// selection brings it straight back.
-		if (_fxBlurred) { showTextFxBar = false; undockFxBar(); }
+		// Move the pinned menu above the keyboard when typing resumes. Only
+		// Close dismisses it after the user has interacted with its controls.
+		if (_fxBlurred) undockFxBar();
 	}
 
 	// A blurred contenteditable stops painting its selection, so the docked
@@ -1519,36 +1530,29 @@
 	}
 	let _selRaf = 0;
 	function onCeSelectNow() {
-		// Docked: the compose was blurred ON PURPOSE, so there is no live
-		// selection. Everything below would read that as "nothing selected"
-		// and clear the emote highlights + the Flip toggle out from under the
-		// open menu — bail until a real selection comes back.
-		if (_fxBlurred) {
-			const s = window.getSelection();
-			if (!s || s.isCollapsed || !inputEl?.contains(s.anchorNode)) return;
-			undockFxBar();
-		}
-		const _sel = window.getSelection();
-		const selInCompose = !!(_sel && inputEl && _sel.anchorNode && inputEl.contains(_sel.anchorNode));
-		if (!selInCompose) { selHasFlip = false; }
-		else computeSelHasFlip();
 		const sel = window.getSelection();
-		// Show the bar when a non-collapsed selection lives in the
-		// compose. Don't auto-HIDE when the selection collapses —
-		// users want the menu to persist until the explicit ✕ button
-		// is pressed (tapping a slider/button briefly clears the
-		// selection, which used to dismiss the bar mid-edit).
-		if (sel && !sel.isCollapsed && inputEl?.contains(sel.anchorNode)) {
-			showTextFxBar = true;
-			scheduleFxDock();   // mobile: give the menu the keyboard's slot
+		const hasComposeSelection = !!(sel?.rangeCount && !sel.isCollapsed
+			&& inputEl?.contains(sel.anchorNode) && inputEl.contains(sel.focusNode));
+		if (!hasComposeSelection) {
+			if (_fxPinned) return; // Keep the saved range and controls during edits.
+			closeFxBar();
+			selHasFlip = false;
+			selHasEmote = false;
+			highlightEmotesInSel(inputEl);
+			return;
 		}
-		if (sel && !sel.isCollapsed && inputEl?.contains(sel.anchorNode)) {
-			const range = sel.getRangeAt(0);
-			_savedCeSel = {
-				start: cePlainOffset(inputEl, range.startContainer, range.startOffset),
-				end: cePlainOffset(inputEl, range.endContainer, range.endOffset)
-			};
-		}
+		// A mobile dock deliberately blurs the editor. Browsers may retain its
+		// native range; leave the dock alone until the editor regains focus.
+		if (_fxBlurred && document.activeElement !== inputEl) return;
+		if (_fxBlurred) undockFxBar();
+		computeSelHasFlip();
+		showTextFxBar = true;
+		scheduleFxDock(); // Dock only after the user interacts with the menu.
+		const range = sel.getRangeAt(0);
+		_savedCeSel = {
+			start: cePlainOffset(inputEl, range.startContainer, range.startOffset),
+			end: cePlainOffset(inputEl, range.endContainer, range.endOffset)
+		};
 		// Highlight every selected emote element (EK/CE images, Telegram +
 		// custom emoji spans, flags) — same helper the message list uses.
 		highlightEmotesInSel(inputEl);
@@ -3673,7 +3677,7 @@
 		undoStack = []; redoStack = [];
 		_savedCeSel = null; _lastInlineTypo = {};
 		// The message is gone, and so is anything it had highlighted.
-		showTextFxBar = false; undockFxBar();
+		closeFxBar();
 		replyingTo = null;
 		resetLinkChips();
 		pendingAttachment = null;
@@ -4826,17 +4830,17 @@
 		<!-- On mobile this wrapper IS the sheet that takes the keyboard's
 		     slot; on desktop it's display:contents and the two bars sit in
 		     the compose stack exactly as before. -->
-		<div class="text-fx-dock">
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div class="text-fx-dock" onpointerdowncapture={pinFxBar} onfocusin={pinFxBar}>
 		<!-- The rows scroll; the ⌫ key does not. It is a sibling of the
 		     scroller, anchored to the dialog's own bottom-right, so it holds
 		     the spot the expression keyboard's delete key occupies. -->
 		<div class="text-fx-scroll">
-		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<div class="text-typo-bar" onfocusin={() => { showTextFxBar = true; }}>
+		<div class="text-typo-bar">
 			<!-- Dismiss sits at the dialog's top-left in BOTH states: the
 			     typography bar is the top row whether the sliders are open or
 			     shut behind the Aa pill. -->
-			<button class="text-fx-close" onmousedown={(e) => { e.preventDefault(); showTextFxBar = false; undockFxBar(); }} title="Close">✕</button>
+			<button class="text-fx-close" onmousedown={(e) => e.preventDefault()} onclick={closeFxBar} title="Close">✕</button>
 			<!-- Mobile: the three typography sliders are the awkward part of
 			     the highlight menu — three full-width rows of chrome landing on
 			     every text selection. They hide behind one "Aa" pill (default
