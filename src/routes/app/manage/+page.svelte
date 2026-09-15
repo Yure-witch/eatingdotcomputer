@@ -9,7 +9,8 @@
 	import { page } from '$app/stores';
 	import { auth, db as rtdb } from '$lib/firebase.js';
 	import { signInWithCustomToken } from 'firebase/auth';
-	import { ref, onValue, off } from 'firebase/database';
+	import { ref, onValue, off, set as rtdbSet } from 'firebase/database';
+	import { beforeNavigate } from '$app/navigation';
 	import { mountStaticEmotes } from '$lib/emote-mount.js';
 	import SpriteSticker from '$lib/components/SpriteSticker.svelte';
 	import { hiddenEmoteList, unhideEmote, initHiddenEmotes } from '$lib/hidden-emotes.js';
@@ -282,6 +283,86 @@
 		return               { icon: '💻', label: 'Desktop browser' };
 	}
 
+	// ── Attendance notes: RTDB, saved live ────────────────────────────
+	// attendanceNotes/{classId}/{date}/{uid} = { workingOn, note, updatedAt, updatedBy }
+	// Instructor-only in the database rules (auth.token.role), not just hidden
+	// in the UI — a student reading RTDB directly gets PERMISSION_DENIED.
+	const NOTE_DEBOUNCE_MS = 2000;
+	let notesByDate = $state({});      // live mirror of the class's whole notes node
+	let notesReady = $state(false);
+	let notesError = $state(null);
+	let noteDrafts = $state({});       // `${date}|${uid}` -> { workingOn, note } while unsaved
+	let noteStatus = $state({});       // `${date}|${uid}` -> 'pending' | 'saving' | 'saved' | 'error'
+	const noteTimers = new Map();
+	let notesRef;
+
+	const noteKey = (date, uid) => `${date}|${uid}`;
+
+	/** What the field shows: your unsaved typing if there is any, else what's stored. */
+	function noteValue(date, uid, field) {
+		const d = noteDrafts[noteKey(date, uid)];
+		if (d) return d[field];
+		return notesByDate?.[date]?.[uid]?.[field] ?? '';
+	}
+
+	/** Most recent earlier session where this student had a "working on". */
+	function previousWorkingOn(date, uid) {
+		const earlier = Object.keys(notesByDate ?? {}).filter((d) => d < date).sort().reverse();
+		for (const d of earlier) {
+			const w = notesByDate[d]?.[uid]?.workingOn;
+			if (w) return { date: d, workingOn: w };
+		}
+		return null;
+	}
+
+	function editNote(date, uid, field, value) {
+		const k = noteKey(date, uid);
+		const current = noteDrafts[k] ?? {
+			workingOn: notesByDate?.[date]?.[uid]?.workingOn ?? '',
+			note: notesByDate?.[date]?.[uid]?.note ?? ''
+		};
+		noteDrafts = { ...noteDrafts, [k]: { ...current, [field]: value } };
+		noteStatus = { ...noteStatus, [k]: 'pending' };
+		clearTimeout(noteTimers.get(k));
+		noteTimers.set(k, setTimeout(() => flushNote(k), NOTE_DEBOUNCE_MS));
+	}
+
+	async function flushNote(k) {
+		clearTimeout(noteTimers.get(k));
+		noteTimers.delete(k);
+		const draft = noteDrafts[k];
+		if (!draft || !data.currentClass?.id) return;
+		const [date, uid] = k.split('|');
+		const workingOn = String(draft.workingOn ?? '').slice(0, 500);
+		const note = String(draft.note ?? '').slice(0, 4000);
+		const nodeRef = ref(rtdb, `attendanceNotes/${data.currentClass.id}/${date}/${uid}`);
+		noteStatus = { ...noteStatus, [k]: 'saving' };
+		try {
+			// Both fields empty removes the node, so a cleared note leaves nothing.
+			await rtdbSet(nodeRef, workingOn.trim() || note.trim()
+				? { workingOn, note, updatedAt: Date.now(), updatedBy: auth.currentUser?.uid ?? '' }
+				: null);
+			// Only drop the draft if nothing was typed while this write was in
+			// flight — otherwise those keystrokes would vanish back to the server
+			// value, and the next debounce will save them.
+			const now = noteDrafts[k];
+			if (now && now.workingOn === draft.workingOn && now.note === draft.note) {
+				const { [k]: _, ...rest } = noteDrafts;
+				noteDrafts = rest;
+				noteStatus = { ...noteStatus, [k]: 'saved' };
+			}
+		} catch (e) {
+			noteStatus = { ...noteStatus, [k]: 'error' };
+			console.warn('[manage] note save failed:', e?.code ?? e);
+		}
+	}
+
+	/** Save everything still waiting on its debounce — before leaving the page. */
+	function flushAllNotes() {
+		for (const k of [...noteTimers.keys()]) flushNote(k);
+	}
+	beforeNavigate(() => flushAllNotes());
+
 	onMount(async () => {
 		// Immediately trigger the layout's presence poll so the manage tab sees
 		// accurate online status right away, not on the next scheduled cycle.
@@ -296,6 +377,29 @@
 				}
 			}
 		}
+
+		if (data.currentClass?.id) {
+			notesRef = ref(rtdb, `attendanceNotes/${data.currentClass.id}`);
+			onValue(notesRef, (snap) => {
+				notesByDate = snap.val() ?? {};
+				notesReady = true;
+				notesError = null;
+			}, (err) => {
+				// Most likely an old Firebase token minted before the role claim
+				// existed. A reload mints a new one.
+				notesError = err?.code ?? 'denied';
+				console.warn('[manage] attendanceNotes subscription denied:', err?.code);
+			});
+		}
+		// Leaving the tab or closing the window inside the debounce window
+		// shouldn't cost the last two seconds of typing.
+		const onHide = () => { if (document.visibilityState === 'hidden') flushAllNotes(); };
+		document.addEventListener('visibilitychange', onHide);
+		window.addEventListener('pagehide', flushAllNotes);
+		removeNoteListeners = () => {
+			document.removeEventListener('visibilitychange', onHide);
+			window.removeEventListener('pagehide', flushAllNotes);
+		};
 
 		// Subscribe to join-request signals — any write here means a new request came in
 		if (data.currentClass?.id) {
@@ -312,7 +416,11 @@
 
 		tickTimer = setInterval(() => { presenceTick++; now = Date.now(); }, 60_000);
 	});
+	let removeNoteListeners = () => {};
 	onDestroy(() => {
+		flushAllNotes();
+		removeNoteListeners();
+		if (notesRef) off(notesRef);
 		clearInterval(tickTimer);
 		if (pendingRequestsRef) off(pendingRequestsRef);
 	});
@@ -858,6 +966,9 @@
 
 			<ul class="at-list">
 				{#each roster as r (r.id)}
+					{@const nk = noteKey(data.attendanceDate, r.id)}
+					{@const prev = previousWorkingOn(data.attendanceDate, r.id)}
+					{@const workingOnVal = noteValue(data.attendanceDate, r.id, 'workingOn')}
 					<li class="at-row">
 						<span class="at-who">
 							<Avatar name={r.name} uid={r.id} avatarKind={r.avatarKind} avatarValue={r.avatarValue} size={26} />
@@ -903,57 +1014,52 @@
 							{/each}
 						</span>
 
-						<!-- Notes for this student, this session. <details> so the
-						     register stays a scannable list of names and the notes
-						     open only for the row you're writing about; its open state
-						     survives the save because rows are keyed by student. -->
-						<details class="at-notes">
-							<summary class="at-notes-sum">
-								<span class="msi msi-16">edit_note</span>
-								{#if r.workingOn}
-									<span class="at-notes-preview">{r.workingOn}</span>
-								{:else if r.note}
-									<span class="at-notes-preview at-notes-muted">Note</span>
-								{:else}
-									<span class="at-notes-muted">Add notes</span>
-								{/if}
-								{#if r.note}<span class="at-notes-dot" title="Has a note"></span>{/if}
-							</summary>
-							<!-- reset:false — SvelteKit's default enhance resets the form
-							     after a successful post, which would snap the textareas
-							     back to their pre-save text until the reload lands. -->
-							<form
-								method="POST"
-								action="?/saveAttendanceNote"
-								class="at-notes-form"
-								use:enhance={() => async ({ update }) => update({ reset: false })}
-							>
-								<input type="hidden" name="session_date" value={data.attendanceDate} />
-								<input type="hidden" name="user_id" value={r.id} />
-								<label class="at-field">
-									<span>Working on</span>
-									<input type="text" name="working_on" value={r.workingOn} maxlength="500"
-										placeholder={r.prevWorkingOn ? `Last time: ${r.prevWorkingOn}` : 'Project, piece, or problem'} />
-								</label>
-								{#if r.prevWorkingOn && !r.workingOn}
-									<!-- Last week's project as context, with a one-tap carry-over:
-									     most weeks it's the same thing, and retyping it is the
-									     reason notes stop getting written. -->
-									<button type="button" class="at-carry"
-										onclick={(e) => { const i = e.currentTarget.form.elements.namedItem('working_on'); i.value = r.prevWorkingOn; i.focus(); }}>
-										Same as {r.prevDate}: <em>{r.prevWorkingOn}</em>
-									</button>
-								{/if}
-								<label class="at-field">
-									<span>Notes</span>
-									<textarea name="note" rows="3" maxlength="4000" placeholder="Only you can see these">{r.note}</textarea>
-								</label>
-								<div class="at-notes-actions">
-									<button type="submit" class="ch-btn-quiet">Save</button>
-									<span class="at-notes-hint">Instructor-only. Clearing both fields deletes the note.</span>
-								</div>
-							</form>
-						</details>
+						<!-- Notes, always open under the row. Stored in RTDB and saved
+						     two seconds after you stop typing (or straight away when you
+						     leave the field / the page). Instructor-only by database rule. -->
+						<div class="at-notes">
+							<label class="at-field">
+								<span>Working on</span>
+								<input
+									type="text"
+									maxlength="500"
+									value={workingOnVal}
+									placeholder={prev ? `Last time: ${prev.workingOn}` : 'Project, piece, or problem'}
+									oninput={(e) => editNote(data.attendanceDate, r.id, 'workingOn', e.currentTarget.value)}
+									onblur={() => noteTimers.has(nk) && flushNote(nk)}
+									disabled={!notesReady}
+								/>
+							</label>
+							{#if prev && !workingOnVal}
+								<!-- Last week's project with a one-tap carry-over: most weeks
+								     it's the same thing, and retyping it is why notes stop
+								     getting written. -->
+								<button type="button" class="at-carry"
+									onclick={() => { editNote(data.attendanceDate, r.id, 'workingOn', prev.workingOn); flushNote(nk); }}>
+									Same as {prev.date}: <em>{prev.workingOn}</em>
+								</button>
+							{/if}
+							<label class="at-field">
+								<span>
+									Notes
+									<span class="at-save at-save-{noteStatus[nk] ?? 'idle'}" aria-live="polite">
+										{#if noteStatus[nk] === 'pending' || noteStatus[nk] === 'saving'}Saving…
+										{:else if noteStatus[nk] === 'saved'}Saved
+										{:else if noteStatus[nk] === 'error'}Couldn't save — reload the page
+										{/if}
+									</span>
+								</span>
+								<textarea
+									rows="2"
+									maxlength="4000"
+									placeholder="Only you can see these"
+									value={noteValue(data.attendanceDate, r.id, 'note')}
+									oninput={(e) => editNote(data.attendanceDate, r.id, 'note', e.currentTarget.value)}
+									onblur={() => noteTimers.has(nk) && flushNote(nk)}
+									disabled={!notesReady}
+								></textarea>
+							</label>
+						</div>
 					</li>
 				{/each}
 			</ul>
@@ -2156,43 +2262,39 @@
 	.at-le:disabled:hover { border-color: var(--border); color: var(--muted-fg); }
 	.at-divider { width: 1px; align-self: stretch; margin: 3px 2px; background: var(--border); }
 
-	/* Notes drop onto their own full-width line under the row. */
+	/* Notes sit on their own full-width line under the row, always visible. */
 	.at-row { flex-wrap: wrap; }
-	.at-notes { flex-basis: 100%; margin-top: 0.1rem; }
-	.at-notes-sum {
-		display: flex; align-items: center; gap: 0.35rem;
-		list-style: none; cursor: pointer;
-		padding: 0.2rem 0.1rem;
-		font-size: 0.78rem; color: var(--muted-fg);
-		min-width: 0;
+	.at-notes {
+		flex-basis: 100%;
+		display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+		gap: 0.5rem 0.75rem; padding: 0.35rem 0 0.15rem;
 	}
-	.at-notes-sum::-webkit-details-marker { display: none; }
-	.at-notes-sum:hover { color: var(--ink); }
-	.at-notes-preview {
-		color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
-	}
-	.at-notes-muted { color: var(--muted-fg); }
-	.at-notes-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--md-sys-color-primary, var(--accent)); flex: none; }
-	.at-notes-form { display: flex; flex-direction: column; gap: 0.5rem; padding: 0.4rem 0 0.25rem; }
-	.at-field { display: flex; flex-direction: column; gap: 0.2rem; }
-	.at-field > span { font-size: 0.72rem; font-weight: 600; color: var(--muted-fg); }
+	.at-field { display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; }
+	.at-field > span { font-size: 0.72rem; font-weight: 600; color: var(--muted-fg); display: flex; align-items: baseline; gap: 0.4rem; }
 	.at-field input, .at-field textarea {
-		padding: 0.45rem 0.6rem;
+		padding: 0.4rem 0.55rem;
 		border: 1.5px solid var(--border); border-radius: 8px;
 		background: var(--paper); color: var(--ink);
-		font-family: inherit; font-size: 0.85rem; resize: vertical;
+		font-family: inherit; font-size: 0.85rem; resize: vertical; min-width: 0;
 	}
 	.at-field input:focus, .at-field textarea:focus { outline: none; border-color: var(--ink); }
+	.at-field input:disabled, .at-field textarea:disabled { opacity: 0.5; }
 	.at-carry {
-		align-self: flex-start;
-		padding: 0.25rem 0.55rem; border: 1px dashed var(--border); border-radius: 7px;
+		grid-column: 1; justify-self: start;
+		padding: 0.2rem 0.5rem; border: 1px dashed var(--border); border-radius: 7px;
 		background: transparent; color: var(--muted-fg);
-		font-family: inherit; font-size: 0.75rem; cursor: pointer; text-align: left;
+		font-family: inherit; font-size: 0.72rem; cursor: pointer; text-align: left;
 	}
 	.at-carry:hover { border-color: var(--ink); color: var(--ink); }
 	.at-carry em { font-style: normal; color: var(--ink); }
-	.at-notes-actions { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
-	.at-notes-hint { font-size: 0.72rem; color: var(--muted-fg); }
+	/* Quiet unless something is wrong: "Saving…" then "Saved" in muted text,
+	   red only on failure. */
+	.at-save { font-weight: 400; }
+	.at-save-saved { color: var(--muted-fg); }
+	.at-save-error { color: var(--danger, #c0392b); font-weight: 600; }
+	@media (max-width: 640px) {
+		.at-notes { grid-template-columns: 1fr; }
+	}
 
 	.at-sub { font-size: 0.95rem; margin: 1.75rem 0 0.6rem; }
 	.at-sessions { display: flex; flex-wrap: wrap; gap: 0.4rem; }

@@ -27,20 +27,11 @@ export async function sessionRoster(classId, sessionDate) {
 	if (!db || !classId) return [];
 
 	const rows = (await db.execute({
+		// Notes are NOT loaded here — they live in RTDB (attendanceNotes/…) so
+		// they can save live as the instructor types. The Manage page reads them
+		// with its own subscription.
 		sql: `SELECT u.id, u.name, u.email, u.avatar_kind, u.avatar_value,
 		             a.status, a.left_early,
-		             n.working_on, n.note,
-		             -- The last thing they were working on BEFORE this session,
-		             -- so a fresh week opens with last week's project as context
-		             -- instead of a blank box.
-		             (SELECT p.working_on FROM attendance_notes p
-		                WHERE p.user_id = u.id AND p.class_id = ?
-		                  AND p.session_date < ? AND p.working_on != ''
-		                ORDER BY p.session_date DESC LIMIT 1) AS prev_working_on,
-		             (SELECT p.session_date FROM attendance_notes p
-		                WHERE p.user_id = u.id AND p.class_id = ?
-		                  AND p.session_date < ? AND p.working_on != ''
-		                ORDER BY p.session_date DESC LIMIT 1) AS prev_date,
 		             (SELECT COUNT(*) FROM attendance x
 		                WHERE x.user_id = u.id AND x.class_id = ?) AS marked_total,
 		             (SELECT COUNT(*) FROM attendance x
@@ -51,11 +42,9 @@ export async function sessionRoster(classId, sessionDate) {
 		        ON cm.user_id = u.id AND cm.status = 'approved' AND cm.class_id = ?
 		      LEFT JOIN attendance a
 		        ON a.user_id = u.id AND a.class_id = ? AND a.session_date = ?
-		      LEFT JOIN attendance_notes n
-		        ON n.user_id = u.id AND n.class_id = ? AND n.session_date = ?
 		      WHERE u.role != 'instructor' AND u.shadowbanned = 0
 		      ORDER BY u.name ASC`,
-		args: [classId, sessionDate, classId, sessionDate, classId, classId, classId, classId, sessionDate, classId, sessionDate]
+		args: [classId, classId, classId, classId, sessionDate]
 	})).rows;
 
 	return rows.map((r) => {
@@ -68,10 +57,6 @@ export async function sessionRoster(classId, sessionDate) {
 			avatarValue: r.avatar_value ? String(r.avatar_value) : null,
 			status: r.status ? String(r.status) : null,
 			leftEarly: Number(r.left_early ?? 0) === 1,
-			workingOn: r.working_on ? String(r.working_on) : '',
-			note: r.note ? String(r.note) : '',
-			prevWorkingOn: r.prev_working_on ? String(r.prev_working_on) : '',
-			prevDate: r.prev_date ? String(r.prev_date) : null,
 			sessions: total,
 			// null rather than 100% for someone who has never been marked — a
 			// student with no history has no rate, and showing a perfect score
@@ -147,34 +132,6 @@ export async function setLeftEarly({ classId, sessionDate, userId, leftEarly }) 
 		args: [leftEarly ? 1 : 0, classId, sessionDate, userId]
 	});
 	return Number(r.rowsAffected ?? 0) > 0;
-}
-
-/**
- * Save the instructor's notes for one student in one session.
- *
- * Both fields empty deletes the row, so clearing a note leaves nothing behind
- * and "has a note" can be answered by whether a row exists.
- */
-export async function saveNote({ classId, sessionDate, userId, workingOn, note, updatedBy }) {
-	const db = getDb();
-	if (!db) return;
-	const w = String(workingOn ?? '').trim().slice(0, 500);
-	const n = String(note ?? '').trim().slice(0, 4000);
-	if (!w && !n) {
-		await db.execute({
-			sql: 'DELETE FROM attendance_notes WHERE class_id = ? AND session_date = ? AND user_id = ?',
-			args: [classId, sessionDate, userId]
-		});
-		return;
-	}
-	await db.execute({
-		sql: `INSERT INTO attendance_notes (class_id, session_date, user_id, working_on, note, updated_by)
-		      VALUES (?, ?, ?, ?, ?, ?)
-		      ON CONFLICT(class_id, session_date, user_id)
-		      DO UPDATE SET working_on = excluded.working_on, note = excluded.note,
-		                    updated_at = datetime('now'), updated_by = excluded.updated_by`,
-		args: [classId, sessionDate, userId, w, n, updatedBy ?? null]
-	});
 }
 
 /**
