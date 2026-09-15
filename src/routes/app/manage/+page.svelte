@@ -902,6 +902,58 @@
 								</form>
 							{/each}
 						</span>
+
+						<!-- Notes for this student, this session. <details> so the
+						     register stays a scannable list of names and the notes
+						     open only for the row you're writing about; its open state
+						     survives the save because rows are keyed by student. -->
+						<details class="at-notes">
+							<summary class="at-notes-sum">
+								<span class="msi msi-16">edit_note</span>
+								{#if r.workingOn}
+									<span class="at-notes-preview">{r.workingOn}</span>
+								{:else if r.note}
+									<span class="at-notes-preview at-notes-muted">Note</span>
+								{:else}
+									<span class="at-notes-muted">Add notes</span>
+								{/if}
+								{#if r.note}<span class="at-notes-dot" title="Has a note"></span>{/if}
+							</summary>
+							<!-- reset:false — SvelteKit's default enhance resets the form
+							     after a successful post, which would snap the textareas
+							     back to their pre-save text until the reload lands. -->
+							<form
+								method="POST"
+								action="?/saveAttendanceNote"
+								class="at-notes-form"
+								use:enhance={() => async ({ update }) => update({ reset: false })}
+							>
+								<input type="hidden" name="session_date" value={data.attendanceDate} />
+								<input type="hidden" name="user_id" value={r.id} />
+								<label class="at-field">
+									<span>Working on</span>
+									<input type="text" name="working_on" value={r.workingOn} maxlength="500"
+										placeholder={r.prevWorkingOn ? `Last time: ${r.prevWorkingOn}` : 'Project, piece, or problem'} />
+								</label>
+								{#if r.prevWorkingOn && !r.workingOn}
+									<!-- Last week's project as context, with a one-tap carry-over:
+									     most weeks it's the same thing, and retyping it is the
+									     reason notes stop getting written. -->
+									<button type="button" class="at-carry"
+										onclick={(e) => { const i = e.currentTarget.form.elements.namedItem('working_on'); i.value = r.prevWorkingOn; i.focus(); }}>
+										Same as {r.prevDate}: <em>{r.prevWorkingOn}</em>
+									</button>
+								{/if}
+								<label class="at-field">
+									<span>Notes</span>
+									<textarea name="note" rows="3" maxlength="4000" placeholder="Only you can see these">{r.note}</textarea>
+								</label>
+								<div class="at-notes-actions">
+									<button type="submit" class="ch-btn-quiet">Save</button>
+									<span class="at-notes-hint">Instructor-only. Clearing both fields deletes the note.</span>
+								</div>
+							</form>
+						</details>
 					</li>
 				{/each}
 			</ul>
@@ -2103,6 +2155,44 @@
 	.at-le:disabled { opacity: 0.3; cursor: not-allowed; }
 	.at-le:disabled:hover { border-color: var(--border); color: var(--muted-fg); }
 	.at-divider { width: 1px; align-self: stretch; margin: 3px 2px; background: var(--border); }
+
+	/* Notes drop onto their own full-width line under the row. */
+	.at-row { flex-wrap: wrap; }
+	.at-notes { flex-basis: 100%; margin-top: 0.1rem; }
+	.at-notes-sum {
+		display: flex; align-items: center; gap: 0.35rem;
+		list-style: none; cursor: pointer;
+		padding: 0.2rem 0.1rem;
+		font-size: 0.78rem; color: var(--muted-fg);
+		min-width: 0;
+	}
+	.at-notes-sum::-webkit-details-marker { display: none; }
+	.at-notes-sum:hover { color: var(--ink); }
+	.at-notes-preview {
+		color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+	}
+	.at-notes-muted { color: var(--muted-fg); }
+	.at-notes-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--md-sys-color-primary, var(--accent)); flex: none; }
+	.at-notes-form { display: flex; flex-direction: column; gap: 0.5rem; padding: 0.4rem 0 0.25rem; }
+	.at-field { display: flex; flex-direction: column; gap: 0.2rem; }
+	.at-field > span { font-size: 0.72rem; font-weight: 600; color: var(--muted-fg); }
+	.at-field input, .at-field textarea {
+		padding: 0.45rem 0.6rem;
+		border: 1.5px solid var(--border); border-radius: 8px;
+		background: var(--paper); color: var(--ink);
+		font-family: inherit; font-size: 0.85rem; resize: vertical;
+	}
+	.at-field input:focus, .at-field textarea:focus { outline: none; border-color: var(--ink); }
+	.at-carry {
+		align-self: flex-start;
+		padding: 0.25rem 0.55rem; border: 1px dashed var(--border); border-radius: 7px;
+		background: transparent; color: var(--muted-fg);
+		font-family: inherit; font-size: 0.75rem; cursor: pointer; text-align: left;
+	}
+	.at-carry:hover { border-color: var(--ink); color: var(--ink); }
+	.at-carry em { font-style: normal; color: var(--ink); }
+	.at-notes-actions { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+	.at-notes-hint { font-size: 0.72rem; color: var(--muted-fg); }
 
 	.at-sub { font-size: 0.95rem; margin: 1.75rem 0 0.6rem; }
 	.at-sessions { display: flex; flex-wrap: wrap; gap: 0.4rem; }

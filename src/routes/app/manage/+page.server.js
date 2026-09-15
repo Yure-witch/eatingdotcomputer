@@ -7,7 +7,7 @@ import { getAdminDb } from '$lib/server/firebase-admin.js';
 import { notifyInactiveStudents } from '$lib/server/notify-inactive.js';
 import { sendApprovalEmail } from '$lib/server/email.js';
 import { visitSummary } from '$lib/server/visits.js';
-import { sessionRoster, sessionDates, mark as markAttendance, setLeftEarly, STATUSES, isSessionDate } from '$lib/server/attendance.js';
+import { sessionRoster, sessionDates, mark as markAttendance, setLeftEarly, saveNote, STATUSES, isSessionDate } from '$lib/server/attendance.js';
 
 export async function load({ locals, parent, url }) {
 	const parentData = await parent();
@@ -713,6 +713,45 @@ export const actions = {
 		const ok = await setLeftEarly({ classId, sessionDate, userId, leftEarly });
 		if (!ok) return fail(400, { error: 'Mark them present or late first — you can only leave a session you were at.', action: 'attendance' });
 		return { attendanceMarked: userId };
+	},
+
+	saveAttendanceNote: async ({ request, locals, cookies }) => {
+		const session = await locals.auth();
+		if (!session || session.user.role !== 'instructor') return fail(403, { error: 'Forbidden', action: 'attendance' });
+
+		const data = await request.formData();
+		const sessionDate = String(data.get('session_date') ?? '');
+		const userId = String(data.get('user_id') ?? '');
+		if (!isSessionDate(sessionDate)) return fail(400, { error: 'Bad session date.', action: 'attendance' });
+		if (!userId) return fail(400, { error: 'Missing student.', action: 'attendance' });
+
+		const db = getDb();
+		if (!db) return fail(503, { error: 'Database unavailable', action: 'attendance' });
+		const selectedId = cookies.get('selected_class_id');
+		const cls = await db.execute({
+			sql: 'SELECT id FROM classes WHERE id = ? OR ? IS NULL LIMIT 1',
+			args: [selectedId ?? null, selectedId ?? null]
+		});
+		const classId = String(cls.rows[0]?.id ?? '');
+		if (!classId) return fail(400, { error: 'No class selected', action: 'attendance' });
+
+		// Same register rule as marking: an approved, visible student in this
+		// class. Notes can't be written about someone who isn't on the register.
+		const target = await db.execute({
+			sql: `SELECT 1 FROM users u
+			      JOIN class_memberships cm ON cm.user_id = u.id AND cm.status = 'approved' AND cm.class_id = ?
+			      WHERE u.id = ? AND u.role != 'instructor' AND u.shadowbanned = 0`,
+			args: [classId, userId]
+		});
+		if (!target.rows[0]) return fail(400, { error: 'That person is not on this register.', action: 'attendance' });
+
+		await saveNote({
+			classId, sessionDate, userId,
+			workingOn: data.get('working_on'),
+			note: data.get('note'),
+			updatedBy: session.user.id
+		});
+		return { noteSaved: userId };
 	},
 
 	markAllPresent: async ({ request, locals, cookies }) => {
