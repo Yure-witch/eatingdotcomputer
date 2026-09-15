@@ -1,0 +1,4597 @@
+{
+  "generatedAt": "2026-09-15T22:35:27.309Z",
+  "dataSha256": "d60fc06d1c4a85dfa66902489fa43edf9cf6aadb1ec46cfd219b5ab333008b43",
+  "note": "Sparse does not always mean wrong: some concepts have one precise emoji. Results need human review. No runtime analytics or external API calls.",
+  "summary": {
+    "probes": 144,
+    "improved": 124,
+    "beforeSparse": 125,
+    "remainingSparse": 6,
+    "needsReview": 0,
+    "names": 1711,
+    "nameFailures": 0,
+    "typoQueries": 1525,
+    "typoFailures": 0,
+    "embeddingsCurrent": true
+  },
+  "rows": [
+    {
+      "query": "murder",
+      "before": 0,
+      "after": 8,
+      "reliable": 8,
+      "results": [
+        {
+          "emoji": "🔪",
+          "name": "kitchen knife",
+          "match": "related"
+        },
+        {
+          "emoji": "🗡️",
+          "name": "dagger",
+          "match": "related"
+        },
+        {
+          "emoji": "🩸",
+          "name": "drop of blood",
+          "match": "related"
+        },
+        {
+          "emoji": "💀",
+          "name": "skull",
+          "match": "related"
+        },
+        {
+          "emoji": "☠️",
+          "name": "skull and crossbones",
+          "match": "related"
+        },
+        {
+          "emoji": "⚰️",
+          "name": "coffin",
+          "match": "related"
+        },
+        {
+          "emoji": "⚔️",
+          "name": "crossed swords",
+          "match": "related"
+        },
+        {
+          "emoji": "🪦",
+          "name": "headstone",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "goth",
+      "before": 0,
+      "after": 8,
+      "reliable": 8,
+      "results": [
+        {
+          "emoji": "🖤",
+          "name": "black heart",
+          "match": "related"
+        },
+        {
+          "emoji": "🥀",
+          "name": "wilted flower",
+          "match": "related"
+        },
+        {
+          "emoji": "🦇",
+          "name": "bat",
+          "match": "related"
+        },
+        {
+          "emoji": "🗡️",
+          "name": "dagger",
+          "match": "related"
+        },
+        {
+          "emoji": "🩸",
+          "name": "drop of blood",
+          "match": "related"
+        },
+        {
+          "emoji": "💀",
+          "name": "skull",
+          "match": "related"
+        },
+        {
+          "emoji": "⚰️",
+          "name": "coffin",
+          "match": "related"
+        },
+        {
+          "emoji": "🕸️",
+          "name": "spider web",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "horror",
+      "before": 1,
+      "after": 7,
+      "reliable": 7,
+      "results": [
+        {
+          "emoji": "🧟",
+          "name": "zombie",
+          "match": "literal"
+        },
+        {
+          "emoji": "👻",
+          "name": "ghost",
+          "match": "related"
+        },
+        {
+          "emoji": "💀",
+          "name": "skull",
+          "match": "related"
+        },
+        {
+          "emoji": "🔪",
+          "name": "kitchen knife",
+          "match": "related"
+        },
+        {
+          "emoji": "🩸",
+          "name": "drop of blood",
+          "match": "related"
+        },
+        {
+          "emoji": "🦇",
+          "name": "bat",
+          "match": "related"
+        },
+        {
+          "emoji": "🕸️",
+          "name": "spider web",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "knives",
+      "before": 0,
+      "after": 5,
+      "reliable": 5,
+      "results": [
+        {
+          "emoji": "🔪",
+          "name": "kitchen knife",
+          "match": "related"
+        },
+        {
+          "emoji": "🗡️",
+          "name": "dagger",
+          "match": "related"
+        },
+        {
+          "emoji": "⚔️",
+          "name": "crossed swords",
+          "match": "related"
+        },
+        {
+          "emoji": "🪓",
+          "name": "axe",
+          "match": "related"
+        },
+        {
+          "emoji": "🛡️",
+          "name": "shield",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "gore",
+      "before": 0,
+      "after": 5,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🩸",
+          "name": "drop of blood",
+          "match": "related"
+        },
+        {
+          "emoji": "🩹",
+          "name": "adhesive bandage",
+          "match": "related"
+        },
+        {
+          "emoji": "💉",
+          "name": "syringe",
+          "match": "related"
+        },
+        {
+          "emoji": "🔪",
+          "name": "kitchen knife",
+          "match": "related"
+        },
+        {
+          "emoji": "👹",
+          "name": "ogre",
+          "match": "fuzzy"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "mourning",
+      "before": 0,
+      "after": 7,
+      "reliable": 6,
+      "results": [
+        {
+          "emoji": "🕯️",
+          "name": "candle",
+          "match": "related"
+        },
+        {
+          "emoji": "🖤",
+          "name": "black heart",
+          "match": "related"
+        },
+        {
+          "emoji": "🥀",
+          "name": "wilted flower",
+          "match": "related"
+        },
+        {
+          "emoji": "⚰️",
+          "name": "coffin",
+          "match": "related"
+        },
+        {
+          "emoji": "🪦",
+          "name": "headstone",
+          "match": "related"
+        },
+        {
+          "emoji": "😢",
+          "name": "crying face",
+          "match": "related"
+        },
+        {
+          "emoji": "🫗",
+          "name": "pouring liquid",
+          "match": "fuzzy"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "vampire",
+      "before": 3,
+      "after": 3,
+      "reliable": 3,
+      "results": [
+        {
+          "emoji": "🧛",
+          "name": "vampire",
+          "match": "literal"
+        },
+        {
+          "emoji": "🦇",
+          "name": "bat",
+          "match": "literal"
+        },
+        {
+          "emoji": "⚰️",
+          "name": "coffin",
+          "match": "literal"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "witchcraft",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🪄",
+          "name": "magic wand",
+          "match": "related"
+        },
+        {
+          "emoji": "🧙",
+          "name": "mage",
+          "match": "related"
+        },
+        {
+          "emoji": "🔮",
+          "name": "crystal ball",
+          "match": "related"
+        },
+        {
+          "emoji": "✨",
+          "name": "sparkles",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "true crime",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🕵️",
+          "name": "detective",
+          "match": "related"
+        },
+        {
+          "emoji": "🔎",
+          "name": "magnifying glass tilted right",
+          "match": "related"
+        },
+        {
+          "emoji": "👣",
+          "name": "footprints",
+          "match": "related"
+        },
+        {
+          "emoji": "🧩",
+          "name": "jigsaw",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "burnout",
+      "before": 0,
+      "after": 5,
+      "reliable": 5,
+      "results": [
+        {
+          "emoji": "🫠",
+          "name": "melting face",
+          "match": "related"
+        },
+        {
+          "emoji": "😵‍💫",
+          "name": "face with spiral eyes",
+          "match": "related"
+        },
+        {
+          "emoji": "😩",
+          "name": "weary face",
+          "match": "related"
+        },
+        {
+          "emoji": "🪫",
+          "name": "low battery",
+          "match": "related"
+        },
+        {
+          "emoji": "🥱",
+          "name": "yawning face",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "overwhelmed",
+      "before": 0,
+      "after": 5,
+      "reliable": 5,
+      "results": [
+        {
+          "emoji": "🫠",
+          "name": "melting face",
+          "match": "related"
+        },
+        {
+          "emoji": "😵‍💫",
+          "name": "face with spiral eyes",
+          "match": "related"
+        },
+        {
+          "emoji": "😩",
+          "name": "weary face",
+          "match": "related"
+        },
+        {
+          "emoji": "🪫",
+          "name": "low battery",
+          "match": "related"
+        },
+        {
+          "emoji": "🥱",
+          "name": "yawning face",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "homesick",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🏠",
+          "name": "house",
+          "match": "related"
+        },
+        {
+          "emoji": "🥺",
+          "name": "pleading face",
+          "match": "related"
+        },
+        {
+          "emoji": "😢",
+          "name": "crying face",
+          "match": "related"
+        },
+        {
+          "emoji": "💔",
+          "name": "broken heart",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "procrastination",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "⏳",
+          "name": "hourglass not done",
+          "match": "related"
+        },
+        {
+          "emoji": "🫠",
+          "name": "melting face",
+          "match": "related"
+        },
+        {
+          "emoji": "📱",
+          "name": "mobile phone",
+          "match": "related"
+        },
+        {
+          "emoji": "🙈",
+          "name": "see-no-evil monkey",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "deadline",
+      "before": 0,
+      "after": 5,
+      "reliable": 5,
+      "results": [
+        {
+          "emoji": "⏰",
+          "name": "alarm clock",
+          "match": "related"
+        },
+        {
+          "emoji": "⏳",
+          "name": "hourglass not done",
+          "match": "related"
+        },
+        {
+          "emoji": "😰",
+          "name": "anxious face with sweat",
+          "match": "related"
+        },
+        {
+          "emoji": "📝",
+          "name": "memo",
+          "match": "related"
+        },
+        {
+          "emoji": "🏃",
+          "name": "person running",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "midterms",
+      "before": 0,
+      "after": 5,
+      "reliable": 5,
+      "results": [
+        {
+          "emoji": "📚",
+          "name": "books",
+          "match": "related"
+        },
+        {
+          "emoji": "📝",
+          "name": "memo",
+          "match": "related"
+        },
+        {
+          "emoji": "🧠",
+          "name": "brain",
+          "match": "related"
+        },
+        {
+          "emoji": "☕",
+          "name": "hot beverage",
+          "match": "related"
+        },
+        {
+          "emoji": "😰",
+          "name": "anxious face with sweat",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "exam week",
+      "before": 0,
+      "after": 5,
+      "reliable": 5,
+      "results": [
+        {
+          "emoji": "📚",
+          "name": "books",
+          "match": "related"
+        },
+        {
+          "emoji": "📝",
+          "name": "memo",
+          "match": "related"
+        },
+        {
+          "emoji": "🧠",
+          "name": "brain",
+          "match": "related"
+        },
+        {
+          "emoji": "☕",
+          "name": "hot beverage",
+          "match": "related"
+        },
+        {
+          "emoji": "😰",
+          "name": "anxious face with sweat",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "homework",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "📝",
+          "name": "memo",
+          "match": "related"
+        },
+        {
+          "emoji": "📚",
+          "name": "books",
+          "match": "related"
+        },
+        {
+          "emoji": "💻",
+          "name": "laptop computer",
+          "match": "related"
+        },
+        {
+          "emoji": "✏️",
+          "name": "pencil",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "graduation",
+      "before": 1,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🎓",
+          "name": "graduation cap",
+          "match": "literal"
+        },
+        {
+          "emoji": "📜",
+          "name": "scroll",
+          "match": "related"
+        },
+        {
+          "emoji": "🎉",
+          "name": "party popper",
+          "match": "related"
+        },
+        {
+          "emoji": "🥳",
+          "name": "partying face",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "imposter syndrome",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🥺",
+          "name": "pleading face",
+          "match": "related"
+        },
+        {
+          "emoji": "🫣",
+          "name": "face with peeking eye",
+          "match": "related"
+        },
+        {
+          "emoji": "😰",
+          "name": "anxious face with sweat",
+          "match": "related"
+        },
+        {
+          "emoji": "🎭",
+          "name": "performing arts",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "overthinking",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "😰",
+          "name": "anxious face with sweat",
+          "match": "related"
+        },
+        {
+          "emoji": "😵‍💫",
+          "name": "face with spiral eyes",
+          "match": "related"
+        },
+        {
+          "emoji": "🫨",
+          "name": "shaking face",
+          "match": "related"
+        },
+        {
+          "emoji": "🧠",
+          "name": "brain",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "panic attack",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "😰",
+          "name": "anxious face with sweat",
+          "match": "related"
+        },
+        {
+          "emoji": "😵‍💫",
+          "name": "face with spiral eyes",
+          "match": "related"
+        },
+        {
+          "emoji": "🫨",
+          "name": "shaking face",
+          "match": "related"
+        },
+        {
+          "emoji": "🧠",
+          "name": "brain",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "relief",
+      "before": 2,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "😌",
+          "name": "relieved face",
+          "match": "literal"
+        },
+        {
+          "emoji": "😮‍💨",
+          "name": "face exhaling",
+          "match": "literal"
+        },
+        {
+          "emoji": "🙌",
+          "name": "raising hands",
+          "match": "related"
+        },
+        {
+          "emoji": "✅",
+          "name": "white heavy check mark",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "cringe",
+      "before": 1,
+      "after": 5,
+      "reliable": 5,
+      "results": [
+        {
+          "emoji": "😖",
+          "name": "confounded face",
+          "match": "literal"
+        },
+        {
+          "emoji": "🫣",
+          "name": "face with peeking eye",
+          "match": "related"
+        },
+        {
+          "emoji": "😬",
+          "name": "grimacing face",
+          "match": "related"
+        },
+        {
+          "emoji": "🫠",
+          "name": "melting face",
+          "match": "related"
+        },
+        {
+          "emoji": "😶",
+          "name": "face without mouth",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "confused",
+      "before": 4,
+      "after": 6,
+      "reliable": 6,
+      "results": [
+        {
+          "emoji": "😕",
+          "name": "confused face",
+          "match": "literal"
+        },
+        {
+          "emoji": "🫤",
+          "name": "face with diagonal mouth",
+          "match": "literal"
+        },
+        {
+          "emoji": "😖",
+          "name": "confounded face",
+          "match": "literal"
+        },
+        {
+          "emoji": "😵‍💫",
+          "name": "face with spiral eyes",
+          "match": "literal"
+        },
+        {
+          "emoji": "🤔",
+          "name": "thinking face",
+          "match": "related"
+        },
+        {
+          "emoji": "❓",
+          "name": "question mark",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "sarcastic",
+      "before": 3,
+      "after": 5,
+      "reliable": 5,
+      "results": [
+        {
+          "emoji": "🫠",
+          "name": "melting face",
+          "match": "literal"
+        },
+        {
+          "emoji": "🤌",
+          "name": "pinched fingers",
+          "match": "literal"
+        },
+        {
+          "emoji": "💁",
+          "name": "person tipping hand",
+          "match": "literal"
+        },
+        {
+          "emoji": "🙄",
+          "name": "face with rolling eyes",
+          "match": "related"
+        },
+        {
+          "emoji": "😏",
+          "name": "smirking face",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "mind blown",
+      "before": 1,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🤯",
+          "name": "exploding head",
+          "match": "literal"
+        },
+        {
+          "emoji": "😲",
+          "name": "astonished face",
+          "match": "related"
+        },
+        {
+          "emoji": "🫢",
+          "name": "face with open eyes and hand over mouth",
+          "match": "related"
+        },
+        {
+          "emoji": "🫨",
+          "name": "shaking face",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "encouragement",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🫂",
+          "name": "people hugging",
+          "match": "related"
+        },
+        {
+          "emoji": "💪",
+          "name": "flexed biceps",
+          "match": "related"
+        },
+        {
+          "emoji": "🙌",
+          "name": "raising hands",
+          "match": "related"
+        },
+        {
+          "emoji": "❤️",
+          "name": "red heart",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "apology",
+      "before": 1,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🙇",
+          "name": "person bowing",
+          "match": "literal"
+        },
+        {
+          "emoji": "🙏",
+          "name": "folded hands",
+          "match": "related"
+        },
+        {
+          "emoji": "🥺",
+          "name": "pleading face",
+          "match": "related"
+        },
+        {
+          "emoji": "😔",
+          "name": "pensive face",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "gratitude",
+      "before": 1,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🥹",
+          "name": "face holding back tears",
+          "match": "literal"
+        },
+        {
+          "emoji": "🙏",
+          "name": "folded hands",
+          "match": "related"
+        },
+        {
+          "emoji": "❤️",
+          "name": "red heart",
+          "match": "related"
+        },
+        {
+          "emoji": "🫶",
+          "name": "heart hands",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "breakup",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "💔",
+          "name": "broken heart",
+          "match": "related"
+        },
+        {
+          "emoji": "🥀",
+          "name": "wilted flower",
+          "match": "related"
+        },
+        {
+          "emoji": "😢",
+          "name": "crying face",
+          "match": "related"
+        },
+        {
+          "emoji": "😭",
+          "name": "loudly crying face",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "flirting",
+      "before": 1,
+      "after": 7,
+      "reliable": 6,
+      "results": [
+        {
+          "emoji": "🫦",
+          "name": "biting lip",
+          "match": "literal"
+        },
+        {
+          "emoji": "😉",
+          "name": "winking face",
+          "match": "related"
+        },
+        {
+          "emoji": "😘",
+          "name": "face blowing a kiss",
+          "match": "related"
+        },
+        {
+          "emoji": "🥰",
+          "name": "smiling face with 3 hearts",
+          "match": "related"
+        },
+        {
+          "emoji": "🌹",
+          "name": "rose",
+          "match": "related"
+        },
+        {
+          "emoji": "❤️‍🔥",
+          "name": "heart on fire",
+          "match": "related"
+        },
+        {
+          "emoji": "🏋️",
+          "name": "person lifting weights",
+          "match": "fuzzy"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "bestie",
+      "before": 7,
+      "after": 10,
+      "reliable": 10,
+      "results": [
+        {
+          "emoji": "👯",
+          "name": "people with bunny ears",
+          "match": "literal"
+        },
+        {
+          "emoji": "👯‍♂️",
+          "name": "men with bunny ears",
+          "match": "literal"
+        },
+        {
+          "emoji": "👯‍♀️",
+          "name": "women with bunny ears",
+          "match": "literal"
+        },
+        {
+          "emoji": "🧑‍🤝‍🧑",
+          "name": "people holding hands",
+          "match": "literal"
+        },
+        {
+          "emoji": "👭",
+          "name": "women holding hands",
+          "match": "literal"
+        },
+        {
+          "emoji": "👬",
+          "name": "men holding hands",
+          "match": "literal"
+        },
+        {
+          "emoji": "👫",
+          "name": "woman and man holding hands",
+          "match": "literal"
+        },
+        {
+          "emoji": "🫂",
+          "name": "people hugging",
+          "match": "related"
+        },
+        {
+          "emoji": "🫶",
+          "name": "heart hands",
+          "match": "related"
+        },
+        {
+          "emoji": "🤝",
+          "name": "handshake",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "lonely",
+      "before": 1,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "💔",
+          "name": "broken heart",
+          "match": "literal"
+        },
+        {
+          "emoji": "🥺",
+          "name": "pleading face",
+          "match": "related"
+        },
+        {
+          "emoji": "😔",
+          "name": "pensive face",
+          "match": "related"
+        },
+        {
+          "emoji": "🫂",
+          "name": "people hugging",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "celebration",
+      "before": 24,
+      "after": 25,
+      "reliable": 25,
+      "results": [
+        {
+          "emoji": "🥳",
+          "name": "partying face",
+          "match": "literal"
+        },
+        {
+          "emoji": "🎉",
+          "name": "party popper",
+          "match": "literal"
+        },
+        {
+          "emoji": "🎊",
+          "name": "confetti ball",
+          "match": "literal"
+        },
+        {
+          "emoji": "🙌",
+          "name": "raising hands",
+          "match": "literal"
+        },
+        {
+          "emoji": "🧑‍🎄",
+          "name": "mx claus",
+          "match": "literal"
+        },
+        {
+          "emoji": "🎂",
+          "name": "birthday cake",
+          "match": "literal"
+        },
+        {
+          "emoji": "🎈",
+          "name": "balloon",
+          "match": "literal"
+        },
+        {
+          "emoji": "🎀",
+          "name": "ribbon",
+          "match": "literal"
+        },
+        {
+          "emoji": "🎁",
+          "name": "wrapped gift",
+          "match": "literal"
+        },
+        {
+          "emoji": "🎇",
+          "name": "sparkler",
+          "match": "literal"
+        },
+        {
+          "emoji": "🎆",
+          "name": "fireworks",
+          "match": "literal"
+        },
+        {
+          "emoji": "🪅",
+          "name": "piñata",
+          "match": "literal"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "cozy",
+      "before": 0,
+      "after": 5,
+      "reliable": 5,
+      "results": [
+        {
+          "emoji": "🧸",
+          "name": "teddy bear",
+          "match": "related"
+        },
+        {
+          "emoji": "🛋️",
+          "name": "couch and lamp",
+          "match": "related"
+        },
+        {
+          "emoji": "☕",
+          "name": "hot beverage",
+          "match": "related"
+        },
+        {
+          "emoji": "🕯️",
+          "name": "candle",
+          "match": "related"
+        },
+        {
+          "emoji": "🫂",
+          "name": "people hugging",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "nostalgia",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🥹",
+          "name": "face holding back tears",
+          "match": "related"
+        },
+        {
+          "emoji": "📸",
+          "name": "camera with flash",
+          "match": "related"
+        },
+        {
+          "emoji": "🧸",
+          "name": "teddy bear",
+          "match": "related"
+        },
+        {
+          "emoji": "📼",
+          "name": "videocassette",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "hangover",
+      "before": 0,
+      "after": 5,
+      "reliable": 5,
+      "results": [
+        {
+          "emoji": "🤕",
+          "name": "face with head-bandage",
+          "match": "related"
+        },
+        {
+          "emoji": "🤢",
+          "name": "nauseated face",
+          "match": "related"
+        },
+        {
+          "emoji": "🥴",
+          "name": "woozy face",
+          "match": "related"
+        },
+        {
+          "emoji": "💧",
+          "name": "droplet",
+          "match": "related"
+        },
+        {
+          "emoji": "🛌",
+          "name": "person in bed",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "flu",
+      "before": 13,
+      "after": 17,
+      "reliable": 17,
+      "results": [
+        {
+          "emoji": "😳",
+          "name": "flushed face",
+          "match": "literal"
+        },
+        {
+          "emoji": "🪈",
+          "name": "flute",
+          "match": "literal"
+        },
+        {
+          "emoji": "😖",
+          "name": "confounded face",
+          "match": "literal"
+        },
+        {
+          "emoji": "🤧",
+          "name": "sneezing face",
+          "match": "literal"
+        },
+        {
+          "emoji": "💗",
+          "name": "growing heart",
+          "match": "literal"
+        },
+        {
+          "emoji": "🍃",
+          "name": "leaf fluttering in wind",
+          "match": "literal"
+        },
+        {
+          "emoji": "🌬️",
+          "name": "wind face",
+          "match": "literal"
+        },
+        {
+          "emoji": "🐩",
+          "name": "poodle",
+          "match": "literal"
+        },
+        {
+          "emoji": "🐑",
+          "name": "ewe",
+          "match": "literal"
+        },
+        {
+          "emoji": "🪀",
+          "name": "yo-yo",
+          "match": "literal"
+        },
+        {
+          "emoji": "🪭",
+          "name": "folding hand fan",
+          "match": "literal"
+        },
+        {
+          "emoji": "💉",
+          "name": "syringe",
+          "match": "literal"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "allergies",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🤧",
+          "name": "sneezing face",
+          "match": "related"
+        },
+        {
+          "emoji": "🌼",
+          "name": "blossom",
+          "match": "related"
+        },
+        {
+          "emoji": "😷",
+          "name": "face with medical mask",
+          "match": "related"
+        },
+        {
+          "emoji": "💊",
+          "name": "pill",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "recovery",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "❤️‍🩹",
+          "name": "mending heart",
+          "match": "related"
+        },
+        {
+          "emoji": "🩹",
+          "name": "adhesive bandage",
+          "match": "related"
+        },
+        {
+          "emoji": "🌷",
+          "name": "tulip",
+          "match": "related"
+        },
+        {
+          "emoji": "🫂",
+          "name": "people hugging",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "dehydrated",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "💧",
+          "name": "droplet",
+          "match": "related"
+        },
+        {
+          "emoji": "🚰",
+          "name": "potable water",
+          "match": "related"
+        },
+        {
+          "emoji": "🥤",
+          "name": "cup with straw",
+          "match": "related"
+        },
+        {
+          "emoji": "🥵",
+          "name": "hot face",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "period cramps",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🩸",
+          "name": "drop of blood",
+          "match": "related"
+        },
+        {
+          "emoji": "😣",
+          "name": "persevering face",
+          "match": "related"
+        },
+        {
+          "emoji": "🫠",
+          "name": "melting face",
+          "match": "related"
+        },
+        {
+          "emoji": "💊",
+          "name": "pill",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "meal prep",
+      "before": 0,
+      "after": 5,
+      "reliable": 5,
+      "results": [
+        {
+          "emoji": "🔪",
+          "name": "kitchen knife",
+          "match": "related"
+        },
+        {
+          "emoji": "🧑‍🍳",
+          "name": "cook",
+          "match": "related"
+        },
+        {
+          "emoji": "🍳",
+          "name": "cooking",
+          "match": "related"
+        },
+        {
+          "emoji": "🥘",
+          "name": "shallow pan of food",
+          "match": "related"
+        },
+        {
+          "emoji": "🥕",
+          "name": "carrot",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "hangry",
+      "before": 0,
+      "after": 6,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🤤",
+          "name": "drooling face",
+          "match": "related"
+        },
+        {
+          "emoji": "🍽️",
+          "name": "fork and knife with plate",
+          "match": "related"
+        },
+        {
+          "emoji": "🍕",
+          "name": "pizza",
+          "match": "related"
+        },
+        {
+          "emoji": "🍔",
+          "name": "hamburger",
+          "match": "related"
+        },
+        {
+          "emoji": "😠",
+          "name": "angry face",
+          "match": "fuzzy"
+        },
+        {
+          "emoji": "👿",
+          "name": "angry face with horns",
+          "match": "fuzzy"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "caffeine",
+      "before": 1,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "☕",
+          "name": "hot beverage",
+          "match": "literal"
+        },
+        {
+          "emoji": "🥱",
+          "name": "yawning face",
+          "match": "related"
+        },
+        {
+          "emoji": "⚡",
+          "name": "high voltage",
+          "match": "related"
+        },
+        {
+          "emoji": "🫨",
+          "name": "shaking face",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "job hunting",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "💼",
+          "name": "briefcase",
+          "match": "related"
+        },
+        {
+          "emoji": "📄",
+          "name": "page facing up",
+          "match": "related"
+        },
+        {
+          "emoji": "🤝",
+          "name": "handshake",
+          "match": "related"
+        },
+        {
+          "emoji": "🧑‍💼",
+          "name": "office worker",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "internship",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "💼",
+          "name": "briefcase",
+          "match": "related"
+        },
+        {
+          "emoji": "📄",
+          "name": "page facing up",
+          "match": "related"
+        },
+        {
+          "emoji": "🤝",
+          "name": "handshake",
+          "match": "related"
+        },
+        {
+          "emoji": "🧑‍💼",
+          "name": "office worker",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "laid off",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "💼",
+          "name": "briefcase",
+          "match": "related"
+        },
+        {
+          "emoji": "😔",
+          "name": "pensive face",
+          "match": "related"
+        },
+        {
+          "emoji": "📉",
+          "name": "chart decreasing",
+          "match": "related"
+        },
+        {
+          "emoji": "💸",
+          "name": "money with wings",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "payday",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "💰",
+          "name": "money bag",
+          "match": "related"
+        },
+        {
+          "emoji": "💵",
+          "name": "dollar banknote",
+          "match": "related"
+        },
+        {
+          "emoji": "🤑",
+          "name": "money-mouth face",
+          "match": "related"
+        },
+        {
+          "emoji": "🎉",
+          "name": "party popper",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "broke",
+      "before": 2,
+      "after": 6,
+      "reliable": 6,
+      "results": [
+        {
+          "emoji": "💔",
+          "name": "broken heart",
+          "match": "literal"
+        },
+        {
+          "emoji": "⛓️‍💥",
+          "name": "15.1 broken chain",
+          "match": "literal"
+        },
+        {
+          "emoji": "💸",
+          "name": "money with wings",
+          "match": "related"
+        },
+        {
+          "emoji": "🪙",
+          "name": "coin",
+          "match": "related"
+        },
+        {
+          "emoji": "😰",
+          "name": "anxious face with sweat",
+          "match": "related"
+        },
+        {
+          "emoji": "📉",
+          "name": "chart decreasing",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "student loans",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "💸",
+          "name": "money with wings",
+          "match": "related"
+        },
+        {
+          "emoji": "🪙",
+          "name": "coin",
+          "match": "related"
+        },
+        {
+          "emoji": "😰",
+          "name": "anxious face with sweat",
+          "match": "related"
+        },
+        {
+          "emoji": "📉",
+          "name": "chart decreasing",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "expensive",
+      "before": 1,
+      "after": 6,
+      "reliable": 5,
+      "results": [
+        {
+          "emoji": "🫰",
+          "name": "hand with index finger and thumb crossed",
+          "match": "literal"
+        },
+        {
+          "emoji": "💸",
+          "name": "money with wings",
+          "match": "related"
+        },
+        {
+          "emoji": "💰",
+          "name": "money bag",
+          "match": "related"
+        },
+        {
+          "emoji": "📈",
+          "name": "chart increasing",
+          "match": "related"
+        },
+        {
+          "emoji": "😱",
+          "name": "face screaming in fear",
+          "match": "related"
+        },
+        {
+          "emoji": "😔",
+          "name": "pensive face",
+          "match": "fuzzy"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "discount",
+      "before": 1,
+      "after": 5,
+      "reliable": 5,
+      "results": [
+        {
+          "emoji": "🈹",
+          "name": "Japanese “discount” button",
+          "match": "literal"
+        },
+        {
+          "emoji": "🏷️",
+          "name": "label",
+          "match": "related"
+        },
+        {
+          "emoji": "🛍️",
+          "name": "shopping bags",
+          "match": "related"
+        },
+        {
+          "emoji": "💵",
+          "name": "dollar banknote",
+          "match": "related"
+        },
+        {
+          "emoji": "🤑",
+          "name": "money-mouth face",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "scam",
+      "before": 0,
+      "after": 5,
+      "reliable": 5,
+      "results": [
+        {
+          "emoji": "⚠️",
+          "name": "warning",
+          "match": "related"
+        },
+        {
+          "emoji": "🎣",
+          "name": "fishing pole",
+          "match": "related"
+        },
+        {
+          "emoji": "💸",
+          "name": "money with wings",
+          "match": "related"
+        },
+        {
+          "emoji": "🚨",
+          "name": "police car light",
+          "match": "related"
+        },
+        {
+          "emoji": "🕵️",
+          "name": "detective",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "privacy",
+      "before": 1,
+      "after": 5,
+      "reliable": 5,
+      "results": [
+        {
+          "emoji": "🔏",
+          "name": "locked with pen",
+          "match": "literal"
+        },
+        {
+          "emoji": "🔒",
+          "name": "locked",
+          "match": "related"
+        },
+        {
+          "emoji": "🤫",
+          "name": "shushing face",
+          "match": "related"
+        },
+        {
+          "emoji": "🛡️",
+          "name": "shield",
+          "match": "related"
+        },
+        {
+          "emoji": "🔐",
+          "name": "locked with key",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "hacked",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "💻",
+          "name": "laptop computer",
+          "match": "related"
+        },
+        {
+          "emoji": "🔓",
+          "name": "unlocked",
+          "match": "related"
+        },
+        {
+          "emoji": "⚠️",
+          "name": "warning",
+          "match": "related"
+        },
+        {
+          "emoji": "🦠",
+          "name": "microbe",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "coding",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "💻",
+          "name": "laptop computer",
+          "match": "related"
+        },
+        {
+          "emoji": "🧑‍💻",
+          "name": "technologist",
+          "match": "related"
+        },
+        {
+          "emoji": "⌨️",
+          "name": "keyboard",
+          "match": "related"
+        },
+        {
+          "emoji": "⚙️",
+          "name": "gear",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "debugging",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🐛",
+          "name": "bug",
+          "match": "related"
+        },
+        {
+          "emoji": "🪲",
+          "name": "beetle",
+          "match": "related"
+        },
+        {
+          "emoji": "🔧",
+          "name": "wrench",
+          "match": "related"
+        },
+        {
+          "emoji": "💻",
+          "name": "laptop computer",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "deploy",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🚀",
+          "name": "rocket",
+          "match": "related"
+        },
+        {
+          "emoji": "📦",
+          "name": "package",
+          "match": "related"
+        },
+        {
+          "emoji": "✅",
+          "name": "white heavy check mark",
+          "match": "related"
+        },
+        {
+          "emoji": "🎉",
+          "name": "party popper",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "bad wifi",
+      "before": 0,
+      "after": 5,
+      "reliable": 5,
+      "results": [
+        {
+          "emoji": "📶",
+          "name": "antenna bars",
+          "match": "related"
+        },
+        {
+          "emoji": "📡",
+          "name": "satellite antenna",
+          "match": "related"
+        },
+        {
+          "emoji": "🔌",
+          "name": "electric plug",
+          "match": "related"
+        },
+        {
+          "emoji": "🐌",
+          "name": "snail",
+          "match": "related"
+        },
+        {
+          "emoji": "🫠",
+          "name": "melting face",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "low battery",
+      "before": 1,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🪫",
+          "name": "low battery",
+          "match": "literal"
+        },
+        {
+          "emoji": "🔌",
+          "name": "electric plug",
+          "match": "related"
+        },
+        {
+          "emoji": "🔋",
+          "name": "battery",
+          "match": "related"
+        },
+        {
+          "emoji": "⚡",
+          "name": "high voltage",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "flight delayed",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "✈️",
+          "name": "airplane",
+          "match": "related"
+        },
+        {
+          "emoji": "⏳",
+          "name": "hourglass not done",
+          "match": "related"
+        },
+        {
+          "emoji": "🧳",
+          "name": "luggage",
+          "match": "related"
+        },
+        {
+          "emoji": "😩",
+          "name": "weary face",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "commuting",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🚗",
+          "name": "automobile",
+          "match": "related"
+        },
+        {
+          "emoji": "🚌",
+          "name": "bus",
+          "match": "related"
+        },
+        {
+          "emoji": "🚦",
+          "name": "vertical traffic light",
+          "match": "related"
+        },
+        {
+          "emoji": "⏰",
+          "name": "alarm clock",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "vacation",
+      "before": 0,
+      "after": 5,
+      "reliable": 5,
+      "results": [
+        {
+          "emoji": "🏖️",
+          "name": "beach with umbrella",
+          "match": "related"
+        },
+        {
+          "emoji": "✈️",
+          "name": "airplane",
+          "match": "related"
+        },
+        {
+          "emoji": "🌴",
+          "name": "palm tree",
+          "match": "related"
+        },
+        {
+          "emoji": "🧳",
+          "name": "luggage",
+          "match": "related"
+        },
+        {
+          "emoji": "😎",
+          "name": "smiling face with sunglasses",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "rainy day",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🌧️",
+          "name": "cloud with rain",
+          "match": "related"
+        },
+        {
+          "emoji": "☔",
+          "name": "umbrella with rain drops",
+          "match": "related"
+        },
+        {
+          "emoji": "💧",
+          "name": "droplet",
+          "match": "related"
+        },
+        {
+          "emoji": "🌂",
+          "name": "closed umbrella",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "heatwave",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🥵",
+          "name": "hot face",
+          "match": "related"
+        },
+        {
+          "emoji": "☀️",
+          "name": "sun",
+          "match": "related"
+        },
+        {
+          "emoji": "🌡️",
+          "name": "thermometer",
+          "match": "related"
+        },
+        {
+          "emoji": "🧊",
+          "name": "ice cube",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "snow day",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🥶",
+          "name": "cold face",
+          "match": "related"
+        },
+        {
+          "emoji": "❄️",
+          "name": "snowflake",
+          "match": "related"
+        },
+        {
+          "emoji": "☃️",
+          "name": "snowman",
+          "match": "related"
+        },
+        {
+          "emoji": "🧣",
+          "name": "scarf",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "moving house",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "📦",
+          "name": "package",
+          "match": "related"
+        },
+        {
+          "emoji": "🏠",
+          "name": "house",
+          "match": "related"
+        },
+        {
+          "emoji": "🚚",
+          "name": "delivery truck",
+          "match": "related"
+        },
+        {
+          "emoji": "🔑",
+          "name": "key",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "chores",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🧹",
+          "name": "broom",
+          "match": "related"
+        },
+        {
+          "emoji": "🧽",
+          "name": "sponge",
+          "match": "related"
+        },
+        {
+          "emoji": "🪣",
+          "name": "bucket",
+          "match": "related"
+        },
+        {
+          "emoji": "🧼",
+          "name": "soap",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "workout",
+      "before": 2,
+      "after": 5,
+      "reliable": 5,
+      "results": [
+        {
+          "emoji": "💦",
+          "name": "sweat droplets",
+          "match": "literal"
+        },
+        {
+          "emoji": "🏋️",
+          "name": "person lifting weights",
+          "match": "literal"
+        },
+        {
+          "emoji": "💪",
+          "name": "flexed biceps",
+          "match": "related"
+        },
+        {
+          "emoji": "🏃",
+          "name": "person running",
+          "match": "related"
+        },
+        {
+          "emoji": "🏅",
+          "name": "sports medal",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "climate change",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🌍",
+          "name": "globe showing Europe-Africa",
+          "match": "related"
+        },
+        {
+          "emoji": "♻️",
+          "name": "recycling symbol",
+          "match": "related"
+        },
+        {
+          "emoji": "🌱",
+          "name": "seedling",
+          "match": "related"
+        },
+        {
+          "emoji": "💚",
+          "name": "green heart",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "stargazing",
+      "before": 0,
+      "after": 5,
+      "reliable": 5,
+      "results": [
+        {
+          "emoji": "🔭",
+          "name": "telescope",
+          "match": "related"
+        },
+        {
+          "emoji": "🌌",
+          "name": "milky way",
+          "match": "related"
+        },
+        {
+          "emoji": "🪐",
+          "name": "ringed planet",
+          "match": "related"
+        },
+        {
+          "emoji": "✨",
+          "name": "sparkles",
+          "match": "related"
+        },
+        {
+          "emoji": "☄️",
+          "name": "comet",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "pirate",
+      "before": 2,
+      "after": 5,
+      "reliable": 5,
+      "results": [
+        {
+          "emoji": "🏴‍☠️",
+          "name": "pirate flag",
+          "match": "literal"
+        },
+        {
+          "emoji": "🦜",
+          "name": "parrot",
+          "match": "literal"
+        },
+        {
+          "emoji": "⚓",
+          "name": "anchor",
+          "match": "related"
+        },
+        {
+          "emoji": "🗺️",
+          "name": "world map",
+          "match": "related"
+        },
+        {
+          "emoji": "💰",
+          "name": "money bag",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "gossip",
+      "before": 1,
+      "after": 5,
+      "reliable": 5,
+      "results": [
+        {
+          "emoji": "💁",
+          "name": "person tipping hand",
+          "match": "literal"
+        },
+        {
+          "emoji": "👀",
+          "name": "eyes",
+          "match": "related"
+        },
+        {
+          "emoji": "🍵",
+          "name": "teacup without handle",
+          "match": "related"
+        },
+        {
+          "emoji": "🤭",
+          "name": "face with hand over mouth",
+          "match": "related"
+        },
+        {
+          "emoji": "🗣️",
+          "name": "speaking head",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "red flags",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🚩",
+          "name": "triangular flag",
+          "match": "related"
+        },
+        {
+          "emoji": "⚠️",
+          "name": "warning",
+          "match": "related"
+        },
+        {
+          "emoji": "🤨",
+          "name": "face with raised eyebrow",
+          "match": "related"
+        },
+        {
+          "emoji": "👀",
+          "name": "eyes",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "good luck",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🤞",
+          "name": "crossed fingers",
+          "match": "related"
+        },
+        {
+          "emoji": "🍀",
+          "name": "four leaf clover",
+          "match": "related"
+        },
+        {
+          "emoji": "✨",
+          "name": "sparkles",
+          "match": "related"
+        },
+        {
+          "emoji": "🧧",
+          "name": "red envelope",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "birthday",
+      "before": 6,
+      "after": 6,
+      "reliable": 6,
+      "results": [
+        {
+          "emoji": "🎂",
+          "name": "birthday cake",
+          "match": "literal"
+        },
+        {
+          "emoji": "🥳",
+          "name": "partying face",
+          "match": "literal"
+        },
+        {
+          "emoji": "🎉",
+          "name": "party popper",
+          "match": "literal"
+        },
+        {
+          "emoji": "💐",
+          "name": "bouquet",
+          "match": "literal"
+        },
+        {
+          "emoji": "🎈",
+          "name": "balloon",
+          "match": "literal"
+        },
+        {
+          "emoji": "🎁",
+          "name": "wrapped gift",
+          "match": "literal"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "camping",
+      "before": 3,
+      "after": 4,
+      "reliable": 3,
+      "results": [
+        {
+          "emoji": "🏕️",
+          "name": "camping",
+          "match": "literal"
+        },
+        {
+          "emoji": "⛺",
+          "name": "tent",
+          "match": "literal"
+        },
+        {
+          "emoji": "🥾",
+          "name": "hiking boot",
+          "match": "literal"
+        },
+        {
+          "emoji": "👏",
+          "name": "clapping hands",
+          "match": "fuzzy"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "hiking",
+      "before": 1,
+      "after": 6,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🥾",
+          "name": "hiking boot",
+          "match": "literal"
+        },
+        {
+          "emoji": "🏔️",
+          "name": "snow-capped mountain",
+          "match": "related"
+        },
+        {
+          "emoji": "🎒",
+          "name": "school backpack",
+          "match": "related"
+        },
+        {
+          "emoji": "🧭",
+          "name": "compass",
+          "match": "related"
+        },
+        {
+          "emoji": "🚴",
+          "name": "person biking",
+          "match": "fuzzy"
+        },
+        {
+          "emoji": "🚵",
+          "name": "person mountain biking",
+          "match": "fuzzy"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "road trip",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🚗",
+          "name": "automobile",
+          "match": "related"
+        },
+        {
+          "emoji": "🛣️",
+          "name": "motorway",
+          "match": "related"
+        },
+        {
+          "emoji": "🗺️",
+          "name": "world map",
+          "match": "related"
+        },
+        {
+          "emoji": "🧳",
+          "name": "luggage",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "picnic",
+      "before": 1,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🧺",
+          "name": "basket",
+          "match": "literal"
+        },
+        {
+          "emoji": "🥪",
+          "name": "sandwich",
+          "match": "related"
+        },
+        {
+          "emoji": "🍓",
+          "name": "strawberry",
+          "match": "related"
+        },
+        {
+          "emoji": "🌳",
+          "name": "deciduous tree",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "barbecue",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🍖",
+          "name": "meat on bone",
+          "match": "related"
+        },
+        {
+          "emoji": "🍗",
+          "name": "poultry leg",
+          "match": "related"
+        },
+        {
+          "emoji": "🔥",
+          "name": "fire",
+          "match": "related"
+        },
+        {
+          "emoji": "🌽",
+          "name": "ear of corn",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "baking",
+      "before": 0,
+      "after": 6,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🧁",
+          "name": "cupcake",
+          "match": "related"
+        },
+        {
+          "emoji": "🍰",
+          "name": "shortcake",
+          "match": "related"
+        },
+        {
+          "emoji": "🥖",
+          "name": "baguette bread",
+          "match": "related"
+        },
+        {
+          "emoji": "🥣",
+          "name": "bowl with spoon",
+          "match": "related"
+        },
+        {
+          "emoji": "🚴",
+          "name": "person biking",
+          "match": "fuzzy"
+        },
+        {
+          "emoji": "🛀",
+          "name": "person taking bath",
+          "match": "fuzzy"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "vegan",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🥦",
+          "name": "broccoli",
+          "match": "related"
+        },
+        {
+          "emoji": "🥕",
+          "name": "carrot",
+          "match": "related"
+        },
+        {
+          "emoji": "🌱",
+          "name": "seedling",
+          "match": "related"
+        },
+        {
+          "emoji": "🥗",
+          "name": "green salad",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "sushi night",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🍣",
+          "name": "sushi",
+          "match": "related"
+        },
+        {
+          "emoji": "🍱",
+          "name": "bento box",
+          "match": "related"
+        },
+        {
+          "emoji": "🍤",
+          "name": "fried shrimp",
+          "match": "related"
+        },
+        {
+          "emoji": "🥢",
+          "name": "chopsticks",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "pizza party",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🍕",
+          "name": "pizza",
+          "match": "related"
+        },
+        {
+          "emoji": "🧀",
+          "name": "cheese wedge",
+          "match": "related"
+        },
+        {
+          "emoji": "🍅",
+          "name": "tomato",
+          "match": "related"
+        },
+        {
+          "emoji": "🎉",
+          "name": "party popper",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "taco tuesday",
+      "before": 0,
+      "after": 3,
+      "reliable": 3,
+      "results": [
+        {
+          "emoji": "🌮",
+          "name": "taco",
+          "match": "related"
+        },
+        {
+          "emoji": "🌯",
+          "name": "burrito",
+          "match": "related"
+        },
+        {
+          "emoji": "🌶️",
+          "name": "hot pepper",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "brunch",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🥞",
+          "name": "pancakes",
+          "match": "related"
+        },
+        {
+          "emoji": "🥐",
+          "name": "croissant",
+          "match": "related"
+        },
+        {
+          "emoji": "🍳",
+          "name": "cooking",
+          "match": "related"
+        },
+        {
+          "emoji": "☕",
+          "name": "hot beverage",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "movie night",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🍿",
+          "name": "popcorn",
+          "match": "related"
+        },
+        {
+          "emoji": "🎬",
+          "name": "clapper board",
+          "match": "related"
+        },
+        {
+          "emoji": "🎥",
+          "name": "movie camera",
+          "match": "related"
+        },
+        {
+          "emoji": "🎞️",
+          "name": "film frames",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "game night",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🎲",
+          "name": "game die",
+          "match": "related"
+        },
+        {
+          "emoji": "🃏",
+          "name": "joker",
+          "match": "related"
+        },
+        {
+          "emoji": "🎮",
+          "name": "video game",
+          "match": "related"
+        },
+        {
+          "emoji": "🧩",
+          "name": "jigsaw",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "karaoke",
+      "before": 1,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🎤",
+          "name": "microphone",
+          "match": "literal"
+        },
+        {
+          "emoji": "🎶",
+          "name": "musical notes",
+          "match": "related"
+        },
+        {
+          "emoji": "🎵",
+          "name": "musical note",
+          "match": "related"
+        },
+        {
+          "emoji": "🧑‍🎤",
+          "name": "singer",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "concert",
+      "before": 1,
+      "after": 5,
+      "reliable": 5,
+      "results": [
+        {
+          "emoji": "🪗",
+          "name": "accordion",
+          "match": "literal"
+        },
+        {
+          "emoji": "🎤",
+          "name": "microphone",
+          "match": "related"
+        },
+        {
+          "emoji": "🎸",
+          "name": "guitar",
+          "match": "related"
+        },
+        {
+          "emoji": "🎶",
+          "name": "musical notes",
+          "match": "related"
+        },
+        {
+          "emoji": "🤘",
+          "name": "sign of the horns",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "festival",
+      "before": 4,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🥮",
+          "name": "moon cake",
+          "match": "literal"
+        },
+        {
+          "emoji": "🎂",
+          "name": "birthday cake",
+          "match": "literal"
+        },
+        {
+          "emoji": "🎆",
+          "name": "fireworks",
+          "match": "literal"
+        },
+        {
+          "emoji": "🎎",
+          "name": "Japanese dolls",
+          "match": "literal"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "book club",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "📚",
+          "name": "books",
+          "match": "related"
+        },
+        {
+          "emoji": "📖",
+          "name": "open book",
+          "match": "related"
+        },
+        {
+          "emoji": "☕",
+          "name": "hot beverage",
+          "match": "related"
+        },
+        {
+          "emoji": "💬",
+          "name": "speech balloon",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "art class",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🎨",
+          "name": "artist palette",
+          "match": "related"
+        },
+        {
+          "emoji": "🖌️",
+          "name": "paintbrush",
+          "match": "related"
+        },
+        {
+          "emoji": "🖼️",
+          "name": "framed picture",
+          "match": "related"
+        },
+        {
+          "emoji": "✏️",
+          "name": "pencil",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "painting",
+      "before": 3,
+      "after": 5,
+      "reliable": 3,
+      "results": [
+        {
+          "emoji": "🖼️",
+          "name": "framed picture",
+          "match": "literal"
+        },
+        {
+          "emoji": "🎨",
+          "name": "artist palette",
+          "match": "literal"
+        },
+        {
+          "emoji": "🖌️",
+          "name": "paintbrush",
+          "match": "literal"
+        },
+        {
+          "emoji": "☝️",
+          "name": "index pointing up",
+          "match": "fuzzy"
+        },
+        {
+          "emoji": "👉",
+          "name": "backhand index pointing right",
+          "match": "fuzzy"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "photography",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "📷",
+          "name": "camera",
+          "match": "related"
+        },
+        {
+          "emoji": "📸",
+          "name": "camera with flash",
+          "match": "related"
+        },
+        {
+          "emoji": "🖼️",
+          "name": "framed picture",
+          "match": "related"
+        },
+        {
+          "emoji": "🏞️",
+          "name": "national park",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "gardening",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🌱",
+          "name": "seedling",
+          "match": "related"
+        },
+        {
+          "emoji": "🪴",
+          "name": "potted plant",
+          "match": "related"
+        },
+        {
+          "emoji": "🌻",
+          "name": "sunflower",
+          "match": "related"
+        },
+        {
+          "emoji": "🧑‍🌾",
+          "name": "farmer",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "knitting",
+      "before": 0,
+      "after": 3,
+      "reliable": 3,
+      "results": [
+        {
+          "emoji": "🧶",
+          "name": "yarn",
+          "match": "related"
+        },
+        {
+          "emoji": "🪡",
+          "name": "sewing needle",
+          "match": "related"
+        },
+        {
+          "emoji": "🧵",
+          "name": "thread",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "sewing",
+      "before": 2,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🪡",
+          "name": "sewing needle",
+          "match": "literal"
+        },
+        {
+          "emoji": "🧵",
+          "name": "thread",
+          "match": "literal"
+        },
+        {
+          "emoji": "👗",
+          "name": "dress",
+          "match": "related"
+        },
+        {
+          "emoji": "✂️",
+          "name": "scissors",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "laundry",
+      "before": 1,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🧺",
+          "name": "basket",
+          "match": "literal"
+        },
+        {
+          "emoji": "🧼",
+          "name": "soap",
+          "match": "related"
+        },
+        {
+          "emoji": "👕",
+          "name": "t-shirt",
+          "match": "related"
+        },
+        {
+          "emoji": "🧦",
+          "name": "socks",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "shopping",
+      "before": 12,
+      "after": 14,
+      "reliable": 12,
+      "results": [
+        {
+          "emoji": "🛒",
+          "name": "shopping cart",
+          "match": "literal"
+        },
+        {
+          "emoji": "🛍️",
+          "name": "shopping bags",
+          "match": "literal"
+        },
+        {
+          "emoji": "👖",
+          "name": "jeans",
+          "match": "literal"
+        },
+        {
+          "emoji": "👕",
+          "name": "t-shirt",
+          "match": "literal"
+        },
+        {
+          "emoji": "👚",
+          "name": "woman’s clothes",
+          "match": "literal"
+        },
+        {
+          "emoji": "👗",
+          "name": "dress",
+          "match": "literal"
+        },
+        {
+          "emoji": "👛",
+          "name": "purse",
+          "match": "literal"
+        },
+        {
+          "emoji": "👜",
+          "name": "handbag",
+          "match": "literal"
+        },
+        {
+          "emoji": "👢",
+          "name": "woman’s boot",
+          "match": "literal"
+        },
+        {
+          "emoji": "👠",
+          "name": "high-heeled shoe",
+          "match": "literal"
+        },
+        {
+          "emoji": "👟",
+          "name": "running shoe",
+          "match": "literal"
+        },
+        {
+          "emoji": "👞",
+          "name": "man’s shoe",
+          "match": "literal"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "wedding",
+      "before": 6,
+      "after": 6,
+      "reliable": 6,
+      "results": [
+        {
+          "emoji": "💒",
+          "name": "wedding",
+          "match": "literal"
+        },
+        {
+          "emoji": "🤵",
+          "name": "person in tuxedo",
+          "match": "literal"
+        },
+        {
+          "emoji": "👰",
+          "name": "person with veil",
+          "match": "literal"
+        },
+        {
+          "emoji": "🧕",
+          "name": "woman with headscarf",
+          "match": "literal"
+        },
+        {
+          "emoji": "💎",
+          "name": "gem stone",
+          "match": "literal"
+        },
+        {
+          "emoji": "💍",
+          "name": "ring",
+          "match": "literal"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "engagement",
+      "before": 2,
+      "after": 5,
+      "reliable": 5,
+      "results": [
+        {
+          "emoji": "💎",
+          "name": "gem stone",
+          "match": "literal"
+        },
+        {
+          "emoji": "💍",
+          "name": "ring",
+          "match": "literal"
+        },
+        {
+          "emoji": "💐",
+          "name": "bouquet",
+          "match": "related"
+        },
+        {
+          "emoji": "🥂",
+          "name": "clinking glasses",
+          "match": "related"
+        },
+        {
+          "emoji": "💑",
+          "name": "couple with heart",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "anniversary",
+      "before": 12,
+      "after": 12,
+      "reliable": 12,
+      "results": [
+        {
+          "emoji": "💝",
+          "name": "heart with ribbon",
+          "match": "literal"
+        },
+        {
+          "emoji": "💞",
+          "name": "revolving hearts",
+          "match": "literal"
+        },
+        {
+          "emoji": "💕",
+          "name": "two hearts",
+          "match": "literal"
+        },
+        {
+          "emoji": "💏",
+          "name": "kiss",
+          "match": "literal"
+        },
+        {
+          "emoji": "👩‍❤️‍💋‍👨",
+          "name": "kiss: woman, man",
+          "match": "literal"
+        },
+        {
+          "emoji": "👨‍❤️‍💋‍👨",
+          "name": "kiss: man, man",
+          "match": "literal"
+        },
+        {
+          "emoji": "👩‍❤️‍💋‍👩",
+          "name": "kiss: woman, woman",
+          "match": "literal"
+        },
+        {
+          "emoji": "💑",
+          "name": "couple with heart",
+          "match": "literal"
+        },
+        {
+          "emoji": "👩‍❤️‍👨",
+          "name": "couple with heart: woman, man",
+          "match": "literal"
+        },
+        {
+          "emoji": "👨‍❤️‍👨",
+          "name": "couple with heart: man, man",
+          "match": "literal"
+        },
+        {
+          "emoji": "👩‍❤️‍👩",
+          "name": "couple with heart: woman, woman",
+          "match": "literal"
+        },
+        {
+          "emoji": "💐",
+          "name": "bouquet",
+          "match": "literal"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "baby shower",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "👶",
+          "name": "baby",
+          "match": "related"
+        },
+        {
+          "emoji": "🍼",
+          "name": "baby bottle",
+          "match": "related"
+        },
+        {
+          "emoji": "🎁",
+          "name": "wrapped gift",
+          "match": "related"
+        },
+        {
+          "emoji": "🧸",
+          "name": "teddy bear",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "pregnant",
+      "before": 2,
+      "after": 3,
+      "reliable": 3,
+      "results": [
+        {
+          "emoji": "🫄",
+          "name": "pregnant person",
+          "match": "literal"
+        },
+        {
+          "emoji": "👶",
+          "name": "baby",
+          "match": "literal"
+        },
+        {
+          "emoji": "🍼",
+          "name": "baby bottle",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "dog walk",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🐕",
+          "name": "dog",
+          "match": "related"
+        },
+        {
+          "emoji": "🐕‍🦺",
+          "name": "service dog",
+          "match": "related"
+        },
+        {
+          "emoji": "🐾",
+          "name": "paw prints",
+          "match": "related"
+        },
+        {
+          "emoji": "🚶",
+          "name": "person walking",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "cat person",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🐱",
+          "name": "cat face",
+          "match": "related"
+        },
+        {
+          "emoji": "🐈",
+          "name": "cat",
+          "match": "related"
+        },
+        {
+          "emoji": "🐈‍⬛",
+          "name": "black cat",
+          "match": "related"
+        },
+        {
+          "emoji": "🐾",
+          "name": "paw prints",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "pet adoption",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🐶",
+          "name": "dog face",
+          "match": "related"
+        },
+        {
+          "emoji": "🐱",
+          "name": "cat face",
+          "match": "related"
+        },
+        {
+          "emoji": "🐾",
+          "name": "paw prints",
+          "match": "related"
+        },
+        {
+          "emoji": "🏠",
+          "name": "house",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "vet appointment",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🐾",
+          "name": "paw prints",
+          "match": "related"
+        },
+        {
+          "emoji": "🩺",
+          "name": "stethoscope",
+          "match": "related"
+        },
+        {
+          "emoji": "🏥",
+          "name": "hospital",
+          "match": "related"
+        },
+        {
+          "emoji": "🐶",
+          "name": "dog face",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "dentist",
+      "before": 3,
+      "after": 3,
+      "reliable": 3,
+      "results": [
+        {
+          "emoji": "😬",
+          "name": "grimacing face",
+          "match": "literal"
+        },
+        {
+          "emoji": "😷",
+          "name": "face with medical mask",
+          "match": "literal"
+        },
+        {
+          "emoji": "🦷",
+          "name": "tooth",
+          "match": "literal"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "hospital",
+      "before": 1,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🏥",
+          "name": "hospital",
+          "match": "literal"
+        },
+        {
+          "emoji": "🩺",
+          "name": "stethoscope",
+          "match": "related"
+        },
+        {
+          "emoji": "🚑",
+          "name": "ambulance",
+          "match": "related"
+        },
+        {
+          "emoji": "🩻",
+          "name": "x-ray",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "emergency",
+      "before": 3,
+      "after": 3,
+      "reliable": 3,
+      "results": [
+        {
+          "emoji": "🚨",
+          "name": "police car light",
+          "match": "literal"
+        },
+        {
+          "emoji": "🚑",
+          "name": "ambulance",
+          "match": "literal"
+        },
+        {
+          "emoji": "🦺",
+          "name": "safety vest",
+          "match": "literal"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "first aid",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🩹",
+          "name": "adhesive bandage",
+          "match": "related"
+        },
+        {
+          "emoji": "🩺",
+          "name": "stethoscope",
+          "match": "related"
+        },
+        {
+          "emoji": "🚑",
+          "name": "ambulance",
+          "match": "related"
+        },
+        {
+          "emoji": "💊",
+          "name": "pill",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "fire drill",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🚨",
+          "name": "police car light",
+          "match": "related"
+        },
+        {
+          "emoji": "🧯",
+          "name": "fire extinguisher",
+          "match": "related"
+        },
+        {
+          "emoji": "🚒",
+          "name": "fire engine",
+          "match": "related"
+        },
+        {
+          "emoji": "🔥",
+          "name": "fire",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "earthquake",
+      "before": 2,
+      "after": 5,
+      "reliable": 5,
+      "results": [
+        {
+          "emoji": "🫨",
+          "name": "shaking face",
+          "match": "literal"
+        },
+        {
+          "emoji": "🛘",
+          "name": "landslide",
+          "match": "literal"
+        },
+        {
+          "emoji": "🏚️",
+          "name": "derelict house",
+          "match": "related"
+        },
+        {
+          "emoji": "🌍",
+          "name": "globe showing Europe-Africa",
+          "match": "related"
+        },
+        {
+          "emoji": "⚠️",
+          "name": "warning",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "flood",
+      "before": 0,
+      "after": 6,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🌊",
+          "name": "water wave",
+          "match": "related"
+        },
+        {
+          "emoji": "🌧️",
+          "name": "cloud with rain",
+          "match": "related"
+        },
+        {
+          "emoji": "🏠",
+          "name": "house",
+          "match": "related"
+        },
+        {
+          "emoji": "⚠️",
+          "name": "warning",
+          "match": "related"
+        },
+        {
+          "emoji": "🥫",
+          "name": "canned food",
+          "match": "fuzzy"
+        },
+        {
+          "emoji": "😋",
+          "name": "face savoring food",
+          "match": "fuzzy"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "recycling",
+      "before": 1,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "♻️",
+          "name": "recycling symbol",
+          "match": "literal"
+        },
+        {
+          "emoji": "🗑️",
+          "name": "wastebasket",
+          "match": "related"
+        },
+        {
+          "emoji": "🌱",
+          "name": "seedling",
+          "match": "related"
+        },
+        {
+          "emoji": "🌍",
+          "name": "globe showing Europe-Africa",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "plant based",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🥦",
+          "name": "broccoli",
+          "match": "related"
+        },
+        {
+          "emoji": "🥕",
+          "name": "carrot",
+          "match": "related"
+        },
+        {
+          "emoji": "🌱",
+          "name": "seedling",
+          "match": "related"
+        },
+        {
+          "emoji": "🥗",
+          "name": "green salad",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "meditation",
+      "before": 2,
+      "after": 5,
+      "reliable": 5,
+      "results": [
+        {
+          "emoji": "🧘",
+          "name": "person in lotus position",
+          "match": "literal"
+        },
+        {
+          "emoji": "🙇",
+          "name": "person bowing",
+          "match": "literal"
+        },
+        {
+          "emoji": "🕯️",
+          "name": "candle",
+          "match": "related"
+        },
+        {
+          "emoji": "🪷",
+          "name": "lotus",
+          "match": "related"
+        },
+        {
+          "emoji": "😌",
+          "name": "relieved face",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "therapy",
+      "before": 1,
+      "after": 5,
+      "reliable": 5,
+      "results": [
+        {
+          "emoji": "💆",
+          "name": "person getting massage",
+          "match": "literal"
+        },
+        {
+          "emoji": "🧠",
+          "name": "brain",
+          "match": "related"
+        },
+        {
+          "emoji": "🛋️",
+          "name": "couch and lamp",
+          "match": "related"
+        },
+        {
+          "emoji": "🫂",
+          "name": "people hugging",
+          "match": "related"
+        },
+        {
+          "emoji": "❤️‍🩹",
+          "name": "mending heart",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "self care",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🛁",
+          "name": "bathtub",
+          "match": "related"
+        },
+        {
+          "emoji": "🕯️",
+          "name": "candle",
+          "match": "related"
+        },
+        {
+          "emoji": "🧘",
+          "name": "person in lotus position",
+          "match": "related"
+        },
+        {
+          "emoji": "💆",
+          "name": "person getting massage",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "boundaries",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🛑",
+          "name": "stop sign",
+          "match": "related"
+        },
+        {
+          "emoji": "✋",
+          "name": "raised hand",
+          "match": "related"
+        },
+        {
+          "emoji": "🛡️",
+          "name": "shield",
+          "match": "related"
+        },
+        {
+          "emoji": "💬",
+          "name": "speech balloon",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "proud",
+      "before": 3,
+      "after": 3,
+      "reliable": 3,
+      "results": [
+        {
+          "emoji": "🥲",
+          "name": "smiling face with tear",
+          "match": "literal"
+        },
+        {
+          "emoji": "🥹",
+          "name": "face holding back tears",
+          "match": "literal"
+        },
+        {
+          "emoji": "🦚",
+          "name": "peacock",
+          "match": "literal"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "jealous",
+      "before": 4,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "😑",
+          "name": "expressionless face",
+          "match": "literal"
+        },
+        {
+          "emoji": "😐",
+          "name": "neutral face",
+          "match": "literal"
+        },
+        {
+          "emoji": "🤨",
+          "name": "face with raised eyebrow",
+          "match": "literal"
+        },
+        {
+          "emoji": "😒",
+          "name": "unamused face",
+          "match": "literal"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "betrayed",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "💔",
+          "name": "broken heart",
+          "match": "related"
+        },
+        {
+          "emoji": "🗡️",
+          "name": "dagger",
+          "match": "related"
+        },
+        {
+          "emoji": "😞",
+          "name": "disappointed face",
+          "match": "related"
+        },
+        {
+          "emoji": "🐍",
+          "name": "snake",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "revenge",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "😈",
+          "name": "smiling face with horns",
+          "match": "related"
+        },
+        {
+          "emoji": "🔥",
+          "name": "fire",
+          "match": "related"
+        },
+        {
+          "emoji": "⚔️",
+          "name": "crossed swords",
+          "match": "related"
+        },
+        {
+          "emoji": "😤",
+          "name": "face with steam from nose",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "forgiveness",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "❤️‍🩹",
+          "name": "mending heart",
+          "match": "related"
+        },
+        {
+          "emoji": "🫂",
+          "name": "people hugging",
+          "match": "related"
+        },
+        {
+          "emoji": "🤝",
+          "name": "handshake",
+          "match": "related"
+        },
+        {
+          "emoji": "🕊️",
+          "name": "dove",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "hopeful",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🤞",
+          "name": "crossed fingers",
+          "match": "related"
+        },
+        {
+          "emoji": "🌈",
+          "name": "rainbow",
+          "match": "related"
+        },
+        {
+          "emoji": "✨",
+          "name": "sparkles",
+          "match": "related"
+        },
+        {
+          "emoji": "🌱",
+          "name": "seedling",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "optimistic",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🤞",
+          "name": "crossed fingers",
+          "match": "related"
+        },
+        {
+          "emoji": "🌈",
+          "name": "rainbow",
+          "match": "related"
+        },
+        {
+          "emoji": "✨",
+          "name": "sparkles",
+          "match": "related"
+        },
+        {
+          "emoji": "🌱",
+          "name": "seedling",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "pessimistic",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "😔",
+          "name": "pensive face",
+          "match": "related"
+        },
+        {
+          "emoji": "☁️",
+          "name": "cloud",
+          "match": "related"
+        },
+        {
+          "emoji": "🙃",
+          "name": "upside-down face",
+          "match": "related"
+        },
+        {
+          "emoji": "🥀",
+          "name": "wilted flower",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "apathetic",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "😐",
+          "name": "neutral face",
+          "match": "related"
+        },
+        {
+          "emoji": "😑",
+          "name": "expressionless face",
+          "match": "related"
+        },
+        {
+          "emoji": "😶",
+          "name": "face without mouth",
+          "match": "related"
+        },
+        {
+          "emoji": "🥱",
+          "name": "yawning face",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "euphoric",
+      "before": 0,
+      "after": 4,
+      "reliable": 4,
+      "results": [
+        {
+          "emoji": "🤩",
+          "name": "star-struck",
+          "match": "related"
+        },
+        {
+          "emoji": "🥳",
+          "name": "partying face",
+          "match": "related"
+        },
+        {
+          "emoji": "😁",
+          "name": "beaming face with smiling eyes",
+          "match": "related"
+        },
+        {
+          "emoji": "✨",
+          "name": "sparkles",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "disgusted",
+      "before": 0,
+      "after": 4,
+      "reliable": 3,
+      "results": [
+        {
+          "emoji": "🤢",
+          "name": "nauseated face",
+          "match": "related"
+        },
+        {
+          "emoji": "🤮",
+          "name": "face vomiting",
+          "match": "related"
+        },
+        {
+          "emoji": "😖",
+          "name": "confounded face",
+          "match": "related"
+        },
+        {
+          "emoji": "🥸",
+          "name": "disguised face",
+          "match": "fuzzy"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "mischievous",
+      "before": 1,
+      "after": 5,
+      "reliable": 5,
+      "results": [
+        {
+          "emoji": "👿",
+          "name": "angry face with horns",
+          "match": "literal"
+        },
+        {
+          "emoji": "😈",
+          "name": "smiling face with horns",
+          "match": "related"
+        },
+        {
+          "emoji": "😏",
+          "name": "smirking face",
+          "match": "related"
+        },
+        {
+          "emoji": "🙃",
+          "name": "upside-down face",
+          "match": "related"
+        },
+        {
+          "emoji": "🤭",
+          "name": "face with hand over mouth",
+          "match": "related"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "silly",
+      "before": 3,
+      "after": 3,
+      "reliable": 3,
+      "results": [
+        {
+          "emoji": "🤪",
+          "name": "zany face",
+          "match": "literal"
+        },
+        {
+          "emoji": "👻",
+          "name": "ghost",
+          "match": "literal"
+        },
+        {
+          "emoji": "🪿",
+          "name": "goose",
+          "match": "literal"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "angry",
+      "before": 8,
+      "after": 8,
+      "reliable": 8,
+      "results": [
+        {
+          "emoji": "😠",
+          "name": "angry face",
+          "match": "literal"
+        },
+        {
+          "emoji": "👿",
+          "name": "angry face with horns",
+          "match": "literal"
+        },
+        {
+          "emoji": "😤",
+          "name": "face with steam from nose",
+          "match": "literal"
+        },
+        {
+          "emoji": "😡",
+          "name": "pouting face",
+          "match": "literal"
+        },
+        {
+          "emoji": "👹",
+          "name": "ogre",
+          "match": "literal"
+        },
+        {
+          "emoji": "👺",
+          "name": "goblin",
+          "match": "literal"
+        },
+        {
+          "emoji": "💢",
+          "name": "anger symbol",
+          "match": "literal"
+        },
+        {
+          "emoji": "🗯️",
+          "name": "right anger bubble",
+          "match": "literal"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "angry face",
+      "before": 2,
+      "after": 2,
+      "reliable": 2,
+      "results": [
+        {
+          "emoji": "😠",
+          "name": "angry face",
+          "match": "literal"
+        },
+        {
+          "emoji": "👿",
+          "name": "angry face with horns",
+          "match": "literal"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "zany face",
+      "before": 1,
+      "after": 1,
+      "reliable": 1,
+      "results": [
+        {
+          "emoji": "🤪",
+          "name": "zany face",
+          "match": "literal"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "red heart",
+      "before": 1,
+      "after": 1,
+      "reliable": 1,
+      "results": [
+        {
+          "emoji": "❤️",
+          "name": "red heart",
+          "match": "literal"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "black cat",
+      "before": 1,
+      "after": 1,
+      "reliable": 1,
+      "results": [
+        {
+          "emoji": "🐈‍⬛",
+          "name": "black cat",
+          "match": "literal"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "sewing needle",
+      "before": 1,
+      "after": 1,
+      "reliable": 1,
+      "results": [
+        {
+          "emoji": "🪡",
+          "name": "sewing needle",
+          "match": "literal"
+        }
+      ],
+      "needsReview": false
+    },
+    {
+      "query": "drop of blood",
+      "before": 1,
+      "after": 1,
+      "reliable": 1,
+      "results": [
+        {
+          "emoji": "🩸",
+          "name": "drop of blood",
+          "match": "literal"
+        }
+      ],
+      "needsReview": false
+    }
+  ],
+  "nameFailures": [],
+  "typoFailures": []
+}

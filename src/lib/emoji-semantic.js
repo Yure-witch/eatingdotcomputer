@@ -47,9 +47,10 @@ export function isSemanticReady() {
 
 /** Call fn when worker is ready. fn() called immediately if already ready. */
 export function onSemanticReady(fn) {
-	if (isSemanticReady()) { fn(); return; }
+	if (isSemanticReady()) { fn(); return () => {}; }
 	readyListeners.push(fn);
 	initSemanticSearch(); // ensure started
+	return () => { readyListeners = readyListeners.filter(listener => listener !== fn); };
 }
 
 /**

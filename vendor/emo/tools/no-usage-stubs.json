@@ -1,0 +1,86 @@
+[
+  {
+    "index": 406,
+    "description": "tracked session factory",
+    "originalBytes": 634,
+    "originalSha256": "1baa5409634ff5ed0b7fe77731e7da637e0fecc68bb2d9982f487eb5c0c88263",
+    "bodyHex": "002001200010e8010b"
+  },
+  {
+    "index": 2639,
+    "description": "deviceIdKey initializer",
+    "originalBytes": 38,
+    "originalSha256": "e365001c2395aebe92c6bf32aafebb1b85b50734d0035507316fb883c8a82bf0",
+    "bodyHex": "0041fcf0d10042003702004184f1d1004180c0033602000b"
+  },
+  {
+    "index": 2640,
+    "description": "stateKey builder",
+    "originalBytes": 173,
+    "originalSha256": "715b145874294683e4d275b73d960bad1a1bc59ad6d923a9793c51326a3c490a",
+    "bodyHex": "002000420037020020004180c0033602080b"
+  },
+  {
+    "index": 2641,
+    "description": "persistentDeviceId generator",
+    "originalBytes": 885,
+    "originalSha256": "616a71739c703362c2aab613fba4f3034f9889d67c1a851a6b4da71a4e3af5a9",
+    "bodyHex": "002000420037020020004180c0033602080b"
+  },
+  {
+    "index": 2642,
+    "description": "defaultStorage selector",
+    "originalBytes": 312,
+    "originalSha256": "d0a77eed58ff8a132b3b15a6126f2222a472d8d0eb5524927103c9297daba587",
+    "bodyHex": "002000420037020020004100360208200041a0863f36020c200041d0853f3602100b"
+  },
+  {
+    "index": 2646,
+    "description": "JSKeyValueStorage host accessor",
+    "originalBytes": 213,
+    "originalSha256": "fe1138159f2d03073c4c877dd69e45e9dfdf63309a8fc288b35b630a1a374375",
+    "bodyHex": "0041000b"
+  },
+  {
+    "index": 2647,
+    "description": "JSKeyValueStorage.get",
+    "originalBytes": 359,
+    "originalSha256": "303d2b9683a07b01c1daae16647c7b5f3e99d4a293e26c8159c70ee384b17dad",
+    "bodyHex": "0020004200370200200041ff013602080b"
+  },
+  {
+    "index": 2648,
+    "description": "JSKeyValueStorage.set",
+    "originalBytes": 296,
+    "originalSha256": "ea7314ca82f8b89ba5535461e783e9f9d93433f87a99c75c32984110d0692ec4",
+    "bodyHex": "000b"
+  },
+  {
+    "index": 2672,
+    "description": "ingest endpoint initializer",
+    "originalBytes": 38,
+    "originalSha256": "0c813c1ad102506f6ab3b1360aff25fc34efcf1bd150b167b8a21d901bc4b85a",
+    "bodyHex": "0041d4f1d100420037020041dcf1d1004180c0033602000b"
+  },
+  {
+    "index": 2673,
+    "description": "makeSend reporting closure",
+    "originalBytes": 2538,
+    "originalSha256": "a1f10f287c3934629de8253146d35e4f60039227f0d201b4dfc95c4a747a00ea",
+    "bodyHex": "000b"
+  },
+  {
+    "index": 2681,
+    "description": "usage-state load closure",
+    "originalBytes": 970,
+    "originalSha256": "7da0e6843427b2490243932c79228f13f25306daad780d2a74ac27c57bb1f524",
+    "bodyHex": "0020004200370200200041003602080b"
+  },
+  {
+    "index": 2682,
+    "description": "usage-state save closure",
+    "originalBytes": 310,
+    "originalSha256": "9d8f2ae2f6c0ee135de072d0175d207b0d403c0387107bc0afa476b93822fe85",
+    "bodyHex": "000b"
+  }
+]

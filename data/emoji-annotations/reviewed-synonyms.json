@@ -1,0 +1,143 @@
+{
+  "🤪": {
+    "query": "zany",
+    "pos": "adjective",
+    "words": [
+      "silly",
+      "wacky",
+      "absurd",
+      "foolish"
+    ],
+    "reason": "Common expression words from Webster's adjective entry; preserves the user's silly → 🤪 expectation."
+  },
+  "🤣": {
+    "query": "laugh",
+    "pos": "noun",
+    "words": [
+      "belly laugh",
+      "guffaw",
+      "chuckle",
+      "giggle"
+    ]
+  },
+  "😶": {
+    "query": "mute",
+    "pos": "adjective",
+    "words": [
+      "wordless",
+      "uncommunicative",
+      "voiceless",
+      "inarticulate"
+    ]
+  },
+  "😨": {
+    "query": "afraid",
+    "pos": "adjective",
+    "words": [
+      "frightened",
+      "terrified",
+      "alarmed",
+      "spooked"
+    ]
+  },
+  "🤬": {
+    "query": "mad",
+    "pos": "adjective",
+    "words": [
+      "furious",
+      "enraged",
+      "irate",
+      "fuming"
+    ]
+  },
+  "💩": {
+    "query": "poop",
+    "pos": "noun",
+    "words": [
+      "feces",
+      "excrement",
+      "waste",
+      "scat"
+    ]
+  },
+  "👑": {
+    "query": "crown",
+    "pos": "noun",
+    "words": [
+      "diadem",
+      "coronet",
+      "chaplet",
+      "coronal"
+    ]
+  },
+  "🩲": {
+    "query": "underwear",
+    "pos": "noun",
+    "words": [
+      "underclothes",
+      "undergarments",
+      "undies",
+      "underclothing"
+    ]
+  },
+  "💆": {
+    "query": "relax",
+    "pos": "verb",
+    "words": [
+      "unwind",
+      "de-stress",
+      "chill out",
+      "decompress"
+    ]
+  },
+  "💆‍♂": {
+    "query": "relax",
+    "pos": "verb",
+    "words": [
+      "unwind",
+      "de-stress",
+      "chill out",
+      "decompress"
+    ]
+  },
+  "💆‍♀": {
+    "query": "relax",
+    "pos": "verb",
+    "words": [
+      "unwind",
+      "de-stress",
+      "chill out",
+      "decompress"
+    ]
+  },
+  "🧟": {
+    "query": "scary",
+    "pos": "adjective",
+    "words": [
+      "frightening",
+      "terrifying",
+      "horrifying",
+      "spine-chilling"
+    ]
+  },
+  "🧟‍♂": {
+    "query": "scary",
+    "pos": "adjective",
+    "words": [
+      "frightening",
+      "terrifying",
+      "horrifying",
+      "spine-chilling"
+    ]
+  },
+  "🧟‍♀": {
+    "query": "scary",
+    "pos": "adjective",
+    "words": [
+      "frightening",
+      "terrifying",
+      "horrifying",
+      "spine-chilling"
+    ]
+  }
+}

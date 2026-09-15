@@ -1,0 +1,7 @@
+{
+  "model": "Xenova/all-MiniLM-L6-v2",
+  "dims": 384,
+  "rows": 1711,
+  "dataSha256": "d60fc06d1c4a85dfa66902489fa43edf9cf6aadb1ec46cfd219b5ab333008b43",
+  "generatedAt": "2026-09-15T22:29:10.468Z"
+}

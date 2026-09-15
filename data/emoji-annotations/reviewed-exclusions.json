@@ -1,0 +1,288 @@
+{
+  "reason": "Manual review removed unrelated senses and negation mismatches from this snapshot. Empty entries stay unchanged rather than receiving unrelated padding.",
+  "excludeAll": [
+    "🏾",
+    "🫺",
+    "😝",
+    "🫥",
+    "🙄",
+    "🙂‍↔",
+    "😵",
+    "😮",
+    "🥹",
+    "👽",
+    "🙈",
+    "🙊",
+    "🫱",
+    "🫳",
+    "🫴",
+    "🫰",
+    "🦴",
+    "👯‍♂",
+    "👯‍♀",
+    "🛀",
+    "👥",
+    "🛑",
+    "🌚",
+    "🌜",
+    "🌝",
+    "🎃",
+    "🎳",
+    "🏓",
+    "🃏",
+    "🪭",
+    "🪗",
+    "🔍",
+    "🔎",
+    "🔐",
+    "⛏",
+    "🪣",
+    "🚮",
+    "🚱",
+    "🛐",
+    "❔",
+    "🈶",
+    "🎪",
+    "🛢",
+    "📏",
+    "📐",
+    "🪤",
+    "😘",
+    "💪",
+    "☑"
+  ],
+  "words": {
+    "😆": [
+      "sneer"
+    ],
+    "😜": [
+      "queer",
+      "queerish"
+    ],
+    "🫩": [
+      "sack",
+      "sick"
+    ],
+    "😵‍💫": [
+      "twist"
+    ],
+    "😳": [
+      "enthusiastic"
+    ],
+    "😫": [
+      "sick"
+    ],
+    "😤": [
+      "snout",
+      "nozzle"
+    ],
+    "👹": [
+      "mortal"
+    ],
+    "🙉": [
+      "evildoing",
+      "villainy",
+      "sin"
+    ],
+    "🫷": [
+      "shackles"
+    ],
+    "🤲": [
+      "palms off"
+    ],
+    "👂": [
+      "consciousness",
+      "knowledge"
+    ],
+    "👷": [
+      "foot soldier",
+      "slave"
+    ],
+    "👷‍♂": [
+      "foot soldier",
+      "structure"
+    ],
+    "👷‍♀": [
+      "foot soldier",
+      "structure"
+    ],
+    "🤴": [
+      "Napoleon"
+    ],
+    "🧛": [
+      "wolf",
+      "shark",
+      "predator"
+    ],
+    "🧛‍♂": [
+      "wolf",
+      "shark",
+      "predator"
+    ],
+    "🧛‍♀": [
+      "wolf",
+      "shark",
+      "predator"
+    ],
+    "🧖": [
+      "camp",
+      "shelter",
+      "house"
+    ],
+    "🧖‍♂": [
+      "camp",
+      "house",
+      "encamp"
+    ],
+    "🧖‍♀": [
+      "camp",
+      "accommodate",
+      "house"
+    ],
+    "🍵": [
+      "alias",
+      "nickname",
+      "epithet"
+    ],
+    "🌆": [
+      "daylight",
+      "sunrise"
+    ],
+    "🌇": [
+      "daylight",
+      "sunrise"
+    ],
+    "⚓": [
+      "anchorperson"
+    ],
+    "💺": [
+      "driver's seat",
+      "head",
+      "headship"
+    ],
+    "🪑": [
+      "driver's seat",
+      "head",
+      "headship"
+    ],
+    "⌚": [
+      "lookout"
+    ],
+    "🥼": [
+      "wool",
+      "fur",
+      "fleece",
+      "hair"
+    ],
+    "🧥": [
+      "wool",
+      "fur",
+      "fleece",
+      "hair"
+    ],
+    "📧": [
+      "snail mail",
+      "parcel post"
+    ],
+    "📤": [
+      "trunk"
+    ],
+    "🪝": [
+      "stripe",
+      "catch-22",
+      "thud"
+    ],
+    "⁉": [
+      "ejaculation"
+    ],
+    "❗": [
+      "ejaculation"
+    ],
+    "😀": [
+      "sneer"
+    ],
+    "😄": [
+      "sneer"
+    ],
+    "🧐": [
+      "well-endowed",
+      "fat"
+    ],
+    "💯": [
+      "tally"
+    ],
+    "👸": [
+      "kingliness"
+    ],
+    "👩‍🍼": [
+      "breast-feed"
+    ],
+    "👨‍🍼": [
+      "breast-feed",
+      "wet-nurse"
+    ],
+    "🧑‍🍼": [
+      "wet-nurse"
+    ],
+    "🐲": [
+      "goblin"
+    ],
+    "🐉": [
+      "goblin"
+    ],
+    "🥠": [
+      "doom"
+    ],
+    "⛩": [
+      "cult"
+    ],
+    "🚲": [
+      "circle",
+      "community"
+    ],
+    "🪄": [
+      "voodoo"
+    ],
+    "🗑": [
+      "restroom"
+    ],
+    "⛎": [
+      "betrayer",
+      "Judas"
+    ],
+    "😇": [
+      "doves"
+    ],
+    "🙇": [
+      "weeping"
+    ],
+    "🙇‍♂": [
+      "weeping"
+    ],
+    "🙇‍♀": [
+      "weeping"
+    ],
+    "📚": [
+      "Bible",
+      "Good Book"
+    ],
+    "🪚": [
+      "decoration",
+      "embellishment"
+    ],
+    "🪠": [
+      "dirt",
+      "soil"
+    ],
+    "🛅": [
+      "sideboard"
+    ],
+    "🔤": [
+      "elements",
+      "grammar"
+    ],
+    "📿": [
+      "dog collar"
+    ]
+  }
+}

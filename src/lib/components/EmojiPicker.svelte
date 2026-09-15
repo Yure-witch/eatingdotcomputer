@@ -21,7 +21,8 @@
 
 <script>
 	import { onMount, tick } from 'svelte';
-	import { initSemanticSearch, searchEmoji, isSemanticReady, onSemanticReady } from '$lib/emoji-semantic.js';
+	import { searchEmoji, onSemanticReady } from '$lib/emoji-semantic.js';
+	import { createEmojiSearchIndex, searchEmojiCatalog } from '$lib/emoji-search.js';
 	import PickerStickyBtn from './PickerStickyBtn.svelte';
 	import { loadNotoEmoji } from '$lib/noto-emoji.js';
 
@@ -69,7 +70,6 @@
 	let semanticOnlyCps  = $state([]);    // cp[] that scored semantically but missed keywords
 	let semanticReady    = $state(false);
 	let semanticWorking  = $state(false); // spinner while embedding
-	let _semanticDebounce = null;
 
 	// ── Long press / variant picker ───────────────────────────────────────────
 	let longPress  = $state(null); // { item, x, y } | null
@@ -665,49 +665,18 @@
 
 	// ── Search with ranking ───────────────────────────────────────────────────
 
-	function scoreItem(item, q) {
-		const qNoColon = q.replace(/^:+|:+$/g, '');
-		if (item.sc.some(s => s === qNoColon)) return 1;
-		if (item.scr?.some(s => s === q)) return 1;
-		if (item.n === q) return 2;
-		if (item.sc.some(s => s.startsWith(qNoColon))) return 3;
-		if (item.n.startsWith(q)) return 4;
-		if (item.st?.some(t => t.startsWith(q))) return 5;
-		if (item.al?.some(a => a.toLowerCase() === q)) return 6;
-		if (item.al?.some(a => a.toLowerCase().includes(q))) return 6;
-		if (item.st?.some(t => t.includes(q))) return 7;
-		return 0;
-	}
-
-	let searchResults = $derived(
+	let searchHits = $derived(
 		query.trim() && data
-			? (() => {
-				const q = query.toLowerCase().trim();
-				const scored = [];
-				for (const g of data.groups) {
-					for (const item of g.items) {
-						const kwScore = scoreItem(item, q);
-						if (kwScore > 0) {
-							// Semantic bonus: within same keyword tier, higher semantic score sorts earlier
-							const semBonus = semanticScores?.get(item.cp) ?? 0;
-							scored.push({ item, kwScore, semBonus });
-						}
-					}
-				}
-				scored.sort((a, b) => {
-					if (a.kwScore !== b.kwScore) return a.kwScore - b.kwScore;
-					if (Math.abs(a.semBonus - b.semBonus) > 0.01) return b.semBonus - a.semBonus;
-					return (a.item.oi ?? 0) - (b.item.oi ?? 0);
-				});
-				return scored.slice(0, 96).map(s => s.item);
-			})()
+			? searchEmojiCatalog(createEmojiSearchIndex(data), query, { semanticScores })
 			: null
 	);
+	let searchResults = $derived(searchHits?.filter(hit => hit.kind !== 'fuzzy').map(hit => hit.item) ?? null);
+	let fuzzyItems = $derived(searchHits?.filter(hit => hit.kind === 'fuzzy').map(hit => hit.item) ?? []);
 
 	// Semantic-only items (matched semantically but not by keyword)
 	let semanticOnlyItems = $derived.by(() => {
 		if (!query.trim() || !data || !semanticOnlyCps.length) return [];
-		const cpSet = new Set(searchResults?.map(i => i.cp) ?? []);
+		const cpSet = new Set(searchHits?.map(hit => hit.item.cp) ?? []);
 		const items = [];
 		for (const cp of semanticOnlyCps) {
 			if (cpSet.has(cp)) continue;
@@ -737,6 +706,10 @@
 	let resolvedSemanticOnlyItems = $derived.by(() => {
 		const t = skinTone, g = gender, ds = dualSelections, dirs = dirSelections;
 		return semanticOnlyItems.map(item => ({ item, e: resolveEmoji(item, t, g, ds, dirs) }));
+	});
+	let resolvedFuzzyItems = $derived.by(() => {
+		const t = skinTone, g = gender, ds = dualSelections, dirs = dirSelections;
+		return fuzzyItems.map(item => ({ item, e: resolveEmoji(item, t, g, ds, dirs) }));
 	});
 	// (Popular now renders as a flow section — see flowingSections.)
 
@@ -965,24 +938,27 @@
 	// ── Semantic search effect ────────────────────────────────────────────────
 	$effect(() => {
 		const q = query.trim();
-		if (!q) { semanticScores = null; semanticOnlyCps = []; semanticWorking = false; return; }
-		clearTimeout(_semanticDebounce);
-		_semanticDebounce = setTimeout(async () => {
-			if (!isSemanticReady()) return;
+		const ready = semanticReady; // Re-run the current query when the worker becomes ready.
+		semanticScores = null; semanticOnlyCps = []; semanticWorking = false;
+		if (!q || !ready) return;
+		let canceled = false;
+		const timer = setTimeout(async () => {
 			semanticWorking = true;
 			try {
 				const hits = await searchEmoji(q, 50); // all ML in worker — main thread just receives results
+				if (canceled) return;
 				semanticScores = new Map(hits.map(h => [h.cp, h.score]));
 				const THRESHOLD = 0.4;
 				semanticOnlyCps = hits[0]?.score >= THRESHOLD ? hits.filter(h => h.score >= THRESHOLD).map(h => h.cp) : [];
 			} catch { /* semantic unavailable, keyword-only */ }
-			semanticWorking = false;
+			if (!canceled) semanticWorking = false;
 		}, 300);
+		return () => { canceled = true; clearTimeout(timer); };
 	});
 
 	onMount(() => {
 		// Start model loading in background
-		onSemanticReady(() => { semanticReady = true; });
+		return onSemanticReady(() => { semanticReady = true; });
 	});
 
 </script>
@@ -1067,7 +1043,7 @@
 		{#if loading}
 			<div class="state-msg">Loading…</div>
 		{:else if searchResults !== null}
-			{#if resolvedSearchItems.length === 0 && resolvedSemanticOnlyItems.length === 0}
+			{#if resolvedSearchItems.length === 0 && resolvedSemanticOnlyItems.length === 0 && resolvedFuzzyItems.length === 0}
 				<div class="state-msg">No results for "{query}"</div>
 			{:else}
 				{#if resolvedSearchItems.length > 0}
@@ -1106,6 +1082,20 @@
 					</div>
 				{:else if semanticWorking}
 					<div class="semantic-section-label">✦ thinking…</div>
+				{/if}
+				{#if resolvedFuzzyItems.length > 0}
+					<div class="semantic-section-label">Similar names</div>
+					<div class="grid" class:noto={fontStyle === 'noto'}>
+						{#each resolvedFuzzyItems as { item, e } (item.cp)}
+							<button class="cell" data-search-match="fuzzy" class:has-variants={item.t?.length} title={item.n}
+								onpointerdown={(ev) => startLp(ev, item)} onpointermove={moveLp}
+								onpointerup={cancelLp} onpointerleave={cancelLp}
+								oncontextmenu={(ev) => openVariants(ev, item)}
+								onmouseenter={() => preview = { e: resolveEmoji(item, skinTone, gender), n: resolvedName(item), sc: resolvedShortcode(item) }}
+								onmouseleave={() => preview = null}
+								onclick={() => { if (lpFired) { lpFired = false; return; } pickItem(item); }}>{e}</button>
+						{/each}
+					</div>
 				{/if}
 			{/if}
 		{:else if flowingSections.length}

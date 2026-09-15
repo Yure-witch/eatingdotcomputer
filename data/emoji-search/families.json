@@ -1,0 +1,11 @@
+{
+  "description": "Explicit collection searches. Name words include future family members automatically; preferred glyphs put the core collection first.",
+  "families": [
+    {
+      "id": "hearts",
+      "terms": ["heart", "hearts", "the heart", "the hearts", "all hearts"],
+      "nameWords": ["heart", "hearts"],
+      "preferred": ["❤️","🧡","💛","💚","🩵","💙","💜","🩷","🤎","🖤","🩶","🤍","💔","❤️‍🔥","❤️‍🩹","💖","💗","💓","💞","💕","💘","💝","💟","♥️","❣️","🫀","🫶"]
+    }
+  ]
+}

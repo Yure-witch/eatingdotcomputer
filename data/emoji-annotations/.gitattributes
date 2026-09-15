@@ -1,0 +1,2 @@
+# Preserve the downloaded source and separate enriched XML byte-for-byte.
+*.xml -text

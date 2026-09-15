@@ -1,0 +1,1917 @@
+{
+  "description": "Reviewed search associations for situations, activities, aesthetics and objects. These are editorial associations, not Unicode annotations or Webster synonyms. Order within each emoji list expresses relevance.",
+  "concepts": [
+    {
+      "id": "murder",
+      "terms": [
+        "murder",
+        "murdered",
+        "murdering",
+        "homicide",
+        "assassination",
+        "assassin",
+        "slasher"
+      ],
+      "emoji": [
+        "🔪",
+        "🗡️",
+        "🩸",
+        "💀",
+        "☠️",
+        "⚰️",
+        "⚔️",
+        "🪦"
+      ]
+    },
+    {
+      "id": "goth",
+      "terms": [
+        "goth",
+        "gothic",
+        "emo",
+        "dark aesthetic"
+      ],
+      "emoji": [
+        "🖤",
+        "🥀",
+        "🦇",
+        "🗡️",
+        "🩸",
+        "💀",
+        "⚰️",
+        "🕸️"
+      ]
+    },
+    {
+      "id": "horror",
+      "terms": [
+        "horror",
+        "horror movie",
+        "creepy",
+        "spooky",
+        "haunted",
+        "scary movie"
+      ],
+      "emoji": [
+        "👻",
+        "💀",
+        "🔪",
+        "🩸",
+        "🧟",
+        "🦇",
+        "🕸️"
+      ]
+    },
+    {
+      "id": "blades",
+      "terms": [
+        "knives",
+        "blades",
+        "weapon",
+        "weapons",
+        "swordfight",
+        "sword fight",
+        "duel"
+      ],
+      "emoji": [
+        "🔪",
+        "🗡️",
+        "⚔️",
+        "🪓",
+        "🛡️"
+      ]
+    },
+    {
+      "id": "blood",
+      "terms": [
+        "bleeding",
+        "bloody",
+        "bloodshed",
+        "gore",
+        "gory"
+      ],
+      "emoji": [
+        "🩸",
+        "🩹",
+        "💉",
+        "🔪"
+      ]
+    },
+    {
+      "id": "mourning",
+      "terms": [
+        "mourning",
+        "grief",
+        "grieving",
+        "funeral",
+        "bereavement",
+        "rest in peace"
+      ],
+      "emoji": [
+        "🕯️",
+        "🖤",
+        "🥀",
+        "⚰️",
+        "🪦",
+        "😢"
+      ]
+    },
+    {
+      "id": "burnout",
+      "terms": [
+        "burnout",
+        "burned out",
+        "burnt out",
+        "overworked",
+        "overwhelmed",
+        "drained"
+      ],
+      "emoji": [
+        "🫠",
+        "😵‍💫",
+        "😩",
+        "🪫",
+        "🥱"
+      ]
+    },
+    {
+      "id": "sleep deprivation",
+      "terms": [
+        "insomnia",
+        "sleepless",
+        "sleep deprived",
+        "all nighter",
+        "pulled an all nighter",
+        "cant sleep",
+        "can't sleep"
+      ],
+      "emoji": [
+        "😵‍💫",
+        "🥱",
+        "☕",
+        "🌙",
+        "😴"
+      ]
+    },
+    {
+      "id": "procrastination",
+      "terms": [
+        "procrastination",
+        "procrastinating",
+        "procrastinate",
+        "putting it off",
+        "distracted",
+        "distraction"
+      ],
+      "emoji": [
+        "⏳",
+        "🫠",
+        "📱",
+        "🙈"
+      ]
+    },
+    {
+      "id": "deadline",
+      "terms": [
+        "deadline",
+        "deadlines",
+        "due date",
+        "due tonight",
+        "running out of time",
+        "time crunch",
+        "last minute"
+      ],
+      "emoji": [
+        "⏰",
+        "⏳",
+        "😰",
+        "📝",
+        "🏃"
+      ]
+    },
+    {
+      "id": "exams",
+      "terms": [
+        "exam",
+        "exams",
+        "midterm",
+        "midterms",
+        "finals",
+        "exam week",
+        "cramming",
+        "studying",
+        "revision"
+      ],
+      "emoji": [
+        "📚",
+        "📝",
+        "🧠",
+        "☕",
+        "😰"
+      ]
+    },
+    {
+      "id": "homework",
+      "terms": [
+        "homework",
+        "assignment",
+        "assignments",
+        "essay",
+        "coursework",
+        "problem set"
+      ],
+      "emoji": [
+        "📝",
+        "📚",
+        "💻",
+        "✏️"
+      ]
+    },
+    {
+      "id": "graduation",
+      "terms": [
+        "graduation",
+        "graduating",
+        "graduated",
+        "diploma",
+        "commencement"
+      ],
+      "emoji": [
+        "🎓",
+        "📜",
+        "🎉",
+        "🥳"
+      ]
+    },
+    {
+      "id": "homesickness",
+      "terms": [
+        "homesick",
+        "homesickness",
+        "miss home",
+        "missing home"
+      ],
+      "emoji": [
+        "🏠",
+        "🥺",
+        "😢",
+        "💔"
+      ]
+    },
+    {
+      "id": "impostor syndrome",
+      "terms": [
+        "impostor syndrome",
+        "imposter syndrome",
+        "self doubt",
+        "insecure",
+        "not good enough"
+      ],
+      "emoji": [
+        "🥺",
+        "🫣",
+        "😰",
+        "🎭"
+      ]
+    },
+    {
+      "id": "anxiety",
+      "terms": [
+        "panic attack",
+        "panicking",
+        "overthinking",
+        "spiraling",
+        "anxiety attack"
+      ],
+      "emoji": [
+        "😰",
+        "😵‍💫",
+        "🫨",
+        "🧠"
+      ]
+    },
+    {
+      "id": "relief",
+      "terms": [
+        "relief",
+        "relieved",
+        "finally done",
+        "weight off my shoulders"
+      ],
+      "emoji": [
+        "😮‍💨",
+        "😌",
+        "🙌",
+        "✅"
+      ]
+    },
+    {
+      "id": "awkwardness",
+      "terms": [
+        "awkward",
+        "awkward silence",
+        "cringe",
+        "cringey",
+        "embarrassing",
+        "embarrassed"
+      ],
+      "emoji": [
+        "🫣",
+        "😬",
+        "🫠",
+        "😶"
+      ]
+    },
+    {
+      "id": "confusion",
+      "terms": [
+        "confused",
+        "confusion",
+        "makes no sense",
+        "what is happening",
+        "lost the plot"
+      ],
+      "emoji": [
+        "😕",
+        "🤔",
+        "❓",
+        "😵‍💫"
+      ]
+    },
+    {
+      "id": "sarcasm",
+      "terms": [
+        "sarcasm",
+        "sarcastic",
+        "irony",
+        "ironic",
+        "yeah right",
+        "eye roll"
+      ],
+      "emoji": [
+        "🙄",
+        "🫠",
+        "😏"
+      ]
+    },
+    {
+      "id": "disbelief",
+      "terms": [
+        "disbelief",
+        "unbelievable",
+        "shook",
+        "mind blown",
+        "plot twist"
+      ],
+      "emoji": [
+        "🤯",
+        "😲",
+        "🫢",
+        "🫨"
+      ]
+    },
+    {
+      "id": "support",
+      "terms": [
+        "moral support",
+        "you got this",
+        "cheering you on",
+        "encouragement",
+        "solidarity"
+      ],
+      "emoji": [
+        "🫂",
+        "💪",
+        "🙌",
+        "❤️"
+      ]
+    },
+    {
+      "id": "apology",
+      "terms": [
+        "apology",
+        "apologize",
+        "apologise",
+        "sorry",
+        "my bad",
+        "forgive me"
+      ],
+      "emoji": [
+        "🙏",
+        "🥺",
+        "🙇",
+        "😔"
+      ]
+    },
+    {
+      "id": "gratitude",
+      "terms": [
+        "gratitude",
+        "grateful",
+        "thank you",
+        "thanks",
+        "appreciate it"
+      ],
+      "emoji": [
+        "🙏",
+        "🥹",
+        "❤️",
+        "🫶"
+      ]
+    },
+    {
+      "id": "breakup",
+      "terms": [
+        "breakup",
+        "break up",
+        "broke up",
+        "dumped",
+        "rejected",
+        "rejection"
+      ],
+      "emoji": [
+        "💔",
+        "🥀",
+        "😢",
+        "😭"
+      ]
+    },
+    {
+      "id": "flirting",
+      "terms": [
+        "flirting",
+        "flirt",
+        "rizz",
+        "crush",
+        "date night",
+        "romantic"
+      ],
+      "emoji": [
+        "😉",
+        "😘",
+        "🥰",
+        "🌹",
+        "❤️‍🔥"
+      ]
+    },
+    {
+      "id": "friendship",
+      "terms": [
+        "friendship",
+        "bestie",
+        "besties",
+        "bff",
+        "best friend",
+        "best friends"
+      ],
+      "emoji": [
+        "🫂",
+        "🫶",
+        "👯",
+        "🤝"
+      ]
+    },
+    {
+      "id": "loneliness",
+      "terms": [
+        "loneliness",
+        "lonely",
+        "left out",
+        "isolated",
+        "missing someone"
+      ],
+      "emoji": [
+        "🥺",
+        "😔",
+        "💔",
+        "🫂"
+      ]
+    },
+    {
+      "id": "celebration",
+      "terms": [
+        "celebrate",
+        "celebration",
+        "celebrating",
+        "achievement",
+        "accomplished",
+        "we did it",
+        "milestone"
+      ],
+      "emoji": [
+        "🎉",
+        "🥳",
+        "🎊",
+        "🙌",
+        "🏆"
+      ]
+    },
+    {
+      "id": "cozy",
+      "terms": [
+        "cozy",
+        "cosy",
+        "hygge",
+        "comfy",
+        "comfort",
+        "cuddly"
+      ],
+      "emoji": [
+        "🧸",
+        "🛋️",
+        "☕",
+        "🕯️",
+        "🫂"
+      ]
+    },
+    {
+      "id": "nostalgia",
+      "terms": [
+        "nostalgia",
+        "nostalgic",
+        "throwback",
+        "good old days",
+        "childhood memories"
+      ],
+      "emoji": [
+        "🥹",
+        "📸",
+        "🧸",
+        "📼"
+      ]
+    },
+    {
+      "id": "hangover",
+      "terms": [
+        "hangover",
+        "hungover",
+        "hangovers",
+        "morning after"
+      ],
+      "emoji": [
+        "🤕",
+        "🤢",
+        "🥴",
+        "💧",
+        "🛌"
+      ]
+    },
+    {
+      "id": "illness",
+      "terms": [
+        "sick day",
+        "flu",
+        "fever",
+        "sore throat",
+        "unwell",
+        "feeling sick"
+      ],
+      "emoji": [
+        "🤒",
+        "🤧",
+        "😷",
+        "💊",
+        "🛌"
+      ]
+    },
+    {
+      "id": "allergies",
+      "terms": [
+        "allergies",
+        "allergic",
+        "hay fever",
+        "pollen allergy"
+      ],
+      "emoji": [
+        "🤧",
+        "🌼",
+        "😷",
+        "💊"
+      ]
+    },
+    {
+      "id": "recovery",
+      "terms": [
+        "get well soon",
+        "recovering",
+        "recovery",
+        "healing",
+        "feel better"
+      ],
+      "emoji": [
+        "❤️‍🩹",
+        "🩹",
+        "🌷",
+        "🫂"
+      ]
+    },
+    {
+      "id": "dehydration",
+      "terms": [
+        "dehydrated",
+        "dehydration",
+        "thirsty",
+        "hydrate",
+        "hydration"
+      ],
+      "emoji": [
+        "💧",
+        "🚰",
+        "🥤",
+        "🥵"
+      ]
+    },
+    {
+      "id": "menstruation",
+      "terms": [
+        "period cramps",
+        "menstrual cramps",
+        "menstruation",
+        "pms",
+        "time of the month"
+      ],
+      "emoji": [
+        "🩸",
+        "😣",
+        "🫠",
+        "💊"
+      ]
+    },
+    {
+      "id": "cooking",
+      "terms": [
+        "meal prep",
+        "cooking dinner",
+        "chopping",
+        "dicing",
+        "food prep",
+        "chef"
+      ],
+      "emoji": [
+        "🔪",
+        "🧑‍🍳",
+        "🍳",
+        "🥘",
+        "🥕"
+      ]
+    },
+    {
+      "id": "hunger",
+      "terms": [
+        "hungry",
+        "starving",
+        "hangry",
+        "need food",
+        "snack time"
+      ],
+      "emoji": [
+        "🤤",
+        "🍽️",
+        "🍕",
+        "🍔"
+      ]
+    },
+    {
+      "id": "caffeine",
+      "terms": [
+        "caffeine",
+        "caffeinated",
+        "need coffee",
+        "coffee break",
+        "espresso"
+      ],
+      "emoji": [
+        "☕",
+        "🥱",
+        "⚡",
+        "🫨"
+      ]
+    },
+    {
+      "id": "job search",
+      "terms": [
+        "job search",
+        "job hunting",
+        "resume",
+        "cv",
+        "job interview",
+        "internship"
+      ],
+      "emoji": [
+        "💼",
+        "📄",
+        "🤝",
+        "🧑‍💼"
+      ]
+    },
+    {
+      "id": "layoff",
+      "terms": [
+        "layoff",
+        "laid off",
+        "unemployed",
+        "unemployment",
+        "lost my job"
+      ],
+      "emoji": [
+        "💼",
+        "😔",
+        "📉",
+        "💸"
+      ]
+    },
+    {
+      "id": "payday",
+      "terms": [
+        "payday",
+        "paycheck",
+        "pay cheque",
+        "salary",
+        "got paid"
+      ],
+      "emoji": [
+        "💰",
+        "💵",
+        "🤑",
+        "🎉"
+      ]
+    },
+    {
+      "id": "financial stress",
+      "terms": [
+        "broke",
+        "bankrupt",
+        "debt",
+        "debts",
+        "bills",
+        "rent",
+        "student loans",
+        "overdraft"
+      ],
+      "emoji": [
+        "💸",
+        "🪙",
+        "😰",
+        "📉"
+      ]
+    },
+    {
+      "id": "expensive",
+      "terms": [
+        "expensive",
+        "pricey",
+        "overpriced",
+        "inflation",
+        "cost of living"
+      ],
+      "emoji": [
+        "💸",
+        "💰",
+        "📈",
+        "😱"
+      ]
+    },
+    {
+      "id": "bargain",
+      "terms": [
+        "bargain",
+        "discount",
+        "sale",
+        "coupon",
+        "cheap",
+        "budget friendly"
+      ],
+      "emoji": [
+        "🏷️",
+        "🛍️",
+        "💵",
+        "🤑"
+      ]
+    },
+    {
+      "id": "scam",
+      "terms": [
+        "scam",
+        "scammer",
+        "scammed",
+        "fraud",
+        "phishing",
+        "identity theft"
+      ],
+      "emoji": [
+        "⚠️",
+        "🎣",
+        "💸",
+        "🚨",
+        "🕵️"
+      ]
+    },
+    {
+      "id": "privacy",
+      "terms": [
+        "privacy",
+        "private",
+        "confidential",
+        "secret",
+        "encrypted",
+        "encryption"
+      ],
+      "emoji": [
+        "🔒",
+        "🤫",
+        "🛡️",
+        "🔐"
+      ]
+    },
+    {
+      "id": "hacking",
+      "terms": [
+        "hacked",
+        "hacker",
+        "cyberattack",
+        "data breach",
+        "malware",
+        "ransomware"
+      ],
+      "emoji": [
+        "💻",
+        "🔓",
+        "⚠️",
+        "🦠"
+      ]
+    },
+    {
+      "id": "coding",
+      "terms": [
+        "coding",
+        "programming",
+        "code",
+        "software",
+        "developer",
+        "algorithm"
+      ],
+      "emoji": [
+        "💻",
+        "🧑‍💻",
+        "⌨️",
+        "⚙️"
+      ]
+    },
+    {
+      "id": "debugging",
+      "terms": [
+        "debugging",
+        "debug",
+        "software bug",
+        "glitch",
+        "glitches",
+        "broken code",
+        "stack trace"
+      ],
+      "emoji": [
+        "🐛",
+        "🪲",
+        "🔧",
+        "💻"
+      ]
+    },
+    {
+      "id": "deployment",
+      "terms": [
+        "deploy",
+        "deployment",
+        "ship it",
+        "release day",
+        "launch day"
+      ],
+      "emoji": [
+        "🚀",
+        "📦",
+        "✅",
+        "🎉"
+      ]
+    },
+    {
+      "id": "connectivity",
+      "terms": [
+        "no wifi",
+        "bad wifi",
+        "offline",
+        "disconnected",
+        "lag",
+        "lagging",
+        "buffering",
+        "internet down"
+      ],
+      "emoji": [
+        "📶",
+        "📡",
+        "🔌",
+        "🐌",
+        "🫠"
+      ]
+    },
+    {
+      "id": "charging",
+      "terms": [
+        "battery dead",
+        "out of battery",
+        "low battery",
+        "need a charger",
+        "charging",
+        "power outage"
+      ],
+      "emoji": [
+        "🪫",
+        "🔌",
+        "🔋",
+        "⚡"
+      ]
+    },
+    {
+      "id": "travel disruption",
+      "terms": [
+        "flight delayed",
+        "flight delay",
+        "missed flight",
+        "cancelled flight",
+        "canceled flight",
+        "jet lag",
+        "jetlag"
+      ],
+      "emoji": [
+        "✈️",
+        "⏳",
+        "🧳",
+        "😩"
+      ]
+    },
+    {
+      "id": "commuting",
+      "terms": [
+        "commute",
+        "commuting",
+        "rush hour",
+        "traffic jam",
+        "stuck in traffic",
+        "running late"
+      ],
+      "emoji": [
+        "🚗",
+        "🚌",
+        "🚦",
+        "⏰"
+      ]
+    },
+    {
+      "id": "vacation",
+      "terms": [
+        "vacation",
+        "holiday",
+        "getaway",
+        "beach day",
+        "spring break",
+        "time off"
+      ],
+      "emoji": [
+        "🏖️",
+        "✈️",
+        "🌴",
+        "🧳",
+        "😎"
+      ]
+    },
+    {
+      "id": "rainy weather",
+      "terms": [
+        "rainy day",
+        "raining",
+        "downpour",
+        "drenched",
+        "pouring rain"
+      ],
+      "emoji": [
+        "🌧️",
+        "☔",
+        "💧",
+        "🌂"
+      ]
+    },
+    {
+      "id": "heat wave",
+      "terms": [
+        "heatwave",
+        "heat wave",
+        "overheating",
+        "scorching",
+        "too hot"
+      ],
+      "emoji": [
+        "🥵",
+        "☀️",
+        "🌡️",
+        "🧊"
+      ]
+    },
+    {
+      "id": "freezing weather",
+      "terms": [
+        "freezing",
+        "frosty",
+        "blizzard",
+        "snow day",
+        "too cold"
+      ],
+      "emoji": [
+        "🥶",
+        "❄️",
+        "☃️",
+        "🧣"
+      ]
+    },
+    {
+      "id": "moving home",
+      "terms": [
+        "moving house",
+        "moving out",
+        "moving in",
+        "new apartment",
+        "packing",
+        "housewarming"
+      ],
+      "emoji": [
+        "📦",
+        "🏠",
+        "🚚",
+        "🔑"
+      ]
+    },
+    {
+      "id": "cleaning",
+      "terms": [
+        "cleaning",
+        "chores",
+        "spring cleaning",
+        "tidying",
+        "messy room",
+        "declutter"
+      ],
+      "emoji": [
+        "🧹",
+        "🧽",
+        "🪣",
+        "🧼"
+      ]
+    },
+    {
+      "id": "exercise",
+      "terms": [
+        "workout",
+        "gym",
+        "lifting",
+        "fitness",
+        "leg day",
+        "personal best"
+      ],
+      "emoji": [
+        "🏋️",
+        "💪",
+        "🏃",
+        "🏅"
+      ]
+    },
+    {
+      "id": "sustainability",
+      "terms": [
+        "sustainability",
+        "eco friendly",
+        "environment",
+        "climate change",
+        "going green",
+        "zero waste"
+      ],
+      "emoji": [
+        "🌍",
+        "♻️",
+        "🌱",
+        "💚"
+      ]
+    },
+    {
+      "id": "stargazing",
+      "terms": [
+        "stargazing",
+        "astronomy",
+        "cosmos",
+        "outer space",
+        "meteor shower"
+      ],
+      "emoji": [
+        "🔭",
+        "🌌",
+        "🪐",
+        "✨",
+        "☄️"
+      ]
+    },
+    {
+      "id": "magic",
+      "terms": [
+        "witchcraft",
+        "wizardry",
+        "witch",
+        "wizard",
+        "spellcasting",
+        "magic spell"
+      ],
+      "emoji": [
+        "🪄",
+        "🧙",
+        "🔮",
+        "✨"
+      ]
+    },
+    {
+      "id": "pirates",
+      "terms": [
+        "pirate",
+        "pirates",
+        "piracy",
+        "treasure hunt",
+        "ahoy"
+      ],
+      "emoji": [
+        "🏴‍☠️",
+        "⚓",
+        "🗺️",
+        "🦜",
+        "💰"
+      ]
+    },
+    {
+      "id": "detective",
+      "terms": [
+        "detective",
+        "mystery",
+        "investigation",
+        "clues",
+        "whodunit",
+        "true crime"
+      ],
+      "emoji": [
+        "🕵️",
+        "🔎",
+        "👣",
+        "🧩"
+      ]
+    },
+    {
+      "id": "gossip",
+      "terms": [
+        "gossip",
+        "spill the tea",
+        "drama",
+        "juicy details",
+        "tea time"
+      ],
+      "emoji": [
+        "👀",
+        "🍵",
+        "🤭",
+        "🗣️"
+      ]
+    },
+    {
+      "id": "red flags",
+      "terms": [
+        "red flag",
+        "red flags",
+        "warning sign",
+        "toxic",
+        "sketchy",
+        "sus",
+        "suspicious"
+      ],
+      "emoji": [
+        "🚩",
+        "⚠️",
+        "🤨",
+        "👀"
+      ]
+    },
+    {
+      "id": "good luck",
+      "terms": [
+        "good luck",
+        "fingers crossed",
+        "wish me luck",
+        "lucky charm"
+      ],
+      "emoji": [
+        "🤞",
+        "🍀",
+        "✨",
+        "🧧"
+      ]
+    },
+    {
+      "id": "birthday",
+      "terms": [
+        "birthday",
+        "bday",
+        "happy birthday",
+        "birthday party"
+      ],
+      "emoji": [
+        "🎂",
+        "🎁",
+        "🎈",
+        "🥳",
+        "🎉"
+      ]
+    },
+    {
+      "id": "hiking",
+      "terms": [
+        "hiking",
+        "hike",
+        "trekking",
+        "trail walk"
+      ],
+      "emoji": [
+        "🥾",
+        "🏔️",
+        "🎒",
+        "🧭"
+      ]
+    },
+    {
+      "id": "road trip",
+      "terms": [
+        "road trip",
+        "roadtrip",
+        "long drive"
+      ],
+      "emoji": [
+        "🚗",
+        "🛣️",
+        "🗺️",
+        "🧳"
+      ]
+    },
+    {
+      "id": "picnic",
+      "terms": [
+        "picnic",
+        "picnicking",
+        "outdoor lunch"
+      ],
+      "emoji": [
+        "🧺",
+        "🥪",
+        "🍓",
+        "🌳"
+      ]
+    },
+    {
+      "id": "barbecue",
+      "terms": [
+        "barbecue",
+        "bbq",
+        "grilling",
+        "cookout"
+      ],
+      "emoji": [
+        "🍖",
+        "🍗",
+        "🔥",
+        "🌽"
+      ]
+    },
+    {
+      "id": "baking",
+      "terms": [
+        "baking",
+        "bake",
+        "baker"
+      ],
+      "emoji": [
+        "🧁",
+        "🍰",
+        "🥖",
+        "🥣"
+      ]
+    },
+    {
+      "id": "vegan food",
+      "terms": [
+        "vegan",
+        "vegetarian",
+        "plant based"
+      ],
+      "emoji": [
+        "🥦",
+        "🥕",
+        "🌱",
+        "🥗"
+      ]
+    },
+    {
+      "id": "sushi dinner",
+      "terms": [
+        "sushi night",
+        "sushi dinner",
+        "japanese food"
+      ],
+      "emoji": [
+        "🍣",
+        "🍱",
+        "🍤",
+        "🥢"
+      ]
+    },
+    {
+      "id": "pizza party",
+      "terms": [
+        "pizza party",
+        "pizza night",
+        "pizzeria"
+      ],
+      "emoji": [
+        "🍕",
+        "🧀",
+        "🍅",
+        "🎉"
+      ]
+    },
+    {
+      "id": "tacos",
+      "terms": [
+        "taco tuesday",
+        "taco night",
+        "mexican food"
+      ],
+      "emoji": [
+        "🌮",
+        "🌯",
+        "🌶️"
+      ]
+    },
+    {
+      "id": "brunch",
+      "terms": [
+        "brunch",
+        "breakfast date",
+        "breakfast food"
+      ],
+      "emoji": [
+        "🥞",
+        "🥐",
+        "🍳",
+        "☕"
+      ]
+    },
+    {
+      "id": "movie night",
+      "terms": [
+        "movie night",
+        "film night",
+        "cinema date"
+      ],
+      "emoji": [
+        "🍿",
+        "🎬",
+        "🎥",
+        "🎞️"
+      ]
+    },
+    {
+      "id": "game night",
+      "terms": [
+        "game night",
+        "board games",
+        "board game"
+      ],
+      "emoji": [
+        "🎲",
+        "🃏",
+        "🎮",
+        "🧩"
+      ]
+    },
+    {
+      "id": "karaoke",
+      "terms": [
+        "karaoke",
+        "singalong",
+        "sing along"
+      ],
+      "emoji": [
+        "🎤",
+        "🎶",
+        "🎵",
+        "🧑‍🎤"
+      ]
+    },
+    {
+      "id": "concert",
+      "terms": [
+        "concert",
+        "live music",
+        "gig",
+        "music festival"
+      ],
+      "emoji": [
+        "🎤",
+        "🎸",
+        "🎶",
+        "🤘"
+      ]
+    },
+    {
+      "id": "book club",
+      "terms": [
+        "book club",
+        "reading group",
+        "reading night"
+      ],
+      "emoji": [
+        "📚",
+        "📖",
+        "☕",
+        "💬"
+      ]
+    },
+    {
+      "id": "art class",
+      "terms": [
+        "art class",
+        "artwork",
+        "art studio"
+      ],
+      "emoji": [
+        "🎨",
+        "🖌️",
+        "🖼️",
+        "✏️"
+      ]
+    },
+    {
+      "id": "photography",
+      "terms": [
+        "photography",
+        "photographer",
+        "photoshoot",
+        "photo shoot"
+      ],
+      "emoji": [
+        "📷",
+        "📸",
+        "🖼️",
+        "🏞️"
+      ]
+    },
+    {
+      "id": "gardening",
+      "terms": [
+        "gardening",
+        "gardener",
+        "planting",
+        "green thumb"
+      ],
+      "emoji": [
+        "🌱",
+        "🪴",
+        "🌻",
+        "🧑‍🌾"
+      ]
+    },
+    {
+      "id": "knitting",
+      "terms": [
+        "knitting",
+        "knit",
+        "crochet",
+        "crocheting"
+      ],
+      "emoji": [
+        "🧶",
+        "🪡",
+        "🧵"
+      ]
+    },
+    {
+      "id": "sewing",
+      "terms": [
+        "sewing",
+        "sew",
+        "stitching",
+        "tailoring"
+      ],
+      "emoji": [
+        "🪡",
+        "🧵",
+        "👗",
+        "✂️"
+      ]
+    },
+    {
+      "id": "laundry",
+      "terms": [
+        "laundry",
+        "washing clothes",
+        "laundromat"
+      ],
+      "emoji": [
+        "🧺",
+        "🧼",
+        "👕",
+        "🧦"
+      ]
+    },
+    {
+      "id": "engagement",
+      "terms": [
+        "engagement",
+        "engaged",
+        "proposal",
+        "proposing"
+      ],
+      "emoji": [
+        "💍",
+        "💐",
+        "🥂",
+        "💑"
+      ]
+    },
+    {
+      "id": "baby shower",
+      "terms": [
+        "baby shower",
+        "newborn",
+        "new baby"
+      ],
+      "emoji": [
+        "👶",
+        "🍼",
+        "🎁",
+        "🧸"
+      ]
+    },
+    {
+      "id": "pregnancy",
+      "terms": [
+        "pregnant",
+        "pregnancy",
+        "expecting a baby"
+      ],
+      "emoji": [
+        "🫄",
+        "🍼",
+        "👶"
+      ]
+    },
+    {
+      "id": "dog walking",
+      "terms": [
+        "dog walk",
+        "walking the dog",
+        "dog park"
+      ],
+      "emoji": [
+        "🐕",
+        "🐕‍🦺",
+        "🐾",
+        "🚶"
+      ]
+    },
+    {
+      "id": "cat lovers",
+      "terms": [
+        "cat person",
+        "cat lover",
+        "cat lovers"
+      ],
+      "emoji": [
+        "🐱",
+        "🐈",
+        "🐈‍⬛",
+        "🐾"
+      ]
+    },
+    {
+      "id": "pet adoption",
+      "terms": [
+        "pet adoption",
+        "adopting a pet",
+        "animal shelter",
+        "rescue pet"
+      ],
+      "emoji": [
+        "🐶",
+        "🐱",
+        "🐾",
+        "🏠"
+      ]
+    },
+    {
+      "id": "veterinarian",
+      "terms": [
+        "vet appointment",
+        "veterinarian",
+        "vet visit",
+        "sick pet"
+      ],
+      "emoji": [
+        "🐾",
+        "🩺",
+        "🏥",
+        "🐶"
+      ]
+    },
+    {
+      "id": "hospital",
+      "terms": [
+        "hospital",
+        "medical care",
+        "doctor appointment",
+        "surgery"
+      ],
+      "emoji": [
+        "🏥",
+        "🩺",
+        "🚑",
+        "🩻"
+      ]
+    },
+    {
+      "id": "first aid",
+      "terms": [
+        "first aid",
+        "medical kit",
+        "injured",
+        "injury"
+      ],
+      "emoji": [
+        "🩹",
+        "🩺",
+        "🚑",
+        "💊"
+      ]
+    },
+    {
+      "id": "fire drill",
+      "terms": [
+        "fire drill",
+        "fire alarm",
+        "fire emergency",
+        "evacuation"
+      ],
+      "emoji": [
+        "🚨",
+        "🧯",
+        "🚒",
+        "🔥"
+      ]
+    },
+    {
+      "id": "earthquake",
+      "terms": [
+        "earthquake",
+        "seismic",
+        "tremor"
+      ],
+      "emoji": [
+        "🫨",
+        "🏚️",
+        "🌍",
+        "⚠️"
+      ]
+    },
+    {
+      "id": "flood",
+      "terms": [
+        "flood",
+        "flooding",
+        "flash flood"
+      ],
+      "emoji": [
+        "🌊",
+        "🌧️",
+        "🏠",
+        "⚠️"
+      ]
+    },
+    {
+      "id": "recycling",
+      "terms": [
+        "recycling",
+        "recycle",
+        "reusable",
+        "reuse"
+      ],
+      "emoji": [
+        "♻️",
+        "🗑️",
+        "🌱",
+        "🌍"
+      ]
+    },
+    {
+      "id": "meditation",
+      "terms": [
+        "meditation",
+        "meditate",
+        "mindfulness",
+        "mindful"
+      ],
+      "emoji": [
+        "🧘",
+        "🕯️",
+        "🪷",
+        "😌"
+      ]
+    },
+    {
+      "id": "therapy",
+      "terms": [
+        "therapy",
+        "therapist",
+        "counseling",
+        "counselling",
+        "mental health"
+      ],
+      "emoji": [
+        "🧠",
+        "🛋️",
+        "🫂",
+        "❤️‍🩹"
+      ]
+    },
+    {
+      "id": "self care",
+      "terms": [
+        "self care",
+        "selfcare",
+        "spa day",
+        "pampering"
+      ],
+      "emoji": [
+        "🛁",
+        "🕯️",
+        "🧘",
+        "💆"
+      ]
+    },
+    {
+      "id": "boundaries",
+      "terms": [
+        "boundaries",
+        "setting boundaries",
+        "personal space"
+      ],
+      "emoji": [
+        "🛑",
+        "✋",
+        "🛡️",
+        "💬"
+      ]
+    },
+    {
+      "id": "betrayal",
+      "terms": [
+        "betrayed",
+        "betrayal",
+        "backstabbed",
+        "backstabbing"
+      ],
+      "emoji": [
+        "💔",
+        "🗡️",
+        "😞",
+        "🐍"
+      ]
+    },
+    {
+      "id": "revenge",
+      "terms": [
+        "revenge",
+        "vengeance",
+        "vengeful"
+      ],
+      "emoji": [
+        "😈",
+        "🔥",
+        "⚔️",
+        "😤"
+      ]
+    },
+    {
+      "id": "forgiveness",
+      "terms": [
+        "forgiveness",
+        "forgiving",
+        "make peace",
+        "reconciliation"
+      ],
+      "emoji": [
+        "❤️‍🩹",
+        "🫂",
+        "🤝",
+        "🕊️"
+      ]
+    },
+    {
+      "id": "hope",
+      "terms": [
+        "hopeful",
+        "hope",
+        "optimistic",
+        "optimism",
+        "new beginning"
+      ],
+      "emoji": [
+        "🤞",
+        "🌈",
+        "✨",
+        "🌱"
+      ]
+    },
+    {
+      "id": "pessimism",
+      "terms": [
+        "pessimistic",
+        "pessimism",
+        "gloomy outlook",
+        "hopeless"
+      ],
+      "emoji": [
+        "😔",
+        "☁️",
+        "🙃",
+        "🥀"
+      ]
+    },
+    {
+      "id": "apathy",
+      "terms": [
+        "apathetic",
+        "apathy",
+        "indifferent",
+        "uninterested"
+      ],
+      "emoji": [
+        "😐",
+        "😑",
+        "😶",
+        "🥱"
+      ]
+    },
+    {
+      "id": "euphoria",
+      "terms": [
+        "euphoric",
+        "euphoria",
+        "ecstatic",
+        "overjoyed"
+      ],
+      "emoji": [
+        "🤩",
+        "🥳",
+        "😁",
+        "✨"
+      ]
+    },
+    {
+      "id": "disgust",
+      "terms": [
+        "disgusted",
+        "disgusting",
+        "disgust",
+        "repulsed",
+        "gross"
+      ],
+      "emoji": [
+        "🤢",
+        "🤮",
+        "😖"
+      ]
+    },
+    {
+      "id": "mischief",
+      "terms": [
+        "mischievous",
+        "mischief",
+        "up to no good",
+        "prank",
+        "pranking"
+      ],
+      "emoji": [
+        "😈",
+        "😏",
+        "🙃",
+        "🤭"
+      ]
+    }
+  ]
+}

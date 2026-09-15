@@ -1,0 +1,5 @@
+# Track reproduction sources; keep downloaded/generated artifacts local.
+/*
+!/.gitignore
+!/NO-USAGE.md
+!/tools/

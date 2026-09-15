@@ -42,7 +42,8 @@
 	import UserMenu from '$lib/components/UserMenu.svelte';
 	import { loadEmojiNames, getEmojiName } from '$lib/emoji-names.js';
 	import { wrapEmojiInText, tgReactionName, expressionSource } from '$lib/emoji-tip.js';
-	import { initSemanticSearch, searchEmoji, cpToChar, onSemanticReady } from '$lib/emoji-semantic.js';
+	import { initSemanticSearch } from '$lib/emoji-semantic.js';
+	import { prewarmEmo, suggestEmoji, suggestionPhrase } from '$lib/emo-suggest.js';
 	import { getCustomEmojiMap, getCachedCustomEmojiMap } from '$lib/custom-emoji-store.js';
 	import {
 		SCREEN_FXS, EXPRESSIVE_FXS, TEXT_FXS, FX_TO_CHAR, CHAR_TO_FX, FX_CLOSE_CHAR, FX_OPEN_CHARS,
@@ -729,10 +730,10 @@
 	let undoStack = [];
 	let redoStack = [];
 
-	// ── Emoji suggestions (semantic) ─────────────────────────────────────────
-	let emojiSuggestions = $state([]); // [{ e, n }]
+	// ── Emoji suggestions (Emo model — see emo-suggest.js) ─────────────
+	onMount(prewarmEmo);
+	let emojiSuggestions = $state([]); // [{ emoji, confidence, kind: 'word' | 'idea' }]
 	let _suggDebounce = null;
-	let _semanticPausedUntil = 0; // cooldown: skip embedding after a no-match result
 
 	// ── Custom emoji colon-shortcode autocomplete ─────────────────────────────
 	let ceSuggestions = $state([]); // [{ shortcode, url }]
@@ -741,22 +742,14 @@
 	$effect(() => {
 		const raw = input;
 		clearTimeout(_suggDebounce);
-		// Extract last word (strip PUA markup chars)
-		const plain = raw.replace(/[\uE100-\uE1FF]/g, '');
-		const word = plain.split(/\s+/).filter(Boolean).at(-1) ?? '';
-		if (word.length < 2) { emojiSuggestions = []; return; }
+		const phrase = suggestionPhrase(raw);
+		if (phrase.length < 2) { emojiSuggestions = []; return; }
 		_suggDebounce = setTimeout(async () => {
-			if (Date.now() < _semanticPausedUntil) return; // in cooldown, skip
-			try {
-				const hits = await searchEmoji(word, 6); // all ML in worker — main thread just receives results
-				if (hits[0]?.score >= 0.4) {
-					emojiSuggestions = hits.map(h => ({ e: cpToChar(h.cp), cp: h.cp }));
-				} else {
-					emojiSuggestions = [];
-					_semanticPausedUntil = Date.now() + 1500;
-				}
-			} catch { emojiSuggestions = []; }
-		}, 250);
+			const hits = await suggestEmoji(phrase);
+			// Stale guard: the draft may have moved on while the model ran.
+			if (suggestionPhrase(input) !== phrase) return;
+			emojiSuggestions = hits;
+		}, 150);
 	});
 
 	// Walk the DOM tree and find the node+offset for a given plain-text character position
@@ -4816,8 +4809,9 @@
 		</div>
 	{:else if emojiSuggestions.length > 0}
 		<div class="emoji-suggestions">
-			{#each emojiSuggestions as s (s.cp)}
-				<button class="emoji-sugg-btn" onmousedown={(e) => { e.preventDefault(); insertEmoji(s.e); }} title={s.cp}>{s.e}</button>
+			{#each emojiSuggestions as s, i (s.emoji)}
+				{#if i > 0 && s.kind !== emojiSuggestions[i - 1].kind}<span class="emoji-sugg-sep" aria-hidden="true"></span>{/if}
+				<button class="emoji-sugg-btn" onmousedown={(e) => { e.preventDefault(); insertEmoji(s.emoji); }}>{s.emoji}</button>
 			{/each}
 		</div>
 	{/if}
@@ -6615,6 +6609,7 @@
 	/* Text fx bar */
 	.emoji-suggestions {
 		display: flex; align-items: center; gap: 0.25rem;
+		overflow-x: auto; min-width: 0;
 		padding: 0.3rem 1rem; background: var(--paper); border-top: 1px solid #ede9e3;
 	}
 	.emoji-sugg-btn {
@@ -6624,6 +6619,8 @@
 		font-family: 'Google Sans Flex', 'Space Grotesk', sans-serif, 'Noto Color Emoji';
 	}
 	.emoji-sugg-btn:hover { background: var(--surface-2); }
+	/* Between word matches (left) and whole-sentence picks (right) — see emo-suggest.js */
+	.emoji-sugg-sep { width: 1px; height: 1.1rem; margin: 0 0.3rem; background: var(--border); flex-shrink: 0; }
 	.ce-shortcode-suggestions { gap: 0.3rem; }
 	.ce-sugg-btn { display: flex; align-items: center; gap: 0.3rem; padding: 0.2rem 0.45rem; font-size: 0.78rem; }
 	.ce-sugg-img { width: 22px; height: 22px; object-fit: contain; flex-shrink: 0; }

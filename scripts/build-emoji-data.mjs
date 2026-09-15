@@ -16,6 +16,7 @@
  *     scr: string[], // shortcodes with colons      e.g. [":heart-face:",":3-hearts:"]
  *     al:  string[], // aliases / emoticons         e.g. [":D", "<3"]
  *     kw:  string[], // CLDR keyword annotations
+ *     sy?: string[], // up to four sourced Merriam-Webster synonyms
  *     st:  string[], // pre-normalized search terms (lowercase, hyphen-expanded)
  *     oi:  number,   // order index (row order in CSV = canonical emoji order)
  *     t?:  [{e,cp}]  // skin-tone variants
@@ -25,14 +26,17 @@
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { buildSearchTerms, loadWebsterSynonyms, applyConceptAssociations } from './lib/emoji-search-data.mjs';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dir, '..');
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Supplemental keywords for emoji absent from fullAnnotations.html
+// Supplemental keywords missing from the source annotations
 // ─────────────────────────────────────────────────────────────────────────────
 const SUPPLEMENTAL_KW = {
+	// CLDR calls 🤪 "goofy" and "zany" but omits the common synonym "silly".
+	'1F92A': ['silly'],
 	'1F610': ['neutral', 'face', 'expressionless', 'blank', 'deadpan', 'meh', 'indifferent', 'unamused', 'awkward', 'straight face'],
 	'1FAE2': ['face', 'hand', 'mouth', 'gasp', 'shocked', 'embarrassed', 'amazed', 'awe', 'disbelief', 'oops', 'shh', 'quiet'],
 	'1F47A': ['goblin', 'monster', 'creature', 'japanese', 'tengu', 'demon', 'angry', 'face', 'fairy tale', 'red', 'mask'],
@@ -121,52 +125,6 @@ function parseOrdering(s) {
 	}
 
 	return { codepoint, qualifier, emoji, name: rest };
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Normalize a term for search: lowercase, strip punctuation, expand hyphens
-// Returns deduplicated array of terms
-// ─────────────────────────────────────────────────────────────────────────────
-function expandTerm(raw) {
-	const s = raw.toLowerCase().trim();
-	if (!s) return [];
-	const terms = new Set();
-	terms.add(s);
-	// hyphen → split parts + joined
-	if (s.includes('-')) {
-		const parts = s.split('-').filter(Boolean);
-		for (const p of parts) if (p.length > 1) terms.add(p);
-		const joined = parts.join('');
-		if (joined !== s && joined.length > 1) terms.add(joined);
-	}
-	return [...terms];
-}
-
-function buildSearchTerms(item) {
-	const all = new Set();
-
-	// name words
-	for (const word of item.n.split(/[\s\-_]+/)) {
-		for (const t of expandTerm(word)) all.add(t);
-	}
-
-	// shortcodes (already stripped of colons)
-	for (const sc of item.sc) {
-		for (const t of expandTerm(sc)) all.add(t);
-	}
-
-	// aliases / emoticons (literal, for searching things like "<3" or "xD")
-	for (const al of item.al) {
-		const trimmed = al.toLowerCase().trim();
-		if (trimmed) all.add(trimmed);
-	}
-
-	// CLDR keywords
-	for (const kw of item.kw) {
-		for (const t of expandTerm(kw)) all.add(t);
-	}
-
-	return [...all].filter(t => t.length > 0);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -365,9 +323,15 @@ function decodeXML(s) {
 const kwMap = {};
 
 async function fetchAndParseCLDR(url) {
-	const res = await fetch(url);
-	if (!res.ok) throw new Error(`HTTP ${res.status} fetching ${url}`);
-	const xml = await res.text();
+	const snapshot = resolve(ROOT, 'data/emoji-annotations/en.xml');
+	let xml;
+	if (url === `${CLDR_BASE}/annotations/en.xml` && existsSync(snapshot)) {
+		xml = readFileSync(snapshot, 'utf8');
+	} else {
+		const res = await fetch(url);
+		if (!res.ok) throw new Error(`HTTP ${res.status} fetching ${url}`);
+		xml = await res.text();
+	}
 	const re = /<annotation cp="([^"]+)"(?![^>]*type="tts")>([^<]+)<\/annotation>/g;
 	let m;
 	while ((m = re.exec(xml)) !== null) {
@@ -522,6 +486,7 @@ async function scrapeEmojiList() {
 }
 
 const listMap = await scrapeEmojiList();
+const websterSynonyms = loadWebsterSynonyms();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Merge CLDR keywords + build normalized searchTerms
@@ -547,6 +512,10 @@ for (const g of groups) {
 			item.kw = item.n.split(/[\s-]+/).filter(w => w.length > 1);
 		}
 
+		// Keep the source separate for records; search gives these equal weight.
+		const synonyms = (websterSynonyms.get(item.e.replaceAll('\uFE0F', '')) ?? [])
+			.filter(word => !item.kw.some(keyword => keyword.toLowerCase() === word.toLowerCase()));
+		if (synonyms.length) item.sy = synonyms;
 		// Pre-compute normalized search terms
 		item.st = buildSearchTerms(item);
 	}
@@ -614,7 +583,7 @@ for (const line of rankLines) {
 const popular = [...ranked, ...HEART_RAINBOW, '❤️‍🔥', ...exHearts];
 console.log(`Popular: ${ranked.length} ranked + ${exHearts.length} expr hearts + ${HEART_RAINBOW.length} rainbow = ${popular.length} total`);
 
-const output = { version: '17.0', groups: cleanGroups, popular };
+const output = applyConceptAssociations({ version: '17.0', groups: cleanGroups, popular });
 
 const outPath = resolve(ROOT, 'static', 'emoji-data.json');
 writeFileSync(outPath, JSON.stringify(output));
