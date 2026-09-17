@@ -2,6 +2,21 @@
 @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Space+Grotesk:wght@400;500;600&family=Pacifico&family=Playfair+Display:ital,wght@0,800;1,800&family=Bungee&family=UnifrakturCook:wght@700&family=Space+Mono:wght@700&family=Caveat:wght@700&family=Monoton&family=Rye&family=Silkscreen&display=swap');
 
 @font-face {
+	/* Material Symbols Rounded, subset to the ~106 icons the app actually
+	   renders and self-hosted. Google's full family is a 5.4MB woff2, and with
+	   `font-display: block` every icon stayed invisible until all of it landed
+	   — on a phone that reads as "the icons never loaded". The subset is
+	   ~140KB, same origin, and precached by the service worker.
+	   Regenerate after adding an icon: node scripts/msi-icons.mjs --write
+	   (needs Node 18+; the default `node` here is v15). */
+	font-family: 'Material Symbols Rounded';
+	src: url('/fonts/material-symbols-rounded.woff2') format('woff2');
+	font-weight: 100 700;
+	font-style: normal;
+	font-display: block;
+}
+
+@font-face {
 	font-family: 'Avara';
 	src: url('/fonts/Avara-master/fonts/webfonts/Bold/Avara-Bold.woff2') format('woff2'),
 		url('/fonts/Avara-master/fonts/webfonts/Bold/Avara-Bold.woff') format('woff'),
