@@ -1,4 +1,5 @@
 <script>
+	import ActivityChart from '$lib/components/ActivityChart.svelte';
 	import { enhance } from '$app/forms';
 	import SyllabusBuilder from '$lib/components/SyllabusBuilder.svelte';
 	import Avatar from '$lib/components/Avatar.svelte';
@@ -152,7 +153,6 @@
 	}
 
 	// Activity chart
-	const W = 480, PAD = 4, LABEL_W = 64, ROW_H = 44;
 	const RANGES = [
 		{ key: '12h', label: '12hr', hours: 12 },
 		{ key: '1d',  label: '1d',   hours: 24 },
@@ -162,7 +162,10 @@
 	];
 	let selectedRange = $state('7d');
 
-	let activityChart = $derived.by(() => {
+	// Per-user activity buckets for the presence chart; ActivityChart turns these
+	// into lanes, bars and a time axis (and gives every member a lane, so a
+	// student with nothing this week is visibly empty rather than missing).
+	let activitySeries = $derived.by(() => {
 		const range = RANGES.find((r) => r.key === selectedRange);
 		const now = Date.now();
 		const rp = rawPresenceCtx?.value ?? {};
@@ -196,41 +199,13 @@
 			})).filter((u) => u.points.length);
 		}
 
-		// Sort by total activity descending (most active first)
-		series = series
-			.map((u) => ({ ...u, total: u.points.reduce((s, p) => s + p.count, 0) }))
-			.sort((a, b) => b.total - a.total);
-
-		if (!series.length) return { rows: [], buckets: [], svgH: ROW_H };
-
-		// Collect all buckets (sorted)
-		const bucketSet = new Set();
-		for (const u of series) for (const p of u.points) bucketSet.add(p.bucket);
-		const buckets = [...bucketSet].sort();
-
-		// Each user gets their own swim lane — no overlap
-		const chartW = W - LABEL_W;
-		const xOf = (b) => LABEL_W + PAD + (buckets.indexOf(b) / Math.max(buckets.length - 1, 1)) * (chartW - PAD * 2);
-
-		const rows = series.map((u, i) => {
-			const userMax = Math.max(1, ...u.points.map((p) => p.count));
-			const rowTop = i * ROW_H;
-			const yOf = (c) => rowTop + PAD + (1 - c / userMax) * (ROW_H - PAD * 2);
-			return {
-				userId: u.userId,
-				name: u.name,
-				total: u.total,
-				hue: (i * 67) % 360,
-				points: u.points.map((p) => `${xOf(p.bucket).toFixed(1)},${yOf(p.count).toFixed(1)}`).join(' '),
-				rawPoints: u.points,
-				rowY: rowTop,
-				labelY: rowTop + ROW_H / 2 + 3.5
-			};
-		});
-
-		const svgH = series.length * ROW_H;
-		return { rows, buckets, svgH };
+		return series;
 	});
+
+	const chartMembers = $derived(
+		data.members.filter((m) => m.role !== 'instructor').map((m) => ({ id: m.id, name: m.name }))
+	);
+	const chartRange = $derived(RANGES.find((r) => r.key === selectedRange));
 
 	// Presence — read directly from the layout's rawPresence via context.
 	// The layout owns the Firebase subscription and API poll, so this always
@@ -635,9 +610,7 @@
 	});
 
 	// Chart hover tooltip
-	let hoverIdx = $state(null);
 	let hoverPct = $state(0); // 0–1, for tooltip positioning
-	let chartEl = $state(null);
 
 	// Bar chart hover
 	let barHoverIdx = $state(null);
@@ -646,29 +619,7 @@
 		barTooltipX = e.clientX - e.currentTarget.getBoundingClientRect().left;
 	}
 
-	function handleChartMouseMove(e) {
-		const rect = e.currentTarget.getBoundingClientRect();
-		const svgX = ((e.clientX - rect.left) / rect.width) * W;
-		const buckets = activityChart.buckets;
-		if (!buckets?.length) return;
-		const raw = (svgX - LABEL_W - PAD) / (W - LABEL_W - PAD * 2) * (buckets.length - 1);
-		hoverIdx = Math.max(0, Math.min(buckets.length - 1, Math.round(raw)));
-		hoverPct = (e.clientX - rect.left) / rect.width;
-	}
 
-	function handleChartMouseLeave() { hoverIdx = null; }
-
-	function formatBucket(bucket) {
-		if (!bucket) return '';
-		if (bucket.includes('T')) {
-			// Bucket is stored as UTC — append Z so Date parses it correctly, then display in local tz
-			return new Date(bucket + ':00Z').toLocaleString('en-US', {
-				month: 'short', day: 'numeric', hour: 'numeric', hour12: true
-			});
-		}
-		const [y, m, d] = bucket.split('-').map(Number);
-		return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-	}
 
 	// One letter each so a row of four fits beside a name on a narrow screen;
 	// the full word is the button's title.
@@ -1121,60 +1072,7 @@
 				{/each}
 			</div>
 		</div>
-		<div class="activity-chart" bind:this={chartEl}>
-			{#if activityChart.rows?.length}
-				<svg viewBox="0 0 {W} {activityChart.svgH}" width="100%" height={activityChart.svgH}
-					class="chart-svg"
-					onmousemove={handleChartMouseMove}
-					onmouseleave={handleChartMouseLeave}>
-					<!-- Swim lane backgrounds and name labels -->
-					{#each activityChart.rows as row, i}
-						<rect x={0} y={row.rowY} width={W} height={ROW_H} fill={i % 2 === 0 ? 'var(--surface-2)' : '#f5f1eb'} />
-						{#if i > 0}
-							<line x1={0} y1={row.rowY} x2={W} y2={row.rowY} stroke="var(--border)" stroke-width="0.5" />
-						{/if}
-						<text x={LABEL_W - 6} y={row.labelY} text-anchor="end" font-size="8" fill="var(--muted-fg)">{row.name.split(' ')[0]}</text>
-					{/each}
-					<!-- Label column separator -->
-					<line x1={LABEL_W} y1={0} x2={LABEL_W} y2={activityChart.svgH} stroke="var(--border)" stroke-width="0.75" />
-					<!-- Data lines (each user in their own lane) -->
-					{#each activityChart.rows as row}
-						{#if row.points}
-							<polyline
-								points={row.points}
-								fill="none"
-								stroke="hsl({row.hue} 55% 42%)"
-								stroke-width="1.5"
-								stroke-linecap="round"
-								stroke-linejoin="round"
-							/>
-						{/if}
-					{/each}
-					<!-- Hover crosshair -->
-					{#if hoverIdx !== null && activityChart.buckets?.length}
-						{@const bx = (LABEL_W + PAD + (hoverIdx / Math.max(activityChart.buckets.length - 1, 1)) * (W - LABEL_W - PAD * 2)).toFixed(1)}
-						<line x1={bx} y1={0} x2={bx} y2={activityChart.svgH} stroke="rgba(0,0,0,0.2)" stroke-width="0.75" stroke-dasharray="2,2" />
-					{/if}
-				</svg>
-				{#if hoverIdx !== null && activityChart.buckets?.length}
-					{@const bucket = activityChart.buckets[hoverIdx]}
-					{@const tooltipLeft = Math.min(Math.max(hoverPct * 100, 15), 75)}
-					<div class="chart-tooltip" style="left: {tooltipLeft}%">
-						<div class="tooltip-date">{formatBucket(bucket)}</div>
-						{#each activityChart.rows as row}
-							{@const pt = row.rawPoints.find(p => p.bucket === bucket)}
-							<div class="tooltip-row">
-								<span class="tooltip-dot" style="background: hsl({row.hue} 55% 42%)"></span>
-								<span>{row.name.split(' ')[0]}</span>
-								<span class="tooltip-count">{pt?.count ?? 0}</span>
-							</div>
-						{/each}
-					</div>
-				{/if}
-			{:else}
-				<p class="chart-empty">No activity in this period.</p>
-			{/if}
-		</div>
+		<ActivityChart series={activitySeries} range={chartRange} members={chartMembers} />
 	</section>
 
 	<section class="members-section">
@@ -1285,10 +1183,14 @@
 	<section class="members-section">
 		<h2>Last online</h2>
 		<div class="last-online-list">
-			{#each data.members.slice().sort((a, b) => (b.lastSeen ?? 0) - (a.lastSeen ?? 0)) as m}
+			<!-- Shadowbanned members sink to the bottom whatever their last seen —
+			     the list is for scanning who's around, and they aren't, to
+			     anyone but instructors. -->
+			{#each data.members.slice().sort((a, b) => (a.shadowbanned ? 1 : 0) - (b.shadowbanned ? 1 : 0) || (b.lastSeen ?? 0) - (a.lastSeen ?? 0)) as m}
 				<div class="last-online-row">
 					<span class="last-online-dot" class:online={m.online}></span>
 					<span class="last-online-name">{m.name}</span>
+					{#if m.shadowbanned}<span class="hidden-chip" title="Shadowbanned — hidden from everyone except instructors">hidden</span>{/if}
 					<span class="last-online-time">
 						{#if m.online}
 							Online now
