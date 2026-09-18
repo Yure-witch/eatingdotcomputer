@@ -157,6 +157,20 @@
         ".read": true,
         ".write": false
       }
+    },
+    "bt": {
+      "$room": {
+        ".read": true,
+        ".write": "$room.matches(/^[0-9a-f]{32}$/)",
+        ".validate": "newData.hasChildren(['k','solved','at'])",
+        "k": { ".validate": "newData.isNumber()" },
+        "solved": { ".validate": "newData.isNumber()" },
+        "at": { ".validate": "newData.isNumber()" },
+        "frames": { ".validate": "newData.isNumber()" },
+        "state": { ".validate": "newData.isString() && newData.val().length <= 16" },
+        "missing": { ".validate": "newData.isString() && newData.val().length <= 8000" },
+        "$other": { ".validate": false }
+      }
     }
   }
 }
