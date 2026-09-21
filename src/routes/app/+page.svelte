@@ -53,11 +53,23 @@
 
 	onMount(async () => {
 		if (!browser) return;
-		// 30s data refresh. Skipped while the tab/app is hidden — an invisible
+		// Data refresh. Skipped while the tab/app is hidden — an invisible
 		// surface doesn't need fresh load data, and each invalidate re-runs
 		// every load function (network + re-render). Resumes on return, so a
 		// backgrounded Capacitor webview stops burning radio + CPU.
-		const refreshTimer = setInterval(() => { if (!document.hidden) invalidateAll(); }, 30_000);
+		//
+		// Three minutes, not the 30 seconds this used to run at. Nothing on
+		// this dashboard moves on a 30-second timescale — assignments, week
+		// plans and submission counts change a few times a week — but the
+		// timer was firing 2,880 server round-trips a day per open tab
+		// regardless, which at class size is the single largest recurring
+		// draw on the hosting request budget after the service worker. Chat
+		// and presence are pushed over Firebase and never depended on this.
+		const refreshTimer = setInterval(() => { if (!document.hidden) invalidateAll(); }, 180_000);
+		// Coming back to a tab is the moment staleness actually shows, so
+		// refresh on return rather than paying a timer to guess.
+		const onVisible = () => { if (!document.hidden) invalidateAll(); };
+		document.addEventListener('visibilitychange', onVisible);
 		isStandalone = window.matchMedia('(display-mode: standalone)').matches || !!window.navigator.standalone;
 		isNative = isNativeApp();
 		const iosDevice = /iphone|ipad|ipod/i.test(navigator.userAgent);
@@ -74,7 +86,7 @@
 		notifOnboarded = onboarded || !isStandalone || !pushSupported || notifPermission !== 'default';
 		window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installPrompt = e; });
 		window.addEventListener('appinstalled', () => { isStandalone = true; installPrompt = null; });
-		return () => clearInterval(refreshTimer);
+		return () => { clearInterval(refreshTimer); document.removeEventListener('visibilitychange', onVisible); };
 	});
 
 	async function install() {

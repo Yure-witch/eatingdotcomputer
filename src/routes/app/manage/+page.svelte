@@ -88,17 +88,35 @@
 			} catch { /* keep last */ }
 		};
 		poll();
-		// 5s poll paused while hidden; the 1s clock only runs while
-		// something is actually generating (a Date.now() refresh for the
-		// elapsed readout — pointless when the list is empty).
-		const iv = setInterval(() => { if (!document.hidden) poll(); }, 5000);
+		// The 5s cadence exists to watch a digest generate — so it only
+		// applies while something IS generating. Idle, the panel is a static
+		// list and 5s was 17,280 requests a day for an unchanging answer,
+		// which is a meaningful slice of the hosting request budget spent by
+		// one instructor leaving one tab open. Paused while hidden either way;
+		// the 1s clock only runs while the generating list is non-empty (a
+		// Date.now() refresh for the elapsed readout).
+		const FAST_MS = 5000, IDLE_MS = 60_000;
+		let iv = null;
+		const arm = (ms) => {
+			if (iv) clearInterval(iv);
+			iv = setInterval(() => { if (!document.hidden) poll(); }, ms);
+		};
+		let fast = null;
+		const pace = () => {
+			const want = gemmaGenerating.length > 0;
+			if (want === fast) return;
+			fast = want;
+			arm(want ? FAST_MS : IDLE_MS);
+		};
+		pace();
 		let tick = null;
 		const syncTick = () => {
 			if (gemmaGenerating.length && !tick) tick = setInterval(() => { if (gemmaGenerating.length) gemmaGenNow = Date.now(); }, 1000);
 			else if (!gemmaGenerating.length && tick) { clearInterval(tick); tick = null; }
+			pace(); // every poll re-reads the list; follow it into/out of fast mode
 		};
 		syncTick();
-		return () => { alive = false; clearInterval(iv); if (tick) clearInterval(tick); };
+		return () => { alive = false; if (iv) clearInterval(iv); if (tick) clearInterval(tick); };
 	});
 	let interestsDraft = $state({});
 	let interestsStatus = $state({});

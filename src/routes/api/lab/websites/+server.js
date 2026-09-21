@@ -3,6 +3,7 @@ import { env } from '$env/dynamic/private';
 import { getDb } from '$lib/server/turso.js';
 import { buildPreview, dropPreviewAssets } from '$lib/server/site-preview.js';
 import { tagSite, normalizeTags, TAGS } from '$lib/server/site-tags.js';
+import { signalScoutWake } from '$lib/server/scout.js';
 
 // Lab → Inspiration: the instructor's curated website gallery.
 //
@@ -39,6 +40,7 @@ async function queueShot(db, url) {
 		sql: `INSERT INTO scout_jobs (kind, query, status) VALUES ('shot', ?, 'queued')`,
 		args: [url]
 	});
+		signalScoutWake();
 }
 
 const publicBase = () =>

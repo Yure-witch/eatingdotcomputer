@@ -9,10 +9,32 @@
 // for the same query — digests degrade gracefully to "no links" rather
 // than blocking.
 import { getDb } from '$lib/server/turso.js';
+import { getAdminDb } from '$lib/server/firebase-admin.js';
 
 const FRESH_MS = 12 * 60 * 60 * 1000;      // reuse done results younger than 12h
 const CACHE_MAX_MS = 7 * 24 * 60 * 60 * 1000; // stale fallback horizon
 const ONLINE_MS = 90 * 1000;                // heartbeat window → "online"
+
+// Tell the worker there is work, instead of letting it ask.
+//
+// kahan is firewalled inbound, so the worker has to reach out — but "reach
+// out" used to mean GET /api/scout/jobs every 15 seconds, forever, which is
+// ~173,000 serverless invocations a month to discover that a queue used a
+// few times a day is empty. It cannot be pushed to directly, but it CAN hold
+// an open stream to something that isn't us: `scout/wake` in RTDB is a single
+// public-read timestamp (no secrets — it says only that a job was enqueued,
+// never what), and the worker subscribes over Firebase's REST event-stream.
+// Bumping it wakes the worker immediately, so latency actually IMPROVES
+// while the idle polling disappears.
+//
+// Strictly fire-and-forget: a queued job is already durable in Turso, and the
+// worker's slow safety-net poll will find it even if this never lands. An
+// enqueue must never fail because RTDB is having a bad day.
+export function signalScoutWake() {
+	try {
+		getAdminDb().ref('scout/wake').set(Date.now()).catch(() => {});
+	} catch { /* no admin app configured — the safety-net poll covers it */ }
+}
 
 function norm(q) {
 	return String(q ?? '').toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 300);
@@ -62,6 +84,7 @@ export async function enqueueSearch(query, requestedBy = null) {
 		sql: `INSERT INTO scout_jobs (kind, query, requested_by) VALUES ('search', ?, ?)`,
 		args: [q, requestedBy]
 	});
+	signalScoutWake();
 }
 
 // Get results for a query: enqueue if needed, give the worker up to

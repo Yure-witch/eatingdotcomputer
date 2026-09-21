@@ -4,6 +4,129 @@ This document is a running record of what has been attempted, what is in progres
 
 ---
 
+### 2026-09-20 — Vercel edge-request budget: cut the four recurring sources
+- **Status**: `attempted` (all four compile; the RTDB wake stream was verified
+  live against Firebase. NOT deployed, and NOT confirmed against the real usage
+  graph — the numbers below are estimates from cadence × client count, not
+  measurements. Confirm in Vercel → Observability → Edge Requests, grouped by
+  path, before and after.)
+- **Trigger**: hit 75% of the Hobby edge-request allowance mid-month.
+
+- **1. Service worker precached the entire site on every deploy** — the big one.
+  `src/service-worker.js` precached `[...build, ...files]`: 225 build chunks plus
+  **1,102 files from `static/`**, ~32MB, and `CACHE = cache-${version}` changes on
+  every push. So every client re-downloaded ~1,327 files each time anything
+  shipped — including the 7.7MB canvaskit build, 162 emoji-half SVGs, 114 WeChat
+  webps, and ~700 `.ufo` glyph SOURCE files for a font that ships as three woff2s.
+  At 126 commits/30d against a class, that alone is plausibly ~600k/month.
+  - Precache is now 6 shell files (offline page, manifest, icons, the Material
+    Symbols woff2). Everything else is cached on FIRST USE by the same
+    cache-first handler, now gated by a path/extension rule instead of the
+    manifest. Built SW went from ~65KB of embedded paths to **1.9KB**.
+  - Second bug in the same handler: it fired a background `fetch()` on every
+    cache HIT, including `/_app/immutable/` — content-hashed URLs that cannot
+    change. Every page load pulled a full second copy of every chunk, font and
+    icon. Immutable hits now short-circuit.
+  - **Tradeoff**: a route never visited isn't available offline until opened
+    once. Not a cold-start regression — a new deploy means new hashed filenames
+    that aren't in cache anyway, so precaching never saved that first fetch.
+  - Note: `svelte.config.js`'s comment claiming the native shell skips the SW is
+    STALE — `src/routes/+layout.svelte` registers it everywhere now, so the iOS
+    shell was paying this too.
+
+- **2. Presence was writing through our server for no reason** (~200k/month est).
+  `/api/presence/ping` used the Admin SDK to write `presence/{uid}/{deviceId}` —
+  the node the client had *already written itself* one line earlier over its own
+  Firebase socket, and the client version is a superset (it carries `name` and
+  `screen`). Fired on mount, every navigation past the 90s debounce, and every
+  2.5-min heartbeat. The 5-min `/api/presence` poll was worse than redundant: it
+  reads the same node an open `onValue` subscription already streams, and it
+  MERGES into `rawPresence`, so it cannot even remove the shadowbanned/orphaned
+  uids its server-side filter excludes.
+  - Writes are now client → RTDB only. The server survives as a **rescue path**,
+    which is what it was actually good for: when client Firebase auth fails the
+    direct write is impossible, so `/api/presence/ping` fires from the direct
+    write's `.catch()`, and the poll arms only when the subscription errors or
+    delivers no first snapshot within a 10s grace window — then disarms on
+    recovery. An empty snapshot counts as healthy.
+  - Kept the `pagehide` sendBeacon; `onDisconnect()` covers it but only after
+    RTDB notices the drop (~30–60s), and it's one request per session close.
+  - **Bug found**: `/api/presence/log` had NO CALLERS anywhere. It is the only
+    writer of `users.last_active`, which the Gemma digest reads to pace itself
+    (`gemma-digest.js:1037`) — so every user read as permanently inactive and the
+    "gone from the app → ~4d" branch of `digestDue()` could never fire right.
+    Wired back up as one call per app open.
+
+- **3. Dashboard + Manage polls.**
+  - `/app` ran `invalidateAll()` every 30s = 2,880 server round-trips/day per open
+    tab, for a surface whose data changes a few times a week. Now 3 min, plus a
+    refresh on tab-return.
+  - Manage → Gemma polled `/api/gemma/digest` every 5s unconditionally (17,280/day
+    per open instructor tab). Now 5s only while something is generating, 60s idle.
+
+- **4. Scout polled every 15s forever** (~173k/month) to discover an empty queue.
+  kahan is firewalled inbound so it can't be pushed to — but it can hold an
+  outbound event-stream to something that isn't us.
+  - New `scout/wake` node in `database.rules.json`: a single public-read
+    timestamp (`.read: true`, `.write: false` — server writes via Admin SDK,
+    which bypasses rules). It leaks only "a job was enqueued at T", never what.
+    Same public-read pattern as `marquee/$room`, `pollRoom`, `bt/$room`.
+  - `signalScoutWake()` exported from `src/lib/server/scout.js`, called at all
+    five `INSERT INTO scout_jobs` sites (scout.js, inspiration.js ×3,
+    api/lab/websites). Fire-and-forget — the job is already durable in Turso.
+  - Worker (`scout/scout.js`) holds a `text/event-stream` on that node using
+    plain Node fetch — **no npm install**, which matters because scout has zero
+    dependencies and kahan's AFS home is broken. Poll dropped to a 5-min safety
+    net for when the stream is down. Latency IMPROVES (instant wake vs up to 15s).
+  - Verified live: the stream opens (HTTP 200), frames parse, and Firebase
+    **does** replay the node's current value as the first `put` on every
+    connect — so the `primed` guard that skips it is load-bearing, otherwise
+    every reconnect would re-poll.
+  - Also corrected `scout.env.example`: `EATING_URL` must be the **www** host
+    (the apex 307s and the redirect drops the Authorization header).
+
+- **Not done / still open**:
+  - `robots.txt` is `Disallow:` (everything crawlable) with no bot gating, and
+    the crawlable surface includes dev probes — `/canvasprobe`, `/dev-chart`,
+    `/dev-picker`, `/dev-thread`, `/emoteprobe`, `/renderprobe`. Unmeasured;
+    AI-scraper traffic is a common cause of Hobby overages.
+  - `data-sveltekit-preload-data="hover"` fires a `__data.json` request per link
+    hover. Cutting to `"tap"` trades perceived snappiness for requests.
+  - Only `/offline` is prerendered; `/`, `/privacy`, `/terms` invoke a function
+    per hit.
+  - Media is NOT a factor: `/api/file-proxy` is download-only, chat images render
+    straight from R2.
+
+- **#4 infrastructure is DEPLOYED and verified end-to-end (2026-09-20)**:
+  - `firebase deploy --only database` → rules released to
+    `eatingdotcomputerrtdb-default-rtdb`. Local rules were HEAD + the 6-line
+    scout addition, so nothing was clobbered. `GET /scout/wake.json`
+    unauthenticated now returns 200 and streams.
+  - The firebase CLI **crashes on Node 26** (`SlowBuffer` removal →
+    `buffer-equal-constant-time`), same root cause as `npm run build`'s adapter
+    step failing locally. Ran it under nvm's Node 22:
+    `PATH="$HOME/.nvm/versions/node/v22.16.0/bin:$PATH" firebase ...`
+  - kahan: deployed scout.js md5 matched git HEAD exactly (no drift), backed up
+    `scout.js`/`scout.env` as `.bak-20260921`, scp'd the new worker (checksum
+    verified), set `POLL_MS=300000`, appended `FIREBASE_DB_URL`. `EATING_URL`
+    was already the www host. kahan runs Node v22.23.1 and its fetch body IS
+    async-iterable (probed, not assumed).
+  - Old worker had been up 22 days; restarted with `setsid nohup` so it detached
+    (PPID 1) and survives the SSH session. Log shows
+    `scout up — waking on .../scout/wake, safety-net poll ... every 300s` then
+    `wake stream open`.
+  - **End-to-end test**: wrote a timestamp to `/scout/wake` with
+    `firebase database:set` → worker logged `woken by RTDB signal`. The full
+    chain works. (That test timestamp is still the node's value; the next real
+    enqueue overwrites it, and the `primed` guard makes it inert either way.)
+- **STILL NEEDED: a Vercel deploy.** Everything in #1, #2, #3 and the app half
+  of #4 (`signalScoutWake()` at the five enqueue sites) only exists in the
+  working tree. Until it ships, scout is running on the 5-min safety net with
+  nothing writing wake events — already a ~95% cut on its own, but the service
+  worker, presence and dashboard/Manage changes are doing nothing yet.
+
+---
+
 ### 2026-09-02 — Size reset by weight/width; formatting toolbar hidden on mobile
 - **Status**: `attempted` (cause isolated by test — the segment math was proved
   innocent before touching anything)

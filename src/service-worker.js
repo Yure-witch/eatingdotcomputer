@@ -5,12 +5,59 @@ const CACHE = `cache-${version}`;
 // the network is gone. Prerendered routes are NOT in `build`/`files`, so it
 // is added to the precache list by hand.
 const OFFLINE_PAGE = '/offline';
-const ASSETS = [...build, ...files, OFFLINE_PAGE];
-// Fast membership test for the fetch handler's allowlist.
-const ASSET_SET = new Set(ASSETS);
+
+// PRECACHE IS DELIBERATELY TINY.
+//
+// This used to be `[...build, ...files, OFFLINE_PAGE]` — every generated
+// chunk plus every file in static/. That is ~1,300 requests, and `version`
+// changes on EVERY deploy, so every client re-downloaded all ~1,300 of them
+// each time anything shipped. At a hundred-odd deploys a month against a
+// class of students that is hundreds of thousands of edge requests spent on
+// files nobody asked for: the 7.7MB canvaskit build, 162 emoji-half SVGs,
+// 114 WeChat webps, and ~700 .ufo glyph SOURCE files for a font that ships
+// as three woff2s. It blew through the hosting request budget on its own.
+//
+// So: precache only what the shell genuinely needs before it can paint or
+// go offline. Everything else — chunks, fonts, emoji art, the big JSON
+// tables — is cached on FIRST USE by the fetch handler below, which is the
+// same cache-first behaviour, just paid for lazily by the people who
+// actually open the feature. The tradeoff is that a route you have never
+// visited is not available offline; `build`/`files` stay imported so that
+// choice is one edit away if that ever becomes the priority.
+const PRECACHE = [
+	OFFLINE_PAGE,
+	'/manifest.json',
+	'/favicon.svg',
+	'/icon-192.png',
+	'/apple-touch-icon.png',
+	// Preloaded in app.html — the icon font every screen paints with.
+	'/fonts/material-symbols-rounded.woff2'
+];
+
+// Runtime-cacheable static types. Extension-based rather than a manifest, so
+// lazily-loaded assets (emoji SVGs, sticker webps, the wasm runtimes) land in
+// the cache the first time something reaches for them.
+const STATIC_EXT = /\.(?:woff2?|ttf|otf|png|jpe?g|gif|webp|svg|ico|wasm|bin)$/;
+
+/** Is this a static asset we're allowed to hold indefinitely? */
+function isCacheableStatic(pathname) {
+	// Never cache anything session-scoped or deploy-scoped.
+	if (pathname.startsWith('/api/')) return false;
+	if (pathname.endsWith('/__data.json')) return false;
+	if (pathname === '/_app/version.json') return false; // the update watchdog's probe
+	// Content-hashed build output: safe forever, by construction.
+	if (pathname.startsWith('/_app/immutable/')) return true;
+	return STATIC_EXT.test(pathname);
+}
 
 self.addEventListener('install', (event) => {
-	event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(ASSETS)));
+	// Individually, not addAll: addAll is all-or-nothing, so one 404 in the
+	// list would fail the whole install and leave the client uncached.
+	event.waitUntil(
+		caches.open(CACHE).then((cache) =>
+			Promise.all(PRECACHE.map((url) => cache.add(url).catch(() => {})))
+		)
+	);
 	self.skipWaiting();
 });
 
@@ -48,20 +95,26 @@ self.addEventListener('fetch', (event) => {
 		return;
 	}
 
-	// ONLY the build's static assets are cache-first: content-hashed files
-	// under /_app/immutable/ plus the precached static files (fonts, icons).
-	// Everything else — __data.json, /api/*, anything dynamic — goes straight
-	// to the network, UNTOUCHED. The old handler cached every same-origin GET,
-	// which included SvelteKit's per-user data payloads: after switching
-	// accounts, the first loads could be served from the PREVIOUS user's
-	// cache — wrong name, wrong role, wrong class, someone else's data. A
-	// service worker must never hold anything session-scoped.
-	const isStatic = url.pathname.startsWith('/_app/immutable/') || ASSET_SET.has(url.pathname);
-	if (!isStatic) return;
+	// ONLY static assets are cache-first. Everything else — __data.json,
+	// /api/*, anything dynamic — goes straight to the network, UNTOUCHED. An
+	// older handler cached every same-origin GET, which included SvelteKit's
+	// per-user data payloads: after switching accounts, the first loads could
+	// be served from the PREVIOUS user's cache — wrong name, wrong role, wrong
+	// class, someone else's data. A service worker must never hold anything
+	// session-scoped.
+	if (!isCacheableStatic(url.pathname)) return;
 
-	// Static assets: cache-first, update in background.
+	// Content-hashed assets are immutable BY NAME: a changed file gets a
+	// changed URL. Revalidating one can only ever return the bytes we already
+	// hold, so a cache hit ends here — no network request at all. (The
+	// previous version fired a background fetch on every hit, which meant a
+	// full second copy of every chunk, font and icon over the wire on every
+	// single page load. That is the entire point of hashing filenames.)
+	const immutable = url.pathname.startsWith('/_app/immutable/');
+
 	event.respondWith(
 		caches.match(event.request).then((cached) => {
+			if (cached && immutable) return cached;
 			const network = fetch(event.request).then((response) => {
 				if (response.status === 200) {
 					const clone = response.clone();

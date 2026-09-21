@@ -13,6 +13,7 @@
 // This module: builds queries from interests/syllabus, enqueues batches
 // (Turso), and reads/reacts through RTDB.
 import { getDb } from '$lib/server/turso.js';
+import { signalScoutWake } from '$lib/server/scout.js';
 import {
 	readUserFeed, readClassBlended, readClassWeekly,
 	setUserReaction, setClassReaction,
@@ -51,6 +52,7 @@ async function enqueue(db, t, query) {
 		sql: `INSERT INTO scout_jobs (kind, query, requested_by) VALUES ('search', ?, ?)`,
 		args: [`${query} #s${seed}`, t]
 	});
+	signalScoutWake();
 	return true;
 }
 
@@ -72,6 +74,7 @@ async function enqueuePersonal(db, userId, interests) {
 		sql: `INSERT INTO scout_jobs (kind, query, requested_by) VALUES ('search', ?, ?)`,
 		args: [query, tag(userId)]
 	});
+	signalScoutWake();
 	return true;
 }
 
@@ -185,6 +188,7 @@ async function enqueueClassBlended(db, classId) {
 		sql: `INSERT INTO scout_jobs (kind, query, requested_by) VALUES ('search', ?, ?)`,
 		args: [`${win.join(', ')} #s${seed}`, t]
 	});
+	signalScoutWake();
 	return true;
 }
 

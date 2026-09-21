@@ -27,7 +27,16 @@ const CHROME_LIBS = process.env.CHROME_LIBS ?? '';
 const SHOT_W = Number(process.env.SHOT_W ?? 1280);
 const SHOT_H = Number(process.env.SHOT_H ?? 800);
 const SHOT_TIMEOUT_MS = Number(process.env.SHOT_TIMEOUT_MS ?? 45000);
-const POLL_MS = Number(process.env.POLL_MS ?? 15000);
+// The poll is now a SAFETY NET, not the mechanism — see watchWake() below.
+// It used to be 15s, which meant ~173,000 requests a month to the app to
+// discover an empty queue, since jobs arrive a handful of times a day. Wake
+// events carry the latency now, so this only has to catch the case where the
+// stream is down; minutes are fine.
+const POLL_MS = Number(process.env.POLL_MS ?? 300000);
+// Firebase RTDB base URL (e.g. https://xxx.firebaseio.com). Public value —
+// same one the web client ships. Without it the worker degrades to plain
+// POLL_MS polling, which still works, just less promptly.
+const FIREBASE_DB_URL = (process.env.FIREBASE_DB_URL ?? '').replace(/\/$/, '');
 const UA = 'eating.computer-scout/1.0 (Cooper Union class project; contact: richardyurewitch@gmail.com)';
 
 if (!TOKEN) {
@@ -647,15 +656,84 @@ async function poll() {
 	return (jobs ?? []).length;
 }
 
+// ── wake channel ─────────────────────────────────────────────────────────
+// kahan has no inbound ports, so the app cannot call us. It can, however,
+// bump a timestamp at `scout/wake` in RTDB (signalScoutWake() on the app
+// side), and we can hold an open event-stream to Firebase — an outbound
+// connection to Google, costing the app nothing while idle. So: the app
+// writes, Google pushes, we poll only when there is actually something to
+// fetch. Firebase's REST API speaks text/event-stream natively, which is
+// why this needs no SDK and no npm install.
+let _wake = null;
+function wakeNow(reason) {
+	if (!_wake) return;              // not currently sleeping — the next
+	const w = _wake; _wake = null;   // poll will pick the job up anyway
+	w(reason);
+}
+/** Sleep up to `ms`, or until a wake event arrives. */
+function waitForWork(ms) {
+	return new Promise((resolve) => {
+		const t = setTimeout(() => { _wake = null; resolve('timer'); }, ms);
+		_wake = (reason) => { clearTimeout(t); resolve(reason); };
+	});
+}
+
+async function watchWake() {
+	if (!FIREBASE_DB_URL) {
+		console.warn(`no FIREBASE_DB_URL — falling back to ${POLL_MS / 1000}s polling only`);
+		return;
+	}
+	const url = `${FIREBASE_DB_URL}/scout/wake.json`;
+	let backoff = 1000;
+	// eslint-disable-next-line no-constant-condition
+	while (true) {
+		try {
+			const res = await fetch(url, { headers: { Accept: 'text/event-stream', 'User-Agent': UA } });
+			if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+			console.log('wake stream open');
+			backoff = 1000;
+			const dec = new TextDecoder();
+			let buf = '';
+			// Firebase replays the node's CURRENT value as the first `put` on
+			// every (re)connect. That is the last job's timestamp, not a new
+			// one — acting on it would re-poll on every reconnect.
+			let primed = false;
+			for await (const chunk of res.body) {
+				buf += dec.decode(chunk, { stream: true });
+				let i;
+				while ((i = buf.indexOf('\n\n')) !== -1) {
+					const frame = buf.slice(0, i);
+					buf = buf.slice(i + 2);
+					if (!/^event:\s*(put|patch)\b/m.test(frame)) continue; // keep-alives etc.
+					if (!primed) { primed = true; continue; }
+					wakeNow('wake');
+				}
+			}
+			throw new Error('stream closed');
+		} catch (e) {
+			console.warn(`wake stream down (${e?.message ?? e}) — reconnecting in ${backoff / 1000}s`);
+			await sleep(backoff);
+			backoff = Math.min(backoff * 2, 60_000);
+		}
+	}
+}
+
 let failures = 0;
-console.log(`scout up — polling ${APP} every ${POLL_MS / 1000}s`);
+console.log(
+	FIREBASE_DB_URL
+		? `scout up — waking on ${FIREBASE_DB_URL}/scout/wake, safety-net poll of ${APP} every ${POLL_MS / 1000}s`
+		: `scout up — polling ${APP} every ${POLL_MS / 1000}s`
+);
+watchWake(); // runs forever alongside the loop; never awaited
 // eslint-disable-next-line no-constant-condition
 while (true) {
 	try {
 		const n = await poll();
 		failures = 0;
 		// If we just did work, check again right away — more may be queued.
-		await sleep(n > 0 ? 1000 : POLL_MS);
+		if (n > 0) { await sleep(1000); continue; }
+		const why = await waitForWork(POLL_MS);
+		if (why === 'wake') console.log('woken by RTDB signal');
 	} catch (e) {
 		failures++;
 		const backoff = Math.min(POLL_MS * 2 ** Math.min(failures, 5), 10 * 60 * 1000);

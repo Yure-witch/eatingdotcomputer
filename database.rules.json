@@ -158,6 +158,12 @@
         ".write": false
       }
     },
+    "scout": {
+      "wake": {
+        ".read": true,
+        ".write": false
+      }
+    },
     "bt": {
       "$room": {
         ".read": true,

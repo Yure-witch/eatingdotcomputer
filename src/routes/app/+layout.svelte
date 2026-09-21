@@ -1732,27 +1732,60 @@
 		} catch { /* ignore */ }
 	}
 
-	// Server-side presence ping — writes via Firebase Admin SDK, bypassing client auth.
-	// Falls back to direct client Firebase write when presenceRef is available (belt-and-suspenders).
+	// The server poll is a RESCUE PATH, not a heartbeat.
+	//
+	// `allPresenceRef` is an open RTDB subscription on the very same node this
+	// endpoint reads with the Admin SDK — when it is healthy it delivers every
+	// change instantly, and polling adds nothing but a serverless invocation
+	// every POLL_INTERVAL in every open tab, forever. (It could not even do the
+	// filtering it looks like it does: pollPresence MERGES into rawPresence, so
+	// a uid the live subscription put there is never removed by a poll that
+	// omits it.) So the poll now runs only while the subscription is known to
+	// be broken — rules denied, auth never came up, or no first snapshot at all
+	// — and stops the moment RTDB proves it is working.
+	const PRESENCE_SUB_GRACE = 10_000; // no first snapshot within this → assume broken
+	let _presenceSubHealthy = false;
+	let _presenceSubWatchdog = null;
+	function armPresenceFallback(why) {
+		if (presencePollTimer) return;
+		console.warn('[ec:presence] live subscription unavailable (%s) — arming server poll', why);
+		pollPresence();
+		presencePollTimer = setInterval(pollPresence, POLL_INTERVAL);
+	}
+	function disarmPresenceFallback() {
+		if (_presenceSubWatchdog) { clearTimeout(_presenceSubWatchdog); _presenceSubWatchdog = null; }
+		if (!_presenceSubHealthy) console.info('[ec:presence] live subscription healthy — server poll not needed');
+		_presenceSubHealthy = true;
+		if (presencePollTimer) { clearInterval(presencePollTimer); presencePollTimer = null; }
+	}
+
+	// Presence writes go CLIENT → RTDB. Nothing about "this tab is open" needs
+	// to touch our own server: the client is already authenticated to Firebase,
+	// already holds a socket to it, and every observer is already subscribed to
+	// the same node. Routing the write through /api/presence/ping as well meant
+	// a serverless invocation on mount, on every navigation past the debounce,
+	// and on every heartbeat — for an Admin-SDK write of `presence/{uid}/{id}`
+	// that is byte-for-byte what the line above just wrote directly, minus
+	// `name` and `screen`, which only the client write carries.
+	//
+	// The server path survives as a RESCUE, not a duplicate: it is the one way
+	// to appear online when client Firebase auth has failed (signInWithCustomToken
+	// rejected, rules denied, token expired), because then the direct write is
+	// impossible. So it fires when — and only when — the direct write didn't.
 	let _pingDeviceId = null;
 	let _pingSessionStart = null;
 	let _lastPingedAt = 0;
-	let presencePing = async (force = false) => {
-		// Debounce: skip if we pinged recently (navigation fires this on every route change)
-		const now = Date.now();
-		if (!force && now - _lastPingedAt < PING_DEBOUNCE) return;
-		_lastPingedAt = now;
-		// Client-side Firebase write (fast, best-effort)
-		if (presenceRef) {
-			update(presenceRef, { online: true, lastSeen: Date.now() })
-				.then(() => console.info('[ec:presence] client RTDB write ok'))
-				.catch((e) => console.error('[ec:presence] client RTDB write FAILED:', e.code, e.message));
+
+	/** Admin-SDK presence write. Only for when the client cannot reach RTDB itself. */
+	let serverPingFallback = async () => {
+		if (!_pingDeviceId) {
+			console.warn('[ec:presence] fallback ping called before deviceId was set — skipping server write');
+			return;
 		}
-		// Server-side write via Admin SDK (always succeeds regardless of client auth)
-		if (_pingDeviceId) {
+		{
 			const isPwa = window.matchMedia('(display-mode: standalone)').matches || !!navigator.standalone;
 			const isMob = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-			console.info('[ec:presence] pinging server-side', { deviceId: _pingDeviceId, pwa: isPwa, mobile: isMob });
+			console.info('[ec:presence] RTDB unavailable — falling back to server ping', { deviceId: _pingDeviceId, pwa: isPwa, mobile: isMob });
 			fetch('/api/presence/ping', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
@@ -1776,8 +1809,6 @@
 					}
 				})
 				.catch((e) => console.error('[ec:presence] server ping fetch error:', e.message));
-		} else {
-			console.warn('[ec:presence] presencePing called before deviceId was set — skipping server write');
 		}
 	};
 
@@ -1791,6 +1822,24 @@
 		if (!name) return;
 		creatingChannel = true;
 		channelError = null;
+	let presencePing = async (force = false) => {
+		// Debounce: skip if we pinged recently (navigation fires this on every route change)
+		const now = Date.now();
+		if (!force && now - _lastPingedAt < PING_DEBOUNCE) return;
+		_lastPingedAt = now;
+		if (!presenceRef) {
+			// No RTDB ref yet — earliest mount, or auth never came up. Rescue path.
+			serverPingFallback();
+			return;
+		}
+		update(presenceRef, { online: true, lastSeen: Date.now() })
+			.then(() => console.info('[ec:presence] client RTDB write ok'))
+			.catch((e) => {
+				console.error('[ec:presence] client RTDB write FAILED:', e.code, e.message);
+				serverPingFallback();
+			});
+	};
+
 		try {
 			const res = await fetch('/api/channels', {
 				method: 'POST',
@@ -1968,11 +2017,27 @@
 		};
 		window.addEventListener('pagehide', sendOfflineBeacon);
 
-		// Immediately fire a server-side ping so the instructor (or any user) shows as
-		// online right away — even before signInWithCustomToken completes.
-		presencePing(true); // force=true: always ping on initial mount regardless of debounce
+		// The one presence call that CANNOT be RTDB: the durable stamp.
+		//
+		// RTDB holds "online now" and the nightly archive cron rolls it into
+		// user_sessions, but `users.last_active` is a Turso column and only a
+		// server write can set it. It is read by the Gemma digest to pace how
+		// often it writes to someone (gemma-digest.js) — and it was reading a
+		// column nothing had written since /api/presence/log lost its last
+		// caller, so every user looked permanently inactive. One request per
+		// app open, which is the correct cost for a once-a-session fact.
+		fetch('/api/presence/log', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				deviceType: /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ? 'mobile' : 'desktop',
+				isPwa: window.matchMedia('(display-mode: standalone)').matches || !!navigator.standalone
+			})
+		}).catch(() => { /* best-effort: a missed stamp must never block the app */ });
 
-		if (!data?.firebaseToken || !data?.currentUser) return;
+		// No Firebase token at all — the direct write is impossible, so this is
+		// the rescue path from the outset.
+		if (!data?.firebaseToken || !data?.currentUser) { serverPingFallback(); return; }
 
 		// Retry Firebase auth so presence and subscriptions work on non-chat pages too.
 		// Chat layout has its own retry, but presence is set up here for all routes.
@@ -1989,7 +2054,9 @@
 			}
 		}
 		if (!fbAuthed) {
-			console.error('[ec:presence] Firebase client auth FAILED after 4 attempts — allPresenceRef subscription will not work; relying on 30s server poll only');
+			console.error('[ec:presence] Firebase client auth FAILED after 4 attempts — allPresenceRef subscription will not work; relying on the server rescue path');
+			// Direct RTDB writes will reject, so post presence the only way left.
+			serverPingFallback();
 		}
 
 		// Colour scheme follows the user, not the device: mirror the M3
@@ -2243,6 +2310,10 @@
 				// Per-device format: any child that is an object is a device node.
 				// Mixed format (stale flat fields + live device objects) → treat as per-device
 				// so orphaned flat `online: false` from old sessions never masks fresh data.
+			// Any delivered snapshot proves the socket and the rules are fine.
+			// An EMPTY one counts: "nobody is present" is a real answer, and
+			// treating it as failure would arm the poll on a quiet class.
+			disarmPresenceFallback();
 				const deviceObjects = Object.values(v).filter(d => d && typeof d === 'object');
 				if (deviceObjects.length === 0) {
 					// Pure flat single-device format
@@ -2318,19 +2389,26 @@
 			rawPresence = { ...rawPresence, ...normalized };
 		}, (err) => {
 			// PERMISSION_DENIED — Firebase RTDB rules denied the read (client auth failed).
-			// The 30s poll via /api/presence (Admin SDK) compensates — users will still appear
-			// online, just with up to 30s latency instead of real-time.
+			// This is exactly the case the server poll exists for: the Admin SDK
+			// reads the node regardless of client auth, so users still appear
+			// online, just at POLL_INTERVAL latency instead of real-time.
 			console.warn('[presence] allPresenceRef denied:', err.code, err.message);
 		});
 
-		await pollPresence();
-		presencePollTimer = setInterval(pollPresence, POLL_INTERVAL); // 30s near-real-time; allPresenceRef handles instant updates
+		// onValue reports failure through its error callback, but a subscription
+		// that simply never delivers reports nothing at all. Give it a grace
+		// window; if no snapshot has landed by then, treat it as broken.
+		_presenceSubWatchdog = setTimeout(() => {
+			if (!_presenceSubHealthy) armPresenceFallback('no snapshot within grace window');
+		}, PRESENCE_SUB_GRACE);
 
 		// Timestamp when this session mounted — used to ignore pre-existing Firebase values
 		// and only toast for messages that arrive after the user opened the app.
 		const mountedAt = Date.now();
 
 		// DMs — track lastAt per conversation so re-fires of the whole userChats snapshot
+			_presenceSubHealthy = false;
+			armPresenceFallback(err.code ?? 'subscription error');
 		// (which happens whenever ANY dm updates) don't double-count old unread messages.
 		const knownDmLastAt = {};
 		let firstUserChatsFire = true;
@@ -2454,6 +2532,7 @@
 		if (unreadCountsRef) off(unreadCountsRef);
 		for (const r of Object.values(channelRefs)) off(r);
 	});
+		clearTimeout(_presenceSubWatchdog);
 
 	function toggleCollapse() {
 		sidebarCollapsed = !sidebarCollapsed;
