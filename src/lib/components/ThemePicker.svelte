@@ -30,6 +30,11 @@
 		previewRolesForPreset
 	} from '$lib/theme-store.js';
 	import ThemeDemo from '$lib/components/ThemeDemo.svelte';
+	import ThemeLibrary from '$lib/components/ThemeLibrary.svelte';
+
+	// The mobile picker embeds this one under "Advanced" and shows the
+	// library itself, higher up, so it asks for it to be left out here.
+	let { library = true } = $props();
 
 	// Preset chips preview the palette each one RESOLVES to in the current
 	// mode, not its raw seed. A seed is an input to the M3 generator, not a
@@ -166,6 +171,10 @@
 			</button>
 		{/each}
 	</div>
+
+	{#if library}
+		<ThemeLibrary />
+	{/if}
 
 	<!-- Core controls ------------------------------------------------------- -->
 	<div class="controls">

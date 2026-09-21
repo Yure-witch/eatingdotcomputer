@@ -28,6 +28,7 @@
 	} from '$lib/theme-store.js';
 	import ThemeDemo from '$lib/components/ThemeDemo.svelte';
 	import ThemePicker from '$lib/components/ThemePicker.svelte';
+	import ThemeLibrary from '$lib/components/ThemeLibrary.svelte';
 
 	let advanced = $state(false);
 
@@ -152,6 +153,8 @@
 		</label>
 	</div>
 
+	<ThemeLibrary />
+
 	{#if isCustom}
 		<div class="seed-line">
 			Seed <code>{$themeStore.seed}</code>
@@ -219,7 +222,7 @@
 		<svg class:flip={advanced} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
 	</button>
 	{#if advanced}
-		<div class="adv"><ThemePicker /></div>
+		<div class="adv"><ThemePicker library={false} /></div>
 	{/if}
 </section>
 

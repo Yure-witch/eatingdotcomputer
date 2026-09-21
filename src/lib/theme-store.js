@@ -233,7 +233,15 @@ const DEFAULTS = {
 	// Like vibrance, it survives a preset change and doesn't clear
 	// presetId: it's a standing taste setting, so you can audition
 	// palettes without it resetting under you.
-	masterChroma: MASTER_CHROMA_MAX
+	masterChroma: MASTER_CHROMA_MAX,
+	// ── Library theme ────────────────────────────────────────────────────
+	// A designed role set from static/theme-library.json (A17 Themes, TAS
+	// Colors and their Energy sets), carried whole — { id, light, dark },
+	// each a role → hex map — so painting it never waits on a fetch and it
+	// syncs to other devices as-is. While set it REPLACES the generated
+	// scheme; the seed knobs above are ignored, and touching any of them
+	// clears it. `dark` still picks the side.
+	library: null
 };
 
 // Coerce an arbitrary object (localStorage blob, RTDB snapshot, saved
@@ -263,8 +271,26 @@ export function sanitizeTheme(v) {
 		tertiaryChroma: typeof v.tertiaryChroma === 'number' ? clamp01_120(v.tertiaryChroma) : null,
 		neutralChroma: typeof v.neutralChroma === 'number' ? clamp01_120(v.neutralChroma) : null,
 		vibrance: typeof v.vibrance === 'number' ? clampVibrance(v.vibrance) : DEFAULTS.vibrance,
-		masterChroma: typeof v.masterChroma === 'number' ? clampMasterChroma(v.masterChroma) : null
+		masterChroma: typeof v.masterChroma === 'number' ? clampMasterChroma(v.masterChroma) : null,
+		library: sanitizeLibrary(v.library)
 	};
+}
+
+const HEX_RE = /^#[0-9a-f]{6}$/i;
+// Only known roles with well-formed hexes survive, and a side missing a
+// surface is rejected outright — a half role set would paint a page with
+// the app.css fallbacks showing through.
+function sanitizeLibrary(lib) {
+	if (!lib || typeof lib !== 'object' || typeof lib.id !== 'string') return null;
+	const side = (m) => {
+		if (!m || typeof m !== 'object') return null;
+		const out = {};
+		for (const role of SCHEME_ROLES) if (HEX_RE.test(m[role])) out[role] = m[role];
+		return out.surface && out.onSurface && out.primary ? out : null;
+	};
+	const light = side(lib.light);
+	const dark = side(lib.dark);
+	return light && dark ? { id: lib.id, light, dark } : null;
 }
 
 function readSaved() {
@@ -550,9 +576,18 @@ function resolveFamilySeed(theme, family) {
 	return null;
 }
 
+// A library theme's painted roles, in the same argb shape buildSchemeRoles returns.
+function libraryRoles(theme) {
+	const side = theme.library?.[theme.dark ? 'dark' : 'light'];
+	if (!side) return null;
+	const out = {};
+	for (const [role, hex] of Object.entries(side)) out[role] = argbFromHex(hex);
+	return out;
+}
+
 function applyTokens(theme) {
 	if (typeof document === 'undefined') return;
-	const roles = buildSchemeRoles(
+	const roles = libraryRoles(theme) ?? buildSchemeRoles(
 		theme.seed, theme.dark, theme.variant, theme.contrastLevel ?? 0,
 		{
 			secondarySource: resolveFamilySeed(theme, 'secondary'),
@@ -707,6 +742,7 @@ function presetRecord(p, s) {
 	return {
 		...s,
 		presetId: p.id,
+		library: null,
 		seed: p.seed,
 		// Fall back to the M3-spec'd default variant (tonalSpot), NOT
 		// to DEFAULTS.variant — DEFAULTS.variant is whatever the global
@@ -751,6 +787,40 @@ export function setPreset(id) {
 	themeStore.update((s) => presetRecord(p, s));
 }
 
+// ── Theme library (static/theme-library.json) ─────────────────────────────
+// ~200 themes from the design team's Figma token libraries — fetched only
+// when a picker opens, not bundled. A 'roles' entry is a designed role set
+// painted as-is; a 'seed' entry (the colorways) goes through the generator
+// exactly like a built-in preset. Either way presetId is 'lib:<id>', which
+// is what the pickers highlight.
+let _library = null;
+export function loadThemeLibrary() {
+	_library ??= fetch('/theme-library.json')
+		.then((r) => (r.ok ? r.json() : Promise.reject(new Error(`theme library ${r.status}`))))
+		.catch((e) => { _library = null; throw e; });
+	return _library;
+}
+
+function libraryRecord(id, entry, s) {
+	if (entry.kind === 'roles') {
+		const library = sanitizeLibrary({ id, light: entry.light, dark: entry.dark });
+		return library ? { ...s, presetId: `lib:${id}`, library } : s;
+	}
+	return {
+		...presetRecord({ ...entry, id: `lib:${id}` }, s),
+		presetId: `lib:${id}`
+	};
+}
+
+export function setLibraryTheme(id, entry) {
+	if (!entry) return;
+	themeStore.update((s) => libraryRecord(id, entry, s));
+}
+
+export function previewRolesForLibrary(id, entry, current) {
+	return previewRoles(libraryRecord(id, entry, current));
+}
+
 // Resolve a handful of roles for an arbitrary theme record — used by the
 // mobile picker to paint each preset chip in its own colours instead of a
 // single seed dot. Memoised on the inputs that actually move the palette,
@@ -762,14 +832,14 @@ const PREVIEW_ROLES = ['primary', 'secondary', 'tertiary', 'surface', 'surfaceCo
 export function previewRoles(theme) {
 	const t = sanitizeTheme(theme);
 	const key = [
-		t.seed, t.variant, t.dark, t.contrastLevel, t.secondaryMode, t.secondarySeed,
+		t.library?.id, t.seed, t.variant, t.dark, t.contrastLevel, t.secondaryMode, t.secondarySeed,
 		t.tertiaryMode, t.tertiarySeed, t.primaryChroma, t.secondaryChroma,
 		t.tertiaryChroma, t.neutralChroma, t.masterChroma, t.vibrance
 	].join('|');
 	const hit = _previewCache.get(key);
 	if (hit) return hit;
 
-	const roles = buildSchemeRoles(t.seed, t.dark, t.variant, t.contrastLevel ?? 0, {
+	const roles = libraryRoles(t) ?? buildSchemeRoles(t.seed, t.dark, t.variant, t.contrastLevel ?? 0, {
 		secondarySource: resolveFamilySeed(t, 'secondary'),
 		tertiarySource: resolveFamilySeed(t, 'tertiary'),
 		primaryChroma: t.primaryChroma,
@@ -799,29 +869,29 @@ export function previewRolesForPreset(p, current) {
 export function setSeed(hex) {
 	const h = (hex || '').trim();
 	if (!/^#[0-9a-f]{6}$/i.test(h)) return;
-	themeStore.update((s) => ({ ...s, presetId: null, seed: h }));
+	themeStore.update((s) => ({ ...s, presetId: null, library: null, seed: h }));
 }
 
 export function setSecondarySeed(hex) {
 	const h = (hex || '').trim();
 	if (!/^#[0-9a-f]{6}$/i.test(h)) return;
-	themeStore.update((s) => ({ ...s, presetId: null, secondarySeed: h, secondaryMode: 'custom' }));
+	themeStore.update((s) => ({ ...s, presetId: null, library: null, secondarySeed: h, secondaryMode: 'custom' }));
 }
 
 export function setSecondaryMode(mode) {
 	if (!['auto', 'complement', 'custom'].includes(mode)) return;
-	themeStore.update((s) => ({ ...s, presetId: null, secondaryMode: mode }));
+	themeStore.update((s) => ({ ...s, presetId: null, library: null, secondaryMode: mode }));
 }
 
 export function setTertiarySeed(hex) {
 	const h = (hex || '').trim();
 	if (!/^#[0-9a-f]{6}$/i.test(h)) return;
-	themeStore.update((s) => ({ ...s, presetId: null, tertiarySeed: h, tertiaryMode: 'custom' }));
+	themeStore.update((s) => ({ ...s, presetId: null, library: null, tertiarySeed: h, tertiaryMode: 'custom' }));
 }
 
 export function setTertiaryMode(mode) {
 	if (!['auto', 'complement', 'custom'].includes(mode)) return;
-	themeStore.update((s) => ({ ...s, presetId: null, tertiaryMode: mode }));
+	themeStore.update((s) => ({ ...s, presetId: null, library: null, tertiaryMode: mode }));
 }
 
 // Per-family chroma overrides. Pass `null` to revert to the variant's
@@ -830,25 +900,25 @@ export function setPrimaryChroma(v) {
 	const n = v == null ? null : clamp01_120(Number(v));
 	// Touching one family is taking manual control, so the master
 	// slider steps aside rather than continuing to override this value.
-	themeStore.update((s) => ({ ...s, presetId: null, masterChroma: null, primaryChroma: n }));
+	themeStore.update((s) => ({ ...s, presetId: null, library: null, masterChroma: null, primaryChroma: n }));
 }
 export function setSecondaryChroma(v) {
 	const n = v == null ? null : clamp01_120(Number(v));
 	// Touching one family is taking manual control, so the master
 	// slider steps aside rather than continuing to override this value.
-	themeStore.update((s) => ({ ...s, presetId: null, masterChroma: null, secondaryChroma: n }));
+	themeStore.update((s) => ({ ...s, presetId: null, library: null, masterChroma: null, secondaryChroma: n }));
 }
 export function setTertiaryChroma(v) {
 	const n = v == null ? null : clamp01_120(Number(v));
 	// Touching one family is taking manual control, so the master
 	// slider steps aside rather than continuing to override this value.
-	themeStore.update((s) => ({ ...s, presetId: null, masterChroma: null, tertiaryChroma: n }));
+	themeStore.update((s) => ({ ...s, presetId: null, library: null, masterChroma: null, tertiaryChroma: n }));
 }
 export function setNeutralChroma(v) {
 	const n = v == null ? null : clamp01_120(Number(v));
 	// Touching one family is taking manual control, so the master
 	// slider steps aside rather than continuing to override this value.
-	themeStore.update((s) => ({ ...s, presetId: null, masterChroma: null, neutralChroma: n }));
+	themeStore.update((s) => ({ ...s, presetId: null, library: null, masterChroma: null, neutralChroma: n }));
 }
 
 // Master saturation. Unlike the per-family setters this deliberately
@@ -894,12 +964,12 @@ export function autoChromaFor(theme, family) {
 
 export function setVariant(id) {
 	if (!VARIANT_CTORS[id]) return;
-	themeStore.update((s) => ({ ...s, presetId: null, variant: id }));
+	themeStore.update((s) => ({ ...s, presetId: null, library: null, variant: id }));
 }
 
 export function setContrast(level) {
 	const n = Math.max(-1, Math.min(1, Number(level) || 0));
-	themeStore.update((s) => ({ ...s, presetId: null, contrastLevel: n }));
+	themeStore.update((s) => ({ ...s, presetId: null, library: null, contrastLevel: n }));
 }
 
 export function setDark(dark) {
@@ -931,6 +1001,7 @@ export function saveCurrentScheme(name) {
 		neutralChroma: t.neutralChroma ?? null,
 		vibrance: t.vibrance ?? 100,
 		masterChroma: t.masterChroma ?? null,
+		library: t.library ?? null,
 		createdAt: Date.now()
 	};
 	savedSchemesStore.update((arr) => [...arr, entry]);
@@ -944,6 +1015,7 @@ export function applySavedScheme(id) {
 	themeStore.update((t) => ({
 		...t,
 		presetId: null,
+		library: sanitizeLibrary(s.library),
 		seed: s.seed,
 		dark: !!s.dark,
 		variant: VARIANT_CTORS[s.variant] ? s.variant : DEFAULTS.variant,
