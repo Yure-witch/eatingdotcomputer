@@ -1,4 +1,5 @@
 <script>
+	import { acceptFor } from '$lib/submission-types.js';
 	import { onMount, tick } from 'svelte';
 	import { browser } from '$app/environment';
 	import { enhance } from '$app/forms';
@@ -23,6 +24,7 @@
 	// on navigation so a new page's data replaces the old.
 	let submissionsByItem = $state({});
 	let studentCount = $state(0);
+	let roster = $state([]); // students M is counted against — for "Not submitted"
 	let peerSubmissions = $state({});
 	$effect(() => {
 		let cancelled = false;
@@ -30,6 +32,7 @@
 			if (cancelled || !x) return;
 			submissionsByItem = x.submissionsByItem ?? {};
 			studentCount = x.studentCount ?? 0;
+			roster = x.roster ?? [];
 			peerSubmissions = x.peerSubmissions ?? {};
 		});
 		return () => { cancelled = true; };
@@ -88,6 +91,32 @@
 		window.addEventListener('appinstalled', () => { isStandalone = true; installPrompt = null; });
 		return () => { clearInterval(refreshTimer); document.removeEventListener('visibilitychange', onVisible); };
 	});
+
+	/**
+	 * Swap a chosen file for an R2 key when the direct upload is available.
+	 * Mutates `formData`: sets `uploaded_key` and drops `file`, so the POST
+	 * carries a short string instead of megabytes. Silent on failure — the file
+	 * stays in the form and the action's own upload path takes over.
+	 */
+	async function uploadSubmissionFile(formData, itemId) {
+		const file = formData.get('file');
+		const kind = String(formData.get('type') ?? '');
+		if (!(file instanceof File) || file.size === 0) return;
+		if (kind !== 'image' && kind !== 'video') return;
+		try {
+			const res = await fetch('/api/upload/presign', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ itemId, kind, contentType: file.type, size: file.size, filename: file.name })
+			});
+			if (!res.ok) return;
+			const { url, key } = await res.json();
+			const put = await fetch(url, { method: 'PUT', body: file, headers: { 'Content-Type': file.type } });
+			if (!put.ok) return;
+			formData.set('uploaded_key', key);
+			formData.delete('file');
+		} catch { /* offline, CORS, anything — fall back to posting the file */ }
+	}
 
 	async function install() {
 		if (!installPrompt) return;
@@ -607,8 +636,12 @@
 										     turned this in" — and studentCount already leaves them
 										     out of the denominator. -->
 										{@const counted = subs.filter((x) => !x.hidden).length}
+										<!-- Everyone in the roster (same set as the M in N/M) with no
+										     completion for this item. -->
+										{@const submittedIds = new Set(subs.map((x) => x.studentId))}
+										{@const missing = roster.filter((st) => !submittedIds.has(st.id))}
 										<div class="overview-item-block">
-											<button class="overview-item" class:has-subs={subs.length > 0} onclick={() => expandedItemSubs = isOpen ? null : item.id}>
+											<button class="overview-item" class:has-subs={subs.length > 0 || missing.length > 0} onclick={() => expandedItemSubs = isOpen ? null : item.id}>
 												<span class="overview-item-label">{@html contentHtml(item.label, false)}</span>
 												{#if item.requiresSubmission}
 													<span class="preview-badge">submission</span>
@@ -627,9 +660,10 @@
 													<span class="overview-item-count">
 														0{total > 0 ? `/${total}` : ''} done
 													</span>
+													{#if missing.length > 0}<span class="overview-chevron" class:open={isOpen}>›</span>{/if}
 												{/if}
 											</button>
-											{#if isOpen && subs.length > 0}
+											{#if isOpen && (subs.length > 0 || missing.length > 0)}
 												<div class="item-subs-list">
 													{#each subs as sub}
 														<div class="item-sub-row">
@@ -655,6 +689,16 @@
 															<span class="sub-time">{timeAgo(sub.completedAt)}</span>
 														</div>
 													{/each}
+													{#if missing.length > 0}
+														<div class="sub-missing">
+															<span class="sub-missing-label">Not submitted · {missing.length}</span>
+															<div class="sub-missing-names">
+																{#each missing as st (st.id)}
+																	<a class="sub-missing-name" href="/app/profile/{st.id}">{st.name || '—'}</a>
+																{/each}
+															</div>
+														</div>
+													{/if}
 												</div>
 											{/if}
 										</div>
@@ -783,7 +827,7 @@
 													{/each}
 												</div>
 												{#if submitType}
-													<form method="POST" action="?/completeItem" enctype="multipart/form-data" use:enhance={() => {
+													<form method="POST" action="?/completeItem" enctype="multipart/form-data" use:enhance={async ({ formData }) => {
 														// Optimistic flip — the bubble swaps to
 														// "Submitted" the instant the student hits the
 														// button, even while a file upload streams to
@@ -810,6 +854,19 @@
 														expandedItemId = null;
 														submitType = '';
 														textSubmissionValue = '';
+														// Upload the file STRAIGHT to R2 and send only the
+														// key. Inside the POST it would ride in a
+														// serverless function's request body, which Vercel
+														// caps at ~4.5MB — under a phone photo and far under
+														// any video, so those submissions were rejected by
+														// the platform before our code ran. SvelteKit awaits
+														// this callback, so the POST waits for the upload;
+														// the optimistic flip above has already happened, so
+														// the bubble reads "Submitted" while it goes. On any
+														// failure the file stays in the form and the old
+														// path handles it.
+														await uploadSubmissionFile(formData, item.id);
+
 														return async ({ result, update }) => {
 															await update({ reset: false });
 															if (result?.type === 'failure' || result?.type === 'error') {
@@ -851,7 +908,7 @@
 																	<span class="existing-sub-hint">Pick a new file to replace your current upload.</span>
 																</div>
 															{/if}
-															<input type="file" name="file" accept={submitType === 'image' ? 'image/*' : 'video/*'} class="submit-input" required />
+															<input type="file" name="file" accept={acceptFor(submitType)} class="submit-input" required />
 														{/if}
 														<div class="submit-row">
 															<button type="submit" class="btn-primary sm">{isEdit ? 'Save changes' : 'Submit'}</button>
@@ -1755,6 +1812,18 @@
 		background: color-mix(in srgb, var(--danger, #c0392b) 15%, transparent);
 		color: var(--danger, #c0392b);
 	}
+	/* Who hasn't turned it in: the roster minus the rows above. */
+	.sub-missing { padding: 0.5rem 0 0.1rem; border-top: 1px solid var(--surface-2); }
+	.sub-missing-label {
+		display: block; font-size: 0.72rem; font-weight: 600; letter-spacing: 0.02em;
+		color: var(--danger, #c0392b); margin-bottom: 0.35rem;
+	}
+	.sub-missing-names { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+	.sub-missing-name {
+		font-size: 0.78rem; padding: 0.15rem 0.55rem; border-radius: 999px;
+		background: var(--surface-2); color: var(--ink); text-decoration: none;
+	}
+	.sub-missing-name:hover { text-decoration: underline; }
 	.sub-type { font-size: 0.72rem; color: var(--muted-fg); flex-shrink: 0; }
 	.sub-time { font-size: 0.72rem; color: var(--muted-fg); flex-shrink: 0; white-space: nowrap; margin-left: auto; }
 	.sub-link-full {

@@ -25,6 +25,7 @@
 	"dependencies": {
 		"@auth/sveltekit": "^1.11.1",
 		"@aws-sdk/client-s3": "^3.983.0",
+		"@aws-sdk/s3-request-presigner": "^3.983.0",
 		"@capacitor/app": "^7.1.2",
 		"@capacitor/cli": "^7.6.6",
 		"@capacitor/core": "^7.6.6",

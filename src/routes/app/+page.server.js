@@ -1,7 +1,8 @@
 import { redirect, fail } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
 import { signOut } from '../../auth.js';
-import { getWeekPlans, getCompletionsForStudent, getCompletionsForWeek, getAllProgressForClass, getSubmissionsByItem, createWeekPlan, createWeekItems, updateWeekPlan, completeItem, uncompleteItem, deleteWeekPlan, toggleWeekSubmissions, toggleItemSubmissions, getVisibleSubmissionsForPlan, getStudentCountForClass } from '$lib/server/week-plans.js';
+import { allowedTypesFor } from '$lib/submission-types.js';
+import { getWeekPlans, getCompletionsForStudent, getCompletionsForWeek, getAllProgressForClass, getSubmissionsByItem, createWeekPlan, createWeekItems, updateWeekPlan, completeItem, uncompleteItem, deleteWeekPlan, toggleWeekSubmissions, toggleItemSubmissions, getVisibleSubmissionsForPlan, getStudentCountForClass, getStudentsForClass } from '$lib/server/week-plans.js';
 import { getKeySyllabusWeeks } from '$lib/server/syllabus.js';
 import { uploadToR2 } from '$lib/server/r2.js';
 
@@ -64,13 +65,14 @@ export async function load({ locals, parent }) {
 	// sections in when it lands.
 	const extras = loadExtras();
 	async function loadExtras() {
-		const out = { progress: {}, allProgress: {}, submissionsByItem: {}, peerSubmissions: {}, studentCount: 0 };
+		const out = { progress: {}, allProgress: {}, submissionsByItem: {}, peerSubmissions: {}, studentCount: 0, roster: [] };
 		if (isInstructor) {
 			if (currentPlan) out.progress = await getCompletionsForWeek(currentPlan.id);
 			out.allProgress = await getAllProgressForClass(classId);
 			const rawSubs = await getSubmissionsByItem(classId);
 			for (const [itemId, subs] of Object.entries(rawSubs)) out.submissionsByItem[itemId] = subs.map(resolveSubmissionUrl);
 			out.studentCount = await getStudentCountForClass(classId);
+			out.roster = await getStudentsForClass(classId);
 		} else if (currentPlan) {
 			const rawPeer = await getVisibleSubmissionsForPlan(currentPlan.id, session.user.id);
 			for (const [itemId, subs] of Object.entries(rawPeer)) out.peerSubmissions[itemId] = subs.map(resolveSubmissionUrl);
@@ -267,18 +269,32 @@ export const actions = {
 			value = String(data.get('text') ?? '').trim();
 			if (!value) return fail(400, { error: 'Response is required', action: 'completeItem', itemId });
 		} else if (type === 'image' || type === 'video') {
-			const file = data.get('file');
-			if (!file || typeof file === 'string' || file.size === 0)
-				return fail(400, { error: 'Please choose a file', action: 'completeItem', itemId });
-			const allowed = type === 'image'
-				? ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
-				: ['video/mp4', 'video/quicktime', 'video/webm', 'video/x-m4v'];
-			if (!allowed.includes(file.type))
-				return fail(400, { error: `Invalid file type for ${type}`, action: 'completeItem', itemId });
-			const ext = file.name.split('.').pop();
-			const key = `submissions/${itemId}/${session.user.id}/${crypto.randomUUID()}.${ext}`;
-			await uploadToR2(key, Buffer.from(await file.arrayBuffer()), file.type);
-			value = key;
+			// Preferred path: the browser already PUT the file straight to R2
+			// with a presigned URL (/api/upload/presign) and hands us the key.
+			// A file posted through here instead rides in the request body,
+			// which Vercel caps at ~4.5MB — smaller than most phone photos and
+			// every video, and rejected by the platform before this code runs.
+			const uploadedKey = String(data.get('uploaded_key') ?? '').trim();
+			if (uploadedKey) {
+				// The key was minted for this student and this item; anything
+				// else is someone hand-editing the form.
+				const expected = `submissions/${itemId}/${session.user.id}/`;
+				if (!uploadedKey.startsWith(expected) || uploadedKey.includes('..'))
+					return fail(400, { error: 'Upload does not belong to this submission', action: 'completeItem', itemId });
+				value = uploadedKey;
+			} else {
+				// Fallback, still correct for small files and for a browser
+				// where the direct upload was unavailable.
+				const file = data.get('file');
+				if (!file || typeof file === 'string' || file.size === 0)
+					return fail(400, { error: 'Please choose a file', action: 'completeItem', itemId });
+				if (!allowedTypesFor(type).includes(file.type))
+					return fail(400, { error: `Invalid file type for ${type}`, action: 'completeItem', itemId });
+				const ext = file.name.split('.').pop();
+				const key = `submissions/${itemId}/${session.user.id}/${crypto.randomUUID()}.${ext}`;
+				await uploadToR2(key, Buffer.from(await file.arrayBuffer()), file.type);
+				value = key;
+			}
 		} else {
 			return fail(400, { error: 'Unknown submission type', action: 'completeItem', itemId });
 		}

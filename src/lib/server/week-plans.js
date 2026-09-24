@@ -104,6 +104,26 @@ export async function getStudentCountForClass(classId) {
 	return Number(result.rows[0]?.cnt ?? 0);
 }
 
+/**
+ * The students "N/M done" is counted against — same rule as
+ * getStudentCountForClass (approved, student, not shadowbanned) — so the
+ * instructor's "Not submitted" list is exactly M minus the N who did.
+ */
+export async function getStudentsForClass(classId) {
+	const db = getDb();
+	if (!db) return [];
+	const result = await db.execute({
+		sql: `SELECT u.id, u.name
+		      FROM class_memberships cm
+		      JOIN users u ON u.id = cm.user_id
+		      WHERE cm.class_id = ? AND cm.status = 'approved' AND u.role = 'student'
+		        AND u.shadowbanned = 0
+		      ORDER BY u.name COLLATE NOCASE`,
+		args: [classId]
+	});
+	return result.rows.map((r) => ({ id: String(r.id), name: String(r.name ?? '') }));
+}
+
 export async function getAllProgressForClass(classId) {
 	const db = getDb();
 	if (!db) return {};
@@ -138,7 +158,7 @@ export async function getSubmissionsByItem(classId) {
 		// student's text or link submission still shows in the expanded list —
 		// they did the work and the instructor should read it — it just doesn't
 		// add to the N in "N/M done".
-		sql: `SELECT ic.item_id, ic.completed_at, ic.submission_type, ic.submission_value,
+		sql: `SELECT ic.item_id, ic.student_id, ic.completed_at, ic.submission_type, ic.submission_value,
 		             u.name as student_name, u.shadowbanned
 		      FROM item_completions ic
 		      JOIN week_items wi ON ic.item_id = wi.id
@@ -156,6 +176,7 @@ export async function getSubmissionsByItem(classId) {
 			completedAt: String(r.completed_at),
 			submissionType: r.submission_type ? String(r.submission_type) : null,
 			submissionValue: r.submission_value ? String(r.submission_value) : null,
+			studentId: String(r.student_id),
 			studentName: String(r.student_name),
 			hidden: Number(r.shadowbanned ?? 0) === 1
 		});

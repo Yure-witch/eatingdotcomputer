@@ -1,4 +1,5 @@
 import { S3Client, ListObjectsV2Command, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { env } from '$env/dynamic/private';
 
 let client;
@@ -36,6 +37,28 @@ export async function uploadToR2(key, body, contentType) {
 		Body: body,
 		ContentType: contentType
 	}));
+}
+
+/**
+ * A short-lived URL the BROWSER can PUT a file to, so the bytes never pass
+ * through the serverless function.
+ *
+ * Vercel caps a function's request body at ~4.5MB. A submission posted through
+ * an action carries the whole file in that body, so a phone photo (3-8MB) or
+ * any video was rejected by the platform before our code ran — no error of
+ * ours, nothing in the logs, just a submission that didn't work. Presigning
+ * moves the upload out of that path entirely.
+ *
+ * The caller builds the key; never let a client choose it.
+ */
+export async function presignPutToR2(key, contentType, expiresIn = 600) {
+	const r2 = getR2Client();
+	if (!r2 || !env.R2_BUCKET) throw new Error('R2 not configured');
+	return getSignedUrl(
+		r2,
+		new PutObjectCommand({ Bucket: env.R2_BUCKET, Key: key, ContentType: contentType }),
+		{ expiresIn }
+	);
 }
 
 export async function deleteFromR2(key) {
