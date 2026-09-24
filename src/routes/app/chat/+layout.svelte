@@ -2,6 +2,8 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { version } from '$app/environment';
 	import { page } from '$app/stores';
+	import { afterNavigate } from '$app/navigation';
+	import { kickRepaint } from '$lib/native-repaint.js';
 	import { auth, db } from '$lib/firebase.js';
 	import { signInWithCustomToken } from 'firebase/auth';
 	import { ref, onValue, goOffline, goOnline } from 'firebase/database';
@@ -19,12 +21,30 @@
 		document.documentElement.classList.toggle('in-conversation', isConv);
 	});
 
+	let chatWrapEl = $state(null);
+
+	// iOS shell only: WebKit sometimes leaves the previous screen's pixels up
+	// after a client-side navigation — tapping a conversation swapped the
+	// header (its own layer) while the body underneath still showed the chat
+	// list, until the app switcher forced a re-composite. See native-repaint.js.
+	afterNavigate(() => kickRepaint(chatWrapEl));
+
 	let firebaseReady = $state(false);
 	let firebaseError = $state(false);
 	let retryAttempts = $state(0);
 	let online = $state(true);      // navigator.onLine, kept live via events
 	let reloadCount = $state(0);    // how many times we've auto-reloaded this tab session
 	let rtdbConnected = $state(true); // RTDB .info/connected — drops when the socket dies
+	// Desktop only: the connect gate used to paint a full-bleed skeleton the
+	// instant you opened a chat, which in a dark theme reads as the screen
+	// going black for a second. The connect is usually quicker than the eye,
+	// so show nothing for a beat and only own the screen if it's genuinely
+	// slow. Mobile keeps the skeleton — there it IS the tap transition, and a
+	// blank pane would be the worse artefact.
+	const CONNECTING_GRACE_MS = 600;
+	let showConnecting = $state(false);
+	let _graceTimer = null;
+
 	let _retryTimer = null;
 	let _connWatch = null;          // unsubscribe for the .info/connected listener
 	let _resyncTimer = null;        // debounce for the force-reconnect kick
@@ -137,6 +157,8 @@
 	}
 
 	function onConnected() {
+		clearTimeout(_graceTimer);
+		showConnecting = false;
 		stopRetryLoop();
 		clearTimeout(_initWatchdog);
 		firebaseError = false;
@@ -228,6 +250,9 @@
 			}
 		}, 25000);
 
+		// Only claim the screen if the connect is slow enough to notice.
+		_graceTimer = setTimeout(() => { if (!firebaseReady) showConnecting = true; }, CONNECTING_GRACE_MS);
+
 		// Initial connect: 5 attempts with linear-ish backoff to ride
 		// out short flaps quickly. If that whole sequence fails we
 		// surface the error banner AND start the 3s background
@@ -243,6 +268,7 @@
 		if (connected) {
 			onConnected();
 		} else {
+			clearTimeout(_graceTimer);
 			firebaseError = true;
 			firebaseReady = true;
 			reportConnectFailure('initial-sequence', new Error(`${MAX_RETRIES} attempts failed`));
@@ -254,6 +280,7 @@
 
 	onDestroy(() => {
 		_destroyed = true;
+		clearTimeout(_graceTimer);
 		stopRetryLoop();
 		clearTimeout(_resyncTimer);
 		clearTimeout(_initWatchdog);
@@ -269,13 +296,16 @@
 	});
 </script>
 
-<div class="chat-wrap">
+<div class="chat-wrap" bind:this={chatWrapEl}>
 	{#if !firebaseReady}
 		<!-- Mobile: keep showing the conversation skeleton (same as the tap
 		     transition) so it goes template → fully-rendered chat with no
-		     "Connecting…" flash in between. Desktop keeps the text. -->
-		<ConvSkeleton />
-		<div class="chat-loading connecting-text">Connecting…</div>
+		     "Connecting…" flash in between. Desktop stays empty until the
+		     connect is slow enough to be worth saying something about. -->
+		<div class="mobile-skeleton"><ConvSkeleton /></div>
+		{#if showConnecting}
+			<div class="chat-loading connecting-text">Connecting…</div>
+		{/if}
 	{:else if firebaseError}
 		<div class="chat-loading error">
 			{#if !online}
@@ -436,6 +466,13 @@
 	/* On mobile the skeleton stands in for the "Connecting…" text. */
 	@media (max-width: 640px) {
 		.connecting-text { display: none; }
+	}
+	/* …and on desktop the skeleton itself is the artefact: a full-bleed
+	   placeholder appearing for the length of a connect reads as the screen
+	   flashing black in a dark theme. Nothing is the better placeholder. */
+	.mobile-skeleton { display: contents; }
+	@media (min-width: 641px) {
+		.mobile-skeleton { display: none; }
 	}
 
 	.auto-retry {
