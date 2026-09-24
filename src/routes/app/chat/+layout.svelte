@@ -1,5 +1,6 @@
 <script>
 	import { onMount, onDestroy } from 'svelte';
+	import { version } from '$app/environment';
 	import { page } from '$app/stores';
 	import { auth, db } from '$lib/firebase.js';
 	import { signInWithCustomToken } from 'firebase/auth';
@@ -57,6 +58,43 @@
 		return data.firebaseToken;
 	}
 
+	// Why the connect failed, reported the same way hooks.client.js reports a
+	// thrown error (dev/errors, via /api/dev/error). Without this the reason is
+	// swallowed by tryConnect's catch and the only evidence a stuck chat leaves
+	// behind is "Connecting…" on someone's phone: the top bar renders from SSR,
+	// the messages never arrive, and nothing anywhere says whether the token
+	// was refused, the socket never opened, or it simply timed out.
+	// Capped per page — the retry loop runs every 3s and must not become a
+	// logging flood.
+	let _connectReports = 0;
+	function reportConnectFailure(stage, err) {
+		if (_connectReports >= 2) return;
+		_connectReports++;
+		try {
+			fetch('/api/dev/error', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					path: location.pathname,
+					message: `chat connect failed at ${stage}: ${String(err?.message ?? err ?? 'unknown')}`,
+					code: err?.code ?? err?.name ?? 'chat-connect',
+					// The shape of the environment matters as much as the error:
+					// native shell vs browser, and whether the device thinks it
+					// is online at all.
+					frame: [
+						`native=${/eatingcomputer-native/.test(navigator.userAgent)}`,
+						`standalone=${!!navigator.standalone || matchMedia('(display-mode: standalone)').matches}`,
+						`online=${navigator.onLine}`,
+						`attempts=${retryAttempts}`,
+						`reloads=${reloadCount}`
+					].join(' | '),
+					build: version
+				}),
+				keepalive: true
+			}).catch(() => {});
+		} catch { /* reporting must never break the retry loop */ }
+	}
+
 	// One sign-in attempt. Resolves true on success, false on failure or
 	// timeout. The ENTIRE operation (token fetch + sign-in) is bounded by the
 	// timeout — a half-open network after sleep can hang either step, and an
@@ -65,10 +103,15 @@
 	// (guaranteed fresh) so the very first connect never waits on the network
 	// for a token it already has.
 	async function tryConnect(preferFresh = true) {
+		// Which step we were on when it went wrong — a timeout means something
+		// very different depending on whether we were fetching a token or
+		// opening the Firebase connection.
+		let stage = 'token';
 		try {
 			const run = (async () => {
 				const token = preferFresh ? await freshToken() : (data.firebaseToken || await freshToken());
 				if (!token) throw new Error('no-token');
+				stage = 'signin';
 				await signInWithCustomToken(auth, token);
 			})();
 			await Promise.race([
@@ -76,7 +119,8 @@
 				new Promise((_, reject) => setTimeout(() => reject(new Error('connect-timeout')), CONNECT_TIMEOUT_MS))
 			]);
 			return true;
-		} catch {
+		} catch (err) {
+			reportConnectFailure(stage, err);
 			return false;
 		}
 	}
@@ -201,6 +245,7 @@
 		} else {
 			firebaseError = true;
 			firebaseReady = true;
+			reportConnectFailure('initial-sequence', new Error(`${MAX_RETRIES} attempts failed`));
 			startRetryLoop();
 		}
 		// Preload EK data in the background so the picker opens instantly
