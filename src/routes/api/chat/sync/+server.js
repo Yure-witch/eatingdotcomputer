@@ -27,6 +27,30 @@ export async function GET({ request }) {
 	const userMap = {};
 	for (const r of usersResult.rows) userMap[String(r.id)] = { name: String(r.name), role: String(r.role) };
 
+	// Rows that can't be archived, so one of them can't take the whole run down
+	// with it (see `skip` below). Reported in the response.
+	const skipped = [];
+	const knownUser = (id) => !!id && !!userMap[String(id)];
+
+	/**
+	 * Archive one row. A single unarchivable row used to throw out of the whole
+	 * endpoint: the nightly cron 500'd, nothing after that point ran, and — the
+	 * part that made it permanent — the Firebase cleanup never ran either, so
+	 * the same row broke it again the next night, and the next. It did exactly
+	 * that every night from 2026-08-23 on, over two `reaction` notifications
+	 * whose sender had since been deleted (notifications.from_uid REFERENCES
+	 * users(id)). Now a bad row is counted and stepped over.
+	 */
+	async function archiveRow(what, stmt) {
+		try {
+			await turso.execute(stmt);
+			return 1;
+		} catch (err) {
+			skipped.push({ what, reason: String(err?.message ?? err).slice(0, 120) });
+			return 0;
+		}
+	}
+
 	let archived = 0;
 
 	async function archiveMessages(rtdbPath, conversationId) {
@@ -74,7 +98,7 @@ export async function GET({ request }) {
 			const mentionsJson = Array.isArray(msg.mn) && msg.mn.length
 				? JSON.stringify(msg.mn.map((m) => ({ uid: m.u, offset: m.o, len: m.l })))
 				: null;
-			await turso.execute({
+			await archiveRow(`message ${msg.key}`, {
 				sql: `INSERT OR IGNORE INTO chat_messages
 				      (id, conversation_id, user_id, user_name, user_role, content, created_at, reply_to_id,
 				       attachment_url, attachment_filename, attachment_mimetype, attachment_size,
@@ -92,7 +116,11 @@ export async function GET({ request }) {
 					// Firebase keys are escaped; Turso stores the raw token.
 					const emoji = decodeReactionKey(emojiKey);
 					for (const reactUserId of Object.keys(users)) {
-						await turso.execute({
+						// message_reactions.user_id REFERENCES users(id): a reaction
+						// left by someone since deleted can't be stored, and it is
+						// not worth failing the run over.
+						if (!knownUser(reactUserId)) { skipped.push({ what: `reaction ${msg.key}`, reason: 'user deleted' }); continue; }
+						await archiveRow(`reaction ${msg.key}`, {
 							sql: 'INSERT OR IGNORE INTO message_reactions (message_id, emoji, user_id) VALUES (?, ?, ?)',
 							args: [msg.key, emoji, reactUserId]
 						});
@@ -133,7 +161,8 @@ export async function GET({ request }) {
 				for (const [emojiKey, users] of Object.entries(emojiMap)) {
 					const emoji = decodeReactionKey(emojiKey);
 					for (const reactUserId of Object.keys(users)) {
-						await turso.execute({
+						if (!knownUser(reactUserId)) { skipped.push({ what: `reaction ${msgId}`, reason: 'user deleted' }); continue; }
+						await archiveRow(`reaction ${msgId}`, {
 							sql: 'INSERT OR IGNORE INTO message_reactions (message_id, emoji, user_id) VALUES (?, ?, ?)',
 							args: [msgId, emoji, reactUserId]
 						});
@@ -188,7 +217,7 @@ export async function GET({ request }) {
 					const content = isCompact ? msg.c : (msg.content ?? '');
 					const userName = userMap[userId]?.name ?? msg.userName ?? 'Unknown';
 					const userRole = userMap[userId]?.role ?? msg.userRole ?? 'student';
-					await turso.execute({
+					await archiveRow(`thread message ${t.key}`, {
 						sql: `INSERT OR IGNORE INTO thread_messages
 						      (id, parent_msg_id, conversation_id, user_id, user_name, user_role, content, created_at,
 						       attachment_url, attachment_filename, attachment_mimetype, attachment_size)
@@ -223,20 +252,33 @@ export async function GET({ request }) {
 				if (ts <= cutoff) toArchive.push({ key: child.key, ts, ...v });
 			});
 			if (!toArchive.length) continue;
+			let storedForUser = 0;
 			for (const n of toArchive) {
-				await turso.execute({
+				// Both recipient_id and from_uid REFERENCE users(id), so a
+				// notification whose sender or recipient has been deleted — or
+				// one with no fromUid at all, which used to be written as the
+				// empty string — can never be stored. Step over it, and let the
+				// cleanup below still clear it from Firebase so it stops being
+				// retried every night forever.
+				if (!knownUser(uid) || !knownUser(n.fromUid)) {
+					skipped.push({ what: `notification ${n.key}`, reason: !knownUser(uid) ? 'recipient deleted' : 'sender deleted' });
+					continue;
+				}
+				storedForUser += await archiveRow(`notification ${n.key}`, {
 					sql: `INSERT OR IGNORE INTO notifications
 					      (id, recipient_id, type, from_uid, from_name, conv_type, conv_id, msg_id, snippet, created_at)
 					      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-					args: [n.key, uid, String(n.type || 'mention'), String(n.fromUid || ''), String(n.fromName || ''),
+					args: [n.key, uid, String(n.type || 'mention'), String(n.fromUid), String(n.fromName || ''),
 					       String(n.convType || 'channel'), String(n.convId || ''), String(n.msgId || ''),
 					       String(n.snippet || ''), n.ts]
 				});
 			}
+			// Everything old is cleared from Firebase, skipped rows included —
+			// that is what stops an unarchivable row being retried forever.
 			const cleanup = {};
 			for (const n of toArchive) cleanup[n.key] = null;
 			await adminDb.ref(`notifications/${uid}`).update(cleanup);
-			archivedNotifs += toArchive.length;
+			archivedNotifs += storedForUser;
 		}
 	}
 
@@ -245,5 +287,7 @@ export async function GET({ request }) {
 	let sweptRenders = 0;
 	try { sweptRenders = await sweepR2Prefix('gif-studio/', 30 * 60 * 1000); } catch { /* best-effort */ }
 
-	return json({ archived, archivedThreads, archivedNotifs, sweptRenders });
+	// `skipped` is the thing to watch: an empty array is a clean run, and a
+	// non-empty one names the rows that need looking at rather than failing.
+	return json({ archived, archivedThreads, archivedNotifs, sweptRenders, skipped });
 }
