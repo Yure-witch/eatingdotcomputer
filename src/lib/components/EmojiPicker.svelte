@@ -22,7 +22,8 @@
 <script>
 	import { onMount, tick } from 'svelte';
 	import { searchEmoji, onSemanticReady } from '$lib/emoji-semantic.js';
-	import { createEmojiSearchIndex, searchEmojiCatalog } from '$lib/emoji-search.js';
+	import { createEmojiSearchIndex, searchEmojiCatalog, attachLocaleKeywords } from '$lib/emoji-search.js';
+	import { loadLocaleKeywords } from '$lib/emoji-locale-kw.js';
 	import PickerStickyBtn from './PickerStickyBtn.svelte';
 	import { loadNotoEmoji } from '$lib/noto-emoji.js';
 
@@ -665,9 +666,13 @@
 
 	// ── Search with ranking ───────────────────────────────────────────────────
 
+	// CLDR ships its emoji keywords per locale, so a student browsing in Spanish
+	// can search "corazón" (and Japanese "ハート"). Loaded once, lazily, and only
+	// for non-English browsers — English keywords are already in the catalog.
+	let localeKw = $state(null);
 	let searchHits = $derived(
 		query.trim() && data
-			? searchEmojiCatalog(createEmojiSearchIndex(data), query, { semanticScores })
+			? searchEmojiCatalog(attachLocaleKeywords(createEmojiSearchIndex(data), localeKw), query, { semanticScores })
 			: null
 	);
 	let searchResults = $derived(searchHits?.filter(hit => hit.kind !== 'fuzzy').map(hit => hit.item) ?? null);
@@ -957,6 +962,7 @@
 	});
 
 	onMount(() => {
+		loadLocaleKeywords().then((kw) => { if (kw) localeKw = kw; });
 		// Start model loading in background
 		return onSemanticReady(() => { semanticReady = true; });
 	});

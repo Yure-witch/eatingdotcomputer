@@ -1,6 +1,11 @@
 // Shared, synchronous search for the picker and composer. No storage or network.
+// Ligatures and stroked letters have no NFKD decomposition, so "coeur" would
+// miss ❤️ "cœur rouge" and "strasse" would miss "straße". Folded on both sides
+// (query and catalog terms run through here), which also keeps English intact.
+const LIGATURES = { 'œ': 'oe', 'æ': 'ae', 'ß': 'ss', 'ø': 'o', 'ł': 'l', 'đ': 'd', 'ð': 'd', 'þ': 'th', 'ı': 'i' };
 export const normalizeEmojiQuery = text => String(text).normalize('NFKD').replace(/\p{M}/gu, '')
-	.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+	.toLowerCase().replace(/[œæßøłđðþı]/g, (c) => LIGATURES[c])
+	.replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 const glyphKey = text => text.replaceAll('\uFE0F', '');
 const indexes = new WeakMap();
 
@@ -32,6 +37,40 @@ export function createEmojiSearchIndex(data) {
 	const index = { entries, concepts, maxConceptWords, families };
 	indexes.set(data, index);
 	return index;
+}
+
+/**
+ * Hang CLDR's localized names and keywords (emoji-locale-kw.js) off the index
+ * so a Spanish browser matches "corazón" and a Japanese one "ハート". English
+ * keywords keep working either way — this adds terms, it never replaces them.
+ * Cheap to call repeatedly; only re-walks the entries when the locale changes.
+ */
+export function attachLocaleKeywords(index, locale) {
+	const tag = locale?.locale ?? null;
+	if (index.localeTag === tag) return index;
+	index.localeTag = tag;
+	for (const entry of index.entries) {
+		const parts = tag ? locale.terms.get(glyphKey(entry.item.e)) : null;
+		// [name, …keywords] — normalized the same way queries are, so accents
+		// and case don't decide whether a student finds their emoji.
+		entry.locale = parts?.length ? parts.map(normalizeEmojiQuery).filter(Boolean) : null;
+	}
+	return index;
+}
+
+/** Mirrors literalTier's ladder, one step softer: English names are canonical. */
+function localeTier(entry, query) {
+	const terms = entry.locale;
+	if (!terms || !query) return 0;
+	const exact = terms.indexOf(query);
+	if (exact === 0) return 2;                                   // the localized name
+	// The name leading with the query beats a keyword hit: "corazón" should
+	// find ❤️ "corazón rojo" before 😍, which only lists it as a keyword.
+	if (terms[0]?.startsWith(query)) return 3;
+	if (exact > 0) return 4;                                     // a localized keyword
+	if (terms.some((t) => t.startsWith(query))) return 5;
+	if (terms.some((t) => t.includes(query))) return 7;
+	return 0;
 }
 
 // Adjacent transpositions count as one typo ("haert" → "heart").
@@ -111,12 +150,19 @@ function literalTier(entry, raw, query) {
 	return 0;
 }
 
+/** Best of the English and localized ladders — a hit in either one counts. */
+function matchTier(entry, raw, query) {
+	const english = literalTier(entry, raw, query);
+	const localized = localeTier(entry, query);
+	return english && localized ? Math.min(english, localized) : english || localized;
+}
+
 export function searchEmojiCatalog(index, text, { limit = 96, semanticScores, includeFuzzy = true, includeRelated = true } = {}) {
 	const raw = String(text).toLowerCase().trim(), query = normalizeEmojiQuery(raw);
 	if (!raw) return [];
 	const hits = new Map();
 	for (const entry of index.entries) {
-		const tier = literalTier(entry, raw, query);
+		const tier = matchTier(entry, raw, query);
 		if (tier) hits.set(entry.item.e, { item: entry.item, tier, kind: 'literal', similarity: 1 });
 	}
 	for (const hit of index.families.get(query) ?? []) hits.set(hit.item.e, hit);
