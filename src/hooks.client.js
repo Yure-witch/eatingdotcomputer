@@ -19,6 +19,73 @@ import { version } from '$app/environment';
  * response that never arrived has `responseStatus` 0 (or no status at all on
  * older WebKit), so the recent failures name themselves.
  */
+/**
+ * Retry a navigation the network killed under it.
+ *
+ * On the iOS shell the web view's network drops out wholesale — one report
+ * lists its own chunks, its own API routes, apis.google.com and R2 avatars all
+ * failing inside four seconds, while those same files serve 200 from a
+ * desktop. When that lands mid-navigation the route's code and data never
+ * arrive: the header (already rendered) shows the new conversation while the
+ * body still shows the old screen, and nothing retries. That is the "tap a
+ * chat and nothing happens" bug, and why opening the app switcher and coming
+ * back appears to fix it — the app reloads on resume.
+ *
+ * So: reload the route we were heading for, once the view is actually visible
+ * and the device says it has a network. A full reload rather than a client-side
+ * retry, because the module graph the failed navigation left behind is the
+ * thing that is broken.
+ *
+ * Bounded hard: at most RETRY_LIMIT attempts per URL per tab session, cleared
+ * on any successful load, so a genuinely dead network can never become a
+ * reload loop.
+ */
+const RETRY_KEY = 'ec:nav-retry';
+const RETRY_TOTAL_KEY = 'ec:nav-retry-total';
+const RETRY_LIMIT = 2;
+// A hard ceiling for the whole tab session that is NEVER cleared. The per-URL
+// budget resets whenever a page loads, which is right — a load means the
+// network came back — but on its own it would let a route that breaks
+// immediately after loading reload forever: load, clear, fail, retry, load…
+const RETRY_TOTAL_LIMIT = 4;
+const NETWORK_ERROR = /load failed|failed to fetch|importing a module script failed|error loading dynamically imported module|networkerror/i;
+
+function retryCount(url) {
+	try {
+		return Number(JSON.parse(sessionStorage.getItem(RETRY_KEY) ?? '{}')[url] ?? 0);
+	} catch { return RETRY_LIMIT; } // no storage → don't retry at all
+}
+
+function noteRetry(url) {
+	try {
+		const all = JSON.parse(sessionStorage.getItem(RETRY_KEY) ?? '{}');
+		all[url] = (Number(all[url]) || 0) + 1;
+		sessionStorage.setItem(RETRY_KEY, JSON.stringify(all));
+		sessionStorage.setItem(RETRY_TOTAL_KEY, String(totalRetries() + 1));
+	} catch { /* private mode: the count above already refused */ }
+}
+
+function totalRetries() {
+	try { return Number(sessionStorage.getItem(RETRY_TOTAL_KEY) ?? 0); } catch { return RETRY_TOTAL_LIMIT; }
+}
+
+function scheduleNavRetry(url) {
+	if (!url || retryCount(url) >= RETRY_LIMIT || totalRetries() >= RETRY_TOTAL_LIMIT) return;
+	const go = () => {
+		if (document.visibilityState !== 'visible' || !navigator.onLine) return;
+		document.removeEventListener('visibilitychange', go);
+		window.removeEventListener('online', go);
+		noteRetry(url);
+		location.href = url;
+	};
+	// Visible and online already? Give the transport a breath to come back,
+	// otherwise wait for whichever signal arrives — returning from the app
+	// switcher fires visibilitychange, a recovered radio fires online.
+	document.addEventListener('visibilitychange', go);
+	window.addEventListener('online', go);
+	setTimeout(go, 900);
+}
+
 function recentFailedRequests() {
 	try {
 		const entries = performance.getEntriesByType('resource') ?? [];
@@ -35,6 +102,18 @@ function recentFailedRequests() {
 	} catch {
 		return null;
 	}
+}
+
+// A page that loaded is proof the network came back: forget the retry budget
+// so the next failure gets its own attempts.
+if (typeof window !== 'undefined') {
+	const clearPerUrlBudget = () => {
+		try { sessionStorage.removeItem(RETRY_KEY); } catch { /* private mode */ }
+	};
+	// `load` may already have fired by the time this module evaluates, in which
+	// case the listener alone would never run and the budget would never reset.
+	if (document.readyState === 'complete') clearPerUrlBudget();
+	else addEventListener('load', clearPerUrlBudget);
 }
 
 export function handleError({ error, event }) {
@@ -66,6 +145,13 @@ export function handleError({ error, event }) {
 			keepalive: true
 		}).catch(() => {});
 	} catch { /* never let reporting cause a second failure */ }
+
+	// A navigation the network killed is worth one automatic retry — see
+	// scheduleNavRetry. Only for that shape of failure: an app bug must still
+	// fail visibly rather than reload in circles.
+	if (NETWORK_ERROR.test(String(err?.message ?? error ?? ''))) {
+		scheduleNavRetry(event?.url?.pathname ? event.url.pathname + (event.url.search ?? '') : null);
+	}
 
 	// Let SvelteKit render its normal error page.
 	return { message: 'Something went wrong.' };
