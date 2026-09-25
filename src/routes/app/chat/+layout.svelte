@@ -67,15 +67,51 @@
 	const MAX_RELOADS = 3;
 	const RELOAD_KEY = 'ec:chat-reloads';
 
-	// A fresh custom token — the one from page load expires after ~1h, so a
-	// tab resumed from a long sleep needs a new one. Falls back to the baked-in
-	// token if the fetch fails/times out (still valid within the first hour).
+	// Firebase rejected the token outright at least once (auth/invalid-custom-
+	// token). Once that has happened the baked-in one is dead to us: every
+	// later attempt fetches.
+	let _bakedTokenRejected = false;
+
+	/**
+	 * Is the token baked into this page load still worth trying?
+	 *
+	 * Custom tokens are JWTs that expire an hour after minting. In a browser
+	 * tab that barely matters — a reload mints a new one. In the iOS shell the
+	 * SAME page can live for days, so the baked token is expired almost all of
+	 * the time, and using it is a guaranteed auth/invalid-custom-token.
+	 */
+	function bakedTokenUsable() {
+		if (_bakedTokenRejected || !data.firebaseToken) return false;
+		try {
+			const payload = JSON.parse(atob(String(data.firebaseToken).split('.')[1]));
+			// A minute of headroom: a token about to expire mid-handshake is
+			// the same failure, just later.
+			return typeof payload.exp === 'number' && payload.exp * 1000 - Date.now() > 60_000;
+		} catch {
+			return false; // unparseable is not a token we should be spending an attempt on
+		}
+	}
+
+	/**
+	 * A usable custom token, or null.
+	 *
+	 * This used to fall back to the page-load token whenever the fetch failed
+	 * — which is exactly when the shell's network is flaky, and by then that
+	 * token is usually expired. So a failed fetch produced a *guaranteed*
+	 * rejected sign-in, and the 3s retry loop re-spent the same dead token
+	 * forever: chat never connected while the rest of the app looked fine.
+	 * Returning null instead lets the attempt fail fast and the next one fetch
+	 * again.
+	 */
 	async function freshToken() {
 		try {
 			const r = await fetch('/api/firebase-token', { cache: 'no-store', signal: AbortSignal.timeout(4000) });
-			if (r.ok) return (await r.json())?.token ?? data.firebaseToken;
-		} catch { /* timeout / offline — use the page-load token */ }
-		return data.firebaseToken;
+			if (r.ok) {
+				const token = (await r.json())?.token;
+				if (token) return token;
+			}
+		} catch { /* timeout / offline — fall through */ }
+		return bakedTokenUsable() ? data.firebaseToken : null;
 	}
 
 	// Why the connect failed, reported the same way hooks.client.js reports a
@@ -129,7 +165,9 @@
 		let stage = 'token';
 		try {
 			const run = (async () => {
-				const token = preferFresh ? await freshToken() : (data.firebaseToken || await freshToken());
+				// The first attempt may use the baked token, but only while it is
+				// actually still valid — see bakedTokenUsable().
+				const token = preferFresh || !bakedTokenUsable() ? await freshToken() : data.firebaseToken;
 				if (!token) throw new Error('no-token');
 				stage = 'signin';
 				await signInWithCustomToken(auth, token);
@@ -140,6 +178,10 @@
 			]);
 			return true;
 		} catch (err) {
+			// Firebase saying the token is invalid means the one we just used is
+			// worthless, not that the service is down — never spend another
+			// attempt on it.
+			if (String(err?.code ?? '').includes('invalid-custom-token')) _bakedTokenRejected = true;
 			reportConnectFailure(stage, err);
 			return false;
 		}
