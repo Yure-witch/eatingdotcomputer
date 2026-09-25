@@ -31,6 +31,9 @@ if xcode-select -p >/dev/null 2>&1; then
 else
   xcode-select --install 2>/dev/null
   note "A system dialog opened — click Install. This script continues once it finishes."
+  note "If it says the software isn't available (common in virtual machines), download"
+  note "\"Command Line Tools for Xcode\" from https://developer.apple.com/download/all/,"
+  note "install it, and this script will pick up automatically."
   until xcode-select -p >/dev/null 2>&1; do sleep 5; done
   note "installed"
 fi
