@@ -115,6 +115,11 @@
 
 	const errorMessages = {
 		CredentialsSignin: 'Incorrect email or password.',
+		// Most accounts here were created through Google and have no password
+		// at all, so "incorrect password" would send them hunting for one that
+		// never existed.
+		UseGoogle: 'That account signs in with Google — use “Continue with Google” above.',
+		UseApple: 'That account signs in with Apple — use “Continue with Apple” above.',
 		OAuthSignin: 'Could not sign in with Google. Please try again.',
 		Default: 'Something went wrong. Please try again.'
 	};
