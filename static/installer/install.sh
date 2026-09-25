@@ -30,9 +30,26 @@ if xcode-select -p >/dev/null 2>&1; then
   note "already installed"
 else
   xcode-select --install 2>/dev/null
-  note "A system dialog opened — click Install, wait for it to finish, then press Return."
-  read -r _ </dev/tty
+  note "A system dialog opened — click Install. This script continues once it finishes."
+  until xcode-select -p >/dev/null 2>&1; do sleep 5; done
+  note "installed"
 fi
+
+# Homebrew and several apps need admin rights. Ask for the password once, up
+# front (stdin is the script itself under curl | bash, so read from the
+# terminal), and keep sudo warm so nothing later stops to ask again.
+bold "Administrator access"
+if ! id -Gn | tr ' ' '\n' | grep -qx admin; then
+  echo "This Mac account ($USER) is not an Administrator, and Homebrew needs one." >&2
+  echo "Ask whoever manages this Mac to make you an admin (System Settings → Users & Groups), then re-run." >&2
+  exit 1
+fi
+note "Enter your Mac login password (nothing shows as you type):"
+if ! sudo -v </dev/tty; then
+  echo "Couldn't get administrator access; nothing else can proceed." >&2
+  exit 1
+fi
+while true; do sudo -n true; sleep 50; kill -0 "$$" || exit; done 2>/dev/null &
 
 bold "Homebrew"
 if ! command -v brew >/dev/null 2>&1; then
@@ -49,6 +66,7 @@ else
   done
   if ! command -v brew >/dev/null 2>&1; then
     echo "Homebrew failed to install; nothing else can proceed." >&2
+    echo "Scroll up for Homebrew's own error message. You can also install it by hand from https://brew.sh and re-run." >&2
     exit 1
   fi
   # Put brew on PATH for future terminal sessions.
