@@ -38,8 +38,8 @@
 		<button type="button" onclick={copy}>{copied ? 'Copied' : 'Copy'}</button>
 	</div>
 	<p class="small">
-		It will ask for your Mac password (Homebrew needs it) and may open the Xcode
-		Command Line Tools installer. Prefer a download?
+		No password, no Homebrew, no Xcode tools — about two minutes on a good
+		connection. Prefer a download?
 		<a href="/installer/dev-starter-kit.zip" download>dev-starter-kit.zip</a> —
 		unzip it, then right-click <em>Install Dev Tools.command</em> → Open.
 		You can also <a href="/installer/install.sh">read the script</a> first.
