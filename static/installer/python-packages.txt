@@ -1,0 +1,19 @@
+# Libraries installed into the shared starter environment (~/.venvs/dev).
+# One per line; edit freely. The installer reads this file.
+requests
+httpx
+python-dotenv
+pydantic
+rich
+typer
+numpy
+pandas
+matplotlib
+pillow
+beautifulsoup4
+sqlalchemy
+fastapi
+uvicorn[standard]
+flask
+pytest
+ipykernel

@@ -1,0 +1,10 @@
+# Command-line tools installed globally, each in its own isolated env (uv tool install).
+# One per line; edit freely. The installer reads this file.
+ruff
+black
+mypy
+ipython
+jupyterlab
+pre-commit
+httpie
+poetry
