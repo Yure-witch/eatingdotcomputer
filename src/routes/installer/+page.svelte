@@ -38,8 +38,8 @@
 		<button type="button" onclick={copy}>{copied ? 'Copied' : 'Copy'}</button>
 	</div>
 	<p class="small">
-		No password, no Homebrew, no Xcode tools — about two minutes on a good
-		connection. Prefer a download?
+		It asks for your Mac password once, installs Homebrew without the Xcode
+		tools, and keeps retrying until everything is installed. Prefer a download?
 		<a href="/installer/dev-starter-kit.zip" download>dev-starter-kit.zip</a> —
 		unzip it, then right-click <em>Install Dev Tools.command</em> → Open.
 		You can also <a href="/installer/install.sh">read the script</a> first.
@@ -51,7 +51,7 @@
 		<li><strong>VS Code</strong> and <strong>Antigravity</strong></li>
 		<li><strong>GitHub Desktop</strong> and <strong>Git</strong></li>
 		<li><strong>Google Chrome</strong></li>
-		<li><strong>Node.js</strong> (with npm)</li>
+		<li><strong>Homebrew</strong> and <strong>Node.js</strong> (with npm)</li>
 		<li><strong>Python 3.13</strong> and <strong>uv</strong></li>
 		<li>
 			Python tools: ruff, black, mypy, ipython, jupyterlab, pre-commit, httpie, poetry
