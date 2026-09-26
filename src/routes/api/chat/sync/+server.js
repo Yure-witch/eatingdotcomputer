@@ -217,7 +217,7 @@ export async function GET({ request }) {
 					const content = isCompact ? msg.c : (msg.content ?? '');
 					const userName = userMap[userId]?.name ?? msg.userName ?? 'Unknown';
 					const userRole = userMap[userId]?.role ?? msg.userRole ?? 'student';
-					await archiveRow(`thread message ${t.key}`, {
+					await archiveRow(`thread message ${msg.key}`, {
 						sql: `INSERT OR IGNORE INTO thread_messages
 						      (id, parent_msg_id, conversation_id, user_id, user_name, user_role, content, created_at,
 						       attachment_url, attachment_filename, attachment_mimetype, attachment_size)

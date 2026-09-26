@@ -1900,7 +1900,7 @@
 				const fd = new FormData();
 				fd.append('file', file, file.name || `paste.${file.type.split('/')[1] || 'bin'}`);
 				fd.append('contextType', 'dm');
-				fd.append('contextId', convId);
+				fd.append('contextId', data.convId);
 				fd.append('classId', data.currentClass?.id ?? '');
 				fetch('/api/upload', { method: 'POST', body: fd })
 					.then(r => r.ok ? r.json() : r.text().then(t => Promise.reject(t)))
@@ -2830,7 +2830,7 @@
 					// The message the block was made from — snapshotted into the
 					// moderation queue so the instructor sees what prompted it.
 					messageId: msg.id,
-					convId,
+					convId: data.convId,
 					content: msg.content ?? ''
 				})
 			});
