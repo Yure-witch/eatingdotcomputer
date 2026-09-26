@@ -167,12 +167,22 @@
 	// mid-reflow / mid-snap. Mobile only.
 	let _convEntering = $state(false);
 	let _convEnterT;
-	const _showConvSkeleton = $derived(
-		_isMobile && (
-			_convEntering ||
-			(!!$navigating && _isConvRoute($navigating.to?.url?.pathname ?? ''))
-		)
-	);
+	// `_convEntering` is the ONLY thing that shows the placeholder, and it is
+	// always on a timer. It used to be OR'd with a live `$navigating` read, and
+	// that term is not bounded by anything: when SvelteKit decides a navigation
+	// needs a full page load (a new deploy, a chunk that no longer exists) it
+	// calls native_navigation(), which sets the document loading and returns a
+	// promise that NEVER resolves — so `$navigating` stays set forever. If that
+	// document load then doesn't happen (our own auto-refresh reload racing it,
+	// iOS dropping it), the tab is left alive with `$navigating` permanently
+	// pointing at the conversation: a full-screen, pointer-events:none
+	// placeholder over every route, with no way out. Hence: one bounded source.
+	const _showConvSkeleton = $derived(_isMobile && _convEntering);
+	// How long the placeholder may stay up without the navigation landing. Long
+	// enough to cover a real slow load (this is a loading state, and cutting it
+	// early flashes the chat menu), short enough that a wedged navigation
+	// uncovers the live pager instead of stranding the screen.
+	const CONV_SKEL_MAX_MS = 6000;
 	// Arm the overlay whenever a navigation INTO a conversation begins, with a
 	// safety timeout so it can never get stuck up — and drop it the moment the
 	// navigation lands. (There's no entry scroll to wait on any more: the pager
@@ -182,10 +192,12 @@
 		const navving = !!$navigating;
 		const enteringNav = _isMobile && navving && _isConvRoute($navigating.to?.url?.pathname ?? '');
 		if (enteringNav) {
+			const href = $navigating.to.url.pathname;
 			untrack(() => {
 				_convEntering = true;
 				clearTimeout(_convEnterT);
-				_convEnterT = setTimeout(() => { _convEntering = false; }, 900);
+				_convEnterT = setTimeout(() => { _convEntering = false; }, CONV_SKEL_MAX_MS);
+				_watchConvOpen(href);
 			});
 			return;
 		}
@@ -200,6 +212,45 @@
 			tick().then(() => requestAnimationFrame(() => { _convEntering = false; }));
 		});
 	});
+
+	// Diagnostic: a conversation tap that still hasn't become a conversation
+	// 10s later is the exact failure this layout spent September chasing (the
+	// header swaps, the body never does). Say so in dev/errors, with the state
+	// that tells the causes apart — a navigation that never settled, one that
+	// landed somewhere else, or a chat still waiting on its Firebase connect.
+	// Silent when it worked. Mobile only, like the placeholder it shadows.
+	let _convOpenWatchT;
+	function _watchConvOpen(href) {
+		clearTimeout(_convOpenWatchT);
+		_convOpenWatchT = setTimeout(() => {
+			try {
+				if (document.visibilityState !== 'visible') return; // backgrounded mid-open
+				const stuckNav = $navigating?.to?.url?.pathname ?? null;
+				const landed = location.pathname === href;
+				const waitingOnConnect = !!document.querySelector('.chat-wrap .mobile-skeleton');
+				if (landed && !stuckNav && !waitingOnConnect) return;
+				fetch('/api/dev/error', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({
+						path: href,
+						message: `chat open stuck: ${!landed ? `landed on ${location.pathname}` : stuckNav ? 'navigation never settled' : 'still connecting'}`,
+						code: 'chat-open-stuck',
+						frame: [
+							`nav=${stuckNav ?? 'none'}`,
+							`chatWrap=${!!document.querySelector('.chat-wrap')}`,
+							`connecting=${waitingOnConnect}`,
+							`skel=${_convEntering}`,
+							`online=${navigator.onLine}`,
+							`native=${/eatingcomputer-native/.test(navigator.userAgent)}`
+						].join(' | '),
+						build: buildVersion
+					}),
+					keepalive: true
+				}).catch(() => {});
+			} catch { /* diagnostics never break navigation */ }
+		}, 10000);
+	}
 
 	// The pager STAYS MOUNTED underneath a chat surface. A conversation (and the
 	// chat-adjacent surfaces) is a layer on TOP of it, not a replacement for it —
@@ -1347,7 +1398,9 @@
 	// the two differ for as long as a service worker is serving a cached bundle.
 	function reportBuild() {
 		try {
-			set(ref(rtdb, `dev/clients/${data.currentUser.id}/${deviceId}`), {
+			// _pingDeviceId, not `deviceId`: that one is local to onMount, so this
+			// line threw inside the try and no device has ever reported a build.
+			set(ref(rtdb, `dev/clients/${data.currentUser.id}/${_pingDeviceId}`), {
 				build: String(buildVersion ?? ''),
 				at: Date.now(),
 				standalone: !!(window.matchMedia?.('(display-mode: standalone)')?.matches || navigator.standalone),
@@ -1812,16 +1865,6 @@
 		}
 	};
 
-	function startDm(user) {
-		const convId = getConvId(data.currentUser.id, user.id);
-		window.location.href = `/app/chat/dm/${convId}`;
-	}
-
-	async function createChannel() {
-		const name = newChannelName.trim();
-		if (!name) return;
-		creatingChannel = true;
-		channelError = null;
 	let presencePing = async (force = false) => {
 		// Debounce: skip if we pinged recently (navigation fires this on every route change)
 		const now = Date.now();
@@ -1840,6 +1883,16 @@
 			});
 	};
 
+	function startDm(user) {
+		const convId = getConvId(data.currentUser.id, user.id);
+		window.location.href = `/app/chat/dm/${convId}`;
+	}
+
+	async function createChannel() {
+		const name = newChannelName.trim();
+		if (!name) return;
+		creatingChannel = true;
+		channelError = null;
 		try {
 			const res = await fetch('/api/channels', {
 				method: 'POST',
@@ -2300,6 +2353,10 @@
 		allPresenceRef = ref(rtdb, 'presence');
 		console.info('[ec:presence] subscribing to allPresenceRef');
 		onValue(allPresenceRef, (snap) => {
+			// Any delivered snapshot proves the socket and the rules are fine.
+			// An EMPTY one counts: "nobody is present" is a real answer, and
+			// treating it as failure would arm the poll on a quiet class.
+			disarmPresenceFallback();
 			if (!snap.exists()) { console.info('[ec:presence] allPresenceRef: empty snapshot'); return; }
 			console.info('[ec:presence] allPresenceRef snapshot — uids:', Object.keys(snap.val()));
 			const fb = snap.val();
@@ -2310,10 +2367,6 @@
 				// Per-device format: any child that is an object is a device node.
 				// Mixed format (stale flat fields + live device objects) → treat as per-device
 				// so orphaned flat `online: false` from old sessions never masks fresh data.
-			// Any delivered snapshot proves the socket and the rules are fine.
-			// An EMPTY one counts: "nobody is present" is a real answer, and
-			// treating it as failure would arm the poll on a quiet class.
-			disarmPresenceFallback();
 				const deviceObjects = Object.values(v).filter(d => d && typeof d === 'object');
 				if (deviceObjects.length === 0) {
 					// Pure flat single-device format
@@ -2393,6 +2446,8 @@
 			// reads the node regardless of client auth, so users still appear
 			// online, just at POLL_INTERVAL latency instead of real-time.
 			console.warn('[presence] allPresenceRef denied:', err.code, err.message);
+			_presenceSubHealthy = false;
+			armPresenceFallback(err.code ?? 'subscription error');
 		});
 
 		// onValue reports failure through its error callback, but a subscription
@@ -2407,8 +2462,6 @@
 		const mountedAt = Date.now();
 
 		// DMs — track lastAt per conversation so re-fires of the whole userChats snapshot
-			_presenceSubHealthy = false;
-			armPresenceFallback(err.code ?? 'subscription error');
 		// (which happens whenever ANY dm updates) don't double-count old unread messages.
 		const knownDmLastAt = {};
 		let firstUserChatsFire = true;
@@ -2522,6 +2575,7 @@
 		clearInterval(heartbeatTimer);
 		clearInterval(tickTimer);
 		clearInterval(presencePollTimer);
+		clearTimeout(_presenceSubWatchdog);
 		clearInterval(idleTickTimer);
 		if (userChatsRef) off(userChatsRef);
 		if (lastReadRef) off(lastReadRef);
@@ -2532,7 +2586,6 @@
 		if (unreadCountsRef) off(unreadCountsRef);
 		for (const r of Object.values(channelRefs)) off(r);
 	});
-		clearTimeout(_presenceSubWatchdog);
 
 	function toggleCollapse() {
 		sidebarCollapsed = !sidebarCollapsed;

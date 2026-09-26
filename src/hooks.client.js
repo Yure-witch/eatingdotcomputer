@@ -1,4 +1,5 @@
 import { version } from '$app/environment';
+import { navigating } from '$app/state';
 
 /**
  * Client-side error reporting. hooks.server.js records server 5xx into
@@ -149,7 +150,15 @@ export function handleError({ error, event }) {
 	// A navigation the network killed is worth one automatic retry — see
 	// scheduleNavRetry. Only for that shape of failure: an app bug must still
 	// fail visibly rather than reload in circles.
-	if (NETWORK_ERROR.test(String(err?.message ?? error ?? ''))) {
+	//
+	// And only for a NAVIGATION. handleError also fires for failed preloads —
+	// the mobile pager warms Home/Orbit/Lab/Manage in the background, and a
+	// network blip fails all of them at once — and "retrying" one of those is
+	// a full page load of a route the user never asked for. You'd be reading a
+	// conversation and get thrown onto Manage 900ms later. A real navigation is
+	// the one `navigating` is currently pointed at.
+	const isNavigation = navigating.to?.url?.pathname === event?.url?.pathname;
+	if (isNavigation && NETWORK_ERROR.test(String(err?.message ?? error ?? ''))) {
 		scheduleNavRetry(event?.url?.pathname ? event.url.pathname + (event.url.search ?? '') : null);
 	}
 

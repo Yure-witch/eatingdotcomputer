@@ -187,6 +187,39 @@
 		}
 	}
 
+	/**
+	 * Is Firebase already signed in as this user, with a usable ID token?
+	 *
+	 * The /app layout signs in once at boot and the SDK keeps that session
+	 * alive (persisted, self-refreshing). On mobile this layout mounts fresh
+	 * on EVERY conversation open — the chat menu is a pager panel, not a child
+	 * of this layout — and re-signing-in each time put a Google round trip
+	 * (plus an IndexedDB write that can wedge) between the tap and the first
+	 * message. Reusing the live session makes opening a chat local.
+	 *
+	 * getIdToken() is what proves it: it resolves from memory while the token
+	 * is fresh, and when it has expired it refreshes — the same round trip RTDB
+	 * would need anyway. If that refresh fails, the session is dead and we fall
+	 * through to a real sign-in.
+	 */
+	async function alreadySignedIn() {
+		try {
+			await Promise.race([
+				auth.authStateReady(),
+				new Promise((r) => setTimeout(r, 1500))
+			]);
+			const user = auth.currentUser;
+			if (!user || !data.currentUser?.id || user.uid !== data.currentUser.id) return false;
+			const token = await Promise.race([
+				user.getIdToken(),
+				new Promise((r) => setTimeout(() => r(null), 4000))
+			]);
+			return !!token;
+		} catch {
+			return false;
+		}
+	}
+
 	// Kick the RTDB SDK to rebuild a dead websocket (common after sleep/wake).
 	// Auth persists across this, so no re-sign-in is needed — it just forces
 	// the transport to reconnect instead of waiting on the SDK's own backoff.
@@ -300,8 +333,8 @@
 		// surface the error banner AND start the 3s background
 		// retry loop so the user doesn't have to touch anything.
 		const MAX_RETRIES = 5;
-		let connected = false;
-		for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+		let connected = await alreadySignedIn();
+		for (let attempt = 1; !connected && attempt <= MAX_RETRIES; attempt++) {
 			// First attempt uses the page-load token (no network wait); later
 			// attempts fetch a fresh one in case that token has gone stale.
 			if (await tryConnect(attempt > 1)) { connected = true; break; }

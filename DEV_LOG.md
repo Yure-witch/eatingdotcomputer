@@ -4,6 +4,50 @@ This document is a running record of what has been attempted, what is in progres
 
 ---
 
+### 2026-09-26 — Mobile: tapping a chat swaps the header but never loads it
+- **Status**: `attempted` (root cause confirmed in the live production bundle;
+  fix scope-checked and built locally. NOT yet confirmed on the phone.)
+- **Root cause**: commit f526731 (2026-09-20, "Cut Vercel edge requests") was
+  committed with two hunks of `src/routes/app/+layout.svelte` pasted into the
+  wrong place — the working tree was correct, which is why every local test
+  since then looked fine while production was broken:
+  - `presencePing` landed INSIDE `createChannel()`, so the top-level
+    `afterNavigate(() => presencePing())` threw `ReferenceError` on every
+    navigation. SvelteKit only clears `$navigating` AFTER running afterNavigate
+    callbacks, so every navigation stayed "in progress" forever.
+  - On mobile the conversation skeleton was shown while `$navigating` pointed at
+    a conversation — i.e. permanently. The header (eagerly titled on tap) sat on
+    top of a full-screen placeholder that never lifted: "header changes, chat
+    never loads".
+  - `err.code` landed in onMount instead of the presence error callback →
+    ReferenceError there too, killing everything after it in onMount (DM list
+    subscription, unread counts, toasts). The heartbeat's `presencePing(true)`
+    threw every tick, which is why presence `lastSeen` froze ~2s after each
+    session started.
+  - The Sep 23–25 fixes (repaint kick, nav retry, token expiry) chased
+    symptoms of this; none could have fixed it.
+- **Fix**: commit the correct layout (presence code back in place; skeleton is
+  timer-bounded only, never tied to `$navigating`). Also:
+  - `hard-refresh.js`: `preventDefault()` on `vite:preloadError` only when we
+    actually reload. It ran before the once-per-session guard, so every later
+    chunk 404 was swallowed (import resolved `undefined`) AND not recovered.
+    Guard is now a 30s cooldown instead of once-per-session.
+  - `hooks.client.js`: the nav retry fired for failed background PRELOADS too
+    (pager warms Home/Orbit/Lab/Manage), doing a full load of a route you never
+    asked for. Now only for the navigation actually in progress.
+  - Chat layout: reuse live Firebase auth (uid match + `getIdToken()`) instead of
+    re-signing-in on every conversation open.
+  - `reportBuild()` referenced onMount's local `deviceId` → always threw → no
+    device ever wrote `dev/clients` (the rules don't allow that write yet either).
+  - Diagnostic: a conversation tap not landed 10s later posts `chat-open-stuck`
+    to dev/errors with the state that tells the causes apart.
+- **Also fixed** (same undeclared-identifier sweep): DM paste-upload and
+  block-user used an undeclared `convId`; `/api/chat/sync` used `t.key` for
+  `msg.key`, throwing whenever an old thread reply needed archiving.
+- **Tool**: undeclared-reference scan over compiled output (acorn + scopes) found
+  all of these in one pass — worth running before any commit built with
+  `git add -p`/patch surgery.
+
 ### 2026-09-20 — Vercel edge-request budget: cut the four recurring sources
 - **Status**: `attempted` (all four compile; the RTDB wake stream was verified
   live against Firebase. NOT deployed, and NOT confirmed against the real usage

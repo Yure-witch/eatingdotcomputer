@@ -49,27 +49,50 @@ export async function hardRefresh() {
 export function installChunkErrorRecovery() {
 	if (typeof window === 'undefined') return;
 	const KEY = 'ec:chunk-reload';
+	// How long one recovery attempt suppresses the next. Long enough that a
+	// genuinely broken deploy can't spin, short enough that a SECOND chunk
+	// failure later in the same session still gets rescued.
+	const COOLDOWN_MS = 30000;
 	const recover = (event) => {
-		event?.preventDefault?.();
+		// preventDefault ONLY once we've committed to reloading. On
+		// `vite:preloadError` it tells Vite the error is handled, and Vite then
+		// resolves the failed import with `undefined` instead of rejecting. It
+		// used to run first, above the guard — so every chunk failure inside the
+		// cooldown (or, before that, for the rest of the session) was swallowed
+		// AND left unrecovered: the route import quietly "succeeded" with
+		// nothing, and the navigation died without an error anyone could see.
+		// Declining lets the rejection reach SvelteKit, which checks for a new
+		// build and does the navigation as a full page load itself.
 		try {
-			if (sessionStorage.getItem(KEY)) return; // already tried this session
+			// TIME-BOXED, not once-per-session. This used to be a bare presence
+			// check cleared by a `load` listener registered here — and this runs
+			// from onMount, so if `load` had already fired the listener never ran,
+			// and if the page was broken enough not to finish loading it never
+			// fired at all. Either way the key stuck and every LATER chunk error
+			// in the tab was silently ignored, which is the "I had to clear the
+			// cache by hand" case. The timestamp was already being written; it
+			// just wasn't being read.
+			const last = Number(sessionStorage.getItem(KEY) ?? 0);
+			if (last && Date.now() - last < COOLDOWN_MS) return;
 			sessionStorage.setItem(KEY, String(Date.now()));
 		} catch { /* private mode — accept the small loop risk over no recovery */ }
+		event?.preventDefault?.();
 		hardRefresh();
 	};
 	window.addEventListener('vite:preloadError', recover);
 	// Belt and braces: dynamic-import failures that don't surface as that event
-	// still arrive as an unhandled rejection with a recognisable message.
+	// still arrive as an unhandled rejection.
 	window.addEventListener('unhandledrejection', (e) => {
-		const msg = String(e?.reason?.message ?? e?.reason ?? '');
-		if (/dynamically imported module|Importing a module script failed/i.test(msg)) recover(e);
+		const reason = e?.reason;
+		const msg = String(reason?.message ?? reason ?? '');
+		// Chrome/Firefox name the failure. Safari does NOT — a route chunk that
+		// 404s there rejects with a bare `TypeError: Load failed`, which is also
+		// what every ordinary failed fetch says, so the message alone can't be
+		// trusted. What separates them is the URL: match on it wherever it shows
+		// up (message, stack, or the filename Safari attaches to the error).
+		const where = `${msg} ${reason?.stack ?? ''} ${reason?.sourceURL ?? ''}`;
+		const named = /dynamically imported module|Importing a module script failed/i.test(msg);
+		const isChunk = /\/_app\/immutable\//.test(where);
+		if (named || isChunk) recover(e);
 	});
-	// A load that succeeds means whatever we recovered from is behind us.
-	try {
-		if (sessionStorage.getItem(KEY)) {
-			window.addEventListener('load', () => {
-				setTimeout(() => { try { sessionStorage.removeItem(KEY); } catch { /* ignore */ } }, 5000);
-			});
-		}
-	} catch { /* ignore */ }
 }
