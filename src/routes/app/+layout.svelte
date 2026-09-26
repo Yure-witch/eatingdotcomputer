@@ -220,13 +220,27 @@
 	// landed somewhere else, or a chat still waiting on its Firebase connect.
 	// Silent when it worked. Mobile only, like the placeholder it shadows.
 	let _convOpenWatchT;
+	let _convOpenHref = null;
+	let _convOpenLanded = false;
+	// A conversation that opened and was then LEFT inside the 10s window is a
+	// success, not a stuck open — the first build of this reported someone
+	// flicking through four DMs as a failure, because by the time the timer
+	// fired they were back on the menu.
+	afterNavigate((nav) => {
+		if (_convOpenHref && nav.to?.url?.pathname === _convOpenHref) _convOpenLanded = true;
+	});
 	function _watchConvOpen(href) {
 		clearTimeout(_convOpenWatchT);
+		_convOpenHref = href;
+		_convOpenLanded = false;
 		_convOpenWatchT = setTimeout(() => {
 			try {
 				if (document.visibilityState !== 'visible') return; // backgrounded mid-open
 				const stuckNav = $navigating?.to?.url?.pathname ?? null;
 				const landed = location.pathname === href;
+				if (_convOpenLanded && !landed) return; // opened, then left
+				// Still on it: only the connect gate can be what's wrong now.
+				if (_convOpenLanded && !document.querySelector('.chat-wrap .mobile-skeleton')) return;
 				const waitingOnConnect = !!document.querySelector('.chat-wrap .mobile-skeleton');
 				if (landed && !stuckNav && !waitingOnConnect) return;
 				fetch('/api/dev/error', {
