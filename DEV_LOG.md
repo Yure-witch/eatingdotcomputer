@@ -4,6 +4,37 @@ This document is a running record of what has been attempted, what is in progres
 
 ---
 
+### 2026-10-15 — Let students submit assignments they missed (late submission)
+- **Status**: `attempted` (built + compiles clean via svelte-check; NOT yet
+  confirmed with a real past-due student account.)
+- **Report**: students who missed an assignment during its week could not submit
+  once the week had passed.
+- **Root cause**: NOT a server rule. `completeItem` (both the week-plans helper
+  and the `?/completeItem` action in `src/routes/app/+page.server.js`) has no
+  due-date/week guard — the server has always accepted late submissions. The
+  gate was purely structural in the UI: the interactive submit forms were only
+  ever rendered inside `{#if data.currentPlan}` on `src/routes/app/+page.svelte`.
+  Once a plan's `due_date < today` it became a `past` plan and was rendered
+  read-only everywhere — the home "overdue" banner listed missed items as plain
+  text, and `/app/weeks` showed a done/total ratio with no forms. The banner even
+  linked to `/app/weeks` ("Open past weeks to finish them"), a dead end.
+- **Fix** (UI only, no schema/endpoint change):
+  - Extracted the per-item checklist row (`.check-row` + submit/edit forms) from
+    the current-week `{#each}` into a top-level `{#snippet checkRow(item, peers)}`
+    so both the current week AND the overdue banner render the exact same
+    interactive row. Declared as a direct child of `<main>` so both call sites
+    are in scope.
+  - The home overdue banner (`+page.svelte`) now renders each missed week as a
+    LIVE checklist via `{@render checkRow(item, [])}` instead of a read-only list.
+  - `load()` in `+page.server.js`: each overdue week now ships its full plan
+    (items incl. acceptedTypes + resource chips) plus `incompleteCount`, and its
+    completions are merged into the shared `completions` map so a just-submitted
+    late item shows done / stays editable and the optimistic re-sync keeps past +
+    current together. `overdueCount` now counts only unfinished items.
+  - `/app/weeks` left as a read-only browse (link reworded to "See all past
+    weeks →"); submitting late happens from the home overdue banner.
+- **Files**: `src/routes/app/+page.svelte`, `src/routes/app/+page.server.js`.
+
 ### 2026-09-26 — Mobile: tapping a chat swaps the header but never loads it
 - **Status**: `attempted` (root cause confirmed in the live production bundle;
   fix scope-checked and built locally. NOT yet confirmed on the phone.)
@@ -47,6 +78,38 @@ This document is a running record of what has been attempted, what is in progres
 - **Tool**: undeclared-reference scan over compiled output (acorn + scopes) found
   all of these in one pass — worth running before any commit built with
   `git add -p`/patch surgery.
+
+### 2026-09-23 — Emoji search: CLDR keywords in the student's own language
+- **Status**: `attempted` (verified against the real search code in the browser:
+  Spanish, French, German and Japanese queries all resolve, English unchanged,
+  `scripts/emoji-search.test.mjs` still 7/7. NOT clicked through the actual
+  picker UI — that's behind a login.)
+- **Why**: the English catalog already comes from CLDR annotations
+  (build-emoji-data.mjs), and CLDR publishes the SAME annotations for ~100
+  locales. So a student browsing in Spanish typing "corazón" got nothing.
+- **`scripts/build-emoji-locale-kw.mjs`**: pulls `annotations/<loc>.xml` +
+  `annotationsDerived/<loc>.xml` per locale, keeps only emoji in our catalog,
+  writes `static/emoji-kw/<loc>.json` as `{ "<glyph>": "name|kw|kw…" }` plus an
+  `index.json` of shipped locales. 22 locales, 1.8MB total, ~29KB gzipped each.
+  Skin-tone variants are EXCLUDED on purpose: they were half of CLDR's entries
+  and the search index never looks them up (it indexes base items; the picker
+  resolves tones), which took the set from 7.4MB to 1.8MB.
+- **`src/lib/emoji-locale-kw.js`**: picks the tag from `navigator.languages`
+  (en* → null, nothing to fetch; zh-TW/HK/MO → zh-Hant; pt-BR → pt), fetches one
+  file, once. Fails silently to English-only search.
+- **`emoji-search.js`**: `attachLocaleKeywords(index, locale)` hangs normalized
+  localized terms on each entry; `localeTier` mirrors the English ladder (exact
+  name 2, name-prefix 3, exact keyword 4, prefix 5, contains 7) and `matchTier`
+  takes the better of the two. Name-prefix beating keyword is what puts ❤️
+  "corazón rojo" above 😍 for "corazón".
+- **Ligature folding in `normalizeEmojiQuery`** (œ→oe, ß→ss, ø, ł, đ, ð, þ, ı):
+  NFKD doesn't decompose these, so "coeur" could never match ❤️ "cœur rouge"
+  and "strasse" missed "straße". Applied to both sides; English is unaffected.
+- **Not precached**: the SW's precache is tiny now and `.json` isn't in its
+  runtime-cacheable extensions, so these files never bulk-download to devices.
+- **Known**: French "coeur" leads with 🫀 — CLDR's French name for it is exactly
+  "cœur", which outranks ❤️ "cœur rouge". Japanese 猫 is a keyword for every cat
+  emoji (the names are ネコ…), so 猫 ranks by catalog order; ネコ is exact.
 
 ### 2026-09-20 — Vercel edge-request budget: cut the four recurring sources
 - **Status**: `attempted` (all four compile; the RTDB wake stream was verified
@@ -163,200 +226,275 @@ This document is a running record of what has been attempted, what is in progres
     `firebase database:set` → worker logged `woken by RTDB signal`. The full
     chain works. (That test timestamp is still the node's value; the next real
     enqueue overwrites it, and the `primed` guard makes it inert either way.)
-- **STILL NEEDED: a Vercel deploy.** Everything in #1, #2, #3 and the app half
-  of #4 (`signalScoutWake()` at the five enqueue sites) only exists in the
-  working tree. Until it ships, scout is running on the 5-min safety net with
-  nothing writing wake events — already a ~95% cut on its own, but the service
-  worker, presence and dashboard/Manage changes are doing nothing yet.
+- **App side DEPLOYED (2026-09-20, commit f526731, build 1789958736830)**:
+  - Committed ONLY this session's hunks — `+layout.svelte`, `app/+page.svelte`
+    and this log also carried other sessions' uncommitted work (conv skeleton /
+    `CONV_SKEL_MAX_MS`; overdue banner + roster "Not submitted"; their DEV_LOG
+    entries), which was left unstaged and is still in the working tree. Staged
+    via per-hunk patches + `git apply --cached --unidiff-zero`, and the staged
+    snapshot was built ALONE in a throwaway worktree (exit 0, adapter done) to
+    prove the commit doesn't lean on anyone's uncommitted code.
+  - Also pushed the previously-unpushed `114963b` (bt/$room rules) — rules-only,
+    already live in Firebase, ignored by Vercel.
+  - Pre-push checks: 15/15 SW cache-predicate cases (incl. `/api/*` with an image
+    extension and `__data.json` never cached); 10/10 presence state-machine cases
+    run against the functions extracted from the real file (healthy → 0 server
+    requests; write rejected / no ref → server rescue; poll arms on error,
+    disarms on snapshot, idempotent). Couldn't exercise presence in a logged-in
+    session — signing in would need credentials.
+  - **Verified on production** in a fresh browser: SW `activated`, precache holds
+    exactly the 6 shell files (was ~1,327); after one controlled reload the cache
+    had lazily picked up 40 `/_app/immutable/` chunks — only what the landing
+    page used — all 40 served through the SW, and 0 session-scoped entries.
+  - `dev/refreshNeeded` stamped after the build went live. 0 devices had
+    reported a build, so no device was awake for it; the app.html watchdog picks
+    the build up on next open.
+  - Still to confirm: presence dots on a real device, and the Vercel usage graph
+    flattening over the next day or two.
 
 ---
 
-### 2026-09-02 — Size reset by weight/width; formatting toolbar hidden on mobile
-- **Status**: `attempted` (cause isolated by test — the segment math was proved
-  innocent before touching anything)
-- **Symptom**: set a size, then change weight or width, and the size snapped
-  back to default.
-- **Not the maths.** A script ran `applyInlineTypo`'s segment math over a
-  committed `sz-137`: weight and width both preserved it
-  (`[sz-137, wght-500, wdth-125]`). The size was gone BEFORE any of that ran.
-- **Root cause**: `applyLiveSize` wraps the selection in a `.sz-live` span
-  carrying a continuous `font-size` and NO `data-fx` — and `data-fx` is the
-  only thing `serializeCe` reads an fx stack from. So while a size drag is in
-  flight the size is invisible to serialisation, and `applyInlineTypo`'s first
-  act is `serializeCe(inputEl)`. `commitLiveSize` bakes a real `sz-N` span, but
-  it only runs on the slider's `change`; anything that re-read the compose
-  before then dropped the size.
-- **Fixes**:
-  - `.sz-live` now carries `data-fx="sz-N"` on every tick of the drag, so the
-    wrapper is never invisible to serialisation in the first place.
-  - `applyInlineTypo` bakes any in-flight size before reading the compose.
-    Also necessary for a second reason: its rebuild replaces the compose's DOM
-    wholesale, which left `_szLive` pointing at a detached node, so the next
-    size drag wrote to something no longer in the document.
-- **Formatting toolbar hidden on mobile.** Bold / italic / underline / strike /
-  colour all live in the highlight dialog now, so `.btn-fmt-more` and
-  `.fmt-tools` are `display: none` on phones — they were no-ops without a
-  selection anyway (`applyTextFx` bails on a collapsed one). The code-block
-  group moves OUT of `.fmt-tools` first: it's the one control in there with no
-  equivalent in the dialog. Desktop is untouched (`.fmt-tools` is
-  `display: contents` there, so the code group keeps its position).
+### 2026-09-16 — Activity chart extracted to a component + /dev-chart harness
+- **Status**: `attempted` (seen and iterated on at `/dev-chart`, desktop + phone
+  width, all five ranges, hover included. NOT seen on the real Manage page —
+  that needs an instructor session I couldn't create, see below.)
+- **Why prod still shows the old line graph**: none of this is committed or
+  deployed. Prod runs the last deploy; these edits only exist in the working tree.
+- **`src/lib/components/ActivityChart.svelte`**: the chart is now a component
+  (Manage → Activity passes `series` / `range` / `members`). `/dev-chart` renders
+  it with mock data and a fixed clock — dev-only, 404 in prod, same pattern as
+  `/dev-thread`.
+- **Clarity fixes on top of the bar change**:
+  - Zebra stripes REMOVED. A full-width stripe read as a full-width bar — an
+    empty lane looked like a student who was online all week. Each lane is now a
+    hairline track, so only real bars are blocks.
+  - One bar colour instead of a hue per student (the lane label already says who).
+  - Every member gets a lane, including people with no activity (an empty lane is
+    the answer to "who never showed up"); busiest first, empties last alphabetical.
+  - Right-hand column per lane: `54h` / `4d` online in the window, `—` for none.
+  - Hairline at each day boundary on hourly ranges; lanes 44px → 30px (bar still
+    lane − 10px) so a class fits on screen.
+  - Tooltip lists who was online in that bucket, or "Nobody online".
+- **Couldn't screenshot the real page**: minting a local Auth.js session cookie
+  for the instructor account (rickyyurewitch@gmail.com — richardyurewitch@ is the
+  student one) was refused by the permission classifier as security-weakening.
+  Didn't work around it. Options: user grants that, or logs in in the Browser pane.
+
+### 2026-09-16 — Manage → Activity: presence bar chart + hidden students last
+- **Status**: `attempted` (compiles; geometry checked by rendering the same
+  maths with stand-in data. NOT seen on the real page — that needs an
+  instructor login, which I didn't want to fake with a throwaway account.)
+- **Last online**: shadowbanned members now sort to the bottom regardless of
+  `lastSeen`, with the same `hidden` chip the members table uses.
+- **Activity chart**: was a per-user polyline of activity counts. Now horizontal
+  presence bars — a bar in every bucket the student was online, nothing when
+  they weren't, so the gaps carry the meaning. Bar height = `ROW_H - BAR_INSET`
+  (44 - 10 = 34), centred in the lane.
+- **Real time axis**: the x-axis is now EVERY bucket in the range, not only the
+  ones with activity (a gap can't mean "offline" if empty buckets aren't on the
+  axis). Built in UTC to match the server's bucket keys. ~6 timestamp keys along
+  the bottom in a 16px strip: weekday+hour for multi-day hourly ranges, bare
+  hour for 12h/1d, date for 1m/6m.
+- **Hover**: crosshair/tooltip switched from a point-to-point scale to the band
+  scale; the tooltip now lists who was online in that bucket, or "Nobody online".
+- **Note**: lanes still only exist for students with activity in the range — a
+  student who was never online in the window has no row at all, rather than an
+  empty lane.
+
+### 2026-09-15 — Material Symbols: subset to the icons we use, self-hosted
+- **Status**: `attempted` (verified in dev: all 106 icons render as glyphs, FILL
+  axis still animates, production `vite build` emits the font and references it;
+  NOT yet verified on a real phone against prod, which was the reported symptom.)
+- **Symptom**: icons not loading properly on mobile in prod.
+- **Cause**: `app.html` linked the FULL Material Symbols Rounded family —
+  a **5.4MB** woff2 — with `display=block`, so every icon stays invisible until
+  all of it arrives. On a phone that reads as "the icons never loaded".
+- **Fix**: `scripts/msi-icons.mjs` scans src for the `.msi` helper (literal
+  ligatures, quoted strings inside dynamic ones, `icon:`/`iconName:` fields),
+  validates each name against Google's icon metadata, and builds the
+  `&icon_names=` URL. 106 icons → **138.5KB** (97% smaller). `--write` saves the
+  subset to `static/fonts/material-symbols-rounded.woff2`; `@font-face` now lives
+  in app.css and the Google stylesheet <link> is gone (preconnects stay for the
+  text families app.css still @imports). Preloaded in app.html; same-origin, so
+  the service worker precaches it (icons work offline).
+- **Subset keeps the variable font**: parsed the woff2 table directory — `fvar`,
+  `gvar`, `avar`, `GSUB` all present, so FILL/wght/GRAD/opsz and the ligature
+  names still work.
+- **After adding a new icon** you must re-run `node scripts/msi-icons.mjs --write`
+  or it renders as literal text. Needs Node 18+ — the default `node` on PATH here
+  is v15 (`~/.nvm/versions/node/v22.16.0/bin/node`), which also breaks `vite build`.
+
+### 2026-09-02 — Frozen UI when immutable chunks 404: three gaps in the recovery
+- **Status**: `attempted` (client navigation verified still working and the new
+  20s watchdog verified NOT misfiring on a completed navigation. The failure
+  itself — a real 404'd chunk — was not reproduced locally, so the recovery path
+  is reasoned from the error log, not observed end to end.)
+- **Symptom**: errors on the site, immutable chunks not found, UI completely
+  frozen; only a manual cache-clear + hard reload got out of it.
+  `installChunkErrorRecovery()` exists precisely for this and did not save it.
+- **Evidence** (read from `dev/errors` in RTDB, which `hooks.client.js` feeds):
+  exactly ONE recorded "Failed to fetch dynamically imported module"
+  (2026-08-31, /app/lab, `nodes/2.DMvU-p4X.js`). Everything from the iPhone
+  today — across SEVEN builds in three hours — is a bare `TypeError: Load
+  failed`. That is the whole problem: see gap 2.
+- **Gap 1 — the loop guard latched permanently.** `recover()` early-returned on
+  the mere PRESENCE of `ec:chunk-reload`, and the only thing that cleared it was
+  a `load` listener registered from `installChunkErrorRecovery()` — which runs in
+  onMount. If `load` had already fired, the listener never ran; if the page was
+  broken enough not to finish loading, `load` never fired at all. Either way the
+  key stuck and every later chunk error in that tab was ignored, which is
+  exactly "I had to clear the cache by hand". Now time-boxed on the timestamp it
+  was already writing but never reading (30s cooldown): still no reload loop,
+  but a second failure later in the session is still rescued.
+- **Gap 2 — Safari doesn't say the words we were matching.** The detector tested
+  the message against `dynamically imported module|Importing a module script
+  failed`. Safari reports a dead route chunk as `TypeError: Load failed` — the
+  same text as any other failed fetch — so on iOS the recovery simply never
+  fired. Broadening the message match would fire a cache-nuking reload on every
+  flaky API call, so instead we match the URL (`/_app/immutable/`) wherever it
+  appears: message, stack, or Safari's `sourceURL`.
+- **Gap 3 — nothing caught the freeze itself.** Both fixes above still depend on
+  recognising a rejection. A navigation whose chunk never arrives just never
+  settles: `$navigating` stays set, the old page stays on screen, taps go
+  nowhere, and nothing threw anywhere catchable. Added a third stage to the
+  existing nav-progress effect (250ms bar → 5s "slow" note → **20s**): hand the
+  pending URL to the browser as a real page load. No diagnosis needed — a stuck
+  navigation is self-evidently stuck — and a fresh document carries the deployed
+  chunk names. Skipped when `navigator.onLine === false`, since offline is a
+  different problem and the offline banner is already up.
 
 ---
 
-### 2026-09-02 — Underline / strikethrough never toggled off
-- **Status**: `attempted` (root cause REPRODUCED in a script and the fix
-  verified against it — not inferred)
-- **Symptom**: underline and strikethrough didn't toggle. Pressing again
-  re-applied instead of clearing.
-- **Root cause**: `fxSplitWords` ("Per word", on by default) makes each WORD
-  its own fx node so it animates on its own beat — and emits the whitespace
-  BETWEEN words as a BARE text node. `serializeCe` rebuilds the fx stack from
-  the DOM, so those spaces come back with an EMPTY stack. `applyTextFx`'s
-  toggle-off test asks whether EVERY overlapping segment already carries the
-  effect; a space never does, so on any multi-word selection the answer was
-  permanently "no" and every press re-applied. Reproduced: three presses of
-  underline on "hello big world", `allHaveIt` false every time.
-- Underline and strike are simply where it SHOWS. Bold and italic broke
-  identically, but a non-bold space looks like a bold one — a gap in an
-  underline does not.
-- **Fixes** (all three needed):
-  - `fxSpaceNode` / `fxSpaceHtml`: whitespace between words keeps the
-    DECORATIONS (underline/strike, not the animations — per-word animation is
-    the point of the split). The rule now runs through the gaps, and the round
-    trip through the DOM is lossless for them.
-  - `applyTextFx` judges "already applied?" on the segments with INK in them,
-    so whitespace can't cast the deciding vote. Whitespace still decides when
-    the selection is nothing but whitespace. This repairs toggling for bold,
-    italic and the animations too.
-  - `nestedFxHtml`'s decoration span was the ONE fx span with no `data-fx`.
-    Since `serializeCe` reads only that attribute, copying an underlined run
-    out of a bubble silently dropped the decoration. Now it has one.
+### 2026-09-02 — Auto-update banner onto the design system; countdown to 4px
+- **Status**: `attempted` (rendered live on the dev server and computed styles
+  read back off the real element — not just eyeballed. A screenshot wasn't
+  possible: the browser pane was hidden, so frames weren't compositing.)
+- **Symptom**: the countdown bar under the auto-refresh banner was hard to see.
+- **Root cause was colour, not only size.** The bar used `--accent`, which is
+  `md-sys-color-primary` — a role the M3 palette tunes for contrast against
+  `surface`. This banner is deliberately an INVERSE surface, so on the current
+  theme it resolved to `#c2ffc3` on a `#69ff87` bar: almost no contrast.
+  `inverse-primary` (`#00541e` here) is the role built for that pairing.
+- **Fix** (`src/routes/+layout.svelte`):
+  - Bar 2px → **4px**, and it now sits in a track
+    (`inverse-on-surface` at 20%) — a bare shrinking bar leaves nothing behind
+    to measure the remaining time against.
+  - `.refreshed-banner` moves from `--ink`/`--paper` to
+    `--inverse-surface`/`--inverse-on-surface`. Those aliases already exist in
+    app.css and are documented for exactly this ("tooltips/banners that
+    intentionally contrast"); `--ink`/`--paper` are HARDCODED near-black/white,
+    so the banner was the one piece of chrome taking no colour from the theme.
+  - `.refreshed-x:hover` was a hardcoded `rgba(255,255,255,0.12)`, which only
+    worked while the bar happened to be dark — on a dark theme the inverse
+    surface is LIGHT and the white overlay vanished. Now an on-surface state
+    layer, matching the `--sidebar-hover` pattern.
+  - The sibling `.update-banner` (the same feature's "reloaded onto the same
+    build" fallback) moved onto the same tokens; its `1px solid #444` border and
+    plain-paper button were the same class of hardcoding.
+- **Measured after**: track and bar both `4px`, bar `rgb(0,84,30)`, banner
+  `rgb(105,255,135)` on `rgb(0,0,0)`.
 
 ---
 
-### 2026-09-02 — Highlight dialog: ⌫ key, and formatting beside the effects
-- **Status**: `attempted`
-- **⌫ in the expression keyboard's spot.** Same position and size as
-  `.expr-del` in ExpressionPicker.svelte, read off its variables rather than
-  eyeballed: 4rem wide, `3rem + 8px` tall, 14px corners, 25px glyph, 6px above
-  the safe-area edge, 2px in from the side. Swapping between the expression
-  keyboard and this dialog shouldn't move it.
-  - It is a SIBLING of a new `.text-fx-scroll` wrapper rather than a child, so
-    the rows scroll under it and it holds its spot — "fixed in position"
-    without `position: fixed` and the viewport arithmetic that comes with it
-    (see the revert two entries down for why that matters here).
-  - Both rows get a right-hand gutter of `4rem + 0.6rem` so nothing — wrapped
-    effect pill or slider — can run under the key, in either state.
-- **⌫ deletes the HIGHLIGHT.** While docked the compose is blurred and there is
-  no live selection, so `composeBackspace` would have trimmed the last
-  character instead. It now acts on `_savedCeSel` via a new `savedSelRange()`
-  (factored out of `paintSavedSel`, which built the same range). The dialog
-  stays open afterward so repeated presses keep deleting.
-- **Formatting beside the effects (mobile).** Bold / italic / underline /
-  strike plus every `TEXT_COLORS` swatch and rainbow, as their own full-size
-  buttons in the effects row — nothing behind a popover. They exist on the
-  compose toolbar too, but at 30px and easy to miss once a selection is made.
-  Mobile only (`_isMobileWidth`); desktop's roomy toolbar is unchanged.
+### 2026-09-02 — Universal Links: app half built (unblocked by approval)
+- **Status**: `attempted` (entitlements plist parses and the app compiles —
+  `xcodebuild ... CODE_SIGNING_ALLOWED=NO` BUILD SUCCEEDED — and `npm run build`
+  compiles both bundles, so the `goto` import is SSR-safe. **Signing with the new
+  entitlement is NOT verified** by that build, and neither is real link
+  resolution: both need the App ID capability + a device.)
+- Completes the three steps left in the 2026-08-31 entry, now that approval has
+  removed the provisioning risk.
+- **1. Entitlement** (`ios/App/App/App.entitlements`):
+  `com.apple.developer.associated-domains` = `applinks:www.eating.computer`.
+  **www, not the apex** — the apex answers 307 -> www and Apple does not follow
+  redirects fetching AASA, so the apex fails validation silently. Re-verified by
+  curl today: www serves it 200 as `application/json`.
+- **2. Handler** (`routeDeepLink` in `src/lib/native.js`, wired to `appUrlOpen`
+  in `initNativeShell`). Read the Capacitor source first to confirm the shape:
+  `CAPApplicationDelegateProxy.continue userActivity` only POSTS a notification
+  and `AppPlugin` re-emits it as `appUrlOpen` — Capacitor never navigates the
+  web view. So this handler owns routing outright, and there is no
+  double-navigation to guard against.
+  - The plugin emits with `retainUntilConsumed: true`, so a link that
+    COLD-LAUNCHED the app is held by the bridge until the listener attaches. No
+    `getLaunchUrl()` poll, and no second delivery path to dedupe.
+  - Hostname is checked against `eating.computer` and its subdomains, because
+    `appUrlOpen` ALSO fires for the Google sign-in custom scheme — routing that
+    would be actively wrong.
+  - `replaceState` only when landing on the generic entry (`/app` or `/`), i.e.
+    the cold-launch case, so Back doesn't return to a dashboard the user never
+    asked for. A link arriving while the app is in use keeps its history entry.
+  - Re-tapping the link you're already on is a no-op rather than a rebuild.
+  - **Known rough edge**: on a cold launch the root layout's last-route restore
+    runs first (synchronous in onMount; this is behind an await), so the deep
+    link lands second and overrides it. Right outcome — the tapped link should
+    beat wherever you were last — but it can flash the restored route first.
+- **3. WKAppBoundDomains**: left alone, as the earlier entry advised. It lists
+  `eating.computer` while server.url and applinks are both `www.` — that is
+  fine, app-bound domains cover subdomains.
+- **Still needs the user**: enable **Associated Domains** on App ID
+  `computer.eating.app` (team `2DA4GWZYAS`) in the developer portal and refresh
+  the profile, or let Xcode automatic signing add it. Until that exists, the
+  archive will FAIL to sign — the unsigned simulator build above cannot catch it.
 
 ---
 
-### 2026-09-02 — Highlight dialog: freeze the compose, unhook the list padding
-- **Status**: `attempted`
-- **Symptoms**: (1) tapping the Aa pill to open the size/weight/width sliders
-  flashed erratically; (2) resizing the text still pushed the sliders DOWN.
-- **Fix 1 — the compose's height stops changing at all while docked.**
-  `height: 200px` (plain length, not a max, nothing resolved against an
-  ancestor) instead of `max-height`. The bar expands upward once, when the
-  dialog opens, then holds; the type scales and scrolls INSIDE it and the
-  layout doesn't react. Two previous passes tried to let it grow while keeping
-  the dialog still by arithmetic — pin the column's bottom, bound the maxima,
-  make only the dialog shrink — and both still pushed the sliders. A box whose
-  size never depends on its contents cannot push anything, which is the only
-  version of this that doesn't need a device to verify.
-- **Fix 2 — the flash.** `.message-list` had
-  `style:padding-bottom="{inputAreaHeight}px"`: its scroll padding tracked the
-  compose's measured height. That padding exists for the NATIVE keyboard
-  transform, which lifts the bar OVER the list — while the dialog is docked
-  there is no transform (body.expr-picker-open pins it to none) and the bar is
-  a plain flex sibling, so the padding was only adding a screenful of dead
-  scroll. Worse, opening the sliders grew the input area ~160px, which moved
-  the padding by the same amount, which jolted the scroll anchor and forced the
-  `content-visibility: auto` rows to re-resolve — the flash. Now 0 while
-  docked.
+### 2026-09-02 — APPROVED on the App Store; APP_STORE_URL set
+- **Status**: `confirmed` (user reported the approval; the listing is live —
+  `itunes.apple.com/lookup?bundleId=computer.eating.app` returns trackId
+  6789277570, version 1.0, released 2026-09-02T07:41:45Z)
+- Apple ID **6789277570** → `https://apps.apple.com/app/id6789277570`.
+  `APP_STORE_URL` in `src/lib/native.js` was `null`, which deliberately kept the
+  "Get the app" banner hidden rather than shipping a dead link; it now holds the
+  real listing, so `shouldPromoteApp()` starts returning true and iOS mobile-web
+  visitors get the App Store callout instead of the Add-to-Home-Screen
+  instructions. Web-side, so it ships on the next deploy — no build needed.
+- **Owed, and worth doing soon**: the approved binary predates the blank-screen
+  recovery in the entry below, so every store install today still has that bug.
+  It needs a 1.0 (5). Submitting is low-risk now — the live listing stays up
+  through review. Note `CURRENT_PROJECT_VERSION` in project.pbxproj still reads
+  2, so the shipped build number is being set by hand in Xcode.
+- **Also unblocked**: the Universal Links app half (Associated Domains) was
+  deferred only because a provisioning change could have broken signing on the
+  build under review. Fold it into the same 1.0 (5).
 
 ---
 
-### 2026-09-02 — Highlight dialog under the message bar, ✕ top-left
-- **Status**: `attempted` (needs a phone pass — native shell especially)
-- **Spec (user)**: dialog UNDER the message, in the strip the text input
-  occupied; the message bar expands UPWARD, away from the controls, as things
-  shift; ✕ at the dialog's top-left in both the slider state and the animation
-  state.
-- **How the upward growth works**: the dialog is the last child of `.input-area`
-  (`order: 1`), and `.input-area` is the last flex item in `.chat-wrap`, so its
-  bottom edge is pinned to the chat column's bottom. A taller compose therefore
-  takes its space from the conversation ABOVE and the dialog underneath never
-  moves — which is the actual fix for the slider running out from under your
-  finger, since every control in the dialog resizes the box directly above it.
-- **No fixed or percentage heights this time.** That is the lesson from the
-  revert above: sizes are content-derived with bounded maxima (compose 200px,
-  dialog `min(50% of --vvh, 26rem)`), `.input-area.fx-dock` is the only thing
-  allowed to shrink at the `.chat-wrap` level and the dialog the only thing
-  allowed to shrink inside it. Worst case is a dialog that scrolls its own
-  rows; nothing can land under the bottom edge.
-- **✕**: moved out of the end of `.text-fx-bar` (where `margin-left: auto` put
-  it bottom-right) to the first child of `.text-typo-bar`, which is the
-  dialog's top row whether the sliders are open or shut behind the Aa pill.
-- **Native keyboard**: `scheduleFxDock` now calls `Keyboard.hide()` from the
-  Capacitor plugin alongside the blur, gated on `isNativeApp()`. A blur should
-  dismiss it in WKWebView, but the entire layout depends on the keyboard
-  actually leaving, so it asks outright instead of assuming.
-
----
-
-### 2026-09-02 — Reverted: the fixed-height compose column broke the native app
-- **Status**: `reverted` (chat pages back to 79cc426; scripts/force-refresh.js kept)
-- **Symptom**: on the native shell at e6e885f the highlight menu rendered below
-  the viewport and the compose was, in the user's words, "very broken".
-- **What was reverted**: `.input-area.fx-dock { height: calc(100% - 7rem) }`
-  plus the flex stretching under it (`.input-bar { flex: 1; align-items:
-  stretch }`, `.compose-ce { flex: 1 }`, the send-button opt-out).
-- **Why it's suspect**: that height is a PERCENTAGE of `.chat-wrap`, and on
-  mobile the conversation renders inside `.fwd-host.conv-layer` — an absolutely
-  positioned `top: 0; height: 100dvh` layer that deliberately sits OUTSIDE
-  `body.native-app .app-shell`'s `padding-top: --native-top-inset`. The chat's
-  own height is `calc(var(--vvh) - var(--header-h))` on the assumption that
-  inset is still applied. Any disagreement between --vvh, 100dvh and the notch
-  inset in the native web view lands entirely on a percentage-height child,
-  where it had nowhere to go but past the bottom edge. The previous layout was
-  content-sized and simply couldn't overrun.
-- **Standing lesson**: don't ship chat layout that depends on the native shell's
-  viewport arithmetic without numbers off a real device. `?vvdbg` (see
-  `src/lib/keyboard-metrics.js`) prints innerHeight / vv.height / offsetTop /
-  dvh / svh / lvh / --vvh live — get that FIRST.
-
----
-
-### 2026-09-02 — Highlight menu: compose takes the keyboard's space
-- **Status**: `attempted` (follow-up to the entry below, from a phone test)
-- **Symptom**: with the menu docked BELOW the compose, dragging the size /
-  weight / width sliders moved the slider out from under your finger.
-- **Root cause**: the compose grew with its content, and everything under it
-  moved when it did. Every control in the menu resizes the very box it sits
-  next to, so any layout that lets that box push the menu around is a slider
-  that runs away mid-drag.
-- **Fix**: menu ABOVE the compose (natural DOM order — no `order` at all), and
-  `.input-area.fx-dock` gets `height: calc(100% - 7rem)` — a % of `.chat-wrap`,
-  which already ends at the visible bottom on every platform, so no --vvh or
-  browser-chrome arithmetic. The compose is `flex: 1` inside that fixed box, so
-  it expands DOWN into the space the keyboard gave up and its height no longer
-  tracks its content: the text scales inside a box that never moves. 7rem of
-  conversation stays visible above. The menu is the only child allowed to
-  shrink (and scrolls) when the column is tight; the send button opts out of
-  the bar's new `align-items: stretch` or it stands 400px tall.
-- **Deploy**: from here on, every push is followed by
-  `node scripts/force-refresh.js` once the new build is actually live, so the
-  phone doesn't sit on an old bundle. Script added this round.
+### 2026-09-02 — Coming back to the app shows a blank screen in the theme colour
+- **Status**: `attempted` (Swift compiles — `xcodebuild ... -sdk iphonesimulator`
+  BUILD SUCCEEDED — but the simulator couldn't be driven here to exercise a
+  background/foreground cycle: `xcode-select` isn't pointed at Xcode. Needs a
+  device pass.)
+- **Symptom**: leave the app (tap a link out to Safari/another app), come back
+  via the iOS "← eating.computer" breadcrumb in the top-left, and the app is a
+  blank screen in a flat dark colour. It never recovers on its own.
+- **Root cause**: the flat colour is `applyShellBackground()` — the native
+  window and web view painted from the user's cached `theme-bg`. Seeing it
+  edge-to-edge means the WKWebView has NO web content: iOS reclaimed its
+  CONTENT PROCESS while the app was backgrounded. (This app is a heavy target
+  for that; the `native-background` atlas reclaim in `+layout.svelte` exists for
+  the same reason.)
+  Capacitor does try to recover — `WebViewDelegationHandler.webViewWebContent`
+  `ProcessDidTerminate` calls `webView.reload()` — but that fires while the app
+  is still BACKGROUNDED, and WebKit will not start a content process for a web
+  view that isn't on screen. The reload is dropped, and nothing retries when the
+  app comes back, so the blank screen is permanent until a force-quit.
+- **Fix** (`ios/App/App/AppDelegate.swift`):
+  - `recoverWebViewIfBlank()`, scheduled 0.4s into `applicationDidBecomeActive`
+    — foregrounding is the only moment the web view can actually be rebuilt.
+  - It reloads ONLY on real evidence of a dead web view: no `url`, or a
+    `document.body.childElementCount` probe that comes back falsy/errors (a
+    terminated content process fails `evaluateJavaScript` outright). Anything
+    with `isLoading` true is left alone so we can't race a recovery Capacitor
+    already started. The point of the probe is that a healthy resume must NOT
+    reload — that would cost the user an unsent draft.
+  - `reloadWebView()` uses `load(URLRequest:)`, not `reload()` — `reload()` is
+    the no-op on a dead content process.
+  - It targets `webView.url`, falling back to `ec_last_url` (cached in
+    `applicationWillResignActive` beside the theme colour), so the user comes
+    back to the PAGE THEY LEFT rather than the dashboard. Falling all the way
+    back to the site root is still safe: `restoreLastRoute` in `+layout.svelte`
+    restores the last `/app` route from localStorage on a root launch.
 
 ---
 
@@ -411,6 +549,40 @@ This document is a running record of what has been attempted, what is in progres
   sheet) but not a toolbar whose height is whatever its rows come to: open the
   typography sliders and the content outgrew the cap, so the panel scrolled its
   own contents. In flow there is nothing to measure and nothing to disagree.
+
+---
+
+### 2026-09-02 — Chat stuck behind its loading placeholder after an auto-refresh
+- **Status**: `attempted` (built and type-checks clean; needs a real
+  new-deploy-while-in-chat pass on a phone to confirm)
+- **Symptom**: after the auto-update refresh, opening a chat left the
+  conversation placeholder (the skeleton bubbles + compose bar) up over the
+  whole screen with no way out of it.
+- **Root cause**: two unbounded things meeting.
+  - `_showConvSkeleton` in `src/routes/app/+layout.svelte` was
+    `_convEntering || ($navigating && isConvRoute(to))`. The first term is on a
+    timer; **the second is not bounded by anything**. When SvelteKit decides a
+    navigation needs a full page load — a new deploy, or a chunk that no longer
+    exists — it calls `native_navigation()`, which starts the document load and
+    returns *a promise that never resolves*, so `$navigating` stays set for the
+    life of the tab. If that document load then doesn't land, the tab is left
+    alive with `$navigating` permanently pointing at the conversation. The
+    placeholder is `position: fixed`, `z-index: 1100` and
+    `pointer-events: none`: it covers every route (including the bottom nav at
+    1000), passes taps through to whatever is under it, and never lifts. You
+    can navigate; you just can't see that you did.
+  - `autoRefresh()` in `src/routes/+layout.svelte` fired `location.reload()`
+    the moment `$updated` flipped — including while SvelteKit was *already*
+    doing that hard navigation. Two top-level navigations racing; whichever the
+    browser drops, one plausible outcome is the tab keeping the document and
+    the wedged `$navigating` above.
+- **Fix**: the placeholder now has ONE source, `_convEntering`, which is always
+  on a timer (6s cap, cleared the moment the navigation lands — long enough to
+  cover a genuinely slow load, short enough that a wedged navigation uncovers
+  the live pager instead of stranding the screen). And `autoRefresh()` returns
+  early while a navigation is in flight; the update is already landing via
+  SvelteKit's own full page load, and the `$navigating` read makes the effect
+  re-run when it settles, which is the retry.
 
 ---
 
@@ -806,6 +978,62 @@ This document is a running record of what has been attempted, what is in progres
 - **Deep links are covered too**: `src/routes/app/lab/+layout.server.js`
   redirects every `/app/lab/*` sub-route back to the index for those accounts,
   so the placeholder can't be walked around by URL.
+
+---
+
+### 2026-08-30 — Fall 2026 roster purge: 12 accounts removed
+- **Status**: `attempted` (applied to prod Turso + RTDB, verified clean on both
+  sides; wants a signed-in pass to confirm the roster and DM list look right)
+- **Who's left in the class**: Revans Ragbir, Richard Yurewitch
+  (`ricky18ful@`), Ricky Yurewitch (`richardyurewitch@`). The instructor
+  account was never in scope — instructors bypass `class_memberships`
+  entirely, so it isn't a member row to begin with.
+- **Removed** (`scripts/purge-fall-2026-students.js`, dry-run by default): 12
+  user rows — Ani V, Diego Herrera, Erica Kolson, Fabio Suarez, Fred Whitley,
+  Jess Kuronen, Jonathan Spiegel, Perf Test, Saskia lampe, Shrilliant y,
+  Takuto Domeki, Yeji Kim — plus 160 activity rows, 50 sessions, 12
+  memberships, 11 messages, 5 reactions, 5 notification records, 3 push subs,
+  1 APNs token, 1 AI key.
+- **DM threads went whole, both sides.** Their only surviving messages were in
+  DMs, and a thread whose other party no longer exists is addressed to nobody —
+  so all 9 conversations went, 46 messages including the instructor's own
+  replies. That's the destructive half; the JSON backup is the way back.
+- **Shared assets are orphaned, not deleted**: `custom_emoji`,
+  `reaction_images`, `conversations.created_by` and
+  `class_memberships.reviewed_by` get their creator nulled. One person leaving
+  shouldn't pull an emoji out from under the whole class.
+- **The RTDB sweep needed a second pass, and the first version was wrong.**
+  Deriving the dead DM ids from the Turso `conversations` table missed 48
+  nodes: read state is written the moment a thread is opened, but a
+  conversation row only appears once a message is archived, so RTDB holds index
+  entries for DM pairs Turso has never heard of. `convReads` also turned out to
+  be keyed by conversation while `lastRead` is keyed by user, so a
+  uid-is-the-first-segment assumption doesn't hold. The script now walks the
+  tree and matches any key CONTAINING a departing uid — a DM id is just the two
+  participant uids joined by `_` — which is position-independent and catches
+  both shapes. Verified afterwards: zero references remain in either store.
+- `membersRev` is bumped at the end; that's what makes the departed names
+  disappear for anyone with the app already open.
+- **Follow-up, same day — both "Richard Yurewitch" accounts and Nav Test.**
+  Fall 2026 is now Revans Ragbir and Ricky Yurewitch (`richardyurewitch@`).
+  - `ricky18ful@` (the Fall 2026 member) and `yurewitchr@` (an empty account
+    that never finished onboarding and belonged to no class) were both deleted
+    — 2,784 activity rows, 18 messages, 14 sessions, 1 push sub between them,
+    and 3 DM threads taken whole (50 messages, the largest being 45 with the
+    instructor account). Same whole-thread policy as above.
+  - **Nav Test was demoted, not deleted.** Its Fall 2026 access never came from
+    a membership row — it's an *instructor*, and instructors bypass
+    `class_memberships` to see every class, which is also why it never appeared
+    on the roster. Dropping it to `student` is what actually removes it from
+    Fall 2026; it keeps the account and its Demo-class membership. The
+    instructor role is now held by exactly one account.
+  - The script grew a `--users=id,id` flag for this: the default target set is
+    still "class roster minus KEEP", but an explicit list reaches accounts that
+    were never class members. Its roster summary was also counting the class
+    down by the whole target list, which read "keeping 1 of 3" when one target
+    wasn't a member — it now names who's left instead.
+  - The rewritten RTDB walk was exercised for real here: 15 nodes removed,
+    zero references left in either store.
 
 ---
 

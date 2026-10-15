@@ -56,6 +56,44 @@ export async function load({ locals, parent }) {
 		}
 	}
 
+	// Weeks whose due date has passed and that still have unchecked items. The
+	// current plan is excluded even when it is itself past due, because its
+	// checklist is already open further down the page — listing it twice reads
+	// as a bug rather than a warning. Instructors are skipped entirely: they
+	// have no completions of their own, so every item would look overdue.
+	//
+	// Each overdue week now ships its FULL plan (items + acceptedTypes +
+	// resource chips) so the banner can render the same interactive checklist
+	// the current week uses — a student who missed a week can submit the late
+	// work straight from here. The server already accepts late submissions
+	// (completeItem has no due-date guard); all that was missing was a surface
+	// rendering the forms for a past plan. We also fold each plan's completions
+	// into the shared `completions` map so a just-submitted past item shows as
+	// done and stays editable, and so the optimistic re-sync (which clones
+	// data.completions) keeps past + current in one place.
+	let overdue = [];
+	if (!isInstructor) {
+		for (const p of past) {
+			if (p.id === currentPlan?.id) continue;
+			const rawPlanCompletions = await getCompletionsForStudent(p.id, userId);
+			const resolved = {};
+			for (const [itemId, c] of Object.entries(rawPlanCompletions)) {
+				resolved[itemId] = resolveSubmissionUrl(c);
+			}
+			const incompleteCount = (p.items ?? []).filter((it) => !resolved[it.id]).length;
+			if (!incompleteCount) continue;
+			Object.assign(completions, resolved);
+			overdue.push({
+				id: p.id,
+				week: p.week,
+				headline: p.headline,
+				dueDate: p.dueDate,
+				items: p.items,
+				incompleteCount
+			});
+		}
+	}
+
 	const maxWeek = plans.reduce((m, p) => Math.max(m, p.week), 0);
 	const pastPlans = plans.filter((p) => p.id !== currentPlan?.id && p.id !== nextPlan?.id).reverse();
 
@@ -86,6 +124,7 @@ export async function load({ locals, parent }) {
 		nextPlan,
 		pastPlans,
 		completions,
+		overdue,
 		allPlans: isInstructor ? plans : [],
 		nextWeekNumber: maxWeek + 1,
 		classId,
