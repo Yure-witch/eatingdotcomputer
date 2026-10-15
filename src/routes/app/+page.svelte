@@ -22,6 +22,18 @@
 	// empty so the week card + checklist paint instantly on tab switch, then
 	// fills in when load()'s `extras` promise resolves. $effect re-subscribes
 	// on navigation so a new page's data replaces the old.
+	// Overdue weeks: collapsed to a count by default so the banner is a nudge
+	// rather than a wall of everything you missed. Opening it is the student's
+	// choice, which is why this is not persisted anywhere.
+	let overdueOpen = $state(false);
+	const overdue = $derived(data.overdue ?? []);
+	// Count the still-UNFINISHED items (each overdue week now carries its full
+	// item list so the checklist can render done rows too). Falls back to the
+	// item count for safety if the server didn't stamp incompleteCount.
+	const overdueCount = $derived(
+		overdue.reduce((n, w) => n + (w.incompleteCount ?? w.items?.length ?? 0), 0)
+	);
+
 	let submissionsByItem = $state({});
 	let studentCount = $state(0);
 	let roster = $state([]); // students M is counted against — for "Not submitted"
@@ -309,6 +321,10 @@
 		void editingPlanId;
 		void previewAsStudent;
 		void items;
+		// Overdue banner: its headlines + item labels carry emote tokens too,
+		// and they only enter the DOM once the student expands it.
+		void overdue;
+		void overdueOpen;
 		if (!pageEl) return;
 		tick().then(() => mountStaticEmotes(pageEl));
 	});
@@ -356,6 +372,43 @@
 
 <div class="shell" bind:this={pageEl}>
 	<main>
+		{#if overdue.length && !isInstructor}
+			<!-- Sits above everything: the point is that it is seen before the current
+			     week pulls attention. Tinted rather than solid red — this is a reminder
+			     for someone who is already behind, not an error they caused. -->
+			<section class="overdue" class:open={overdueOpen}>
+				<button type="button" class="overdue-head" aria-expanded={overdueOpen}
+					aria-controls="overdue-list" onclick={() => (overdueOpen = !overdueOpen)}>
+					<span class="msi msi-18">error</span>
+					<span class="overdue-text">
+						{overdueCount} unfinished {overdueCount === 1 ? 'item' : 'items'}
+						from {overdue.length === 1 ? 'week ' + overdue[0].week : overdue.length + ' earlier weeks'}
+					</span>
+					<span class="msi msi-18 overdue-chev">expand_more</span>
+				</button>
+				{#if overdueOpen}
+					<div class="overdue-body" id="overdue-list">
+						<!-- Each missed week is now a LIVE checklist, not a read-only list:
+						     the same row UI the current week uses, so students can submit or
+						     check off late work right here. The server never gated late
+						     submission (completeItem has no due-date check) — the only thing
+						     missing was a surface that rendered these forms for a past plan. -->
+						{#each overdue as wk (wk.id)}
+							<div class="overdue-week">
+								<h3 class="overdue-week-title">Week {wk.week} — {@html contentHtml(wk.headline, false)}</h3>
+								<div class="checklist overdue-checklist">
+									{#each wk.items as item (item.id)}
+										{@render checkRow(item, [])}
+									{/each}
+								</div>
+							</div>
+						{/each}
+						<a class="overdue-link" href="/app/weeks">See all past weeks →</a>
+					</div>
+				{/if}
+			</section>
+		{/if}
+
 		{#if isInstructor}
 			<!-- Instructor controls: preview toggle. Sits at the top of
 			     the page so it's reachable regardless of which view is
@@ -771,8 +824,96 @@
 				{#if data.currentPlan.items.length > 0}
 					<div class="checklist">
 						{#each data.currentPlan.items as item (item.id)}
+							{@render checkRow(item, peerSubmissions?.[item.id] ?? [])}
+						{/each}
+					</div>
+				{/if}
+
+				<!-- Up next preview. The instructor writes this teaser as the
+				     "Next class preview" ON THE CURRENT week's plan, so prefer
+				     currentPlan.topicPreview; fall back to the next plan's own
+				     preview / headline. Clickable — drops into /app/weeks. -->
+				{#if data.currentPlan.topicPreview || data.nextPlan}
+					<a class="next-preview" href="/app/weeks">
+						<span class="next-label">Up next</span>
+						<span class="next-text">{@html contentHtml(data.currentPlan.topicPreview || data.nextPlan?.topicPreview || data.nextPlan?.headline || '', false)}</span>
+					</a>
+				{/if}
+
+				<div class="bottom-links">
+					<a href="/app/weeks" class="atlas-link">View previous weeks →</a>
+				</div>
+
+			{:else}
+				<div class="empty-state">
+					<h1>No assignments yet</h1>
+					<p>Check back soon.</p>
+				</div>
+			{/if}
+			</fieldset>
+		{/if}
+
+		<!-- Mobile install instructions. Hidden in the native shell — you're
+		     already in the app, there's nothing to install. -->
+		{#if isMobile && !isStandalone && !isNative}
+			<div class="install-banner">
+				{#if isIOS && APP_STORE_URL}
+					<!-- iOS with a live store listing: the native app is the
+					     better home (real push via APNs, keyboard-aware
+					     compose). The PWA path stays for Android, where web
+					     push works natively. -->
+					<p class="install-banner-title">📲 eating.computer for iPhone</p>
+					<p class="install-banner-sub">Get the app for reliable notifications — mentions, replies, and DMs land on your lock screen.</p>
+					<a class="btn-primary appstore-link" href={APP_STORE_URL} target="_blank" rel="noopener noreferrer">Download on the App Store</a>
+				{:else if installPrompt}
+					<p class="install-banner-title">📲 Install eating.computer</p>
+					<p class="install-banner-sub">Add to your home screen for the full experience.</p>
+					<button class="btn-primary" onclick={install}>Install app</button>
+				{:else if isIOS}
+					<p class="install-banner-title">📲 Install eating.computer</p>
+					<p class="install-banner-sub">To install on iPhone or iPad:</p>
+					<ol class="install-steps">
+						<li>Tap the <strong>Share</strong> button <span class="ios-share">⎙</span> at the bottom of Safari</li>
+						<li>Scroll down and tap <strong>"Add to Home Screen"</strong></li>
+						<li>Tap <strong>Add</strong></li>
+					</ol>
+				{:else if isAndroid}
+					<p class="install-banner-title">📲 Install eating.computer</p>
+					<p class="install-banner-sub">To install on Android:</p>
+					<ol class="install-steps">
+						<li>Tap the <strong>⋮ menu</strong> in Chrome</li>
+						<li>Tap <strong>"Add to Home screen"</strong> or <strong>"Install app"</strong></li>
+						<li>Tap <strong>Install</strong></li>
+					</ol>
+				{/if}
+			</div>
+		{/if}
+
+		<!-- Notification settings -->
+		{#if isStandalone && notifOnboarded && pushSupported}
+			<div class="utility-row">
+				{#if pushSubscribed}
+					<button class="utility-chip" onclick={togglePush} disabled={pushLoading}>
+						🔔 {pushLoading ? '…' : 'Disable notifications'}
+					</button>
+				{:else if notifPermission === 'granted'}
+					<button class="utility-chip" onclick={togglePush} disabled={pushLoading}>
+						🔕 {pushLoading ? '…' : 'Re-enable notifications'}
+					</button>
+				{:else if notifPermission === 'denied'}
+					<p class="muted">Notifications blocked — enable them in Settings.</p>
+				{/if}
+				{#if pushError}<p class="form-error">{pushError}</p>{/if}
+			</div>
+		{/if}
+		<!-- ══════════════ checkRow snippet ══════════════
+		     One checklist row (self-check or submission item), shared by the
+		     current week AND the overdue banner so a missed week stays fully
+		     submittable. `peers` is the classmate submissions to show beneath
+		     (empty for overdue rows). Declared as a direct child of <main> so
+		     both call sites are in scope. -->
+		{#snippet checkRow(item, peers)}
 							{@const done = !!completions[item.id]}
-							{@const peers = peerSubmissions?.[item.id] ?? []}
 							<div class="check-row" class:completed={done}>
 								{#if item.requiresSubmission}
 									<!-- Submission item -->
@@ -1028,87 +1169,7 @@
 									</div>
 								{/if}
 							</div>
-						{/each}
-					</div>
-				{/if}
-
-				<!-- Up next preview. The instructor writes this teaser as the
-				     "Next class preview" ON THE CURRENT week's plan, so prefer
-				     currentPlan.topicPreview; fall back to the next plan's own
-				     preview / headline. Clickable — drops into /app/weeks. -->
-				{#if data.currentPlan.topicPreview || data.nextPlan}
-					<a class="next-preview" href="/app/weeks">
-						<span class="next-label">Up next</span>
-						<span class="next-text">{@html contentHtml(data.currentPlan.topicPreview || data.nextPlan?.topicPreview || data.nextPlan?.headline || '', false)}</span>
-					</a>
-				{/if}
-
-				<div class="bottom-links">
-					<a href="/app/weeks" class="atlas-link">View previous weeks →</a>
-				</div>
-
-			{:else}
-				<div class="empty-state">
-					<h1>No assignments yet</h1>
-					<p>Check back soon.</p>
-				</div>
-			{/if}
-			</fieldset>
-		{/if}
-
-		<!-- Mobile install instructions. Hidden in the native shell — you're
-		     already in the app, there's nothing to install. -->
-		{#if isMobile && !isStandalone && !isNative}
-			<div class="install-banner">
-				{#if isIOS && APP_STORE_URL}
-					<!-- iOS with a live store listing: the native app is the
-					     better home (real push via APNs, keyboard-aware
-					     compose). The PWA path stays for Android, where web
-					     push works natively. -->
-					<p class="install-banner-title">📲 eating.computer for iPhone</p>
-					<p class="install-banner-sub">Get the app for reliable notifications — mentions, replies, and DMs land on your lock screen.</p>
-					<a class="btn-primary appstore-link" href={APP_STORE_URL} target="_blank" rel="noopener noreferrer">Download on the App Store</a>
-				{:else if installPrompt}
-					<p class="install-banner-title">📲 Install eating.computer</p>
-					<p class="install-banner-sub">Add to your home screen for the full experience.</p>
-					<button class="btn-primary" onclick={install}>Install app</button>
-				{:else if isIOS}
-					<p class="install-banner-title">📲 Install eating.computer</p>
-					<p class="install-banner-sub">To install on iPhone or iPad:</p>
-					<ol class="install-steps">
-						<li>Tap the <strong>Share</strong> button <span class="ios-share">⎙</span> at the bottom of Safari</li>
-						<li>Scroll down and tap <strong>"Add to Home Screen"</strong></li>
-						<li>Tap <strong>Add</strong></li>
-					</ol>
-				{:else if isAndroid}
-					<p class="install-banner-title">📲 Install eating.computer</p>
-					<p class="install-banner-sub">To install on Android:</p>
-					<ol class="install-steps">
-						<li>Tap the <strong>⋮ menu</strong> in Chrome</li>
-						<li>Tap <strong>"Add to Home screen"</strong> or <strong>"Install app"</strong></li>
-						<li>Tap <strong>Install</strong></li>
-					</ol>
-				{/if}
-			</div>
-		{/if}
-
-		<!-- Notification settings -->
-		{#if isStandalone && notifOnboarded && pushSupported}
-			<div class="utility-row">
-				{#if pushSubscribed}
-					<button class="utility-chip" onclick={togglePush} disabled={pushLoading}>
-						🔔 {pushLoading ? '…' : 'Disable notifications'}
-					</button>
-				{:else if notifPermission === 'granted'}
-					<button class="utility-chip" onclick={togglePush} disabled={pushLoading}>
-						🔕 {pushLoading ? '…' : 'Re-enable notifications'}
-					</button>
-				{:else if notifPermission === 'denied'}
-					<p class="muted">Notifications blocked — enable them in Settings.</p>
-				{/if}
-				{#if pushError}<p class="form-error">{pushError}</p>{/if}
-			</div>
-		{/if}
+		{/snippet}
 	</main>
 </div>
 
@@ -1948,4 +2009,29 @@
 		.item-main { flex-wrap: wrap; }
 		.req-toggle { width: 100%; margin-top: 0.25rem; }
 	}
+
+	/* ── Overdue banner ─────────────────────────────────────────────────── */
+	/* Same error tint the create-card uses for invalid fields, so "something
+	   needs attention" looks the same everywhere in the app. */
+	.overdue {
+		border: 1px solid color-mix(in srgb, var(--md-sys-color-error, var(--danger)) 45%, var(--border));
+		background: color-mix(in srgb, var(--md-sys-color-error, var(--danger)) 6%, var(--paper));
+		border-radius: 12px; margin-bottom: 16px; overflow: hidden;
+	}
+	.overdue-head {
+		display: flex; align-items: center; gap: 8px; width: 100%;
+		padding: 11px 13px; background: none; border: 0; cursor: pointer;
+		font: inherit; text-align: left; color: var(--md-sys-color-error, var(--danger));
+	}
+	.overdue-text { flex: 1; font-size: 0.9rem; font-weight: 600; }
+	.overdue-chev { transition: transform 140ms ease; opacity: 0.75; }
+	.overdue.open .overdue-chev { transform: rotate(180deg); }
+	.overdue-body { padding: 0 13px 13px; border-top: 1px solid color-mix(in srgb, var(--md-sys-color-error, var(--danger)) 22%, transparent); }
+	.overdue-week { margin-top: 12px; }
+	.overdue-week-title { margin: 0 0 4px; font-size: 0.82rem; font-weight: 600; color: var(--ink); }
+	.overdue-items { margin: 0; padding-left: 18px; display: grid; gap: 3px; }
+	.overdue-items li { font-size: 0.85rem; color: var(--ink); }
+	.overdue-tag { margin-left: 6px; font-size: 0.72rem; color: var(--muted-fg); }
+	.overdue-link { display: inline-block; margin-top: 12px; font-size: 0.82rem; color: var(--accent); }
+	@media (prefers-reduced-motion: reduce) { .overdue-chev { transition: none; } }
 </style>
