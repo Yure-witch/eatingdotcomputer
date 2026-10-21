@@ -585,9 +585,37 @@ function libraryRoles(theme) {
 	return out;
 }
 
+// The Default preset's LIGHT side is a designed role set, not the generated
+// green. Run through the maxed-out Default knobs, the green seed paints a
+// saturated mid-green page (#00933e) in light mode, and muted copy on it
+// lands under 3:1. This is "Pine · CMF" from the A17 library
+// (static/theme-library.json → pine-cmf.light), inlined so a cold light-mode
+// boot never waits on the library fetch. Dark keeps the generated green.
+// Like a library theme it's painted as-is, so the saturation sliders don't
+// move it; editing the seed or variant leaves Default (presetId → null) and
+// hands the palette back to the generator.
+const DEFAULT_LIGHT_ROLES = {
+	primary: '#57624b', onPrimary: '#effcde', primaryContainer: '#a3af94', onPrimaryContainer: '#252f1c',
+	secondary: '#5c6056', onSecondary: '#f6f9ec', secondaryContainer: '#e0e4d7', onSecondaryContainer: '#4f5349',
+	tertiary: '#5c6400', onTertiary: '#f8ffa6', tertiaryContainer: '#e8f564', onTertiaryContainer: '#555c00',
+	error: '#9d422c', onError: '#fff6f4', errorContainer: '#fe8b70', onErrorContainer: '#5a1001',
+	background: '#faf9f4', onBackground: '#30332d', surface: '#faf9f4', onSurface: '#30332d',
+	surfaceVariant: '#e1e3da', onSurfaceVariant: '#5f5f5b', surfaceContainer: '#eeeee7', surfaceContainerLow: '#f4f4ed',
+	surfaceContainerHigh: '#e8e9e1', surfaceContainerLowest: '#ffffff', surfaceContainerHighest: '#e1e3da', outline: '#7a7b76',
+	outlineVariant: '#b2b2ad', shadow: '#000000', scrim: '#000000', inverseSurface: '#0d0f0c',
+	inverseOnSurface: '#9d9d98', inversePrimary: '#bfcbaf'
+};
+
+function defaultLightRoles(theme) {
+	if (theme.presetId !== 'default' || theme.dark || theme.library) return null;
+	const out = {};
+	for (const [role, hex] of Object.entries(DEFAULT_LIGHT_ROLES)) out[role] = argbFromHex(hex);
+	return out;
+}
+
 function applyTokens(theme) {
 	if (typeof document === 'undefined') return;
-	const roles = libraryRoles(theme) ?? buildSchemeRoles(
+	const roles = libraryRoles(theme) ?? defaultLightRoles(theme) ?? buildSchemeRoles(
 		theme.seed, theme.dark, theme.variant, theme.contrastLevel ?? 0,
 		{
 			secondarySource: resolveFamilySeed(theme, 'secondary'),
@@ -832,14 +860,14 @@ const PREVIEW_ROLES = ['primary', 'secondary', 'tertiary', 'surface', 'surfaceCo
 export function previewRoles(theme) {
 	const t = sanitizeTheme(theme);
 	const key = [
-		t.library?.id, t.seed, t.variant, t.dark, t.contrastLevel, t.secondaryMode, t.secondarySeed,
+		t.library?.id, t.presetId === 'default', t.seed, t.variant, t.dark, t.contrastLevel, t.secondaryMode, t.secondarySeed,
 		t.tertiaryMode, t.tertiarySeed, t.primaryChroma, t.secondaryChroma,
 		t.tertiaryChroma, t.neutralChroma, t.masterChroma, t.vibrance
 	].join('|');
 	const hit = _previewCache.get(key);
 	if (hit) return hit;
 
-	const roles = libraryRoles(t) ?? buildSchemeRoles(t.seed, t.dark, t.variant, t.contrastLevel ?? 0, {
+	const roles = libraryRoles(t) ?? defaultLightRoles(t) ?? buildSchemeRoles(t.seed, t.dark, t.variant, t.contrastLevel ?? 0, {
 		secondarySource: resolveFamilySeed(t, 'secondary'),
 		tertiarySource: resolveFamilySeed(t, 'tertiary'),
 		primaryChroma: t.primaryChroma,
