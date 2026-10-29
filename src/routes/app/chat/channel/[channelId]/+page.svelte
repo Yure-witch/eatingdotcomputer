@@ -7,7 +7,7 @@
 	import { afterNavigate } from '$app/navigation';
 	import { pageTitle, pageTitleHref } from '$lib/page-title-store.js';
 	import { db } from '$lib/firebase.js';
-	import { ref, onChildAdded, onChildRemoved, onValue, off, query, limitToLast, set, remove, get } from 'firebase/database';
+	import { ref, onChildAdded, onChildRemoved, onValue, off, query, limitToLast, set, remove, get, goOffline, goOnline } from 'firebase/database';
 	import { normaliseMessage, buildUserMap, formatTime } from '$lib/chat.js';
 	import { resolveMentionsFromText, segmentMentions } from '$lib/mentions.js';
 	import { scallopedClip, starburstClip } from '$lib/scalloped.js';
@@ -3152,34 +3152,46 @@
 			if (messages.some(m => m.fx === 'hearts')) startHeartsLoop();
 		}
 
-		firebaseRef = query(ref(db, `channels/${convId}/messages`), limitToLast(50));
-		onChildAdded(firebaseRef, (snap) => {
-			const _t0 = performance.now();
-			const msg = normaliseMessage(snap.key, snap.val(), userMap);
-			if (messages.find((m) => m.id === msg.id)) return;
-			// Replace a matching pending optimistic rather than appending (prevents duplicate flash)
-			const optIdx = messages.findIndex(m => m.pending && m.userId === msg.userId && m.content === msg.content);
-			if (optIdx !== -1) {
-				messages = [...messages.slice(0, optIdx), msg, ...messages.slice(optIdx + 1)];
-			} else {
-				// Only follow the new message if the reader was already at the
-				// bottom. Someone else sending while you're reading back through
-				// history used to haul you down to the latest bubble.
-				const follow = atBottom();
-				messages = [...messages, msg];
-				if (follow) scrollToBottom();
-				markRead();
-			}
-			const _dur = performance.now() - _t0;
-			if (_dur > 4) console.warn('[perf:msg]', _dur.toFixed(1) + 'ms');
-		});
+		// Re-attachable: resyncMessages() calls it again when a send comes back
+		// OK but its echo never arrived, i.e. this listener had stalled.
+		_subscribeMessages = () => {
+			if (firebaseRef) off(firebaseRef);
+			firebaseRef = query(ref(db, `channels/${convId}/messages`), limitToLast(50));
+			onChildAdded(firebaseRef, (snap) => {
+				const _t0 = performance.now();
+				const msg = normaliseMessage(snap.key, snap.val(), userMap);
+				const known = messages.findIndex((m) => m.id === msg.id);
+				if (known !== -1) {
+					// Confirmed from the POST response while this listener was stalled
+					// (see confirmSent) — the real copy is here now, so use it.
+					if (messages[known].localEcho) messages = [...messages.slice(0, known), msg, ...messages.slice(known + 1)];
+					return;
+				}
+				// Replace a matching pending optimistic rather than appending (prevents duplicate flash)
+				const optIdx = messages.findIndex(m => (m.pending || m.localEcho) && m.userId === msg.userId && m.content === msg.content);
+				if (optIdx !== -1) {
+					messages = [...messages.slice(0, optIdx), msg, ...messages.slice(optIdx + 1)];
+				} else {
+					// Only follow the new message if the reader was already at the
+					// bottom. Someone else sending while you're reading back through
+					// history used to haul you down to the latest bubble.
+					const follow = atBottom();
+					messages = [...messages, msg];
+					if (follow) scrollToBottom();
+					markRead();
+				}
+				const _dur = performance.now() - _t0;
+				if (_dur > 4) console.warn('[perf:msg]', _dur.toFixed(1) + 'ms');
+			});
 
-		// A delete removes the node in Firebase (server-side, via /api/chat/delete)
-		// — mirror that here so every connected client drops the message live,
-		// not just the person who deleted it (who saw it vanish optimistically).
-		onChildRemoved(firebaseRef, (snap) => {
-			messages = messages.filter((m) => m.id !== snap.key);
-		});
+			// A delete removes the node in Firebase (server-side, via /api/chat/delete)
+			// — mirror that here so every connected client drops the message live,
+			// not just the person who deleted it (who saw it vanish optimistically).
+			onChildRemoved(firebaseRef, (snap) => {
+				messages = messages.filter((m) => m.id !== snap.key);
+			});
+		};
+		_subscribeMessages();
 
 		typingRef = ref(db, `typing/${convId}`);
 		onValue(typingRef, (snap) => {
@@ -3636,6 +3648,34 @@
 		_tgSprites.clear();
 	});
 
+	// The server only answers after its fan-out (push, unread counts), well
+	// after the write lands, so a healthy listener has already swapped the
+	// optimistic bubble for the real message by the time the POST returns.
+	// Still pending here means our listener missed the write (stalled socket
+	// after sleep/wake). Dropping the bubble then made a sent message look
+	// lost, so keep it as the confirmed message and kick the listener.
+	function confirmSent(optId, id) {
+		const i = messages.findIndex((m) => m.id === optId);
+		if (i === -1 || !messages[i].pending) return;
+		if (id && messages.some((m) => m.id === id)) {
+			messages = messages.filter((m) => m.id !== optId);
+			return;
+		}
+		// No key (older server) — leave it pending rather than drop it.
+		if (id) messages = [...messages.slice(0, i), { ...messages[i], id, pending: false, localEcho: true }, ...messages.slice(i + 1)];
+		resyncMessages();
+	}
+
+	let _subscribeMessages = null;
+	let _lastResync = 0;
+	function resyncMessages() {
+		if (Date.now() - _lastResync < 10000) return;
+		_lastResync = Date.now();
+		// Same kick the chat layout gives a dead websocket after sleep/wake.
+		try { goOffline(db); goOnline(db); } catch { /* SDK not ready */ }
+		_subscribeMessages?.();
+	}
+
 	async function send() {
 		// Strip zero-width caret anchors (compose-box editing artifacts) so they
 		// never get stored/sent.
@@ -3698,21 +3738,25 @@
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ content: _sendContent, channelId: convId, reply_to: replySnap, attachment: attSnap, effect: fxSnap || undefined, fontSize: szSnap, fontWeight: wghtSnap, fontStretch: wdthSnap, noSplit: noSplit || undefined, wiggleSize: wigSnap, tgFx: tgFxSnap, mentions: _sendMentions.length ? _sendMentions : undefined })
-		}).then(() => {
-			// Only remove if still pending (onChildAdded may have already replaced it)
-			if (messages.some((m) => m.id === optimistic.id && m.pending)) {
-				messages = messages.filter((m) => m.id !== optimistic.id);
-			}
-		}).catch(() => {
+		}).then(async (res) => {
+			// fetch only rejects on network failure; a 4xx/5xx used to land here
+			// and silently drop the message along with the draft.
+			const body = await res.json().catch(() => ({}));
+			if (!res.ok) throw new Error(body?.message || `the server said ${res.status}`);
+			confirmSent(optimistic.id, body?.id);
+		}).catch((err) => {
 			messages = messages.filter((m) => m.id !== optimistic.id);
 			// Only restore if input is still empty (user hasn't started typing something new)
-			if (!input.trim() && !pendingAttachment) {
+			const restore = !input.trim() && !pendingAttachment;
+			if (restore) {
 				setCeInput(content);
 				replyingTo = replySnap;
 				pendingAttachment = attSnap;
 				messageEffect = fxSnap;
 				messageFontSize = szSnap ?? 1.0;
 			}
+			const why = err instanceof TypeError ? 'check your connection and try again' : err?.message;
+			alert(`Message not sent: ${why}.` + (restore ? ' Your text is back in the box.' : ''));
 		});
 	}
 

@@ -17,6 +17,7 @@ export async function POST({ request, locals }) {
 	if (content && content.length > 20000) error(400, 'Message too long (max 20,000 characters)');
 
 	const db = getAdminDb();
+	let msgKey = null;
 	const senderName = session.user.name || session.user.email;
 	// Strip Unicode PUA effect markers (U+E100–U+E1FF) so notifications show clean plain text
 	const plainContent = content
@@ -134,93 +135,111 @@ export async function POST({ request, locals }) {
 		// DM
 		const convId = getConvId(session.user.id, to);
 		const msgRef = await db.ref(`dms/${convId}/messages`).push(msg);
-		await fanOutNotifs('dm', convId, msgRef.key);
-		// A recipient who blocked the sender gets NONE of the surfacing: no
-		// chat-list bump, no unread tick, no push. The message itself still
-		// lands in the conversation node, so unblocking restores the history.
-		const recipientBlocked = senderHidden || blockersOfSender.has(to);
-		await Promise.all([
-			db.ref(`userChats/${session.user.id}/${convId}`).update({ otherUserId: to, lastMessage: preview, lastAt: now }),
-			...(recipientBlocked ? [] : [
-				db.ref(`userChats/${to}/${convId}`).update({ otherUserId: session.user.id, otherUserName: senderName, lastMessage: preview, lastAt: now }),
-				db.ref(`unreadCounts/${to}`).update({ [convId]: ServerValue.increment(1) })
-			])
-		]);
-		// Push notification to recipient
-		if (!recipientBlocked) {
-			await notifyUsers([to], {
-				title: senderName,
-				body: preview,
-				url: `/app/chat/dm/${convId}`,
-				tag: `dm-${convId}`
-			});
+		msgKey = msgRef.key;
+		// The message is written. Everything below is fan-out (notifications,
+		// previews, unread counts); a failure there must not turn this into an
+		// error response, or the sender is told it failed and sends it twice.
+		try {
+			await fanOutNotifs('dm', convId, msgRef.key);
+			// A recipient who blocked the sender gets NONE of the surfacing: no
+			// chat-list bump, no unread tick, no push. The message itself still
+			// lands in the conversation node, so unblocking restores the history.
+			const recipientBlocked = senderHidden || blockersOfSender.has(to);
+			await Promise.all([
+				db.ref(`userChats/${session.user.id}/${convId}`).update({ otherUserId: to, lastMessage: preview, lastAt: now }),
+				...(recipientBlocked ? [] : [
+					db.ref(`userChats/${to}/${convId}`).update({ otherUserId: session.user.id, otherUserName: senderName, lastMessage: preview, lastAt: now }),
+					db.ref(`unreadCounts/${to}`).update({ [convId]: ServerValue.increment(1) })
+				])
+			]);
+			// Push notification to recipient
+			if (!recipientBlocked) {
+				await notifyUsers([to], {
+					title: senderName,
+					body: preview,
+					url: `/app/chat/dm/${convId}`,
+					tag: `dm-${convId}`
+				});
+			}
+		} catch (e) {
+			console.error('[chat] dm fan-out failed after write', e);
 		}
 	} else {
 		// Channel
 		const channel = channelId ?? 'class';
 		const msgRef = await db.ref(`channels/${channel}/messages`).push(msg);
-		await fanOutNotifs('channel', channel, msgRef.key);
-		// Channel preview — the "Name: message" line under each channel in the
-		// sidebar and on the mobile chat menu. A shadowbanned sender must not
-		// write it: this node is shared by everyone, so their name and the text
-		// of a message nobody can open were being shown to the whole class in
-		// the one place the message filters don't reach.
-		//
-		// The cost is that their OWN sidebar preview stops advancing on their
-		// own messages. That is a far smaller tell than the alternative, and
-		// per-viewer previews would mean a node per member per channel.
-		if (!senderHidden) {
-			const meta = { lastAt: now, lastMessage: preview, lastUser: senderName };
-			await db.ref(`channels/${channel}`).update(meta);
-			// Lightweight metadata node (used by layout for unread dots — no messages payload)
-			await db.ref(`channelMeta/${channel}`).update(meta);
-		}
+		msgKey = msgRef.key;
+		// The message is written. Everything below is fan-out (notifications,
+		// previews, unread counts); a failure there must not turn this into an
+		// error response, or the sender is told it failed and sends it twice.
+		try {
+			await fanOutNotifs('channel', channel, msgRef.key);
+			// Channel preview — the "Name: message" line under each channel in the
+			// sidebar and on the mobile chat menu. A shadowbanned sender must not
+			// write it: this node is shared by everyone, so their name and the text
+			// of a message nobody can open were being shown to the whole class in
+			// the one place the message filters don't reach.
+			//
+			// The cost is that their OWN sidebar preview stops advancing on their
+			// own messages. That is a far smaller tell than the alternative, and
+			// per-viewer previews would mean a node per member per channel.
+			if (!senderHidden) {
+				const meta = { lastAt: now, lastMessage: preview, lastUser: senderName };
+				await db.ref(`channels/${channel}`).update(meta);
+				// Lightweight metadata node (used by layout for unread dots — no messages payload)
+				await db.ref(`channelMeta/${channel}`).update(meta);
+			}
 
-		const turso = getDb();
-		if (turso) {
-			// Increment unread counts for all class members (best-effort, never blocks push)
-			try {
-				const convResult = await turso.execute({
-					sql: "SELECT class_id FROM conversations WHERE id = ? AND type = 'channel'",
-					args: [channel]
-				});
-				const classId = convResult.rows[0]?.class_id;
-				if (classId) {
-					const membersResult = await turso.execute({
-						sql: `SELECT DISTINCT u.id FROM users u
-						      WHERE u.role = 'instructor'
-						         OR EXISTS (
-						              SELECT 1 FROM class_memberships cm
-						              WHERE cm.user_id = u.id AND cm.status = 'approved' AND cm.class_id = ?
-						            )`,
-						args: [String(classId)]
+			const turso = getDb();
+			if (turso) {
+				// Increment unread counts for all class members (best-effort, never blocks push)
+				try {
+					const convResult = await turso.execute({
+						sql: "SELECT class_id FROM conversations WHERE id = ? AND type = 'channel'",
+						args: [channel]
 					});
-					const unreadUpdates = {};
-					for (const r of membersResult.rows) {
-						const uid = String(r.id);
-						if (uid === session.user.id || senderHidden || blockersOfSender.has(uid)) continue;
-						unreadUpdates[`unreadCounts/${uid}/${channel}`] = ServerValue.increment(1);
+					const classId = convResult.rows[0]?.class_id;
+					if (classId) {
+						const membersResult = await turso.execute({
+							sql: `SELECT DISTINCT u.id FROM users u
+							      WHERE u.role = 'instructor'
+							         OR EXISTS (
+							              SELECT 1 FROM class_memberships cm
+							              WHERE cm.user_id = u.id AND cm.status = 'approved' AND cm.class_id = ?
+							            )`,
+							args: [String(classId)]
+						});
+						const unreadUpdates = {};
+						for (const r of membersResult.rows) {
+							const uid = String(r.id);
+							if (uid === session.user.id || senderHidden || blockersOfSender.has(uid)) continue;
+							unreadUpdates[`unreadCounts/${uid}/${channel}`] = ServerValue.increment(1);
+						}
+						if (Object.keys(unreadUpdates).length > 0) {
+							await db.ref().update(unreadUpdates);
+						}
 					}
-					if (Object.keys(unreadUpdates).length > 0) {
-						await db.ref().update(unreadUpdates);
-					}
-				}
-			} catch { /* unread counts are best-effort */ }
+				} catch { /* unread counts are best-effort */ }
 
-			// Push notification to all other users with subscriptions
-			const usersResult = await turso.execute({
-				sql: 'SELECT DISTINCT user_id FROM push_subscriptions WHERE user_id != ?',
-				args: [session.user.id]
-			});
-			const userIds = senderHidden ? [] : usersResult.rows.map((r) => String(r.user_id)).filter((uid) => !blockersOfSender.has(uid));
-			await notifyUsers(userIds, {
-				title: `New message in #${channel}`,
-				body: `${senderName}: ${preview}`,
-				url: `/app/chat/channel/${channel}`,
-				tag: `channel-${channel}`
-			});
+				// Push notification to all other users with subscriptions
+				const usersResult = await turso.execute({
+					sql: 'SELECT DISTINCT user_id FROM push_subscriptions WHERE user_id != ?',
+					args: [session.user.id]
+				});
+				const userIds = senderHidden ? [] : usersResult.rows.map((r) => String(r.user_id)).filter((uid) => !blockersOfSender.has(uid));
+				await notifyUsers(userIds, {
+					title: `New message in #${channel}`,
+					body: `${senderName}: ${preview}`,
+					url: `/app/chat/channel/${channel}`,
+					tag: `channel-${channel}`
+				});
+			}
+		} catch (e) {
+			console.error('[chat] channel fan-out failed after write', e);
 		}
 	}
 
-	return json({ ok: true });
+	// The new message's key lets the sender confirm their bubble even when
+	// their own RTDB listener has stalled and never echoes it back.
+	return json({ ok: true, id: msgKey });
 }
