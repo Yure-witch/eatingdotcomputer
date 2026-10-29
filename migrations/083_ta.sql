@@ -1,0 +1,12 @@
+-- Teaching assistants.
+--
+-- A TA is a full class member — they sign in, chat, and are visible to everyone
+-- (with a "TA" badge) — but they are STAFF, not a tracked student: they must not
+-- count toward the assignment "N/M done" denominator or appear in the attendance
+-- register. This mirrors how `shadowbanned` is excluded from those same counts
+-- (migration 077), except a TA is public and positive rather than hidden.
+--
+-- A flag, not a role: `role` stays 'student' so nothing in the auth/access layer
+-- (which only distinguishes 'instructor') changes. Count queries exclude
+-- `is_ta = 1` alongside `shadowbanned = 1`.
+ALTER TABLE users ADD COLUMN is_ta INTEGER NOT NULL DEFAULT 0;

@@ -42,7 +42,7 @@ export async function sessionRoster(classId, sessionDate) {
 		        ON cm.user_id = u.id AND cm.status = 'approved' AND cm.class_id = ?
 		      LEFT JOIN attendance a
 		        ON a.user_id = u.id AND a.class_id = ? AND a.session_date = ?
-		      WHERE u.role != 'instructor' AND u.shadowbanned = 0
+		      WHERE u.role != 'instructor' AND u.shadowbanned = 0 AND u.is_ta = 0
 		      ORDER BY u.name ASC`,
 		args: [classId, classId, classId, classId, sessionDate]
 	})).rows;
@@ -74,7 +74,7 @@ export async function sessionDates(classId, limit = 60) {
 		sql: `SELECT session_date, COUNT(*) AS marked,
 		             SUM(CASE WHEN status IN ('present','late') THEN 1 ELSE 0 END) AS here,
 		             SUM(left_early) AS left_early
-		      FROM attendance WHERE class_id = ?
+		      FROM attendance a JOIN users u ON u.id = a.user_id WHERE a.class_id = ? AND u.shadowbanned = 0 AND u.is_ta = 0
 		      GROUP BY session_date ORDER BY session_date DESC LIMIT ?`,
 		args: [classId, limit]
 	})).rows.map((r) => ({
@@ -147,14 +147,14 @@ export async function attendanceForUser(userId) {
 	if (!db || !userId) return null;
 
 	const me = (await db.execute({
-		sql: `SELECT u.shadowbanned, cm.class_id
+		sql: `SELECT u.shadowbanned, u.is_ta, cm.class_id
 		      FROM users u
 		      LEFT JOIN class_memberships cm
 		        ON cm.user_id = u.id AND cm.status = 'approved'
 		      WHERE u.id = ? LIMIT 1`,
 		args: [userId]
 	})).rows[0];
-	if (!me || Number(me.shadowbanned) === 1) return null;
+	if (!me || Number(me.shadowbanned) === 1 || Number(me.is_ta) === 1) return null;
 	const classId = me.class_id ? String(me.class_id) : null;
 	if (!classId) return null;
 

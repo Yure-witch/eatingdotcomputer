@@ -60,7 +60,7 @@ export async function load({ locals, parent, url }) {
 	// All members + online status — scoped to current class (instructors always included)
 	const db = getDb();
 	const usersResult = db ? await db.execute({
-		sql: `SELECT u.id, u.name, u.email, u.role, u.created_at, u.avatar_kind, u.avatar_value, u.gemma_digest, u.interests, u.year, u.hide_tg_emoji, u.shadowbanned FROM users u
+		sql: `SELECT u.id, u.name, u.email, u.role, u.created_at, u.avatar_kind, u.avatar_value, u.gemma_digest, u.interests, u.year, u.hide_tg_emoji, u.shadowbanned, u.is_ta FROM users u
 		      WHERE u.role = 'instructor'
 		         OR EXISTS (
 		              SELECT 1 FROM class_memberships cm
@@ -128,6 +128,7 @@ export async function load({ locals, parent, url }) {
 			// own payload — see the members query in app/+layout.server.js for
 			// the same gate on the class-wide list.
 			shadowbanned: Number(r.shadowbanned ?? 0) === 1,
+			isTa: Number(r.is_ta ?? 0) === 1,
 			// Inverted on purpose: the column stores "hidden", the UI offers
 			// "enabled", which is the way round an instructor thinks about it.
 			thirdPartyEmotes: Number(r.hide_tg_emoji ?? 0) !== 1,
@@ -677,7 +678,7 @@ export const actions = {
 		const target = await db.execute({
 			sql: `SELECT 1 FROM users u
 			      JOIN class_memberships cm ON cm.user_id = u.id AND cm.status = 'approved' AND cm.class_id = ?
-			      WHERE u.id = ? AND u.role != 'instructor' AND u.shadowbanned = 0`,
+			      WHERE u.id = ? AND u.role != 'instructor' AND u.shadowbanned = 0 AND u.is_ta = 0`,
 			args: [classId, userId]
 		});
 		if (!target.rows[0]) return fail(400, { error: 'That person is not on this register.', action: 'attendance' });
