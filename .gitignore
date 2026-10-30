@@ -67,3 +67,6 @@ _m.mjs
 _v.mjs
 _dbg.mjs
 firebase-debug.log
+
+# Work Archive exports (scripts/export-work-archive.js) — student work + personal data
+/work-archive-export/

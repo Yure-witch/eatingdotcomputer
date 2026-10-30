@@ -4,6 +4,33 @@ This document is a running record of what has been attempted, what is in progres
 
 ---
 
+### 2026-10-30 — Work Archive: students' AI agents upload an exhaustive record of their work
+- **Status**: `attempted` (API exercised end-to-end on localhost with the reference
+  uploader: validation errors, secret detection, size limits, token scoping,
+  presigned R2 PUTs, /complete. Pages type-check and were server-rendered with
+  fixture data at 1280/390px. NOT yet seen signed-in in a browser; the browser
+  .zip/folder upload path is untested against a live session.)
+- **Why**: documentation repository of everything students made with AI, for
+  reporting/funding. Students paste a prompt into Claude Code; the agent reads the
+  protocol, gathers projects/ideas/images, interviews them, records consent, uploads.
+- **Pieces**:
+  - Protocol (agent-facing): `static/work-archive/PROTOCOL.md`, `manifest.schema.json`,
+    `upload.mjs` (zero-dep Node uploader) — served at `/work-archive/…`.
+  - Migration `084_work_archive.sql`: `archive_tokens` (hashed, 30-day, one live per
+    user), `archive_submissions` (full snapshots; open → complete), `archive_assets`.
+  - API `/api/archive` (+ `/token`, `/validate`, `/submissions`, `/submissions/[id]`,
+    `/files` presign, `/complete`, `/export`). Bearer `ecwa_` token OR session; token
+    can't touch `/token`. Validation + secret scan in `$lib/server/work-archive.js`,
+    shared path/type rules in `$lib/work-archive.js`.
+  - Pages `/app/archive` (token, prompt, .zip/folder upload, history; instructor
+    roster + exports) and `/app/archive/[id]` (rendered manifest).
+  - `scripts/export-work-archive.js` → offline copy + index.html + projects.csv.
+  - Account deletion now removes archive rows + `work-archive/<uid>/` in R2.
+  - Student homepage (`/app`): Work Archive card above the week — invitation until
+    they've archived, then "archived {date}" (`archivedAt` from the page loader).
+    Icon is `auto_awesome` because the self-hosted Material Symbols font is a subset
+    (`scripts/msi-icons.mjs`); `inventory_2`/`archive` aren't in it.
+
 ### 2026-10-15 — Let students submit assignments they missed (late submission)
 - **Status**: `attempted` (built + compiles clean via svelte-check; NOT yet
   confirmed with a real past-due student account.)

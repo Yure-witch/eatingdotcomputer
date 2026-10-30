@@ -10,7 +10,8 @@ import { deleteFromR2, sweepR2Prefix } from '$lib/server/r2.js';
 //   DELETED   profile row, class memberships, submissions/completions, stars,
 //             notifications (to and from them), push + APNs registrations,
 //             activity/session logs, Gemma goals/state, uploads (R2 objects
-//             included), avatar photos, reactions, and their RTDB user nodes
+//             included), avatar photos, Work Archive submissions + tokens,
+//             reactions, and their RTDB user nodes
 //             (chat list, read state, presence, notifications, digest state,
 //             recommendations).
 //   KEPT      messages they sent, with the stored author name rewritten to
@@ -59,6 +60,7 @@ export async function POST({ request, locals }) {
 		}
 	} catch { /* objects orphaned in R2 at worst */ }
 	try { await sweepR2Prefix(`avatars/${uid}/`, 0); } catch { /* same */ }
+	try { await sweepR2Prefix(`work-archive/${uid}/`, 0); } catch { /* same */ }
 
 	// ── Turso: personal data rows ─────────────────────────────────────────
 	const deletes = [
@@ -81,6 +83,9 @@ export async function POST({ request, locals }) {
 		['DELETE FROM thread_message_reactions WHERE user_id = ?', [uid]],
 		['DELETE FROM uploaded_files WHERE uploaded_by_id = ?', [uid]],
 		['DELETE FROM conversation_members WHERE user_id = ?', [uid]],
+		['DELETE FROM archive_assets WHERE submission_id IN (SELECT id FROM archive_submissions WHERE user_id = ?)', [uid]],
+		['DELETE FROM archive_submissions WHERE user_id = ?', [uid]],
+		['DELETE FROM archive_tokens WHERE user_id = ?', [uid]],
 		// Anonymise, keep content (see header note):
 		[`UPDATE chat_messages SET user_name = 'Deleted user' WHERE user_id = ?`, [uid]],
 		[`UPDATE thread_messages SET user_name = 'Deleted user' WHERE user_id = ?`, [uid]],

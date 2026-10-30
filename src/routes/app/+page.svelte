@@ -793,6 +793,21 @@
 			{/if}
 			<fieldset class="student-fieldset" disabled={isInstructor && previewAsStudent}>
 
+			<!-- Work Archive: the student's AI agent documents everything they've
+			     made with AI for the class record (/app/archive). Invitation until
+			     they've uploaded one, then a quiet "archived" link to view/update. -->
+			<a class="archive-card" class:done={data.archivedAt} href="/app/archive">
+				<span class="msi msi-18">auto_awesome</span>
+				<span class="archive-card-text">
+					{#if data.archivedAt}
+						<b>Work Archive</b> · archived {formatDate(data.archivedAt.slice(0, 10))}. View or update it
+					{:else}
+						<b>Work Archive</b> · have your AI agent document everything you've made with AI
+					{/if}
+				</span>
+				<span class="msi msi-18 archive-card-go">arrow_forward</span>
+			</a>
+
 			{#if data.currentPlan}
 				<div class="week-meta">
 					<span class="week-tag">Class {data.currentPlan.week}</span>
@@ -1404,6 +1419,23 @@
 		font-size: 1rem; color: var(--muted-fg); font-style: italic;
 		transition: color 140ms ease;
 	}
+
+	/* Work Archive card — sits above the week. Accent-tinted until the student
+	   has uploaded an archive, then muted. */
+	.archive-card {
+		display: flex; align-items: center; gap: 0.6rem;
+		margin: 0 0 1.5rem; padding: 0.7rem 0.9rem;
+		border: 1.5px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+		background: color-mix(in srgb, var(--accent) 7%, transparent);
+		border-radius: 12px;
+		color: var(--ink); text-decoration: none; font-size: 0.88rem; line-height: 1.4;
+	}
+	.archive-card .msi { color: var(--accent); flex-shrink: 0; }
+	.archive-card-text { flex: 1; min-width: 0; }
+	.archive-card-go { transition: transform 140ms ease; }
+	.archive-card:hover .archive-card-go { transform: translateX(2px); }
+	.archive-card.done { border-color: var(--border); background: none; color: var(--muted-fg); }
+	.archive-card.done .msi { color: var(--muted-fg); }
 
 	/* Bottom links */
 	.bottom-links { margin-top: 1.5rem; }

@@ -5,6 +5,7 @@ import { allowedTypesFor } from '$lib/submission-types.js';
 import { getWeekPlans, getCompletionsForStudent, getCompletionsForWeek, getAllProgressForClass, getSubmissionsByItem, createWeekPlan, createWeekItems, updateWeekPlan, completeItem, uncompleteItem, deleteWeekPlan, toggleWeekSubmissions, toggleItemSubmissions, getVisibleSubmissionsForPlan, getStudentCountForClass, getStudentsForClass } from '$lib/server/week-plans.js';
 import { getKeySyllabusWeeks } from '$lib/server/syllabus.js';
 import { uploadToR2 } from '$lib/server/r2.js';
+import { getDb } from '$lib/server/turso.js';
 
 export async function load({ locals, parent }) {
 	const parentData = await parent();
@@ -14,6 +15,21 @@ export async function load({ locals, parent }) {
 	const classId = parentData.currentClass?.id ?? 'idc-fall-2026';
 	const userId = session.user.id;
 	const isInstructor = session.user.role === 'instructor';
+
+	// When this student last completed a Work Archive (null = never) — drives
+	// the archive card at the top of the student view. Started here so it runs
+	// alongside the plan queries instead of after them; never fails the page.
+	const archivedAtPromise = (async () => {
+		try {
+			const r = await getDb()?.execute({
+				sql: `SELECT MAX(completed_at) AS at FROM archive_submissions WHERE user_id = ? AND status = 'complete'`,
+				args: [userId]
+			});
+			return r?.rows[0]?.at ? String(r.rows[0].at) : null;
+		} catch {
+			return null;
+		}
+	})();
 
 	const plans = await getWeekPlans(classId);
 	// Default week subtitles come from the class's KEY syllabus: week N's
@@ -128,6 +144,7 @@ export async function load({ locals, parent }) {
 		allPlans: isInstructor ? plans : [],
 		nextWeekNumber: maxWeek + 1,
 		classId,
+		archivedAt: await archivedAtPromise,
 		extras
 	};
 }

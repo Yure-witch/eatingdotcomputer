@@ -98,6 +98,36 @@ export async function sweepR2Prefix(prefix, maxAgeMs) {
 	return deleted;
 }
 
+/** Every object under `prefix` as { key, size }. Throws if R2 is unavailable —
+ *  callers that verify uploads need to know the listing actually happened. */
+export async function listR2Prefix(prefix) {
+	const r2 = getR2Client();
+	if (!r2 || !env.R2_BUCKET) throw new Error('R2 not configured');
+	const out = [];
+	let token;
+	do {
+		const res = await r2.send(new ListObjectsV2Command({
+			Bucket: env.R2_BUCKET, Prefix: prefix, MaxKeys: 1000, ContinuationToken: token
+		}));
+		for (const o of res.Contents ?? []) if (o.Key) out.push({ key: o.Key, size: Number(o.Size ?? 0) });
+		token = res.IsTruncated ? res.NextContinuationToken : undefined;
+	} while (token);
+	return out;
+}
+
+/** An object's body as text, or null when it doesn't exist. */
+export async function getR2Text(key) {
+	const r2 = getR2Client();
+	if (!r2 || !env.R2_BUCKET) throw new Error('R2 not configured');
+	try {
+		const res = await r2.send(new GetObjectCommand({ Bucket: env.R2_BUCKET, Key: key }));
+		return await res.Body.transformToString('utf-8');
+	} catch (e) {
+		if (e?.name === 'NoSuchKey' || e?.$metadata?.httpStatusCode === 404) return null;
+		throw e;
+	}
+}
+
 export async function listR2Assets() {
 	if (!env.R2_BUCKET) return [];
 	const r2 = getR2Client();
