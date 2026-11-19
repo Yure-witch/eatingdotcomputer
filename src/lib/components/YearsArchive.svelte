@@ -90,6 +90,7 @@
 										{#each c.highlights as h}
 											<li>
 												<span class="h-title">{#if h.url}{@render link(h.url, h.title)}{:else}{h.title}{/if}</span>
+												{#if h.from}<span class="from h-from">From {h.from}</span>{/if}
 												<span class="h-about">{h.about}</span>
 											</li>
 										{/each}
@@ -154,7 +155,7 @@
 										<h4>All projects<span class="count">{c.projects.length}</span></h4>
 										<ul class="projects">
 											{#each c.projects as pr}
-												<li>{@render link(pr.url, pr.label)}</li>
+												<li>{@render link(pr.url, pr.label)}{#if pr.from}{' '}<span class="from">(from {pr.from})</span>{/if}</li>
 											{/each}
 										</ul>
 									</div>
@@ -319,6 +320,12 @@
 		font-weight: 600;
 		margin-bottom: 0.2rem;
 	}
+	/* "from an auditor" / "from a friend": work by someone not enrolled. */
+	.from {
+		font-size: 0.88rem;
+		color: var(--muted-fg);
+	}
+	.h-from { display: block; margin-bottom: 0.2rem; }
 	.h-about {
 		display: block;
 		font-size: 0.95rem;

@@ -32,14 +32,17 @@
 //     projects: [                         // "All projects", shown under Students
 //       { label: 'Project', url: 'https://…' }
 //     ],
-//     // Any person below may be a bare name or { name, note?, url?, work? },
-//     // where work is a list of { label, url } shown under their name.
+//     // Work by someone who isn't a student (highlights or projects) adds
+//     // from: 'an auditor' / 'a friend', shown as "from an auditor".
+//     // Any person below may be a bare name or { name, note?, url?, work? };
+//     // work ({ label, url }, shown under the name) is for guests only, never
+//     // students, auditors or friends.
 //     auditors: ['Full Name', …],
 //     tas: ['Full Name', …],
 //     guestLecturers: [{ name: 'Full Name', note: 'Talk title or affiliation', url: 'https://…' }],
 //     guestCritics: ['Full Name', { name: 'Full Name', url: 'https://…' }],
 //     guests: ['Full Name', …],
-//     friends: [{ name: 'Full Name', note: 'Audited', work: [{ label: 'Project', url: 'https://…' }] }]
+//     friends: [{ name: 'Full Name', note: 'Audited' }]
 //   }
 //
 // Don't link the Fall 2025 syllabus or midterm brief PDFs: both print a
@@ -261,6 +264,7 @@ export const archive = {
 						},
 						{
 							title: 'Urban Fossil',
+							from: 'an auditor',
 							about: 'A generative type tool made from trash found on the street.',
 							url: 'https://suyeonkimdesign.github.io/urban-fossil/'
 						},
@@ -276,11 +280,13 @@ export const archive = {
 						},
 						{
 							title: 'tap.in',
+							from: 'an auditor',
 							about: 'A social site for finding events in NYC.',
 							url: 'https://tapppp.in/'
 						},
 						{
 							title: 'Camera Flip-Dot Display',
+							from: 'a friend',
 							about: 'Turns your camera into a flip-dot display, with a drone synth that follows the image.',
 							url: 'https://revanspr.github.io/FlipDisc/'
 						}
@@ -315,6 +321,7 @@ export const archive = {
 						{ label: 'Blink dark patterns', url: 'https://juliasolines.github.io/Blink-dark-patterns/' },
 						{ label: 'Body-following Particles (midterm)', url: 'https://juliasolines.github.io/Trabajo/Midterm%20ai%20play/' },
 						{ label: 'Border (final)', url: 'https://border-gilt-three.vercel.app' },
+						{ label: 'Camera Flip-Dot Display', url: 'https://revanspr.github.io/FlipDisc/', from: 'a friend' },
 						{ label: 'Colegio Simón Bolívar (final, later in a senior show)', url: 'https://juliasolines.github.io/Trabajo/' },
 						{ label: 'Concepts and Play', url: 'https://phredmorris.github.io/Concepts-and-Play/' },
 						{ label: 'Dark Patterns', url: 'https://hollywoodcelebrity.github.io/DarkMatter/' },
@@ -356,30 +363,23 @@ export const archive = {
 						{ label: 'Strega Nona (text adventure)', url: 'https://playfic.com/games/phredmorris/strega-nona' },
 						{ label: 'STRNG Journal (final)', url: 'https://elainelufy000elfy.github.io/STRG-journal/' },
 						{ label: 'Talk to Me', url: 'https://talktome-nine.vercel.app' },
+						{ label: 'tap.in, a social site for finding events in NYC', url: 'https://tapppp.in/', from: 'an auditor' },
 						{ label: 'Termite Playground', url: 'https://juliasolines.github.io/Trabajo/termites/' },
 						{ label: 'The Library (text adventure)', url: 'https://playfic.com/games/MADMAXDOD/the-library' },
 						{ label: 'Tulip Roof', url: 'https://editor.p5js.org/Saucekia/full/zQF66zzRf' },
+						{
+							label: 'Urban Fossil, a generative type tool made from street trash',
+							url: 'https://suyeonkimdesign.github.io/urban-fossil/',
+							from: 'an auditor'
+						},
 						{ label: 'Volatility Explained', url: 'https://volatility-explained-soq2.vercel.app' },
 						{ label: 'Volatility Playbook Simulator', url: 'https://akis-b.github.io/UbuntuAIApp/' },
 						{ label: 'Web Dev Homework Report', url: 'https://madmaxdod.github.io/IntDesHomework1-/' },
 						{ label: 'Where the Cows Move', url: 'https://kamaiwilliams.github.io/cow-tracker/' },
 						{ label: 'Young You Journal (midterm)', url: 'https://elainelufy000elfy.github.io/young-me/' }
 					],
-					auditors: [
-						{
-							name: 'Oliver Coria',
-							work: [{ label: 'tap.in, a social site for finding events in NYC', url: 'https://tapppp.in/' }]
-						},
-						{
-							name: 'Suyeon Kim',
-							work: [
-								{
-									label: 'Urban Fossil, a generative type tool made from street trash',
-									url: 'https://suyeonkimdesign.github.io/urban-fossil/'
-								}
-							]
-						}
-					],
+					// Their work is in the lists above, marked "from an auditor".
+					auditors: ['Oliver Coria', 'Suyeon Kim'],
 					guestLecturers: [{ name: 'Yeji Kim' }, { name: 'Diego Herrera', note: 'Glitch Feminism' }],
 					guestCritics: [
 						'Diego Herrera',
@@ -390,13 +390,8 @@ export const archive = {
 						'Yeji Kim'
 					],
 					guests: [],
-					friends: [
-						{
-							name: 'Revans Ragbir',
-							note: 'Audited',
-							work: [{ label: 'FlipDisc', url: 'https://revanspr.github.io/FlipDisc/' }]
-						}
-					]
+					// Their work is in the lists above, marked "from a friend".
+					friends: [{ name: 'Revans Ragbir', note: 'Audited' }]
 				}
 			]
 		}

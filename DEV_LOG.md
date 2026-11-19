@@ -39,8 +39,9 @@ This document is a running record of what has been attempted, what is in progres
     `src/lib/server/archive-authors.js` (server-only, imported by nothing; the repo is
     public so it's readable on GitHub, which the user accepted). Labels that contained
     a name were reworded ("Mondrian and Cam" → "Mondrian", Kia's "kia" text adventure →
-    "A text adventure"). Auditors and Revans still show their own work under their
-    names, as asked earlier. Links still contain students' GitHub usernames.
+    "A text adventure"). Auditors' and Revans's work is in the same lists, marked "from an
+    auditor" / "from a friend" (`from` field); their names are listed without work.
+    Links still contain students' GitHub usernames.
 
 ---
 

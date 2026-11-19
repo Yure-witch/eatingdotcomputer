@@ -94,8 +94,8 @@ export const ARCHIVE_AUTHORS = {
 			{ label: 'Osci Draw (WaveDraw)', url: 'https://saucekia.github.io/WaveDraw/' },
 			{ label: 'Gestural 3D model viewer', url: null }
 		],
-		// Not students. Their work is also shown under their own names on the
-		// public page, as the user asked.
+		// Not students. Shown publicly as "from an auditor" / "from a friend";
+		// their names are listed, but not next to their work.
 		'Oliver Coria (auditor)': [{ label: 'tap.in', url: 'https://tapppp.in/' }],
 		'Suyeon Kim (auditor)': [{ label: 'Urban Fossil', url: 'https://suyeonkimdesign.github.io/urban-fossil/' }],
 		'Revans Ragbir (friend, audited)': [
