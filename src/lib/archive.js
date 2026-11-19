@@ -83,7 +83,7 @@ export const archive = {
 						'Daeun C.',
 						'Elle C.',
 						{ name: 'Isabel Z.', school: 'Engineering' },
-						'Isaiah',
+						'Isaiah N.',
 						'Noah O.',
 						'Ryan J.',
 						'Yuval H.'

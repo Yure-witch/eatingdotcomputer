@@ -17,8 +17,7 @@ This document is a running record of what has been attempted, what is in progres
   `src/lib/server/archive-authors.js` is deleted: this repo is public, so it can't
   hold full names. Names were also taken out of the 2026-11-18 entry below.
 - **Known gaps**: earlier commits (3c1bc8f…be0a288) still hold full names in git
-  history; project links still contain students' GitHub usernames. One 2026 student
-  is listed by first name only: the app has no last name for them.
+  history; project links still contain students' GitHub usernames.
 
 ---
 
