@@ -90,7 +90,6 @@
 										{#each c.highlights as h}
 											<li>
 												<span class="h-title">{#if h.url}{@render link(h.url, h.title)}{:else}{h.title}{/if}</span>
-												<span class="h-by">{h.by.join(' and ')}</span>
 												<span class="h-about">{h.about}</span>
 											</li>
 										{/each}
@@ -149,17 +148,13 @@
 										</ul>
 									</div>
 								{/if}
-								{#if g.key === 'students' && c.work?.length}
+								{#if g.key === 'students' && c.projects?.length}
+									<!-- Titles and links only: never who made them (see archive.js). -->
 									<div class="field">
-										<h4>All student work</h4>
-										<ul class="work">
-											{#each c.work as w}
-												<li>
-													<span class="work-name">{w.name}</span>
-													<span class="work-items">
-														{#each w.items as it, j}{@render link(it.url, it.label)}{#if j < w.items.length - 1}{', '}{/if}{/each}
-													</span>
-												</li>
+										<h4>All projects<span class="count">{c.projects.length}</span></h4>
+										<ul class="projects">
+											{#each c.projects as pr}
+												<li>{@render link(pr.url, pr.label)}</li>
 											{/each}
 										</ul>
 									</div>
@@ -311,7 +306,7 @@
 
 	.materials { line-height: 1.5; }
 
-	/* Selected work: title, who made it, what it does. */
+	/* Selected work: title and what it does. No names, on purpose. */
 	.highlights {
 		display: grid;
 		grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
@@ -322,12 +317,7 @@
 		display: block;
 		font-size: 1.05rem;
 		font-weight: 600;
-	}
-	.h-by {
-		display: block;
-		font-size: 0.88rem;
-		color: var(--muted-fg);
-		margin-bottom: 0.25rem;
+		margin-bottom: 0.2rem;
 	}
 	.h-about {
 		display: block;
@@ -354,9 +344,13 @@
 		font-variant-numeric: tabular-nums;
 	}
 
-	.work { line-height: 1.5; }
-	.work li + li { margin-top: 0.7rem; }
-	.work-name { display: block; font-weight: 600; }
+	/* All projects: a flat A–Z list of links, in columns like the names. */
+	.projects {
+		columns: 15rem auto;
+		column-gap: 1.75rem;
+		line-height: 1.5;
+	}
+	.projects li { break-inside: avoid; margin-bottom: 0.3rem; }
 	.work-items { display: block; }
 	.note {
 		display: block;

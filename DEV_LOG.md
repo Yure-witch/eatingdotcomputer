@@ -33,6 +33,14 @@ This document is a running record of what has been attempted, what is in progres
   - "Selected work" (`highlights` in archive.js) leads each course: the projects the
     user picked as most out there, described in their words. Kia's gestural 3D viewer has
     no public link (not on her GitHub, p5 editor or in the collected email/Teams links).
+  - **Attribution rule (user, 2026-11-18)**: the public page never pairs a student's
+    name with a project. Students are listed by name; Selected work and "All projects"
+    (a flat A–Z list) carry titles and links only. Who made what lives in
+    `src/lib/server/archive-authors.js` (server-only, imported by nothing; the repo is
+    public so it's readable on GitHub, which the user accepted). Labels that contained
+    a name were reworded ("Mondrian and Cam" → "Mondrian", Kia's "kia" text adventure →
+    "A text adventure"). Auditors and Revans still show their own work under their
+    names, as asked earlier. Links still contain students' GitHub usernames.
 
 ---
 

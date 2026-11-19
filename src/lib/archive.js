@@ -4,6 +4,11 @@
 // Everything here is PUBLIC and indexable, names included. Edit this file and
 // deploy; there is no database behind it. Years are listed newest first.
 //
+// Never put a student's name next to a project here (title, label, note or
+// comment): this file ships to the browser. Students are listed by name, and
+// projects are listed by title, but the two are never paired. Who made what is
+// logged in $lib/server/archive-authors.js, which stays on the server.
+//
 // Shape of one course (every list is optional; empty lists are hidden):
 //
 //   {
@@ -21,11 +26,11 @@
 //       { week: 9, title: 'Midterm crit' }   // url and homework optional
 //     ],
 //     highlights: [                       // "Selected work", shown first
-//       { title: 'Project', by: ['Full Name'], about: 'One or two plain sentences.', url: 'https://…' }
+//       { title: 'Project', about: 'One or two plain sentences.', url: 'https://…' }
 //     ],                                  // url optional (installations, lost links)
 //     students: ['Full Name', …],
-//     work: [                             // student work, shown under Students
-//       { name: 'Full Name', items: [{ label: 'Project', url: 'https://…' }] }
+//     projects: [                         // "All projects", shown under Students
+//       { label: 'Project', url: 'https://…' }
 //     ],
 //     // Any person below may be a bare name or { name, note?, url?, work? },
 //     // where work is a list of { label, url } shown under their name.
@@ -176,90 +181,108 @@ export const archive = {
 						{ week: 14, title: 'Hype, virality and fake people online', homework: 'Finish the final.' },
 						{ week: 15, title: 'Final crit' }
 					],
-					// The projects that went furthest out, as Ricky describes them.
+					// The projects that went furthest out, picked by Ricky. No names: who
+					// made each one is in $lib/server/archive-authors.js. Neighbours are
+					// mixed on purpose so one student's work doesn't sit in a run.
 					highlights: [
 						{
 							title: 'Evil Fridge',
-							by: ['Akis Bouzoulas'],
 							about: 'Show it a photo of a refrigerator and an AI model tells you which weapons you could make from it. The model hallucinated.',
 							url: 'https://github.com/Akis-B/EvilFridgeApp'
 						},
 						{
-							title: 'Doily generator',
-							by: ['Fred Whitley'],
-							about: 'Generates randomized needle-tatting doily patterns. Fred then made the doilies by hand.',
-							url: 'https://github.com/phredmorris/TattingGenerator'
-						},
-						{
 							title: 'Osci Draw',
-							by: ['Saskia (Kia) Lampe'],
 							about: 'Draw a line with a whiteboard marker and a camera reads it as a waveform, so the drawing plays as a synthesizer.',
 							url: 'https://saucekia.github.io/WaveDraw/'
 						},
 						{
-							title: 'Gestural 3D model viewer',
-							by: ['Saskia (Kia) Lampe'],
-							about: 'Pinch your fingers in the air to turn and move around a 3D world.'
-						},
-						{
 							title: 'Colegio Simón Bolívar',
-							by: ['Julia Solines'],
-							about: 'A 3D world of rooms, sounds and memories from Ecuador. It went on to her senior show.',
+							about: 'A 3D world of rooms, sounds and memories from Ecuador. It went on to a senior show.',
 							url: 'https://juliasolines.github.io/Trabajo/'
 						},
 						{
-							title: 'Letters',
-							by: ['Julia Solines'],
-							about: 'Listens to everything you say and rebuilds it as a poem in experimental form.',
-							url: 'https://juliasolines.github.io/Trabajo/letters/'
+							title: 'Doily generator',
+							about: 'Generates randomized needle-tatting doily patterns. The doilies were then made by hand.',
+							url: 'https://github.com/phredmorris/TattingGenerator'
 						},
 						{
 							title: 'Interactive Dot Grid',
-							by: ['Samantha Kye'],
 							about: 'Tracks your hands and grows or shrinks a field of circles around them, so your hands seem to give off an aura.',
 							url: 'https://samanthakye.github.io/finalproject/'
 						},
 						{
-							title: 'Plane Viewer',
-							by: ['Max Dodziuk'],
-							about: 'Something like a flight simulator, except what you do is look at planes in the sky.',
-							url: 'https://plane-viewer.vercel.app'
-						},
-						{
-							title: 'Border',
-							by: ['Campbell Cronk', 'Max Dodziuk'],
-							about: 'An installation of six iPads, every camera pointed at your shoes. The closer you walk, the smaller your feet get on screen.',
-							url: 'https://border-gilt-three.vercel.app'
+							title: 'Degrading Editions',
+							about: 'Anonymous file hosting where every upload has ten copies, and each download degrades the file until it can\'t be read.',
+							url: 'https://madmaxdod.github.io/site/'
 						},
 						{
 							title: 'Bio-Love Simulator',
-							by: ['Alyssa Mendo'],
 							about: 'A walk through the inside of a body, built in three.js. Freaky.',
 							url: 'https://hollywoodcelebrity.github.io/LoveSim/'
 						},
 						{
 							title: 'Reach 4 Stars',
-							by: ['Kamai Williams'],
 							about: 'A hand-tracking game of exercises for carpal tunnel.',
 							url: 'https://kamaiwilliams.github.io/hand-game/'
 						},
 						{
+							title: 'Border',
+							about: 'An installation of six iPads, every camera pointed at your shoes. The closer you walk, the smaller your feet get on screen.',
+							url: 'https://border-gilt-three.vercel.app'
+						},
+						{
+							title: 'Letters',
+							about: 'Listens to everything you say and rebuilds it as a poem in experimental form.',
+							url: 'https://juliasolines.github.io/Trabajo/letters/'
+						},
+						{
+							title: 'STRNG Journal',
+							about: 'A journal that weaves each entry, rated for intensity and pleasantness, into strings.',
+							url: 'https://elainelufy000elfy.github.io/STRG-journal/'
+						},
+						{
+							title: 'Gestural 3D model viewer',
+							about: 'Pinch your fingers in the air to turn and move around a 3D world.'
+						},
+						{
+							title: 'Plane Viewer',
+							about: 'Something like a flight simulator, except what you do is look at planes in the sky.',
+							url: 'https://plane-viewer.vercel.app'
+						},
+						{
 							title: 'Loop Pad',
-							by: ['Kamai Williams'],
 							about: 'A pad for chopping and screwing loops.',
 							url: 'https://kamaiwilliams.github.io/chopandscrew/loop-pad.html'
 						},
 						{
+							title: 'Audio to Cellular Automata',
+							about: 'Drop in an MP3 and the music drives the Game of Life, Lenia and other cellular automata.',
+							url: 'https://campbe1l.github.io/camsgenaudioart/'
+						},
+						{
 							title: 'Urban Fossil',
-							by: ['Suyeon Kim'],
 							about: 'A generative type tool made from trash found on the street.',
 							url: 'https://suyeonkimdesign.github.io/urban-fossil/'
 						},
 						{
+							title: 'IMPRESS',
+							about: 'A webcam presses what it sees into a 3D membrane, which you can export as a file for 3D printing.',
+							url: 'https://saucekia.github.io/IMPRESS/'
+						},
+						{
+							title: 'Where the Cows Move',
+							about: 'Daily movements of cattle herds on the Logone Floodplain in Cameroon, played back over time.',
+							url: 'https://kamaiwilliams.github.io/cow-tracker/'
+						},
+						{
 							title: 'tap.in',
-							by: ['Oliver Coria'],
 							about: 'A social site for finding events in NYC.',
 							url: 'https://tapppp.in/'
+						},
+						{
+							title: 'Camera Flip-Dot Display',
+							about: 'Turns your camera into a flip-dot display, with a drone synth that follows the image.',
+							url: 'https://revanspr.github.io/FlipDisc/'
 						}
 					],
 					// The DTSS (registrar) roster for FA-326-1, Fall 2025. Julia is
@@ -276,121 +299,71 @@ export const archive = {
 						'Samantha Kye',
 						'Saskia (Kia) Lampe'
 					],
-					// Public links from email, the class Teams channel and students'
-					// own lists, oldest first, each checked live on 2026-11-18. Work
-					// sent as attachments, OneDrive or Drive shares isn't listed.
-					work: [
-						{
-							name: 'Akis Bouzoulas',
-							items: [
-								{ label: 'Euro Olympics (text adventure)', url: 'https://playfic.com/games/akisb/euroolympics' },
-								{ label: 'Homework 3', url: 'https://akis-b.github.io/FA326HW3/' },
-								{ label: 'Dark Patterns Awareness', url: 'https://akis-b.github.io/FA326-HW4/' },
-								{ label: 'Simple Planner', url: 'https://akis-b.github.io/Planner/' },
-								{ label: 'Volatility Playbook Simulator', url: 'https://akis-b.github.io/UbuntuAIApp/' },
-								{ label: 'Volatility Explained', url: 'https://volatility-explained-soq2.vercel.app' },
-								{ label: 'Pickle Passion Press', url: 'https://secretominouspickle.vercel.app' },
-								{ label: 'Glass Stacker', url: 'https://glass-stacker.vercel.app' },
-								{ label: 'Evil Fridge App (final)', url: 'https://github.com/Akis-B/EvilFridgeApp' }
-							]
-						},
-						{
-							name: 'Alyssa Mendo',
-							items: [
-								{ label: 'Binary Music Player', url: 'https://hollywoodcelebrity.github.io/CelebrityKeys/' },
-								{ label: 'Dark Patterns', url: 'https://hollywoodcelebrity.github.io/DarkMatter/' },
-								{ label: 'Talk to Me', url: 'https://talktome-nine.vercel.app' },
-								{ label: 'Bio-Love Simulator', url: 'https://hollywoodcelebrity.github.io/LoveSim/' },
-								{ label: 'Generative sketch', url: 'https://editor.p5js.org/hollywoodcelebrity/full/B852S3ujI' }
-							]
-						},
-						{
-							name: 'Campbell Cronk',
-							items: [
-								{ label: 'Mondrian and Cam', url: 'https://campbe1l.github.io/cams-Mondrian/' },
-								{ label: 'Dark Patterns in Figma and ClassPass', url: 'https://campbe1l.github.io/camsdarkpattern/' },
-								{ label: 'Particle Cloud', url: 'https://campbe1l.github.io/camandchatsparticlecloud/' },
-								{ label: 'Audio to Cellular Automata', url: 'https://campbe1l.github.io/camsgenaudioart/' },
-								{ label: 'Border, with Max Dodziuk (final)', url: 'https://border-gilt-three.vercel.app' }
-							]
-						},
-						{
-							name: 'Elaine Lu',
-							items: [
-								{ label: 'Young You Journal (midterm)', url: 'https://elainelufy000elfy.github.io/young-me/' },
-								{ label: 'STRNG Journal (final)', url: 'https://elainelufy000elfy.github.io/STRG-journal/' }
-							]
-						},
-						{
-							name: 'Fred Whitley',
-							items: [
-								{ label: 'Strega Nona (text adventure)', url: 'https://playfic.com/games/phredmorris/strega-nona' },
-								{ label: 'Concepts and Play', url: 'https://phredmorris.github.io/Concepts-and-Play/' },
-								{ label: 'Midterm', url: 'https://github.com/phredmorris/Midterm' },
-								{ label: 'Doily generator', url: 'https://github.com/phredmorris/TattingGenerator' }
-							]
-						},
-						{
-							name: 'Julia Solines',
-							items: [
-								{ label: 'House Taken Over (text adventure)', url: 'https://playfic.com/games/jsolasol/house-taken-over' },
-								{ label: 'Explaining a Site', url: 'https://juliasolines.github.io/Trabajo/starmap/' },
-								{ label: 'Blink dark patterns', url: 'https://juliasolines.github.io/Blink-dark-patterns/' },
-								{ label: 'Termite Playground', url: 'https://juliasolines.github.io/Trabajo/termites/' },
-								{ label: 'Mold Takeover', url: 'https://juliasolines.github.io/App-pp/' },
-								{ label: 'Body-following Particles (midterm)', url: 'https://juliasolines.github.io/Trabajo/Midterm%20ai%20play/' },
-								{ label: 'Letters, a poem made from what you say', url: 'https://juliasolines.github.io/Trabajo/letters/' },
-								{ label: 'p5.js sketch', url: 'https://editor.p5js.org/juliasolines/full/1RYe5chIj' },
-								{ label: 'Generative Worms', url: 'https://juliasolines.github.io/Generative-Worms/' },
-								{ label: 'Colegio Simón Bolívar (final, later in her senior show)', url: 'https://juliasolines.github.io/Trabajo/' }
-							]
-						},
-						{
-							name: 'Kamai Williams',
-							items: [
-								{ label: 'Make a Sandwich for Lunch (text adventure)', url: 'https://kamaiwilliams.github.io/sandwhich-text-adventure/' },
-								{ label: 'Inspecting Theta.NYC Exhibitions', url: 'https://kamaiwilliams.github.io/nine-eleven/' },
-								{ label: 'Examples of Dark Patterns', url: 'https://kamaiwilliams.github.io/nine-eighteen/index.html' },
-								{ label: 'Loop Pad', url: 'https://kamaiwilliams.github.io/chopandscrew/loop-pad.html' },
-								{ label: 'Where the Cows Move', url: 'https://kamaiwilliams.github.io/cow-tracker/' },
-								{ label: 'Keyboard Pixel Visualizer', url: 'https://kamaiwilliams.github.io/generative-art/' },
-								{ label: 'Reach 4 Stars, a hand-tracking carpal tunnel exercise (final)', url: 'https://kamaiwilliams.github.io/hand-game/' }
-							]
-						},
-						{
-							name: 'Max Dodziuk',
-							items: [
-								{ label: 'The Library (text adventure)', url: 'https://playfic.com/games/MADMAXDOD/the-library' },
-								{ label: 'Web Dev Homework Report', url: 'https://madmaxdod.github.io/IntDesHomework1-/' },
-								{ label: 'AI homework', url: 'https://madmaxdod.github.io/HWAI2/' },
-								{ label: 'Plane Viewer', url: 'https://plane-viewer.vercel.app' },
-								{ label: 'Degrading Editions, anonymous media hosting', url: 'https://madmaxdod.github.io/site/' },
-								{ label: 'Border, with Campbell Cronk (final)', url: 'https://border-gilt-three.vercel.app' }
-							]
-						},
-						{
-							name: 'Samantha Kye',
-							items: [
-								{ label: 'a great day? (text adventure)', url: 'https://playfic.com/games/samanthakye/a-great-day' },
-								{ label: 'Pinterest Notes', url: 'https://samanthakye.github.io/samanthakye/' },
-								{ label: 'Misinformation and Dark Patterns', url: 'https://samanthakye.github.io/sk-darkpatterns/' },
-								{ label: 'Portfolio', url: 'https://samanthakye.github.io/samkyeportfolio/' },
-								{ label: 'dotted.', url: 'https://samanthakye.github.io/dotted/' },
-								{ label: 'Interactive Dot Grid', url: 'https://samanthakye.github.io/finalproject/' },
-								{ label: 'Audio Glitch Visualizer', url: 'https://samanthakye.github.io/finalproject2/' }
-							]
-						},
-						{
-							name: 'Saskia (Kia) Lampe',
-							items: [
-								{ label: 'kia (text adventure)', url: 'https://playfic.com/games/saucekia_l/kia' },
-								{ label: 'A Manual for a Manual', url: 'https://saucekia.github.io/Week2WebsiteAboutAWebsite/' },
-								{ label: 'Dark Patterns in Figma', url: 'https://saucekia.github.io/DarkPatterns/' },
-								{ label: 'IMPRESS, software for making a good impression (midterm)', url: 'https://github.com/Saucekia/IMPRESS' },
-								{ label: 'Tulip Roof', url: 'https://editor.p5js.org/Saucekia/full/zQF66zzRf' },
-								{ label: 'Osci Draw (WaveDraw)', url: 'https://saucekia.github.io/WaveDraw/' }
-							]
-						}
+					// Every public link students sent: email, the class Teams channel and
+					// their own documentation lists, each checked live on 2026-11-18. Work
+					// sent as attachments, OneDrive or Drive shares isn't listed. A-Z, with
+					// no names; authors are in $lib/server/archive-authors.js.
+					projects: [
+						{ label: 'a great day? (text adventure)', url: 'https://playfic.com/games/samanthakye/a-great-day' },
+						{ label: 'A Manual for a Manual', url: 'https://saucekia.github.io/Week2WebsiteAboutAWebsite/' },
+						{ label: 'A text adventure', url: 'https://playfic.com/games/saucekia_l/kia' },
+						{ label: 'AI homework', url: 'https://madmaxdod.github.io/HWAI2/' },
+						{ label: 'Audio Glitch Visualizer', url: 'https://samanthakye.github.io/finalproject2/' },
+						{ label: 'Audio to Cellular Automata', url: 'https://campbe1l.github.io/camsgenaudioart/' },
+						{ label: 'Binary Music Player', url: 'https://hollywoodcelebrity.github.io/CelebrityKeys/' },
+						{ label: 'Bio-Love Simulator', url: 'https://hollywoodcelebrity.github.io/LoveSim/' },
+						{ label: 'Blink dark patterns', url: 'https://juliasolines.github.io/Blink-dark-patterns/' },
+						{ label: 'Body-following Particles (midterm)', url: 'https://juliasolines.github.io/Trabajo/Midterm%20ai%20play/' },
+						{ label: 'Border (final)', url: 'https://border-gilt-three.vercel.app' },
+						{ label: 'Colegio Simón Bolívar (final, later in a senior show)', url: 'https://juliasolines.github.io/Trabajo/' },
+						{ label: 'Concepts and Play', url: 'https://phredmorris.github.io/Concepts-and-Play/' },
+						{ label: 'Dark Patterns', url: 'https://hollywoodcelebrity.github.io/DarkMatter/' },
+						{ label: 'Dark Patterns Awareness', url: 'https://akis-b.github.io/FA326-HW4/' },
+						{ label: 'Dark Patterns in Figma', url: 'https://saucekia.github.io/DarkPatterns/' },
+						{ label: 'Dark Patterns in Figma and ClassPass', url: 'https://campbe1l.github.io/camsdarkpattern/' },
+						{ label: 'Degrading Editions, anonymous media hosting', url: 'https://madmaxdod.github.io/site/' },
+						{ label: 'Doily generator', url: 'https://github.com/phredmorris/TattingGenerator' },
+						{ label: 'dotted.', url: 'https://samanthakye.github.io/dotted/' },
+						{ label: 'Euro Olympics (text adventure)', url: 'https://playfic.com/games/akisb/euroolympics' },
+						{ label: 'Evil Fridge (final)', url: 'https://github.com/Akis-B/EvilFridgeApp' },
+						{ label: 'Examples of Dark Patterns', url: 'https://kamaiwilliams.github.io/nine-eighteen/index.html' },
+						{ label: 'Explaining a Site', url: 'https://juliasolines.github.io/Trabajo/starmap/' },
+						{ label: 'Generative sketch', url: 'https://editor.p5js.org/hollywoodcelebrity/full/B852S3ujI' },
+						{ label: 'Generative Worms', url: 'https://juliasolines.github.io/Generative-Worms/' },
+						{ label: 'Glass Stacker', url: 'https://glass-stacker.vercel.app' },
+						{ label: 'Homework 3', url: 'https://akis-b.github.io/FA326HW3/' },
+						{ label: 'House Taken Over (text adventure)', url: 'https://playfic.com/games/jsolasol/house-taken-over' },
+						{ label: 'IMPRESS, software for making a good impression (midterm)', url: 'https://saucekia.github.io/IMPRESS/' },
+						{ label: 'Inspecting Theta.NYC Exhibitions', url: 'https://kamaiwilliams.github.io/nine-eleven/' },
+						{ label: 'Interactive Dot Grid', url: 'https://samanthakye.github.io/finalproject/' },
+						{ label: 'Keyboard Pixel Visualizer', url: 'https://kamaiwilliams.github.io/generative-art/' },
+						{ label: 'Letters, a poem made from what you say', url: 'https://juliasolines.github.io/Trabajo/letters/' },
+						{ label: 'Loop Pad', url: 'https://kamaiwilliams.github.io/chopandscrew/loop-pad.html' },
+						{ label: 'Make a Sandwich for Lunch (text adventure)', url: 'https://kamaiwilliams.github.io/sandwhich-text-adventure/' },
+						{ label: 'Midterm', url: 'https://github.com/phredmorris/Midterm' },
+						{ label: 'Misinformation and Dark Patterns', url: 'https://samanthakye.github.io/sk-darkpatterns/' },
+						{ label: 'Mold Takeover', url: 'https://juliasolines.github.io/App-pp/' },
+						{ label: 'Mondrian', url: 'https://campbe1l.github.io/cams-Mondrian/' },
+						{ label: 'Osci Draw (WaveDraw)', url: 'https://saucekia.github.io/WaveDraw/' },
+						{ label: 'p5.js sketch', url: 'https://editor.p5js.org/juliasolines/full/1RYe5chIj' },
+						{ label: 'Particle Cloud', url: 'https://campbe1l.github.io/camandchatsparticlecloud/' },
+						{ label: 'Pickle Passion Press', url: 'https://secretominouspickle.vercel.app' },
+						{ label: 'Pinterest Notes', url: 'https://samanthakye.github.io/samanthakye/' },
+						{ label: 'Plane Viewer', url: 'https://plane-viewer.vercel.app' },
+						{ label: 'Portfolio', url: 'https://samanthakye.github.io/samkyeportfolio/' },
+						{ label: 'Reach 4 Stars, a hand-tracking carpal tunnel exercise (final)', url: 'https://kamaiwilliams.github.io/hand-game/' },
+						{ label: 'Simple Planner', url: 'https://akis-b.github.io/Planner/' },
+						{ label: 'Strega Nona (text adventure)', url: 'https://playfic.com/games/phredmorris/strega-nona' },
+						{ label: 'STRNG Journal (final)', url: 'https://elainelufy000elfy.github.io/STRG-journal/' },
+						{ label: 'Talk to Me', url: 'https://talktome-nine.vercel.app' },
+						{ label: 'Termite Playground', url: 'https://juliasolines.github.io/Trabajo/termites/' },
+						{ label: 'The Library (text adventure)', url: 'https://playfic.com/games/MADMAXDOD/the-library' },
+						{ label: 'Tulip Roof', url: 'https://editor.p5js.org/Saucekia/full/zQF66zzRf' },
+						{ label: 'Volatility Explained', url: 'https://volatility-explained-soq2.vercel.app' },
+						{ label: 'Volatility Playbook Simulator', url: 'https://akis-b.github.io/UbuntuAIApp/' },
+						{ label: 'Web Dev Homework Report', url: 'https://madmaxdod.github.io/IntDesHomework1-/' },
+						{ label: 'Where the Cows Move', url: 'https://kamaiwilliams.github.io/cow-tracker/' },
+						{ label: 'Young You Journal (midterm)', url: 'https://elainelufy000elfy.github.io/young-me/' }
 					],
 					auditors: [
 						{
