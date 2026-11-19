@@ -4,6 +4,38 @@ This document is a running record of what has been attempted, what is in progres
 
 ---
 
+### 2026-11-18 — Public homepage becomes a teaching archive
+- **Status**: `attempted` (signed-out `/` checked in the browser at desktop and 375px,
+  light and dark; spine face swap works. `/app/years` and the sidebar item compile and
+  type-check but were NOT seen signed-in.)
+- **What**: the animated font-field landing page is replaced by an archive of teaching
+  years: per course, materials links (syllabi, lectures, Drive folders) and people
+  (students, auditors, TAs, guest lecturers, guests). Full names, public by choice.
+  Log in button top right. Signed-in users reach the same page via sidebar → Archive.
+- **Pieces**:
+  - Content: `src/lib/archive.js` (hand-edited, no DB). Fall 2026 roster copied from
+    `class_memberships` on 2026-11-18, minus the TA and shadowbanned accounts.
+  - `src/lib/components/YearsArchive.svelte`: year spines (sticky, vertical on desktop)
+    set in the old landing page's type cast; pointing at one swaps its face.
+  - `src/routes/+page.svelte` (public), `src/routes/app/years/+page.svelte` (in-app),
+    `navItems` entry in `src/routes/app/+layout.svelte` (sidebar only, not BottomNav).
+  - `+page.server.js` unchanged: signed-in → `/app`, native shell → `/login`.
+  - Fall 2025 added (first class taught): week-by-week lecture decks (Drive folder
+    1zcOf3P5…, decks are link-shared) with each week's homework copied from the syllabus,
+    student work links from cooper.edu Outlook, the archived 2025FA Teams channel and the
+    students' own documentation lists (public links only, each checked live), auditors
+    with their work, a "Friends" group (Revans Ragbir), guest lecturers and guest critics
+    from the user. The syllabus and midterm-brief PDFs are NOT linked: both print the
+    user's personal phone number. "Lucy Pan" (lucypp) is Kia Lampe's anonymous persona
+    from the week 10 assignment; don't list or link it. 2025 student list is the DTSS (dtss.cooper.edu)
+    faculty roster the user pasted in (10 students; names only, no IDs or attendance). The shared folder itself is NOT
+    linked: it also holds a deepfake of a person, celebrity source clips and a 15 GB zip.
+  - "Selected work" (`highlights` in archive.js) leads each course: the projects the
+    user picked as most out there, described in their words. Kia's gestural 3D viewer has
+    no public link (not on her GitHub, p5 editor or in the collected email/Teams links).
+
+---
+
 ### 2026-10-30 — Work Archive: students' AI agents upload an exhaustive record of their work
 - **Status**: `attempted` (API exercised end-to-end on localhost with the reference
   uploader: validation errors, secret detection, size limits, token scoping,

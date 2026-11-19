@@ -88,6 +88,14 @@
 			iconName: 'experiment'
 		},
 		{
+			// The public teaching archive (the logged-out homepage), from
+			// $lib/archive.js. Sidebar only: not a pager panel or a BottomNav tab.
+			href: '/app/years',
+			label: 'Archive',
+			active: (p) => p.startsWith('/app/years'),
+			iconName: 'history'
+		},
+		{
 			href: '/app/manage',
 			label: 'Manage',
 			active: (p) => p.startsWith('/app/manage'),
