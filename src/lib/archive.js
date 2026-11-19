@@ -91,7 +91,8 @@ export const archive = {
 						{ name: 'Perrin Anto', note: 'Upcoming' }
 					],
 					guestCritics: ['Fabio Suarez', { name: 'Perrin Anto', note: 'Upcoming' }],
-					guests: []
+					guests: [],
+					friends: ['Babe Adams', 'Diego Herrera']
 				}
 			]
 		},
