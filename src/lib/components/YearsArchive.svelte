@@ -137,7 +137,7 @@
 										<ul class="names" class:detailed={list.some((p) => p.note || p.work?.length)}>
 											{#each list as p}
 												<li>
-													{#if p.url}{@render link(p.url, p.name)}{:else}<span class="name">{p.name}</span>{/if}
+													{#if p.url}{@render link(p.url, p.name)}{:else}<span class="name">{p.name}</span>{/if}{#if p.school}{' '}<span class="school">{p.school}</span>{/if}
 													{#if p.note}<span class="note">{p.note}</span>{/if}
 													{#if p.work?.length}
 														<span class="work-items">
@@ -359,6 +359,12 @@
 	}
 	.projects li { break-inside: avoid; margin-bottom: 0.3rem; }
 	.work-items { display: block; }
+	/* A student from outside the School of Art: Engineering, Architecture. */
+	.school {
+		margin-left: 0.15em;
+		font-size: 0.82rem;
+		color: var(--muted-fg);
+	}
 	.note {
 		display: block;
 		font-size: 0.88rem;

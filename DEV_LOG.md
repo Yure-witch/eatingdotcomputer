@@ -4,13 +4,31 @@ This document is a running record of what has been attempted, what is in progres
 
 ---
 
+### 2026-11-19 — Archive: students by first name and last initial
+- **Status**: `attempted`
+- **Rule (user, 2026-11-19)**: on the public archive, students, auditors, TAs and
+  friends appear as first name + last initial ("Akis B."). Guest lecturers, guest
+  critics and guests keep full names (one critic listed by handle now shows his full
+  name). Students from outside the School of Art carry their school in muted text
+  after the name (`school` field: 2025 has one engineering and one architecture
+  student, 2026 two engineering students).
+- **Private key**: full names, schools, archive folders and who made each public
+  project live in `PEOPLE.md` in the PRIVATE `Yure-witch/teaching-archive` repo.
+  `src/lib/server/archive-authors.js` is deleted: this repo is public, so it can't
+  hold full names. Names were also taken out of the 2026-11-18 entry below.
+- **Known gaps**: earlier commits (3c1bc8f…be0a288) still hold full names in git
+  history; project links still contain students' GitHub usernames. One 2026 student
+  is listed by first name only: the app has no last name for them.
+
+---
+
 ### 2026-11-18 — Public homepage becomes a teaching archive
 - **Status**: `attempted` (signed-out `/` checked in the browser at desktop and 375px,
   light and dark; spine face swap works. `/app/years` and the sidebar item compile and
   type-check but were NOT seen signed-in.)
 - **What**: the animated font-field landing page is replaced by an archive of teaching
   years: per course, materials links (syllabi, lectures, Drive folders) and people
-  (students, auditors, TAs, guest lecturers, guests). Full names, public by choice.
+  (students, auditors, TAs, guest lecturers, guests). Names: see 2026-11-19.
   Log in button top right. Signed-in users reach the same page via sidebar → Archive.
 - **Pieces**:
   - Content: `src/lib/archive.js` (hand-edited, no DB). Fall 2026 roster copied from
@@ -24,23 +42,22 @@ This document is a running record of what has been attempted, what is in progres
     1zcOf3P5…, decks are link-shared) with each week's homework copied from the syllabus,
     student work links from cooper.edu Outlook, the archived 2025FA Teams channel and the
     students' own documentation lists (public links only, each checked live), auditors
-    with their work, a "Friends" group (Revans Ragbir), guest lecturers and guest critics
+    with their work, a "Friends" group, guest lecturers and guest critics
     from the user. The syllabus and midterm-brief PDFs are NOT linked: both print the
-    user's personal phone number. "Lucy Pan" (lucypp) is Kia Lampe's anonymous persona
-    from the week 10 assignment; don't list or link it. 2025 student list is the DTSS (dtss.cooper.edu)
+    user's personal phone number. A student's anonymous persona from the week 10
+    assignment must never be listed or linked. 2025 student list is the DTSS (dtss.cooper.edu)
     faculty roster the user pasted in (10 students; names only, no IDs or attendance). The shared folder itself is NOT
     linked: it also holds a deepfake of a person, celebrity source clips and a 15 GB zip.
   - "Selected work" (`highlights` in archive.js) leads each course: the projects the
-    user picked as most out there, described in their words. Kia's gestural 3D viewer has
-    no public link (not on her GitHub, p5 editor or in the collected email/Teams links).
+    user picked as most out there, described in their words. The gestural 3D viewer has
+    no public link (not on its author's GitHub, p5 editor or in the collected email/Teams links).
   - **Attribution rule (user, 2026-11-18)**: the public page never pairs a student's
     name with a project. Students are listed by name; Selected work and "All projects"
-    (a flat A–Z list) carry titles and links only. Who made what lives in
-    `src/lib/server/archive-authors.js` (server-only, imported by nothing; the repo is
-    public so it's readable on GitHub, which the user accepted). Labels that contained
-    a name were reworded ("Mondrian and Cam" → "Mondrian", Kia's "kia" text adventure →
-    "A text adventure"). Auditors' and Revans's work is in the same lists, marked "from an
-    auditor" / "from a friend" (`from` field); their names are listed without work.
+    (a flat A–Z list) carry titles and links only. Who made what lives in the private
+    teaching-archive repo's PEOPLE.md (see 2026-11-19). Labels that contained a name
+    were reworded (to "Mondrian", "A text adventure"). Auditors' and a friend's work is
+    in the same lists, marked "from an auditor" / "from a friend" (`from` field); their
+    names are listed without work.
     Links still contain students' GitHub usernames.
 
 ---

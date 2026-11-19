@@ -1,13 +1,19 @@
 // The public teaching archive: what logged-out visitors see at "/", and what
 // signed-in members see under "Archive" in the app sidebar (/app/years).
 //
-// Everything here is PUBLIC and indexable, names included. Edit this file and
-// deploy; there is no database behind it. Years are listed newest first.
+// Everything here is PUBLIC and indexable, and so is this repo on GitHub. Edit
+// this file and deploy; there is no database behind it. Years are listed
+// newest first.
 //
-// Never put a student's name next to a project here (title, label, note or
-// comment): this file ships to the browser. Students are listed by name, and
-// projects are listed by title, but the two are never paired. Who made what is
-// logged in $lib/server/archive-authors.js, which stays on the server.
+// Names (Ricky's rule, 2026-11-19): students, auditors, TAs and friends appear
+// as first name + last initial ("Akis B."), never a full name, not even in a
+// comment. Guest lecturers, guest critics and guests are public figures here
+// and keep their full names. Full names, and who made what, are kept privately
+// in PEOPLE.md in the private Yure-witch/teaching-archive repo, never here.
+//
+// Never put a student's name next to a project (title, label, note or
+// comment). Students are listed by name, and projects by title, but the two
+// are never paired.
 //
 // Shape of one course (every list is optional; empty lists are hidden):
 //
@@ -28,21 +34,23 @@
 //     highlights: [                       // "Selected work", shown first
 //       { title: 'Project', about: 'One or two plain sentences.', url: 'https://…' }
 //     ],                                  // url optional (installations, lost links)
-//     students: ['Full Name', …],
+//     students: ['First L.', { name: 'First L.', school: 'Engineering' }, …],
+//                                         // school: only for students outside the
+//                                         // School of Art (Engineering, Architecture)
 //     projects: [                         // "All projects", shown under Students
 //       { label: 'Project', url: 'https://…' }
 //     ],
 //     // Work by someone who isn't a student (highlights or projects) adds
 //     // from: 'an auditor' / 'a friend', shown as "from an auditor".
-//     // Any person below may be a bare name or { name, note?, url?, work? };
+//     // Any person may be a bare name or { name, school?, note?, url?, work? };
 //     // work ({ label, url }, shown under the name) is for guests only, never
 //     // students, auditors or friends.
-//     auditors: ['Full Name', …],
-//     tas: ['Full Name', …],
+//     auditors: ['First L.', …],
+//     tas: ['First L.', …],
 //     guestLecturers: [{ name: 'Full Name', note: 'Talk title or affiliation', url: 'https://…' }],
 //     guestCritics: ['Full Name', { name: 'Full Name', url: 'https://…' }],
 //     guests: ['Full Name', …],
-//     friends: [{ name: 'Full Name', note: 'Audited' }]
+//     friends: [{ name: 'First L.', note: 'Audited' }]   // full name if they also spoke
 //   }
 //
 // Don't link the Fall 2025 syllabus or midterm brief PDFs: both print a
@@ -68,20 +76,20 @@ export const archive = {
 					// Copied from the Fall 2026 roster on 2026-11-18 (approved members,
 					// minus the TA and shadowbanned accounts).
 					students: [
-						'Abigail Velazco',
-						'Angela Gray',
-						'bailey',
-						'Casey Chung',
-						'Daeun Chung',
-						'Elle Charles',
-						'Isabel Zulawski',
+						'Abigail V.',
+						{ name: 'Angela G.', school: 'Engineering' },
+						'Bailey W.',
+						'Casey C.',
+						'Daeun C.',
+						'Elle C.',
+						{ name: 'Isabel Z.', school: 'Engineering' },
 						'Isaiah',
-						'Noah Oh',
-						'Ryan Jang',
-						'Yuval Harel'
+						'Noah O.',
+						'Ryan J.',
+						'Yuval H.'
 					],
 					auditors: [],
-					tas: ['Ani V'],
+					tas: ['Ani V.'],
 					guestLecturers: [
 						'Char Stiles',
 						'Diego Herrera',
@@ -92,7 +100,7 @@ export const archive = {
 					],
 					guestCritics: ['Fabio Suarez', { name: 'Perrin Anto', note: 'Upcoming' }],
 					guests: [],
-					friends: ['Babe Adams', 'Diego Herrera']
+					friends: ['Babe A.', 'Diego Herrera']
 				}
 			]
 		},
@@ -186,8 +194,8 @@ export const archive = {
 						{ week: 15, title: 'Final crit' }
 					],
 					// The projects that went furthest out, picked by Ricky. No names: who
-					// made each one is in $lib/server/archive-authors.js. Neighbours are
-					// mixed on purpose so one student's work doesn't sit in a run.
+					// made each one is in the private PEOPLE.md. Neighbours are mixed on
+					// purpose so one student's work doesn't sit in a run.
 					highlights: [
 						{
 							title: 'Evil Fridge',
@@ -292,24 +300,23 @@ export const archive = {
 							url: 'https://revanspr.github.io/FlipDisc/'
 						}
 					],
-					// The DTSS (registrar) roster for FA-326-1, Fall 2025. Julia is
-					// "Julia Solines Reed" there; she publishes as Julia Solines.
+					// The DTSS (registrar) roster for FA-326-1, Fall 2025.
 					students: [
-						'Akis Bouzoulas',
-						'Alyssa Mendo',
-						'Campbell Cronk',
-						'Elaine Lu',
-						'Fred Whitley',
-						'Julia Solines',
-						'Kamai Williams',
-						'Max Dodziuk',
-						'Samantha Kye',
-						'Saskia (Kia) Lampe'
+						{ name: 'Akis B.', school: 'Engineering' },
+						'Alyssa M.',
+						'Campbell C.',
+						{ name: 'Elaine L.', school: 'Architecture' },
+						'Fred W.',
+						'Julia S.',
+						'Kamai W.',
+						'Max D.',
+						'Samantha K.',
+						'Saskia (Kia) L.'
 					],
 					// Every public link students sent: email, the class Teams channel and
 					// their own documentation lists, each checked live on 2026-11-18. Work
 					// sent as attachments, OneDrive or Drive shares isn't listed. A-Z, with
-					// no names; authors are in $lib/server/archive-authors.js.
+					// no names; authors are in the private PEOPLE.md.
 					projects: [
 						{ label: 'a great day? (text adventure)', url: 'https://playfic.com/games/samanthakye/a-great-day' },
 						{ label: 'A Manual for a Manual', url: 'https://saucekia.github.io/Week2WebsiteAboutAWebsite/' },
@@ -380,19 +387,19 @@ export const archive = {
 						{ label: 'Young You Journal (midterm)', url: 'https://elainelufy000elfy.github.io/young-me/' }
 					],
 					// Their work is in the lists above, marked "from an auditor".
-					auditors: ['Oliver Coria', 'Suyeon Kim'],
+					auditors: ['Oliver C.', 'Suyeon K.'],
 					guestLecturers: [{ name: 'Yeji Kim' }, { name: 'Diego Herrera', note: 'Glitch Feminism' }],
 					guestCritics: [
 						'Diego Herrera',
 						'Erin Sparling',
 						'Fabio Suarez',
-						{ name: 'lihuang', url: 'https://lihuang.space' },
+						{ name: 'Li Huang', url: 'https://lihuang.space' },
 						'River Friedman',
 						'Yeji Kim'
 					],
 					guests: [],
 					// Their work is in the lists above, marked "from a friend".
-					friends: [{ name: 'Revans Ragbir', note: 'Audited' }]
+					friends: [{ name: 'Revans R.', note: 'Audited' }]
 				}
 			]
 		}
