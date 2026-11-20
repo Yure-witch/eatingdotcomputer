@@ -21,6 +21,11 @@ import { env } from '$env/dynamic/private';
 import { getR2Client } from '$lib/server/r2.js';
 
 export const MEMBER_WORK = {
+	'Fall 2025': {
+		guestLecturers: {
+			'Diego Herrera': [{ label: 'Slides', file: 'on-glitch.pdf', title: 'On Glitch.pdf' }]
+		}
+	},
 	'Fall 2026': {
 		guestLecturers: {
 			'Diego Herrera': [

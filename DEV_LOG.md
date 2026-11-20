@@ -15,6 +15,9 @@ This document is a running record of what has been attempted, what is in progres
     an ID card, which is why the deck stays members-only.
   - Mason Webb, "The String": an interactive page first made as a claude.ai
     artifact, copied with the claude.ai wrapper script removed.
+- **Added (Fall 2025 guest lecturers)**: Diego Herrera's "On Glitch" slides
+  (the Glitch Feminism talk, Keynote exported to PDF). Slide 2 shows the same ID
+  cards, so it is members-only too.
 - **How**: `src/lib/server/archive-members.js` lists the members-only links. Only
   `/app/years` loads it (after the /app layout's sign-in and approval checks), and
   `YearsArchive` merges them into the matching person. Files are in R2 under
@@ -26,6 +29,8 @@ This document is a running record of what has been attempted, what is in progres
 - **Checked locally**: logged out, `/` shows both titles and no links,
   `/app/years/files/*` returns 401 and `/app/years` redirects to log in. The
   signed-in view is not yet seen locally (no local session).
+- **Checked live (2026 files)**: signed in, both Diego links and Mason's talk
+  appear and open; the PDF and The String load.
 
 ---
 

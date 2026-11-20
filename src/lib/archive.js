@@ -394,6 +394,7 @@ export const archive = {
 					],
 					// Their work is in the lists above, marked "from an auditor".
 					auditors: ['Oliver C.', 'Suyeon K.'],
+					// Diego's slides are members-only: $lib/server/archive-members.js.
 					guestLecturers: [{ name: 'Yeji Kim' }, { name: 'Diego Herrera', note: 'Glitch Feminism' }],
 					guestCritics: [
 						'Diego Herrera',
