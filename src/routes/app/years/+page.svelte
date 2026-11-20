@@ -5,6 +5,8 @@
 	import { pageTitle } from '$lib/page-title-store.js';
 	import YearsArchive from '$lib/components/YearsArchive.svelte';
 
+	let { data } = $props();
+
 	onMount(() => pageTitle.set('Archive'));
 </script>
 
@@ -12,7 +14,7 @@
 
 <div class="years-shell">
 	<main>
-		<YearsArchive />
+		<YearsArchive memberWork={data.memberWork} />
 	</main>
 </div>
 

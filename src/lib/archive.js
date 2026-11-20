@@ -53,6 +53,10 @@
 //     friends: [{ name: 'First L.', note: 'Audited' }]   // full name if they also spoke
 //   }
 //
+// Links only signed-in class members should see (a guest's deck with their
+// ID on a slide, say) don't go here: put them in $lib/server/archive-members.js,
+// which adds them on /app/years only.
+//
 // Don't link the Fall 2025 syllabus or midterm brief PDFs: both print a
 // personal phone number. The weekly homework below is copied from the syllabus.
 
@@ -92,8 +96,10 @@ export const archive = {
 					tas: ['Ani V.'],
 					guestLecturers: [
 						'Char Stiles',
-						'Diego Herrera',
-						'Mason Webb',
+						// Diego's slides and notes and Mason's talk are members-only:
+						// $lib/server/archive-members.js.
+						{ name: 'Diego Herrera', note: 'Surviving Apocalypse: On Raving, Cyborgs, and The Underground' },
+						{ name: 'Mason Webb', note: 'The String' },
 						'Clarence Kwan',
 						{ name: 'Yeji Kim', note: 'Upcoming' },
 						{ name: 'Perrin Anto', note: 'Upcoming' }

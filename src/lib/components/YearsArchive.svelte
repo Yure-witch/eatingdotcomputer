@@ -33,8 +33,17 @@
 		faces[i] = next;
 	}
 
+	// Members-only links from /app/years (see $lib/server/archive-members.js),
+	// keyed term → group → name. The public homepage never passes any.
+	let { memberWork = null } = $props();
+	const withMemberWork = (p, c, group) => {
+		const extra = memberWork?.[c.term]?.[group]?.[p.name];
+		return extra?.length ? { ...p, work: [...(p.work ?? []), ...extra] } : p;
+	};
+
 	const isCurrent = (y) => y.courses.some((c) => c.current);
-	const external = (url) => /^https?:\/\//.test(url);
+	// Members-only files open in a new tab like outside links.
+	const external = (url) => /^https?:\/\//.test(url) || url.startsWith('/app/years/files/');
 </script>
 
 {#snippet link(url, label)}
@@ -130,7 +139,7 @@
 							{/if}
 
 							{#each PEOPLE_GROUPS as g}
-								{@const list = (c[g.key] ?? []).map(person)}
+								{@const list = (c[g.key] ?? []).map((p) => withMemberWork(person(p), c, g.key))}
 								{#if list.length}
 									<div class="field">
 										<h4>{list.length === 1 ? g.one : g.many}{#if list.length > 1}<span class="count">{list.length}</span>{/if}</h4>

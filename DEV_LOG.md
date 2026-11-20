@@ -4,6 +4,31 @@ This document is a running record of what has been attempted, what is in progres
 
 ---
 
+### 2026-11-20 — Archive: members-only guest lecture materials
+- **Status**: `attempted`
+- **Rule (user, 2026-11-20)**: a guest's lecture materials can be seen by signed-in
+  class members, but the logged-out archive doesn't link them. It shows only the
+  talk title.
+- **Added (Fall 2026 guest lecturers)**:
+  - Diego Herrera, "Surviving Apocalypse: On Raving, Cyborgs, and The Underground":
+    the slides (Keynote exported to PDF) and their Google Doc notes. A slide shows
+    an ID card, which is why the deck stays members-only.
+  - Mason Webb, "The String": an interactive page first made as a claude.ai
+    artifact, copied with the claude.ai wrapper script removed.
+- **How**: `src/lib/server/archive-members.js` lists the members-only links. Only
+  `/app/years` loads it (after the /app layout's sign-in and approval checks), and
+  `YearsArchive` merges them into the matching person. Files are in R2 under
+  `archive-members/<random>/<name>`. The random folder is never written in this
+  public repo, and the server finds it by listing the prefix.
+  `/app/years/files/<name>` runs `requireClassAccess`. A PDF then redirects to a
+  10-minute signed URL. An HTML page opens full-screen in a sandboxed iframe (no
+  allow-same-origin) pointing at a signed URL.
+- **Checked locally**: logged out, `/` shows both titles and no links,
+  `/app/years/files/*` returns 401 and `/app/years` redirects to log in. The
+  signed-in view is not yet seen locally (no local session).
+
+---
+
 ### 2026-11-19 — Archive: students by first name and last initial
 - **Status**: `attempted`
 - **Rule (user, 2026-11-19)**: on the public archive, students, auditors, TAs and
