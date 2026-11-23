@@ -38,7 +38,14 @@ export const MEMBER_WORK = {
 			// A copy of Mason's interactive talk (first made as a claude.ai
 			// artifact, with the claude.ai wrapper script removed). It names
 			// real people and private history, hence members-only.
-			'Mason Webb': [{ label: 'Lecture', file: 'the-string.html', title: 'The String' }]
+			'Mason Webb': [{ label: 'Lecture', file: 'the-string.html', title: 'The String' }],
+			'Clarence Kwan': [
+				{
+					label: 'Slides',
+					file: 'coding-yourself-into-existence.pdf',
+					title: 'Coding Yourself into Existence.pdf'
+				}
+			]
 		}
 	}
 };

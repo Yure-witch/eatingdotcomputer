@@ -96,11 +96,11 @@ export const archive = {
 					tas: ['Ani V.'],
 					guestLecturers: [
 						'Char Stiles',
-						// Diego's slides and notes and Mason's talk are members-only:
+						// Diego's, Mason's and Clarence's materials are members-only:
 						// $lib/server/archive-members.js.
 						{ name: 'Diego Herrera', note: 'Surviving Apocalypse: On Raving, Cyborgs, and The Underground' },
 						{ name: 'Mason Webb', note: 'The String' },
-						'Clarence Kwan',
+						{ name: 'Clarence Kwan', note: 'Coding Yourself into Existence' },
 						{ name: 'Yeji Kim', note: 'Upcoming' },
 						{ name: 'Perrin Anto', note: 'Upcoming' }
 					],
