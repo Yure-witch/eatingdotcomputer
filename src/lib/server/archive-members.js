@@ -28,6 +28,7 @@ export const MEMBER_WORK = {
 	},
 	'Fall 2026': {
 		guestLecturers: {
+			'Char Stiles': [{ label: 'Slides', file: 'char-stiles-lecture.pdf', title: 'Char Stiles lecture.pdf' }],
 			'Diego Herrera': [
 				{ label: 'Slides', file: 'surviving-apocalypse.pdf', title: 'Surviving Apocalypse.pdf' },
 				{

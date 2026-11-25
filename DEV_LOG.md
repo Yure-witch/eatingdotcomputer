@@ -15,6 +15,9 @@ This document is a running record of what has been attempted, what is in progres
     an ID card, which is why the deck stays members-only.
   - Mason Webb, "The String": an interactive page first made as a claude.ai
     artifact, copied with the claude.ai wrapper script removed.
+- **Added 2026-11-25**: Char Stiles' slides, Fall 2026: a 2.2 GB Keynote deck
+  (124 slides, mostly video) from Char's Drive, exported to a 76 MB PDF. Videos
+  don't carry over; nothing personal on any slide.
 - **Added 2026-11-23**: Clarence Kwan's "Coding Yourself into Existence" slides
   (a PDF of the Google Slides deck), Fall 2026. Nothing personal on any slide;
   members-only by the same rule.

@@ -96,7 +96,7 @@ export const archive = {
 					tas: ['Ani V.'],
 					guestLecturers: [
 						'Char Stiles',
-						// Diego's, Mason's and Clarence's materials are members-only:
+						// Char's, Diego's, Mason's and Clarence's materials are members-only:
 						// $lib/server/archive-members.js.
 						{ name: 'Diego Herrera', note: 'Surviving Apocalypse: On Raving, Cyborgs, and The Underground' },
 						{ name: 'Mason Webb', note: 'The String' },
