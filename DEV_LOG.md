@@ -36,6 +36,11 @@ This document is a running record of what has been attempted, what is in progres
 - **Checked locally** (dev-only preview page, not committed, since there is no
   local sign-in): placement against the slide images on rotated, cropped and
   multi-video slides; play, mute, the blocked-sound fallback, grid, phone layout.
+- **Checked live**: logged out, decks redirect to log in and the PDFs return 401;
+  signed in, the Archive shows all five Slides links and they open the viewer in
+  the app; Char's three-video slide plays, the label layer shows on slide 45, and
+  the back link returns to the Archive at the same scroll position.
+  Not yet seen on a real iPhone (sound unlock is Safari-specific).
 
 ---
 
