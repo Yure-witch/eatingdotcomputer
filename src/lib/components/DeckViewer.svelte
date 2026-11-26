@@ -302,7 +302,10 @@
 	}
 
 	// "#12" opens slide 12, on load or when the address is edited.
-	function fromHash() {
+	function fromHash(e) {
+		// An edited address adds a history entry, so "back" would land on the
+		// old slide: from then on the back link is a plain link to the Archive.
+		if (e) fromArchive = false;
 		const n = parseInt(location.hash.slice(1), 10);
 		if (n >= 1 && n <= total) go(n - 1);
 	}
