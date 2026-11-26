@@ -19,6 +19,10 @@ This document is a running record of what has been attempted, what is in progres
   and On Glitch (videos, GIFs and a sound on slide 3 of each), Clarence Kwan
   (no media), and Yeji Kim's "Cooper Union Talk" (78 slides, 7 GIFs and a Drive
   video), new on the Fall 2025 row. About 480 MB in R2.
+- **Added the same day**: Yeji's second deck from Drive, "Yeji Presentation" (51
+  slides, 8 GIFs; Glimmer for Android XR, the NYT, Pratt Shows), as a second
+  link on her Fall 2025 row. Every slide of both Yeji decks checked: nothing
+  personal. First deck uploaded with `scripts/decks/upload-deck.mjs`.
 - **Details worth keeping**:
   - Sound: browsers refuse sound until a tap, so a video falls back to silent
     with a "Tap for sound" button. The viewer reuses a fixed pool of video

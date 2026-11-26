@@ -34,7 +34,8 @@ export const MEMBER_WORK = {
 	'Fall 2025': {
 		guestLecturers: {
 			'Yeji Kim': [
-				{ label: 'Slides', deck: 'yeji-kim-cooper-union-talk', pdf: 'yeji-kim-cooper-union-talk.pdf', title: 'Cooper Union Talk' }
+				{ label: 'Slides', deck: 'yeji-kim-cooper-union-talk', pdf: 'yeji-kim-cooper-union-talk.pdf', title: 'Cooper Union Talk' },
+				{ label: 'Presentation', deck: 'yeji-kim-presentation', pdf: 'yeji-kim-presentation.pdf', title: 'Yeji Presentation' }
 			],
 			'Diego Herrera': [{ label: 'Slides', deck: 'on-glitch', pdf: 'on-glitch.pdf', title: 'On Glitch' }]
 		}
