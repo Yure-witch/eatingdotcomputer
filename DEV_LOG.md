@@ -4,6 +4,41 @@ This document is a running record of what has been attempted, what is in progres
 
 ---
 
+### 2026-11-26 — Archive: guest decks play in the app, videos included
+- **Status**: `attempted`
+- **Asked (user)**: convert the decks' videos and make a viewer so guest decks
+  play properly in the web app instead of as PDFs. Also add Yeji Kim's 2025
+  slides from Drive.
+- **What**: `/app/years/decks/<slug>` (`DeckViewer.svelte`) shows each slide as
+  an image with its videos, GIFs and sounds laid over the exact frames they had,
+  re-encoded as H.264 MP4 (1080p, 8 Mbps cap), GIFs as silent looping MP4s.
+  Full screen, a slide grid, a scrubber, keyboard (arrows, space, F, G, M, K),
+  tap left/right and swipe on phones, `#12` links to a slide. The PDF stays one
+  tap away. Members-only like the rest; the Archive's Slides links now open it.
+- **Decks**: Char Stiles (124 slides, 42 videos), Diego's Surviving Apocalypse
+  and On Glitch (videos, GIFs and a sound on slide 3 of each), Clarence Kwan
+  (no media), and Yeji Kim's "Cooper Union Talk" (78 slides, 7 GIFs and a Drive
+  video), new on the Fall 2025 row. About 480 MB in R2.
+- **Details worth keeping**:
+  - Sound: browsers refuse sound until a tap, so a video falls back to silent
+    with a "Tap for sound" button. The viewer reuses a fixed pool of video
+    elements so one tap keeps sound on for the rest of the deck (Safari unlocks
+    per element).
+  - Keynote's AppleScript rotation is counter-clockwise and its position is the
+    rotated outline's corner; Slides/PPTX GIFs can be cropped (`srcRect`).
+  - Items Keynote drew above a video (5 of Char's slides) are cut out as a
+    transparent top layer so the video doesn't cover them.
+  - Signed URLs are signed at the start of a 6-hour window so they stay the
+    same across reloads and the browser cache works.
+  - The icon font subset was rebuilt (from committed code plus the viewer) for
+    the five new icons.
+  - The build scripts are in `scripts/decks/` (README there).
+- **Checked locally** (dev-only preview page, not committed, since there is no
+  local sign-in): placement against the slide images on rotated, cropped and
+  multi-video slides; play, mute, the blocked-sound fallback, grid, phone layout.
+
+---
+
 ### 2026-11-20 — Archive: members-only guest lecture materials
 - **Status**: `attempted`
 - **Rule (user, 2026-11-20)**: a guest's lecture materials can be seen by signed-in
